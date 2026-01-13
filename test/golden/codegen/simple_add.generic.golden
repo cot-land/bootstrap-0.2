@@ -1,0 +1,11 @@
+.func simple_add:
+  ; b1 (ret)
+  stack[0] = const_int 40    ; v1
+  stack[8] = const_int 2    ; v2
+  r0 = stack[0]    ; load v1
+  r1 = stack[8]    ; load v2
+  stack[16] = add r0, r1    ; v3
+  r0 = stack[16]    ; load v3
+  return r0
+
+.end simple_add

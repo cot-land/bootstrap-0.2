@@ -1,0 +1,7 @@
+// compile
+// Tests that empty functions compile.
+fn empty() {}
+
+fn main() {
+    empty();
+}

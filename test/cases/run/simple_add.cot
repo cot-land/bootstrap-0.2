@@ -1,0 +1,6 @@
+// run
+// Tests basic arithmetic operations.
+fn main() {
+    let x = 40 + 2;
+    assert(x == 42);
+}

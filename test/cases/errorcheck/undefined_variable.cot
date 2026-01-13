@@ -1,0 +1,5 @@
+// errorcheck
+// Tests that undefined variables produce clear error messages.
+fn main() {
+    let x = undefined_var; // ERROR "undefined"
+}

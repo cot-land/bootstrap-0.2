@@ -1,0 +1,7 @@
+func simple_add:
+  b1 (ret):
+    v1 = const_int [40] : uses=1
+    v2 = const_int [2] : uses=1
+    v3 = add v1, v2 : uses=1
+    control: v3
+
