@@ -284,7 +284,7 @@
 | 3. Computed Base Index | DONE | test_computed_base_assign | |
 | 4. Array Copy | DONE | test_array_copy, test_array_copy_values | |
 | 5. String Variable | DONE | test_string_var_copy, test_string_var_copy2 | |
-| 6. Pointer Field Store | TODO | | |
+| 6. Pointer Field Store | DONE | test_ptr_field_store | 6c9b16f |
 | 7. Function Return Type | DONE | (existing tests verify correctness) | |
-| 8. Function Types | TODO | | |
+| 8. Function Types | DONE | test_fn_type | 125302b |
 | 9-13. Optimizations | DEFERRED | | |

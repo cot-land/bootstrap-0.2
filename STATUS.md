@@ -6,7 +6,7 @@
 
 Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven compiler architecture. The goal is to eliminate the "whack-a-mole" debugging pattern that killed previous attempts.
 
-**Current State:** Phase 8 in progress. 104 e2e tests passing! Working toward self-hosting.
+**Current State:** Phase 8 complete. 106 e2e tests passing! Working toward self-hosting.
 
 ---
 
