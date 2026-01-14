@@ -6,7 +6,7 @@
 
 Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven compiler architecture. The goal is to eliminate the "whack-a-mole" debugging pattern that killed previous attempts.
 
-**Current State:** Phase 8 IN PROGRESS. Core language features working, ~15/113 tests passing.
+**Current State:** Phase 8 NEARLY COMPLETE. All core language features working, Fibonacci compiles correctly!
 
 ### Recent Milestones (2026-01-14)
 - ✅ `fn main() i64 { return 42; }` compiles and runs correctly
@@ -17,8 +17,10 @@ Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven
 - ✅ **Local variables work!** `let x: i64 = 42; return x;`
 - ✅ **Comparisons work!** `==, !=, <, <=, >, >=` with CMP + CSET
 - ✅ **Conditionals work!** `if 1 == 2 { return 0; } else { return 42; }`
-- ✅ **Simple while loops work!** (without variable mutation)
-- ✅ E2E test suite: ~15/113 tests passing
+- ✅ **While loops with phi nodes work!** Variable mutation in loops now supported
+- ✅ **Fibonacci compiles and returns 55!** (10th Fibonacci number)
+- ✅ Parallel copy algorithm for phi moves prevents register clobbering
+- ✅ Go-inspired iterative phi insertion using work list pattern
 
 ---
 
@@ -86,7 +88,8 @@ Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven
 | Comparison operators (==, !=, <, <=, >, >=) | ✅ DONE |
 | Conditionals (if/else) | ✅ DONE |
 | Simple while loops (no variable mutation) | ✅ DONE |
-| While loops with variable mutation | BLOCKED (needs phi for back edges) |
+| While loops with variable mutation | ✅ DONE (phi nodes implemented) |
+| Parallel copy for phi moves | ✅ DONE |
 | Structs | TODO |
 
 ### Phase 9: Self-Hosting
@@ -94,7 +97,7 @@ Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven
 | Task | Status |
 |------|--------|
 | Compiler compiles simple .cot | ✅ Done |
-| Compiler compiles fibonacci | TODO |
+| Compiler compiles fibonacci | ✅ DONE (returns 55 correctly!) |
 | Compiler compiles scanner.cot | TODO |
 | Compiler compiles itself | TODO |
 
@@ -234,6 +237,26 @@ pub fn encodeLdpStp(..., is_load: bool) u32 {
 ```
 
 **Lesson:** When encoding instructions, related variants should share ONE function with explicit parameters. Never trust implicit defaults for critical bits.
+
+### Lesson Learned: Phi Insertion and Parallel Copy (2026-01-14)
+
+Implementing proper phi insertion for loops with variable mutation required two key insights from Go:
+
+**1. Iterative FwdRef Resolution:**
+Instead of a single pass, use a work list that processes FwdRef values iteratively. When resolving a FwdRef creates a new phi that needs more arguments, those new FwdRefs are added to the work list. This naturally handles complex control flow.
+
+**2. Parallel Copy Algorithm:**
+When multiple phi nodes need to be resolved at block boundaries, naive sequential moves can clobber registers. If phi1 writes to x1 and phi2 reads from x1, emitting phi1's move first destroys phi2's source.
+
+**Solution:** Two-phase parallel copy:
+```zig
+// Phase 1: Save conflicting sources to temp registers
+for (moves) |m| if (m.needs_temp) emit(mov temp, m.src);
+// Phase 2: Emit actual moves (from temps or sources)
+for (moves) |m| emit(mov m.dest, m.temp_or_src);
+```
+
+**Result:** Fibonacci now compiles correctly, returning 55 (10th Fibonacci number).
 
 ### Go Divergences (Intentional)
 

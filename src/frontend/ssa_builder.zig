@@ -476,83 +476,169 @@ pub const SSABuilder = struct {
     }
 
     // ========================================================================
-    // Phi Insertion (Deferred)
+    // Phi Insertion - Go's Iterative Work List Algorithm
+    // ========================================================================
+    //
+    // Based on Go's simplePhiState from cmd/compile/internal/ssagen/phi.go
+    //
+    // Key insight: When we can't find a definition and hit a block with multiple
+    // predecessors, we CREATE a new FwdRef and add it to the work list. This
+    // continues iteratively until all FwdRefs are resolved.
+    //
+    // This handles loops because:
+    // 1. When processing the loop header looking for `x` from the back edge
+    // 2. We create a new FwdRef for `x` in the loop header
+    // 3. Add that FwdRef to the work list
+    // 4. When we process it, we find incoming values from all predecessors
+    // 5. Eventually everything converges
     // ========================================================================
 
-    /// Insert phi nodes for all forward references.
+    /// Insert phi nodes for all forward references using Go's iterative algorithm.
     /// This is called after all blocks have been walked.
     pub fn insertPhis(self: *SSABuilder) !void {
-        // Collect all FwdRef values
+        // Work list of FwdRefs to process - grows as we discover new ones
         var fwd_refs = std.ArrayListUnmanaged(*Value){};
         defer fwd_refs.deinit(self.allocator);
 
+        // Collect initial FwdRef values and treat them as definitions
         for (self.func.blocks.items) |block| {
             for (block.values.items) |value| {
                 if (value.op == .fwd_ref) {
                     try fwd_refs.append(self.allocator, value);
+                    // IMPORTANT: Treat FwdRefs as definitions in their block
+                    // This allows lookupVarOutgoing to find them
+                    const local_idx: ir.LocalIdx = @intCast(value.aux_int);
+                    try self.ensureDefvar(block.id, local_idx, value);
                 }
             }
         }
 
-        // Process each FwdRef
-        for (fwd_refs.items) |fwd| {
-            try self.resolveFwdRef(fwd);
-        }
-    }
+        // Temporary storage for incoming values
+        var args = std.ArrayListUnmanaged(*Value){};
+        defer args.deinit(self.allocator);
 
-    /// Resolve a single forward reference.
-    fn resolveFwdRef(self: *SSABuilder, fwd: *Value) !void {
-        const local_idx: ir.LocalIdx = @intCast(fwd.aux_int);
-        const block = fwd.block orelse return error.NoBlock;
+        // Process FwdRefs iteratively until the work list is empty
+        while (fwd_refs.pop()) |fwd| {
+            const block = fwd.block orelse continue;
 
-        // No predecessors? Can't resolve (will be caught in verification)
-        if (block.preds.len == 0) {
-            return;
-        }
+            // Entry block should never have FwdRef (variable used before defined)
+            if (block == self.func.entry) {
+                // For now, treat as error - will be caught in verification
+                continue;
+            }
 
-        // Collect incoming values from predecessors
-        var incoming = std.ArrayListUnmanaged(*Value){};
-        defer incoming.deinit(self.allocator);
+            // No predecessors? Skip (unreachable block)
+            if (block.preds.len == 0) {
+                continue;
+            }
 
-        for (block.preds) |pred_edge| {
-            const pred_block = pred_edge.b;
-            const val = try self.lookupVarOutgoing(pred_block, local_idx, fwd.type_idx);
-            try incoming.append(self.allocator, val);
-        }
+            const local_idx: ir.LocalIdx = @intCast(fwd.aux_int);
 
-        // All same value? Convert to copy
-        if (incoming.items.len > 0) {
-            var all_same = true;
-            const first = incoming.items[0];
-            for (incoming.items[1..]) |v| {
-                if (v != first) {
-                    all_same = false;
+            // Find variable value on each predecessor
+            args.clearRetainingCapacity();
+            for (block.preds) |pred_edge| {
+                const val = try self.lookupVarOutgoing(
+                    pred_edge.b,
+                    local_idx,
+                    fwd.type_idx,
+                    &fwd_refs,
+                );
+                try args.append(self.allocator, val);
+            }
+
+            // Decide if we need a phi or not
+            // We need a phi if there are two different args (excluding self-references)
+            var witness: ?*Value = null;
+            var need_phi = false;
+
+            for (args.items) |a| {
+                if (a == fwd) {
+                    continue; // Self-reference, skip
+                }
+                if (witness == null) {
+                    witness = a; // First witness
+                } else if (a != witness) {
+                    need_phi = true; // Two different values, need phi
                     break;
                 }
             }
 
-            if (all_same) {
-                // Replace FwdRef with Copy
-                fwd.op = .copy;
-                fwd.addArg(first);
-            } else {
+            if (need_phi) {
                 // Convert to Phi with all incoming values
                 fwd.op = .phi;
-                for (incoming.items) |v| {
+                for (args.items) |v| {
                     fwd.addArg(v);
                 }
+            } else if (witness) |w| {
+                // One witness (excluding self). Make it a copy.
+                fwd.op = .copy;
+                fwd.addArg(w);
+            }
+            // If no witness at all (all self-references), leave as fwd_ref
+            // This will be caught in verification as an error
+        }
+
+        // Reorder all blocks to ensure phis are at the start
+        try self.reorderPhis();
+    }
+
+    /// Reorder values in each block to ensure phis come first.
+    /// This is necessary because FwdRefs created during lookupVarOutgoing
+    /// may be appended to the end of a block, then converted to phis.
+    fn reorderPhis(self: *SSABuilder) !void {
+        for (self.func.blocks.items) |block| {
+            var phis = std.ArrayListUnmanaged(*Value){};
+            defer phis.deinit(self.allocator);
+            var non_phis = std.ArrayListUnmanaged(*Value){};
+            defer non_phis.deinit(self.allocator);
+
+            // Separate phis from non-phis
+            for (block.values.items) |v| {
+                if (v.op == .phi) {
+                    try phis.append(self.allocator, v);
+                } else {
+                    try non_phis.append(self.allocator, v);
+                }
+            }
+
+            // Rebuild values: phis first, then non-phis
+            block.values.clearRetainingCapacity();
+            for (phis.items) |v| {
+                try block.values.append(self.allocator, v);
+            }
+            for (non_phis.items) |v| {
+                try block.values.append(self.allocator, v);
             }
         }
     }
 
-    /// Look up the value of a variable at the end of a block.
-    fn lookupVarOutgoing(self: *SSABuilder, block: *Block, local_idx: ir.LocalIdx, type_idx: TypeIndex) !*Value {
-        // Walk backwards through single-predecessor chains
-        var cur = block;
-        var depth: u32 = 0;
-        const max_depth: u32 = 1000; // Prevent infinite loops
+    /// Helper to ensure defvars[block_id][local_idx] = value
+    fn ensureDefvar(self: *SSABuilder, block_id: u32, local_idx: ir.LocalIdx, value: *Value) !void {
+        const gop = try self.defvars.getOrPut(block_id);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = std.AutoHashMap(ir.LocalIdx, *Value).init(self.allocator);
+        }
+        // Only set if not already defined (don't override real definitions with FwdRefs)
+        const inner_gop = try gop.value_ptr.getOrPut(local_idx);
+        if (!inner_gop.found_existing) {
+            inner_gop.value_ptr.* = value;
+        }
+    }
 
-        while (depth < max_depth) : (depth += 1) {
+    /// Look up the value of a variable at the end of a block.
+    /// If not found and we hit a block with multiple predecessors, creates a new
+    /// FwdRef and adds it to the work list.
+    fn lookupVarOutgoing(
+        self: *SSABuilder,
+        block: *Block,
+        local_idx: ir.LocalIdx,
+        type_idx: TypeIndex,
+        fwd_refs: *std.ArrayListUnmanaged(*Value),
+    ) !*Value {
+        var cur = block;
+
+        // Walk backwards through single-predecessor chains
+        while (true) {
             // Check if block defines this variable
             if (self.defvars.get(cur.id)) |block_defs| {
                 if (block_defs.get(local_idx)) |val| {
@@ -566,12 +652,11 @@ pub const SSABuilder = struct {
                 continue;
             }
 
-            // Multiple predecessors or entry block - stop walking
+            // Multiple predecessors or no predecessors (entry) - stop walking
             break;
         }
 
-        // If we reach here, we need to create a new FwdRef and recurse
-        // (This handles the case where the variable was defined before this block chain)
+        // Create a new FwdRef for this variable in the current block
         const new_fwd = try self.func.newValue(.fwd_ref, type_idx, cur, .{});
         new_fwd.aux_int = @intCast(local_idx);
         try cur.addValue(self.allocator, new_fwd);
@@ -582,6 +667,9 @@ pub const SSABuilder = struct {
             gop.value_ptr.* = std.AutoHashMap(ir.LocalIdx, *Value).init(self.allocator);
         }
         try gop.value_ptr.put(local_idx, new_fwd);
+
+        // CRITICAL: Add to work list so it gets processed
+        try fwd_refs.append(self.allocator, new_fwd);
 
         return new_fwd;
     }

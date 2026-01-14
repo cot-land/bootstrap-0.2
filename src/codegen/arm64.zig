@@ -299,6 +299,7 @@ pub const ARM64CodeGen = struct {
         self.value_regs.clearRetainingCapacity();
         self.block_offsets.clearRetainingCapacity();
         self.branch_fixups.clearRetainingCapacity();
+        self.next_reg = 0; // Reset register allocation
 
         // Add symbol (prepend underscore for macOS symbol naming convention)
         // All functions are external so they can be called from other functions
@@ -310,6 +311,11 @@ pub const ARM64CodeGen = struct {
             .external = true, // All functions are external
         });
 
+        // Pre-allocate registers for all phi nodes
+        // This is necessary so that phi moves know the destination register
+        // before the phi block is generated
+        try self.preAllocatePhiRegisters(f);
+
         // Emit prologue
         try self.emitPrologue();
 
@@ -320,6 +326,26 @@ pub const ARM64CodeGen = struct {
 
         // Apply branch fixups now that we know all block offsets
         try self.applyBranchFixups();
+    }
+
+    /// Pre-allocate registers for all phi nodes in the function.
+    /// This is called before code generation so that phi moves can
+    /// look up the destination register before the phi is generated.
+    /// NOTE: When regalloc_state exists, we use regalloc's assignments instead.
+    fn preAllocatePhiRegisters(self: *ARM64CodeGen, f: *const Func) !void {
+        // Skip pre-allocation if regalloc has already assigned registers
+        if (self.regalloc_state != null) {
+            return;
+        }
+
+        for (f.blocks.items) |block| {
+            for (block.values.items) |value| {
+                if (value.op == .phi) {
+                    const dest_reg = self.allocateReg();
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            }
+        }
     }
 
     /// Apply all pending branch fixups.
@@ -366,6 +392,118 @@ pub const ARM64CodeGen = struct {
         try self.emit(asm_mod.encodeRET(30));
     }
 
+    /// Emit phi moves for an edge from current block to target block.
+    /// For each phi in the target block, find this block's corresponding argument
+    /// and move it to the phi's register.
+    fn emitPhiMoves(self: *ARM64CodeGen, current_block: *const Block, target_block: *const Block) !void {
+        // Find which predecessor index we are in target's predecessor list
+        var pred_idx: ?usize = null;
+        for (target_block.preds, 0..) |pred_edge, i| {
+            if (pred_edge.b.id == current_block.id) {
+                pred_idx = i;
+                break;
+            }
+        }
+        const idx = pred_idx orelse return; // Not a predecessor (shouldn't happen)
+
+        // Parallel copy algorithm:
+        // When multiple phis need to be resolved, we can't emit moves sequentially
+        // because a move's destination might be another move's source.
+        // Example: phi1: x1 = x2, phi2: x5 = x1 - if we emit phi1 first, x1 is clobbered!
+        //
+        // Solution: Two-phase approach
+        // Phase 1: Save all source values that might be clobbered to temp registers
+        // Phase 2: Copy from temps/sources to final destinations
+
+        const PhiMove = struct {
+            src_val: *const Value,
+            src_reg: ?u5,
+            dest_reg: u5,
+            needs_temp: bool,
+            temp_reg: u5,
+        };
+
+        // Collect all phi moves
+        var moves = std.ArrayListUnmanaged(PhiMove){};
+        defer moves.deinit(self.allocator);
+
+        for (target_block.values.items) |value| {
+            if (value.op != .phi) continue;
+
+            const args = value.args;
+            if (idx >= args.len) continue;
+            const src_val = args[idx];
+
+            const phi_reg = self.getRegForValue(value) orelse continue;
+            const src_reg = self.getRegForValue(src_val);
+
+            try moves.append(self.allocator, .{
+                .src_val = src_val,
+                .src_reg = src_reg,
+                .dest_reg = phi_reg,
+                .needs_temp = false,
+                .temp_reg = 0,
+            });
+        }
+
+        if (moves.items.len == 0) return;
+
+        // Detect conflicts: a source reg that will be overwritten before it's read
+        // A move needs a temp if its source_reg equals any other move's dest_reg
+        var temp_counter: u5 = 16; // Start with x16, x17 are scratch registers
+        for (moves.items, 0..) |*move, i| {
+            if (move.src_reg) |src| {
+                // Check if this source will be clobbered by an earlier move
+                for (moves.items[0..i]) |other| {
+                    if (other.dest_reg == src) {
+                        // This source will be clobbered before we read it
+                        move.needs_temp = true;
+                        move.temp_reg = temp_counter;
+                        temp_counter += 1;
+                        if (temp_counter > 17) {
+                            // Ran out of scratch registers, fall back to x9-x15
+                            temp_counter = 9;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Phase 1: Save conflicting sources to temp registers
+        for (moves.items) |move| {
+            if (move.needs_temp) {
+                if (move.src_reg) |src| {
+                    // MOV temp, src (encoded as ADD temp, src, #0)
+                    try self.emit(asm_mod.encodeADDImm(move.temp_reg, src, 0, 0));
+                }
+            }
+        }
+
+        // Phase 2: Emit actual moves
+        for (moves.items) |move| {
+            if (move.needs_temp) {
+                // Source was saved to temp
+                if (move.src_reg != null) {
+                    // MOV dest, temp
+                    try self.emit(asm_mod.encodeADDImm(move.dest_reg, move.temp_reg, 0, 0));
+                } else {
+                    // Source wasn't in a register, regenerate to dest
+                    try self.ensureInReg(move.src_val, move.dest_reg);
+                }
+            } else {
+                // No conflict, emit directly
+                if (move.src_reg) |s| {
+                    if (s != move.dest_reg) {
+                        try self.emit(asm_mod.encodeADDImm(move.dest_reg, s, 0, 0));
+                    }
+                } else {
+                    try self.ensureInReg(move.src_val, move.dest_reg);
+                }
+            }
+        }
+    }
+
     /// Generate binary code for a block
     fn generateBlockBinary(self: *ARM64CodeGen, block: *const Block) !void {
         // Record block start offset for branch calculations
@@ -400,6 +538,9 @@ pub const ARM64CodeGen = struct {
                     const then_block = block.succs[0].b;
                     const else_block = block.succs[1].b;
 
+                    // Emit phi moves for the else branch (taken when CBZ succeeds)
+                    try self.emitPhiMoves(block, else_block);
+
                     // Emit CBZ (branch to else if condition is zero/false)
                     // Record fixup to patch later
                     const cbz_offset = self.offset();
@@ -409,6 +550,9 @@ pub const ARM64CodeGen = struct {
                         .target_block_id = else_block.id,
                         .is_cbz = true,
                     });
+
+                    // Emit phi moves for the then branch
+                    try self.emitPhiMoves(block, then_block);
 
                     // Emit unconditional branch to then block
                     // (in case then block isn't immediately after)
@@ -425,6 +569,10 @@ pub const ARM64CodeGen = struct {
                 // Plain block - branch to successor if not falling through
                 if (block.succs.len > 0) {
                     const target = block.succs[0].b;
+
+                    // Emit phi moves before branching
+                    try self.emitPhiMoves(block, target);
+
                     const b_offset = self.offset();
                     try self.emit(asm_mod.encodeB(0)); // Placeholder
                     try self.branch_fixups.append(self.allocator, .{
@@ -562,8 +710,26 @@ pub const ARM64CodeGen = struct {
                 }
             },
 
-            .phi, .copy, .fwd_ref => {
-                // These should be resolved by regalloc
+            .copy => {
+                // Copy emits MOV from source to dest
+                // Use regalloc's assigned register, not naive allocation
+                const dest_reg = self.getDestRegForValue(value);
+                const args = value.args;
+                if (args.len > 0) {
+                    const src = args[0];
+                    try self.ensureInReg(src, dest_reg);
+                }
+                try self.value_regs.put(self.allocator, value, dest_reg);
+            },
+
+            .phi => {
+                // Phi values are handled at block boundaries (see emitPhiMoves)
+                // Register was pre-allocated in preAllocatePhiRegisters
+                // Nothing to do here - the phi moves happen at predecessor blocks
+            },
+
+            .fwd_ref => {
+                // Should not appear after phi insertion
                 const dest_reg = self.allocateReg();
                 try self.value_regs.put(self.allocator, value, dest_reg);
             },
@@ -683,11 +849,11 @@ pub const ARM64CodeGen = struct {
 
     /// Move value to specified register
     fn moveToReg(self: *ARM64CodeGen, dest: u5, value: *const Value) !void {
-        // Check if value is already in the destination register
-        if (self.value_regs.get(value)) |src_reg| {
+        // Check if value is already in a register (check regalloc first, then simple tracking)
+        if (self.getRegForValue(value)) |src_reg| {
             if (src_reg == dest) return;
-            // mov dest, src (via ORR with XZR)
-            try self.emit(asm_mod.encodeADDReg(dest, 31, src_reg));
+            // mov dest, src (via ADD with #0)
+            try self.emit(asm_mod.encodeADDImm(dest, src_reg, 0, 0));
             return;
         }
 
@@ -697,6 +863,15 @@ pub const ARM64CodeGen = struct {
             .const_bool => {
                 const imm: i64 = if (value.aux_int != 0) 1 else 0;
                 try self.emitLoadImmediate(dest, imm);
+            },
+            .phi => {
+                // Phi value should already be in a register from phi moves
+                // If we get here, something went wrong - but don't emit 0, emit first arg
+                if (value.args.len > 0) {
+                    try self.moveToReg(dest, value.args[0]);
+                } else {
+                    try self.emit(asm_mod.encodeMOVZ(dest, 0, 0));
+                }
             },
             else => {
                 // Fallback: emit 0
