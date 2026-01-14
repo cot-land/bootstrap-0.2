@@ -1,5 +1,19 @@
 # Bootstrap 0.2 - Development Guidelines
 
+## USE BUILT-IN TOOLS FOR TEST FILES
+
+**ALWAYS use Edit/Write tools for creating and updating test files** - never use bash `cat` or heredocs to write test code. This ensures:
+1. The test code is visible in Claude Code CLI output
+2. The code is properly formatted and not truncated
+3. Changes can be reviewed before committing
+
+**For debugging tests:**
+- Create temporary test files with `Write` tool at `/tmp/test_*.cot`
+- Update `test/e2e/all_tests.cot` with `Edit` tool
+- Run tests with `Bash` to execute the compiled binary
+
+---
+
 ## REFRESH YOUR KNOWLEDGE REGULARLY
 
 **Before implementing ANY feature, re-read [SYNTAX.md](SYNTAX.md)** to ensure you understand the exact Cot syntax. This prevents implementing wrong syntax or missing edge cases.
