@@ -1,339 +1,319 @@
-# Bootstrap 0.2 - Project Status
+# Bootstrap 0.2 - Self-Hosting Roadmap
 
 **Last Updated: 2026-01-15**
 
-## Executive Summary
+## Current State
 
-Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven compiler architecture. The goal is to eliminate the "whack-a-mole" debugging pattern that killed previous attempts.
-
-**Current State:** Phase 8 complete. 106 e2e tests passing! Working toward self-hosting.
+**106 e2e tests passing.** Core language features complete. Now focused on features required for self-hosting.
 
 ---
 
-## Self-Hosting Feature Checklist
+## Self-Hosting Requirements Analysis
 
-**Goal:** Compiler compiles itself. All features below are required.
+A self-hosting Cot compiler needs to:
+1. **Read source files** from disk
+2. **Tokenize** source into tokens (Scanner)
+3. **Parse** tokens into AST (Parser)
+4. **Type check** the AST (Checker)
+5. **Generate code** (Lowerer → SSA → ARM64)
+6. **Write object files** to disk
 
-### Tier 1: Core Language (COMPLETE)
+### Language Features Needed
 
-These features are working with 43+ e2e tests:
-
-| Feature | Status | Tests |
-|---------|--------|-------|
-| Integer literals (decimal, hex, binary, octal) | ✅ DONE | test_return, test_large_number |
-| Arithmetic (+, -, *, /, %) | ✅ DONE | test_add, test_sub, test_mul, test_div, test_mod |
-| Unary minus (-x) | ✅ DONE | test_unary_minus |
-| Comparison operators (==, !=, <, <=, >, >=) | ✅ DONE | test_eq, test_ne, test_lt, etc. |
-| Boolean type (true, false) | ✅ DONE | test_bool_* |
-| Local variables (let, var) | ✅ DONE | test_let, test_var_mutation |
-| Function declarations | ✅ DONE | All tests |
-| Function calls (0-8 args) | ✅ DONE | test_call, test_fibonacci |
-| Function calls (9+ args) | ✅ DONE | test_many_args |
-| If/else conditionals | ✅ DONE | test_if_*, test_else_if |
-| While loops | ✅ DONE | test_while_*, test_nested_while |
-| Break/continue | ✅ DONE | test_break, test_continue |
-| Void functions | ✅ DONE | test_void_* |
-| Recursive functions | ✅ DONE | test_factorial, test_fibonacci |
-| Structs (simple) | ✅ DONE | test_struct_simple |
-| Structs (nested) | ✅ DONE | test_struct_nested |
-| Structs (large, 64+ bytes) | ✅ DONE | test_struct_large |
-
-### Tier 2: Data Types (COMPLETE)
-
-Required for handling source text, tokens, and AST nodes:
-
-| Feature | Status | Priority | Notes |
-|---------|--------|----------|-------|
-| **String literals** | ✅ DONE | P0 | "hello", escape sequences |
-| **String type** | ✅ DONE | P0 | Pointer + length pair |
-| **String variable copy** | ✅ DONE | P0 | s2 = s1 copies (ptr, len) |
-| **len() builtin** | ✅ DONE | P0 | Works on literals and variables |
-| **Character literals** | ✅ DONE | P0 | 'a', '\n', '\\' |
-| **u8 type** | ✅ DONE | P0 | For characters/bytes |
-| **Fixed arrays [N]T** | ✅ DONE | P0 | [256]u8 for buffers |
-| **Array literals** | ✅ DONE | P0 | [1, 2, 3] |
-| **Array indexing arr[i]** | ✅ DONE | P0 | Read and write |
-| **Array copy** | ✅ DONE | P0 | b = a copies elements |
-| **Array as parameter** | ✅ DONE | P0 | fn foo(arr: [N]T) |
-| **Slices []T** | ✅ DONE | P1 | Create, index, len(), write |
-| **Slice from array** | ✅ DONE | P1 | arr[start:end] syntax |
-| **Implicit slice end** | ✅ DONE | P1 | arr[:], arr[start:], arr[:end] |
-
-### Tier 3: Memory & Pointers (COMPLETE)
-
-Required for tree structures and dynamic allocation:
-
-| Feature | Status | Priority | Notes |
-|---------|--------|----------|-------|
-| **Pointer types *T** | ✅ DONE | P0 | *i64, *Node |
-| **Address-of &x** | ✅ DONE | P0 | Get pointer to value |
-| **Dereference ptr.*** | ✅ DONE | P0 | Read/write through pointer |
-| **Pointer as parameter** | ✅ DONE | P0 | fn foo(p: *i64) |
-| **Pointer arithmetic** | ❌ TODO | P2 | ptr + offset (maybe) |
-| **Optional types ?T** | ✅ DONE | P1 | Nullable values |
-| **null literal** | ✅ DONE | P1 | For pointers and optionals |
-
-### Tier 4: Enums & Pattern Matching (IN PROGRESS)
-
-Required for token types, AST node kinds:
-
-| Feature | Status | Priority | Notes |
-|---------|--------|----------|-------|
-| **Enum declaration** | ✅ DONE | P0 | enum Status { Pending, Active } |
-| **Enum value access** | ✅ DONE | P0 | Status.Active |
-| **Enum comparison** | ✅ DONE | P0 | s == Status.Active |
-| **Enum as parameter** | ✅ DONE | P0 | fn foo(s: Status) |
-| **Enum as integer** | ❌ TODO | P1 | @enumToInt |
-| **Switch statement** | ❌ TODO | P1 | Or use if/else chains |
-
-### Tier 5: Operators (IN PROGRESS)
-
-Required for bit manipulation, flags:
-
-| Feature | Status | Priority | Notes |
-|---------|--------|----------|-------|
-| **Bitwise AND &** | ✅ DONE | P0 | Flags, masks |
-| **Bitwise OR \|** | ✅ DONE | P0 | Combining flags |
-| **Bitwise XOR ^** | ✅ DONE | P1 | test_bitwise_xor |
-| **Bitwise NOT ~** | ❌ TODO | P1 | |
-| **Left shift <<** | ✅ DONE | P0 | test_shl, test_shift_var |
-| **Right shift >>** | ✅ DONE | P0 | test_shr, test_mask_extract |
-| **Logical AND (and)** | ✅ DONE | P0 | Short-circuit, 8 e2e tests |
-| **Logical OR (or)** | ✅ DONE | P0 | Short-circuit, 8 e2e tests |
-| **Logical NOT (not)** | ✅ DONE | P0 | !x already works |
-| **Compound assign +=, -=** | ❌ TODO | P2 | Convenience |
-
-### Tier 6: Control Flow (MOSTLY COMPLETE)
-
-| Feature | Status | Priority | Notes |
-|---------|--------|----------|-------|
-| **For-in loops** | ✅ DONE | P1 | for item in items { } - 4 e2e tests |
-| **Else-if chains** | ✅ DONE | - | Already working |
-| **Defer statement** | ❌ TODO | P2 | Cleanup on scope exit |
-
-### Tier 7: Module System (TODO)
-
-| Feature | Status | Priority | Notes |
-|---------|--------|----------|-------|
-| **Global constants** | ❌ TODO | P1 | const MAX = 100; |
-| **Import statement** | ❌ TODO | P2 | import "file.cot" |
-| **Multiple files** | ❌ TODO | P2 | Compile multiple .cot |
+| Category | Feature | Status | Priority | Notes |
+|----------|---------|--------|----------|-------|
+| **I/O** | Read file | ❌ TODO | P0 | Can't compile without reading source |
+| **I/O** | Write file | ❌ TODO | P0 | Can't emit object files |
+| **Memory** | Heap allocation | ❌ TODO | P0 | Need dynamic data structures |
+| **Memory** | Free/deallocation | ❌ TODO | P0 | Prevent memory leaks |
+| **Strings** | String comparison | ❓ Verify | P0 | `s1 == s2` for keywords |
+| **Strings** | String indexing | ❓ Verify | P0 | `s[i]` for char access |
+| **Strings** | String concatenation | ❌ TODO | P1 | Error messages |
+| **Control** | Switch statement | ❌ TODO | P1 | Token/AST dispatch |
+| **Data** | Global constants | ❌ TODO | P1 | `const EOF = 0;` |
+| **Modules** | Import statement | ❌ TODO | P1 | Split code into files |
+| **Functions** | Indirect calls | 🔶 Partial | P1 | `f(x)` where f is variable |
+| **Types** | Integer casts | ❌ TODO | P2 | `@intCast(u8, x)` |
+| **Operators** | Bitwise NOT | ❌ TODO | P2 | `~x` |
+| **Operators** | Compound assign | ❌ TODO | P3 | `x += 1` |
+| **Control** | Defer | ❌ TODO | P3 | Cleanup on scope exit |
 
 ---
 
-## Implementation Order
+## Execution Plan
 
-Based on dependencies and self-hosting needs:
+### Phase 1: Verify String Operations (1-2 hours)
 
-### Sprint 1: Strings & Characters ✅ COMPLETE
-1. ✅ u8 type support
-2. ✅ Character literals ('a', '\n')
-3. ✅ String type (ptr + len pair)
-4. ✅ String literals ("hello") - compiles, ADRP/ADD relocation works
-5. ✅ String escape sequences (in parser)
-6. ✅ len() builtin for string literals (compile-time)
-7. ✅ len() builtin for string variables (runtime)
+Before anything else, verify strings work correctly since the compiler does heavy string manipulation.
 
-### Sprint 2: Arrays ✅ COMPLETE
-1. ✅ Fixed array types [N]T
-2. ✅ Array literals [1, 2, 3]
-3. ✅ Array indexing arr[i]
-4. ✅ Array assignment arr[i] = x
-5. ✅ Array as function parameter
+**Tasks:**
+1. Test string comparison: `s1 == s2`, `s1 != s2`
+2. Test string indexing: `s[0]`, `s[i]` where i is variable
+3. Test string slicing: `s[0:5]`
+4. Test string in conditionals: `if s == "fn" { ... }`
 
-### Sprint 3: Pointers ✅ COMPLETE
-1. ✅ Pointer types *T
-2. ✅ Address-of operator &x
-3. ✅ Dereference operator ptr.* (read and write)
-4. ✅ Pointer as function parameter
-5. ✅ Memory-based SSA (Go's pattern for address-taken variables)
-
-### Sprint 4: Bitwise & Logical (COMPLETE)
-1. ✅ Bitwise operators (&, |, ^, <<, >>) - 8 e2e tests
-2. ❌ Bitwise NOT (~) - deferred
-3. ✅ Logical operators (and, or) with short-circuit evaluation - 8 e2e tests
-
-### Sprint 5: Enums (COMPLETE)
-1. ✅ Enum declarations
-2. ✅ Enum value access (Color.Red)
-3. ✅ Enum in conditionals - 5 e2e tests
-
-### Sprint 6: Advanced (IN PROGRESS)
-1. ✅ Optional types ?T and null - 4 e2e tests
-2. ✅ Slices []T - 8 e2e tests (create, index, len, write)
-3. ✅ For-in loops - 4 e2e tests (array, break, continue, slice)
-4. ❌ Global constants
+**Tests to add:**
+- `test_string_eq` - String equality comparison
+- `test_string_ne` - String inequality
+- `test_string_index` - Character access by index
+- `test_string_compare_keyword` - Compare against keyword literals
 
 ---
 
-## Test Requirements
+### Phase 2: File I/O via System Calls (P0)
 
-**Each feature must have comprehensive tests before implementation is complete.**
+**Goal:** Read source files, write object files.
 
-### Test Categories Per Feature:
+**Approach:** Direct system calls (no libc dependency for simplicity)
 
-1. **Basic functionality** - Does it work at all?
-2. **Edge cases** - Empty, zero, max values
-3. **Interaction** - With other features (structs, functions, loops)
-4. **Large scale** - Many elements, deep nesting
-5. **Error cases** - Invalid inputs (parser/checker tests)
+```cot
+// macOS ARM64 system calls
+const SYS_READ: i64 = 3;
+const SYS_WRITE: i64 = 4;
+const SYS_OPEN: i64 = 5;
+const SYS_CLOSE: i64 = 6;
 
-### Example: Array Feature Tests
-```
-test_array_literal_empty        - []
-test_array_literal_one          - [42]
-test_array_literal_many         - [1, 2, 3, 4, 5]
-test_array_index_first          - arr[0]
-test_array_index_last           - arr[len-1]
-test_array_index_middle         - arr[2]
-test_array_assign               - arr[0] = 99
-test_array_in_struct            - struct { data: [10]i64 }
-test_array_as_param             - fn foo(arr: [5]i64)
-test_array_as_return            - fn bar() [3]i64
-test_array_nested               - [[1,2], [3,4]]
-test_array_of_structs           - [Point{}, Point{}]
-test_array_large                - [100]i64
+fn syscall3(num: i64, a1: i64, a2: i64, a3: i64) i64 {
+    // Assembly: SVC #0x80
+}
+
+fn readFile(path: string) string {
+    let fd = syscall3(SYS_OPEN, path.ptr, O_RDONLY, 0);
+    // ... read into buffer
+}
 ```
 
----
+**Implementation Steps:**
+1. Add `syscall` intrinsic or inline assembly support
+2. Implement `open()`, `read()`, `write()`, `close()` wrappers
+3. Implement `readFile(path) -> string`
+4. Implement `writeFile(path, data)`
 
-## Recent Milestones (2026-01-15)
+**Tests:**
+- `test_file_read` - Read a small test file
+- `test_file_write` - Write and verify contents
+- `test_file_not_found` - Handle missing files
 
-### Sprint 6: Full Slices Implementation
-- ✅ **Slice creation** - `arr[start:end]` syntax
-- ✅ **Slice storage** - 16-byte (ptr, len) pairs following Go's dec.rules
-- ✅ **Slice indexing** - `s[i]` reads/writes through slice pointer
-- ✅ **len(slice)** - Returns slice length via slice_len op
-- ✅ **Slice element assignment** - `s[i] = x` writes through slice pointer
-- ✅ **SSA decomposition** - SlicePtr/SliceLen optimized away on slice_make
-- ✅ **8 e2e tests** - create, index, len, write through slice
-- ✅ **92 e2e tests passing**
-
-### Sprint 6: Null and Optionals
-- ✅ **null literal** - Null keyword and literal in scanner/parser
-- ✅ **Null pointer assignment** - `let p: *i64 = null;`
-- ✅ **Null comparison** - `p == null`, `p != null`
-- ✅ **Codegen for const_nil** - ARM64 emits 0 for null
-- ✅ **4 e2e tests** - test_null_eq, test_null_ne, test_null_eq_right, test_ptr_not_null
-
-### Sprint 3: Pointers Complete!
-- ✅ **Pointer types *T** - Pointer type in TypeRegistry
-- ✅ **Address-of &x** - Takes address of local variables
-- ✅ **Dereference ptr.*** - Read and write through pointers
-- ✅ **Pointer as parameter** - Pass pointers to functions
-- ✅ **Memory-based SSA** - Following Go's pattern for address-taken variables
-- ✅ **59 e2e tests passing**
-
-### Sprint 2: Arrays Complete! (2026-01-14)
-- ✅ **Fixed arrays [N]T** - Array types in TypeRegistry
-- ✅ **Array literals [1, 2, 3]** - Initialize arrays
-- ✅ **Array indexing arr[i]** - Read with constants and variables
-- ✅ **Array assignment arr[i] = x** - Write to array elements
-- ✅ **Array as parameter** - Pass arrays to functions
-- ✅ **54 e2e tests passing**
-
-### Earlier Milestones (2026-01-14)
-- ✅ `fn main() i64 { return 42; }` compiles and runs correctly
-- ✅ **Function calls work!** `add_one(41)` returns 42
-- ✅ **Local variables work!** `let x: i64 = 42; return x;`
-- ✅ **Comparisons work!** `==, !=, <, <=, >, >=` with CMP + CSET
-- ✅ **Conditionals work!** `if 1 == 2 { return 0; } else { return 42; }`
-- ✅ **While loops with phi nodes work!** Variable mutation in loops
-- ✅ **Fibonacci compiles and returns 55!** (10th Fibonacci number)
-- ✅ **Structs!** - Simple, nested, and large structs (64+ bytes) all working
-
-### Key Architecture Changes
-- **Memory-based SSA:** Variables use local_addr + load/store instead of pure SSA
-- **Regalloc arg handling:** Function args use fixed ABI registers (x0-x7)
-- **Two-phase parameter init:** All args captured first, then stored to stack
+**Go Reference:** `~/learning/go/src/syscall/` for syscall patterns
 
 ---
 
-## Completed Components
+### Phase 3: Memory Allocation (P0)
 
-### Backend (Phases 0-5) - COMPLETE
+**Goal:** Dynamic allocation for AST nodes, tokens, strings.
 
-| Phase | Component | Location | Status |
-|-------|-----------|----------|--------|
-| 0 | SSA Value/Block/Func | `src/ssa/` | Done |
-| 0 | SSA Op definitions | `src/ssa/op.zig` | Done |
-| 0 | Dominator tree | `src/ssa/dom.zig` | Done |
-| 0 | Pass infrastructure | `src/ssa/compile.zig` | Done |
-| 1 | Liveness analysis | `src/ssa/liveness.zig` | Done |
-| 2 | Register allocator | `src/ssa/regalloc.zig` | Done |
-| 3 | Lowering pass | `src/ssa/passes/lower.zig` | Done |
-| 4 | Generic codegen | `src/codegen/generic.zig` | Done |
-| 4 | ARM64 codegen | `src/codegen/arm64.zig` | Done |
-| 5 | Mach-O writer | `src/obj/macho.zig` | Done |
+**Approach:** Simple bump allocator initially, then proper malloc
 
-### Frontend (Phase 6) - COMPLETE
+```cot
+// Option A: Bump allocator (simpler, no free)
+struct Arena {
+    buffer: *u8,
+    offset: i64,
+    capacity: i64,
+}
 
-| Component | Location | Status |
-|-----------|----------|--------|
-| Token system | `src/frontend/token.zig` | Done |
-| Scanner | `src/frontend/scanner.zig` | Done |
-| Parser | `src/frontend/parser.zig` | Done |
-| Type checker | `src/frontend/checker.zig` | Done |
-| IR definitions | `src/frontend/ir.zig` | Done |
-| AST lowering | `src/frontend/lower.zig` | Done |
-| IR→SSA builder | `src/frontend/ssa_builder.zig` | Done |
+fn arenaAlloc(arena: *Arena, size: i64) *u8 {
+    let ptr = arena.buffer + arena.offset;
+    arena.offset = arena.offset + size;
+    return ptr;
+}
 
-### Testing Infrastructure - COMPLETE
-
-- **180+ unit tests passing**
-- **103 e2e tests passing**
-- Table-driven tests for comprehensive coverage
-- Golden file infrastructure ready
-
----
-
-## Architecture
-
-```
-Source → Scanner → Parser → AST
-                              ↓
-                         Type Checker
-                              ↓
-                         Lowerer → IR
-                              ↓
-                         SSABuilder → SSA Func
-                              ↓
-                    Passes (lower, regalloc)
-                              ↓
-                         Codegen → Machine Code
-                              ↓
-                         Object Writer → .o file
-                              ↓
-                         Linker (zig cc) → Executable
+// Option B: System malloc (via syscall or libc)
+fn malloc(size: i64) *u8;
+fn free(ptr: *u8) void;
 ```
 
-### Debug Infrastructure
+**Implementation Steps:**
+1. Decide: bump allocator vs mmap-based vs libc malloc
+2. Implement allocation primitive
+3. Add typed allocation: `alloc(T) -> *T`
+4. Test with dynamic array growth
 
-```bash
-COT_DEBUG=all ./zig-out/bin/cot input.cot -o output
-COT_DEBUG=parse,lower,ssa ./zig-out/bin/cot input.cot -o output
-```
-
-Available phases: `parse`, `check`, `lower`, `ssa`, `regalloc`, `codegen`
-
----
-
-## Running Tests
-
-```bash
-# Fast unit tests (run frequently)
-zig build test
-
-# All tests including integration
-zig build test-all
-
-# Run e2e tests
-cd test/e2e && ./run_tests.sh
-```
+**Tests:**
+- `test_alloc_simple` - Allocate and use memory
+- `test_alloc_struct` - Allocate struct dynamically
+- `test_alloc_array` - Allocate array dynamically
 
 ---
 
-## References
+### Phase 4: Global Constants (P1)
 
-- Go compiler: `~/learning/go/src/cmd/compile/`
-- See also: [CLAUDE.md](CLAUDE.md), [REGISTER_ALLOC.md](REGISTER_ALLOC.md)
+**Goal:** Define constants at file scope.
+
+```cot
+const MAX_TOKENS: i64 = 10000;
+const EOF: i64 = 0;
+
+fn main() i64 {
+    return MAX_TOKENS;  // Use constant
+}
+```
+
+**Implementation Steps:**
+1. Parser: Handle `const` declarations at top level
+2. Checker: Register constants in global scope
+3. Lowerer: Inline constant values (no runtime storage)
+
+**Tests:**
+- `test_const_int` - Integer constant
+- `test_const_use` - Use constant in expression
+- `test_const_in_array_size` - `var arr: [MAX_SIZE]i64`
+
+---
+
+### Phase 5: Switch Statement (P1)
+
+**Goal:** Efficient dispatch on values.
+
+```cot
+switch tok.kind {
+    .ident => return handleIdent(),
+    .number => return handleNumber(),
+    .lparen, .rparen => return handleParen(),
+    else => return handleOther(),
+}
+```
+
+**Implementation Steps:**
+1. Parser: Parse switch expression and cases
+2. Checker: Verify case types match switch expression
+3. Lowerer: Convert to chained branches or jump table
+4. Consider: Start with if-else lowering, optimize later
+
+**Tests:**
+- `test_switch_int` - Switch on integer
+- `test_switch_enum` - Switch on enum value
+- `test_switch_default` - Default case
+- `test_switch_multi` - Multiple values per case
+
+---
+
+### Phase 6: Indirect Function Calls (P1)
+
+**Goal:** Call functions through variables.
+
+```cot
+fn add(a: i64, b: i64) i64 { return a + b; }
+
+fn main() i64 {
+    var f: fn(i64, i64) -> i64 = add;
+    return f(20, 22);  // Indirect call - NOT YET WORKING
+}
+```
+
+**Current State:** Function types work, assignment works, but calling through variable fails.
+
+**Implementation Steps:**
+1. Modify `lowerCall` to detect if callee is a variable
+2. For variables: emit `load` of function pointer, then indirect call
+3. Add `call_indirect` IR node (or modify existing call)
+4. Codegen: Use `BLR` (branch-link-register) instead of `BL`
+
+**Tests:**
+- `test_fn_ptr_call` - Call through function pointer
+- `test_fn_ptr_param` - Pass function as parameter
+- `test_fn_ptr_return` - Return function from function
+
+---
+
+### Phase 7: Import/Multiple Files (P1)
+
+**Goal:** Split compiler into multiple source files.
+
+```cot
+// scanner.cot
+fn scan(source: string) []Token { ... }
+
+// parser.cot
+import "scanner.cot";
+fn parse(tokens: []Token) Ast { ... }
+
+// main.cot
+import "parser.cot";
+fn main() i64 { ... }
+```
+
+**Implementation Steps:**
+1. Parser: Handle `import "path"` declarations
+2. Driver: Track imported files, avoid double-import
+3. Checker: Merge symbol tables from imports
+4. Compilation order: Topological sort by dependencies
+
+**Tests:**
+- `test_import_simple` - Import and use function
+- `test_import_type` - Import and use struct type
+- `test_import_chain` - A imports B imports C
+
+---
+
+### Phase 8: Type Casts (P2)
+
+**Goal:** Convert between numeric types.
+
+```cot
+let big: i64 = 1000;
+let small: u8 = @intCast(u8, big);  // Truncate to u8
+let unsigned: u64 = @bitCast(u64, signed);  // Reinterpret bits
+```
+
+**Implementation Steps:**
+1. Parser: Handle `@intCast(Type, expr)` syntax
+2. Checker: Validate cast is reasonable
+3. Lowerer: Emit appropriate conversion ops
+4. Codegen: Emit truncation/extension instructions
+
+---
+
+## Milestone Targets
+
+| Milestone | Features | Goal |
+|-----------|----------|------|
+| **M1: Strings verified** | String ops work | Confidence to proceed |
+| **M2: Can read files** | File I/O | Read source.cot |
+| **M3: Dynamic memory** | Allocation | Build data structures |
+| **M4: Language complete** | Constants, switch, imports | Write compiler in Cot |
+| **M5: Self-hosting** | Compile self | Victory! |
+
+---
+
+## Completed Features (Reference)
+
+### Tier 1: Core Language ✅
+- Integer literals, arithmetic, comparisons
+- Boolean type, local variables
+- Functions (0-8+ args), recursion
+- If/else, while loops, break/continue
+- Structs (simple, nested, large)
+
+### Tier 2: Data Types ✅
+- String literals and type, len() builtin
+- Character literals, u8 type
+- Fixed arrays, array literals, indexing
+- Slices, slice from array, implicit end
+
+### Tier 3: Memory & Pointers ✅
+- Pointer types *T, address-of &x
+- Dereference ptr.*, pointer parameters
+- Optional types ?T, null literal
+
+### Tier 4: Enums ✅
+- Enum declaration, value access
+- Enum comparison, enum parameters
+
+### Tier 5: Operators ✅
+- Bitwise AND, OR, XOR, shifts
+- Logical AND, OR with short-circuit
+
+### Tier 6: Control Flow ✅
+- For-in loops (array, slice, range)
+- Else-if chains
+
+---
+
+## Technical Reference Docs
+
+- [CLAUDE.md](CLAUDE.md) - Development guidelines, Zig 0.15 API
+- [SYNTAX.md](SYNTAX.md) - Cot language syntax reference
+- [DATA_STRUCTURES.md](DATA_STRUCTURES.md) - Go-to-Zig translations
+- [REGISTER_ALLOC.md](REGISTER_ALLOC.md) - Register allocator algorithm
+- [TESTING_FRAMEWORK.md](TESTING_FRAMEWORK.md) - Testing approach
