@@ -450,19 +450,46 @@ pub const SSABuilder = struct {
                 // have their address taken. This is conservative but correct.
                 // TODO: Add escape analysis to avoid stores for purely SSA variables.
 
-                // Get address of local
-                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
-                addr_val.aux_int = @intCast(s.local_idx);
-                try cur.addValue(self.allocator, addr_val);
-
                 // Check if storing a slice type - need to decompose into (ptr, len)
                 // Following Go's dec.rules pattern for slice stores:
                 // (Store dst (SliceMake ptr len)) =>
                 //   (Store (OffPtr [8] dst) len
                 //     (Store dst ptr))
-                if (value.op == .slice_make and value.args.len >= 2) {
-                    const ptr_val = value.args[0];
-                    const len_val = value.args[1];
+                const value_type = self.type_registry.get(value.type_idx);
+                const is_slice_value = (value.op == .slice_make and value.args.len >= 2);
+                const is_slice_call = (value.op == .static_call and value_type == .slice);
+
+                if (is_slice_value or is_slice_call) {
+                    // Extract ptr and len from the slice value FIRST
+                    // IMPORTANT: For call results, we must extract x0/x1 immediately
+                    // before any other instructions that might clobber them
+                    // For slice_make: args[0] is ptr, args[1] is len
+                    // For static_call: use slice_ptr and slice_len to extract from call result
+                    var ptr_val: *Value = undefined;
+                    var len_val: *Value = undefined;
+
+                    if (is_slice_value) {
+                        ptr_val = value.args[0];
+                        len_val = value.args[1];
+                    } else {
+                        // For call results, use slice_ptr/slice_len ops
+                        // These will map to x0/x1 in codegen
+                        // IMPORTANT: Extract len (x1) FIRST before ptr (x0)
+                        // because slice_ptr might move x0 to another register
+                        // and the regalloc could assign that register to x1's location
+                        len_val = try self.func.newValue(.slice_len, TypeRegistry.I64, cur, .{});
+                        len_val.addArg(value);
+                        try cur.addValue(self.allocator, len_val);
+
+                        ptr_val = try self.func.newValue(.slice_ptr, TypeRegistry.I64, cur, .{});
+                        ptr_val.addArg(value);
+                        try cur.addValue(self.allocator, ptr_val);
+                    }
+
+                    // Get address of local (after extracting call result components)
+                    const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                    addr_val.aux_int = @intCast(s.local_idx);
+                    try cur.addValue(self.allocator, addr_val);
 
                     // Store ptr at offset 0
                     const ptr_store = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
@@ -486,6 +513,11 @@ pub const SSABuilder = struct {
                     self.assign(s.local_idx, value);
                     break :blk value;
                 }
+
+                // Get address of local
+                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                addr_val.aux_int = @intCast(s.local_idx);
+                try cur.addValue(self.allocator, addr_val);
 
                 // Regular store for non-slice types
                 const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});

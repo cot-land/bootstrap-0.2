@@ -594,7 +594,28 @@ pub const Lowerer = struct {
                         return;
                     }
                 }
-                // TODO: Handle computed base (index into expression)
+                // Handle computed base (index into expression like getSlice()[0] = x)
+                // Following Go's pattern: evaluate base, get address, store through it
+                switch (base_type) {
+                    .slice => {
+                        // For slice expressions: lower base, extract ptr, store through
+                        const base_val = try self.lowerExprNode(idx.base);
+                        const ptr_type = self.type_reg.makePointer(elem_type) catch TypeRegistry.I64;
+                        const ptr_val = try fb.emitSlicePtr(base_val, ptr_type, assign.span);
+                        _ = try fb.emitStoreIndexValue(ptr_val, index_node, value_node, elem_size, assign.span);
+                        return;
+                    },
+                    .pointer => {
+                        // For pointer expressions: lower base, store through pointer
+                        const base_val = try self.lowerExprNode(idx.base);
+                        _ = try fb.emitStoreIndexValue(base_val, index_node, value_node, elem_size, assign.span);
+                        return;
+                    },
+                    else => {
+                        // For array expressions returned by value, we'd need to store to temp first
+                        // This is rare - typically arrays are accessed through locals or pointers
+                    },
+                }
             },
             .deref => |d| {
                 // Dereference assignment: ptr.* = value
@@ -1210,6 +1231,14 @@ pub const Lowerer = struct {
             if (fb.lookupLocal(base_expr.ident.name)) |local_idx| {
                 return try fb.emitSliceLocal(local_idx, start_node, end_node, elem_size, slice_type, se.span);
             }
+        }
+
+        // Handle deref base specially: arr.*[:] needs the POINTER value, not a load through it
+        // Following Go's pattern: for slicing, we need the address of the data, not the data itself
+        if (base_expr == .deref) {
+            // Lower the operand (the pointer) without dereferencing
+            const ptr_val = try self.lowerExprNode(base_expr.deref.operand);
+            return try fb.emitSliceValue(ptr_val, start_node, end_node, elem_size, slice_type, se.span);
         }
 
         // Base is a computed expression

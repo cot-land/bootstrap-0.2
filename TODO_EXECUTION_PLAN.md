@@ -281,7 +281,7 @@
 |------|--------|-------|--------|
 | 1. For-In Loops | DONE | test_for_array, test_for_break, test_for_continue, test_for_slice | |
 | 2. Implicit Slice End | DONE | test_slice_implicit_end, test_slice_full, test_slice_implicit_start | |
-| 3. Computed Base Index | TODO | | |
+| 3. Computed Base Index | DONE | test_computed_base_assign | |
 | 4. Array Copy | DONE | test_array_copy, test_array_copy_values | |
 | 5. String Variable | DONE | test_string_var_copy, test_string_var_copy2 | |
 | 6. Pointer Field Store | TODO | | |

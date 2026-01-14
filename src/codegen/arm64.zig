@@ -614,10 +614,33 @@ pub const ARM64CodeGen = struct {
         // Generate terminator based on block kind
         switch (block.kind) {
             .ret => {
-                // Return block - ensure return value is in x0
+                // Return block - ensure return value is in x0 (and x1 for slices)
                 if (block.numControls() > 0) {
                     const ret_val = block.controlValues()[0];
-                    try self.moveToX0(ret_val);
+                    // Handle slice returns: need both ptr (x0) and len (x1)
+                    if (ret_val.op == .slice_make and ret_val.args.len >= 2) {
+                        // Put ptr in x0
+                        const ptr_val = ret_val.args[0];
+                        const ptr_reg = self.getRegForValue(ptr_val) orelse blk: {
+                            try self.ensureInReg(ptr_val, 0);
+                            break :blk @as(u5, 0);
+                        };
+                        if (ptr_reg != 0) {
+                            try self.emit(asm_mod.encodeADDImm(0, ptr_reg, 0, 0)); // MOV x0, ptr_reg
+                        }
+                        // Put len in x1
+                        const len_val = ret_val.args[1];
+                        const len_reg = self.getRegForValue(len_val) orelse blk: {
+                            try self.ensureInReg(len_val, 1);
+                            break :blk @as(u5, 1);
+                        };
+                        if (len_reg != 1) {
+                            try self.emit(asm_mod.encodeADDImm(1, len_reg, 0, 0)); // MOV x1, len_reg
+                        }
+                        debug.log(.codegen, "      ret slice: ptr=x{d}->x0, len=x{d}->x1", .{ ptr_reg, len_reg });
+                    } else {
+                        try self.moveToX0(ret_val);
+                    }
                 }
                 try self.emitEpilogue();
             },
@@ -861,16 +884,39 @@ pub const ARM64CodeGen = struct {
 
             .slice_ptr => {
                 // slice_ptr(slice) -> extract pointer from slice
-                // For MVP: slice is stored as ptr, so just copy
+                // For call results: ptr is in x0
+                // For slice_make: ptr is in args[0]
                 const args = value.args;
                 if (args.len >= 1) {
-                    const slice_reg = self.getRegForValue(args[0]) orelse blk: {
-                        try self.ensureInReg(args[0], 0);
-                        break :blk @as(u5, 0);
-                    };
+                    const slice_val = args[0];
                     const dest_reg = self.getDestRegForValue(value);
-                    if (slice_reg != dest_reg) {
-                        try self.emit(asm_mod.encodeADDImm(dest_reg, slice_reg, 0, 0));
+
+                    if (slice_val.op == .static_call) {
+                        // Call result: ptr is in x0 after the call
+                        if (dest_reg != 0) {
+                            try self.emit(asm_mod.encodeADDImm(dest_reg, 0, 0, 0)); // MOV dest, x0
+                        }
+                        debug.log(.codegen, "      slice_ptr (call result) x0 -> x{d}", .{dest_reg});
+                    } else if (slice_val.op == .slice_make and slice_val.args.len >= 1) {
+                        // slice_make: ptr is args[0]
+                        const ptr_reg = self.getRegForValue(slice_val.args[0]) orelse blk: {
+                            try self.ensureInReg(slice_val.args[0], 0);
+                            break :blk @as(u5, 0);
+                        };
+                        if (ptr_reg != dest_reg) {
+                            try self.emit(asm_mod.encodeADDImm(dest_reg, ptr_reg, 0, 0));
+                        }
+                        debug.log(.codegen, "      slice_ptr (slice_make) x{d} -> x{d}", .{ ptr_reg, dest_reg });
+                    } else {
+                        // Other cases: just copy the register
+                        const slice_reg = self.getRegForValue(slice_val) orelse blk: {
+                            try self.ensureInReg(slice_val, 0);
+                            break :blk @as(u5, 0);
+                        };
+                        if (slice_reg != dest_reg) {
+                            try self.emit(asm_mod.encodeADDImm(dest_reg, slice_reg, 0, 0));
+                        }
+                        debug.log(.codegen, "      slice_ptr (other) x{d} -> x{d}", .{ slice_reg, dest_reg });
                     }
                     try self.value_regs.put(self.allocator, value, dest_reg);
                 }
@@ -878,12 +924,44 @@ pub const ARM64CodeGen = struct {
 
             .slice_len => {
                 // slice_len(slice) -> extract length from slice
-                // For MVP: we'd need to track len separately
-                // For now, return 0 as placeholder
-                const dest_reg = self.getDestRegForValue(value);
-                try self.emitLoadImmediate(dest_reg, 0);
-                try self.value_regs.put(self.allocator, value, dest_reg);
-                debug.log(.codegen, "      slice_len -> x{d} (placeholder 0)", .{dest_reg});
+                // For call results: slice is returned in x0 (ptr) + x1 (len)
+                // For slice_make: len is in args[1]
+                const args = value.args;
+                if (args.len >= 1) {
+                    const slice_val = args[0];
+                    const dest_reg = self.getDestRegForValue(value);
+
+                    if (slice_val.op == .static_call) {
+                        // Call result: len is in x1 after the call
+                        // Move x1 to dest_reg
+                        if (dest_reg != 1) {
+                            try self.emit(asm_mod.encodeADDImm(dest_reg, 1, 0, 0)); // MOV dest, x1
+                        }
+                        debug.log(.codegen, "      slice_len (call result) x1 -> x{d}", .{dest_reg});
+                    } else if (slice_val.op == .slice_make and slice_val.args.len >= 2) {
+                        // slice_make: len is args[1]
+                        const len_reg = self.getRegForValue(slice_val.args[1]) orelse blk: {
+                            try self.ensureInReg(slice_val.args[1], 1);
+                            break :blk @as(u5, 1);
+                        };
+                        if (len_reg != dest_reg) {
+                            try self.emit(asm_mod.encodeADDImm(dest_reg, len_reg, 0, 0));
+                        }
+                        debug.log(.codegen, "      slice_len (slice_make) x{d} -> x{d}", .{ len_reg, dest_reg });
+                    } else {
+                        // Load from memory: len is at offset 8 from slice ptr
+                        const slice_reg = self.getRegForValue(slice_val) orelse blk: {
+                            try self.ensureInReg(slice_val, 0);
+                            break :blk @as(u5, 0);
+                        };
+                        // This case is for slice locals loaded from memory
+                        // The slice_val is the ptr component, len is at offset 8
+                        // But this shouldn't normally happen - slice locals use load_local
+                        try self.emit(asm_mod.encodeADDImm(dest_reg, slice_reg, 0, 0));
+                        debug.log(.codegen, "      slice_len (fallback) x{d} -> x{d}", .{ slice_reg, dest_reg });
+                    }
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
             },
 
             .neg => {

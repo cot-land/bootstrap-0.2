@@ -2,7 +2,7 @@
 // COT END-TO-END TEST SUITE
 // ============================================================================
 //
-// Progress: 103 / 103 tests passing (string var copy complete!)
+// Progress: 104 / 104 tests passing (slice return + computed base!)
 //
 // ============================================================================
 // STATUS TRACKER
@@ -1037,6 +1037,22 @@ fn test_slice_implicit_start() i64 {
 }
 
 // ============================================================================
+// TIER 15.4: Computed Base Index Assignment
+// ============================================================================
+
+// Helper that returns a slice from a pointer parameter
+fn get_slice_from_ptr(arr: *[3]i64) []i64 {
+    return arr.*[:];
+}
+
+// Test computed base assignment: func()[i] = x
+fn test_computed_base_assign() i64 {
+    var backing: [3]i64 = [0, 0, 0];
+    get_slice_from_ptr(&backing)[0] = 42;  // Assign through computed slice
+    return backing[0];  // Should be 42
+}
+
+// ============================================================================
 // TIER 15.5: Array Copy Semantics
 // ============================================================================
 
@@ -1268,6 +1284,9 @@ fn main() i64 {
     if test_slice_implicit_end() == 30 { passed = passed + 1; }
     if test_slice_full() == 5 { passed = passed + 1; }
     if test_slice_implicit_start() == 30 { passed = passed + 1; }
+
+    // TIER 15.4: Computed Base Index Assignment
+    if test_computed_base_assign() == 42 { passed = passed + 1; }
 
     // TIER 15.5: Array Copy
     if test_array_copy() == 10 { passed = passed + 1; }
