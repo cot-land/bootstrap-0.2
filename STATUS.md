@@ -21,6 +21,9 @@ Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven
 - ✅ **Fibonacci compiles and returns 55!** (10th Fibonacci number)
 - ✅ Parallel copy algorithm for phi moves prevents register clobbering
 - ✅ Go-inspired iterative phi insertion using work list pattern
+- ✅ **Nested function calls work!** Register allocator properly spills values across calls
+- ✅ Complete rewrite of regalloc following Go's Use linked list + nextCall pattern
+- ✅ Debug infrastructure with COT_DEBUG environment variable (zero-cost when disabled)
 
 ---
 
@@ -59,7 +62,7 @@ Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven
 
 ### Testing Infrastructure - COMPLETE
 
-- **172+ tests passing** as of 2026-01-14
+- **185+ tests passing** as of 2026-01-14
 - Table-driven tests for comprehensive coverage
 - Golden file infrastructure ready
 - Allocation tracking with CountingAllocator
@@ -164,6 +167,7 @@ bootstrap-0.2/
 │   │   ├── test_helpers.zig  # Test fixtures
 │   │   ├── liveness.zig      # Liveness analysis
 │   │   ├── regalloc.zig      # Register allocator
+│   │   ├── stackalloc.zig    # Stack slot assignment
 │   │   └── passes/
 │   │       └── lower.zig     # Lowering pass
 │   │
@@ -257,6 +261,99 @@ for (moves) |m| emit(mov m.dest, m.temp_or_src);
 ```
 
 **Result:** Fibonacci now compiles correctly, returning 55 (10th Fibonacci number).
+
+### Lesson Learned: Register Allocator LoadReg Integration (2026-01-14)
+
+When a value is spilled before a call and later reloaded, we create a `load_reg` SSA value that represents the reloaded value. Initially we made the mistake of assigning the register to the original value, not the load_reg.
+
+**The bug:**
+```zig
+// WRONG: Assigned register to original value v3, not to load_reg v12
+fn loadValue(self: *Self, v: *Value, block: *Block) void {
+    const load = self.f.newValue(.load_reg, ...);
+    self.assignReg(v, reg);  // BUG: v has no register after this!
+}
+```
+
+**What happened:** When codegen asked for v12's register, it found nothing (regs mask=0x0) and fell back to naive allocation.
+
+**The fix:**
+```zig
+// CORRECT: Assign register to the load_reg value and update control references
+fn loadValue(self: *Self, v: *Value, block: *Block) *Value {
+    const load = self.f.newValue(.load_reg, ...);
+    self.assignReg(load, reg);  // The load_reg has the register
+    return load;                 // Return so caller can update references
+}
+
+// Caller updates block control to point to load_reg
+const loaded = try self.loadValue(ctrl, block);
+if (loaded != ctrl) block.setControl(loaded);
+```
+
+**Key insight:** The `load_reg` instruction is what produces the value in the register. The original value (v3) is still "in memory" via its spill slot. All references that need the register value must use the load_reg.
+
+### Lesson Learned: Regalloc Value Ordering and Arg Updates (2026-01-14)
+
+Implementing proper register allocation for recursive functions (fibonacci) revealed several critical issues:
+
+**1. ARM64 LDR/STR Offset Scaling:**
+ARM64 LDR/STR with unsigned immediate scales the offset by operand size. For 64-bit operations, the encoding expects `offset/8`, not the raw byte offset.
+```zig
+// WRONG: Passing byte offset directly
+const spill_off: u12 = @intCast(loc.stackOffset());  // 16 bytes
+// Encodes as [sp, #128] because 16*8 = 128!
+
+// CORRECT: Scale for 64-bit operand
+const byte_off = loc.stackOffset();
+const spill_off: u12 = @intCast(@divExact(byte_off, 8));  // Now encodes as [sp, #16]
+```
+
+**2. Instruction Ordering with Spills/Loads:**
+Spills and loads must be inserted at the correct position in the instruction stream, not appended to the end of the block.
+```zig
+// WRONG: Appending to end - spills/loads happen after values that need them
+try block.values.append(self.allocator, load);
+
+// CORRECT: Build a new list with correct ordering
+var new_values = std.ArrayListUnmanaged(*Value){};
+// Insert loads BEFORE the value that needs the loaded arg
+// Insert spills BEFORE the call instruction
+```
+
+**3. Updating Value Args to Point to Reloads:**
+When a spilled value is reloaded, the value that uses it must have its arg updated to point to the `load_reg`, not the original value.
+```zig
+// WRONG: Original arg still points to spilled value
+const loaded = try self.loadValue(arg, block);  // Created load_reg
+// But v.args[i] still points to original, which has stale register
+
+// CORRECT: Update arg to point to reload
+const loaded = try self.loadValue(arg, block);
+if (loaded != arg) {
+    v.args[i] = loaded;  // Now points to load_reg with valid register
+}
+```
+
+**4. Pending Spills from allocReg:**
+When `loadValue` calls `allocReg` and allocReg needs to spill a value to free a register, that spill must also be inserted at the correct position.
+```zig
+// Track spills that occur during allocation
+pending_spills: std.ArrayListUnmanaged(*Value) = .{},
+
+// In allocReg, add spills to pending list
+if (try self.spillReg(reg, block)) |spill| {
+    try self.pending_spills.append(self.allocator, spill);
+}
+
+// In allocBlock, drain pending spills before inserting loads
+for (self.pending_spills.items) |spill| {
+    try new_values.append(self.allocator, spill);
+}
+self.pending_spills.clearRetainingCapacity();
+```
+
+**Result:** Fibonacci now returns correct result (55) with proper spill/reload ordering.
 
 ### Go Divergences (Intentional)
 

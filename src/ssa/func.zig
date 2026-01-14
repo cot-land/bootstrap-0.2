@@ -45,40 +45,42 @@ const Pos = types.Pos;
 const IDAllocator = types.IDAllocator;
 
 /// Location where a value lives after register allocation.
+/// Go reference: cmd/compile/internal/ssa/location.go
 pub const Location = union(enum) {
-    /// In a physical register
-    register: Register,
-    /// On the stack
-    stack: StackSlot,
-    /// Register pair (for large values)
-    pair: [2]Register,
-    /// No location assigned
-    none,
+    /// In a physical register (stores register number 0-31)
+    register: u8,
+    /// On the stack (stores offset from SP in bytes)
+    stack: i32,
 
     pub fn format(self: Location, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
         _ = fmt;
         _ = options;
         switch (self) {
-            .register => |r| try writer.print("{s}", .{r.name}),
-            .stack => |s| try writer.print("[sp+{d}]", .{s.offset}),
-            .pair => |p| try writer.print("({s},{s})", .{ p[0].name, p[1].name }),
-            .none => try writer.writeAll("none"),
+            .register => |r| try writer.print("x{d}", .{r}),
+            .stack => |off| try writer.print("[sp+{d}]", .{off}),
         }
     }
-};
 
-/// Physical register.
-pub const Register = struct {
-    num: u8,
-    obj_num: i16,
-    name: []const u8,
-};
+    /// Check if this is a register location
+    pub fn isReg(self: Location) bool {
+        return self == .register;
+    }
 
-/// Stack slot for local variables and spills.
-pub const StackSlot = struct {
-    offset: i64,
-    size: u32,
-    type_idx: TypeIndex,
+    /// Get register number (panics if not a register)
+    pub fn reg(self: Location) u8 {
+        return switch (self) {
+            .register => |r| r,
+            .stack => @panic("Location.reg() called on stack slot"),
+        };
+    }
+
+    /// Get stack offset (panics if not a stack slot)
+    pub fn stackOffset(self: Location) i32 {
+        return switch (self) {
+            .stack => |off| off,
+            .register => @panic("Location.stackOffset() called on register"),
+        };
+    }
 };
 
 /// SSA function representation.
@@ -107,7 +109,9 @@ pub const Func = struct {
     vid: IDAllocator = .{},
 
     /// Register allocation results (indexed by Value.id)
-    reg_alloc: std.AutoHashMapUnmanaged(ID, Location),
+    /// Go reference: cmd/compile/internal/ssa/func.go RegAlloc field
+    /// Slice is grown dynamically via setHome()
+    reg_alloc: []?Location = &.{},
 
     /// Constant cache: aux_int -> list of constant values
     /// Prevents duplicate constants.
@@ -142,7 +146,6 @@ pub const Func = struct {
             .name = name,
             .type_idx = 0,
             .blocks = .{},
-            .reg_alloc = .{},
             .constants = .{},
         };
     }
@@ -188,8 +191,10 @@ pub const Func = struct {
             b = next;
         }
 
-        // Free other maps
-        self.reg_alloc.deinit(self.allocator);
+        // Free reg_alloc slice if allocated
+        if (self.reg_alloc.len > 0) {
+            self.allocator.free(self.reg_alloc);
+        }
 
         var const_it = self.constants.valueIterator();
         while (const_it.next()) |list| {
@@ -204,6 +209,53 @@ pub const Func = struct {
         if (self.cached_idom) |idom| {
             self.allocator.free(idom);
         }
+    }
+
+    // =========================================
+    // Register Allocation Results (Go pattern)
+    // =========================================
+
+    /// Get the location (register or stack slot) for a value.
+    /// Go reference: cmd/compile/internal/ssa/stackalloc.go getHome()
+    /// Returns null if no location has been assigned.
+    pub fn getHome(self: *const Func, vid: ID) ?Location {
+        if (vid >= self.reg_alloc.len) return null;
+        return self.reg_alloc[vid];
+    }
+
+    /// Set the location (register or stack slot) for a value.
+    /// Go reference: cmd/compile/internal/ssa/stackalloc.go setHome()
+    /// Grows the reg_alloc slice as needed.
+    pub fn setHome(self: *Func, v: *const Value, loc: Location) !void {
+        // Grow slice if needed
+        if (v.id >= self.reg_alloc.len) {
+            const new_len = v.id + 1;
+            if (self.reg_alloc.len == 0) {
+                self.reg_alloc = try self.allocator.alloc(?Location, new_len);
+                for (self.reg_alloc) |*slot| {
+                    slot.* = null;
+                }
+            } else {
+                const old_len = self.reg_alloc.len;
+                self.reg_alloc = try self.allocator.realloc(self.reg_alloc, new_len);
+                for (old_len..new_len) |i| {
+                    self.reg_alloc[i] = null;
+                }
+            }
+        }
+        self.reg_alloc[v.id] = loc;
+    }
+
+    /// Assign a register to a value.
+    /// Convenience wrapper around setHome for register assignments.
+    pub fn setReg(self: *Func, v: *const Value, reg: u8) !void {
+        try self.setHome(v, .{ .register = reg });
+    }
+
+    /// Assign a stack slot to a value.
+    /// Convenience wrapper around setHome for spill slots.
+    pub fn setStack(self: *Func, v: *const Value, offset: i32) !void {
+        try self.setHome(v, .{ .stack = offset });
     }
 
     // =========================================

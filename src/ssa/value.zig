@@ -357,10 +357,48 @@ pub const Value = struct {
             try writer.print(" [{d}]", .{self.aux_int});
         }
     }
+
+    // =========================================
+    // Register Allocation Access (Go pattern)
+    // Go reference: cmd/compile/internal/ssa/value.go Reg() method
+    // =========================================
+
+    /// Get the register number assigned to this value.
+    /// Panics if the value is not assigned to a register.
+    /// Go reference: cmd/compile/internal/ssa/value.go Reg()
+    pub fn getReg(self: *const Value) u8 {
+        const loc = self.getHome() orelse @panic("Value.getReg: no location assigned");
+        return loc.reg();
+    }
+
+    /// Get the register number if this value is in a register, null otherwise.
+    pub fn regOrNull(self: *const Value) ?u8 {
+        const loc = self.getHome() orelse return null;
+        return switch (loc) {
+            .register => |r| r,
+            .stack => null,
+        };
+    }
+
+    /// Get the location (register or stack) for this value.
+    /// Returns null if no location has been assigned.
+    pub fn getHome(self: *const Value) ?Location {
+        const b = self.block orelse return null;
+        return b.func.getHome(self.id);
+    }
+
+    /// Check if this value has a register assigned.
+    pub fn hasReg(self: *const Value) bool {
+        const loc = self.getHome() orelse return false;
+        return loc.isReg();
+    }
 };
 
-/// Forward declaration for Block (defined in block.zig)
+/// Forward declarations
 pub const Block = @import("block.zig").Block;
+const func_mod = @import("func.zig");
+pub const Func = func_mod.Func;
+pub const Location = func_mod.Location;
 
 // =========================================
 // Tests

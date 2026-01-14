@@ -9,6 +9,9 @@ const std = @import("std");
 pub const driver = @import("driver.zig");
 pub const Driver = driver.Driver;
 
+// Debug infrastructure
+pub const pipeline_debug = @import("pipeline_debug.zig");
+
 // Core modules
 pub const core = struct {
     pub const types = @import("core/types.zig");
@@ -144,6 +147,9 @@ pub const frontend = struct {
 };
 
 pub fn main() !void {
+    // Initialize debug infrastructure from COT_DEBUG env var
+    pipeline_debug.initGlobal();
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();

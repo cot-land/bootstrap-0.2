@@ -18,6 +18,7 @@ const ssa = @import("../ssa/func.zig");
 const ssa_block = @import("../ssa/block.zig");
 const ssa_value = @import("../ssa/value.zig");
 const ssa_op = @import("../ssa/op.zig");
+const debug = @import("../pipeline_debug.zig");
 
 const Allocator = std.mem.Allocator;
 const TypeRegistry = types.TypeRegistry;
@@ -258,8 +259,13 @@ pub const SSABuilder = struct {
     /// Convert an IR function to SSA form.
     /// This is the main entry point for conversion.
     pub fn build(self: *SSABuilder) !*Func {
+        debug.log(.ssa, "=== Building SSA for '{s}' ===", .{self.ir_func.name});
+        debug.log(.ssa, "  IR has {} blocks, {} nodes", .{ self.ir_func.blocks.len, self.ir_func.nodes.len });
+
         // Walk all IR blocks in order
         for (self.ir_func.blocks, 0..) |ir_block, i| {
+            debug.log(.ssa, "  Processing IR block {}, {} nodes", .{ i, ir_block.nodes.len });
+
             // Get or create SSA block for this IR block
             const ssa_block_ptr = try self.getOrCreateBlock(@intCast(i));
 
@@ -276,11 +282,15 @@ pub const SSABuilder = struct {
             // Don't end entry block until we've processed control flow
         }
 
+        debug.log(.ssa, "  Inserting phis...", .{});
         // Insert phi nodes for forward references
         try self.insertPhis();
 
+        debug.log(.ssa, "  Verifying SSA form...", .{});
         // Verify SSA form
         try self.verify();
+
+        debug.log(.ssa, "  SSA build complete: {} blocks, entry=block {}", .{ self.func.numBlocks(), if (self.func.entry) |e| e.id else 0 });
 
         // Transfer ownership to caller
         return self.takeFunc();
@@ -312,6 +322,7 @@ pub const SSABuilder = struct {
                 const val = try self.func.newValue(.const_int, node.type_idx, cur, .{});
                 val.aux_int = c.value;
                 try cur.addValue(self.allocator, val);
+                debug.log(.ssa, "    n{} -> v{} const_int {}", .{ node_idx, val.id, c.value });
                 break :blk val;
             },
 
@@ -352,6 +363,7 @@ pub const SSABuilder = struct {
                 const val = try self.func.newValue(op, node.type_idx, cur, .{});
                 val.addArg2(left, right);
                 try cur.addValue(self.allocator, val);
+                debug.log(.ssa, "    n{} -> v{} {} v{} v{}", .{ node_idx, val.id, @intFromEnum(op), left.id, right.id });
                 break :blk val;
             },
 
@@ -371,6 +383,9 @@ pub const SSABuilder = struct {
                 if (r.value) |ret_val_idx| {
                     const ret_val = try self.convertNode(ret_val_idx) orelse return error.MissingValue;
                     cur.setControl(ret_val);
+                    debug.log(.ssa, "    n{} -> ret v{}", .{ node_idx, ret_val.id });
+                } else {
+                    debug.log(.ssa, "    n{} -> ret void", .{node_idx});
                 }
                 _ = self.endBlock();
                 break :blk null;
@@ -409,6 +424,7 @@ pub const SSABuilder = struct {
                 }
 
                 try cur.addValue(self.allocator, call_val);
+                debug.log(.ssa, "    n{} -> v{} call '{s}' with {} args", .{ node_idx, call_val.id, c.func_name, c.args.len });
                 break :blk call_val;
             },
 

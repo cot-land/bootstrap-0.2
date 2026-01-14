@@ -40,6 +40,7 @@ const Location = @import("../ssa/func.zig").Location;
 const asm_mod = @import("../arm64/asm.zig");
 const regalloc = @import("../ssa/regalloc.zig");
 const macho = @import("../obj/macho.zig");
+const debug = @import("../pipeline_debug.zig");
 
 /// ARM64 register numbers.
 pub const Reg = enum(u8) {
@@ -143,9 +144,6 @@ pub const ARM64CodeGen = struct {
     allocator: std.mem.Allocator,
     func: *const Func,
 
-    /// Stack frame size.
-    frame_size: i64 = 0,
-
     /// Register state.
     reg_state: [32]?*const Value = [_]?*const Value{null} ** 32,
 
@@ -167,6 +165,15 @@ pub const ARM64CodeGen = struct {
     /// Next register to allocate for MVP (simple linear allocation)
     next_reg: u5 = 0,
 
+    /// Stack frame size for spilled values (set from stackalloc)
+    frame_size: u32 = 16, // Default: just FP/LR
+
+    /// Next spill slot to allocate (for Go-style spill/reload)
+    next_spill_slot: u32 = 0,
+
+    /// Map from store_reg value to its spill slot index
+    spill_slot_map: std.AutoHashMapUnmanaged(*const Value, u32),
+
     /// Block ID → code offset mapping (for branch calculations)
     block_offsets: std.AutoHashMapUnmanaged(u32, u32),
 
@@ -182,6 +189,7 @@ pub const ARM64CodeGen = struct {
             .relocations = .{},
             .regalloc_state = null,
             .value_regs = .{},
+            .spill_slot_map = .{},
             .block_offsets = .{},
             .branch_fixups = .{},
         };
@@ -192,6 +200,7 @@ pub const ARM64CodeGen = struct {
         self.symbols.deinit(self.allocator);
         self.relocations.deinit(self.allocator);
         self.value_regs.deinit(self.allocator);
+        self.spill_slot_map.deinit(self.allocator);
         self.block_offsets.deinit(self.allocator);
         self.branch_fixups.deinit(self.allocator);
         // regalloc_state is borrowed, not owned - don't deinit
@@ -201,6 +210,12 @@ pub const ARM64CodeGen = struct {
     /// Must be called before generateBinary.
     pub fn setRegAllocState(self: *ARM64CodeGen, state: *const regalloc.RegAllocState) void {
         self.regalloc_state = state;
+    }
+
+    /// Set the stack frame size (from stackalloc).
+    /// Must be called before generateBinary.
+    pub fn setFrameSize(self: *ARM64CodeGen, size: u32) void {
+        self.frame_size = size;
     }
 
     // ========================================================================
@@ -295,11 +310,16 @@ pub const ARM64CodeGen = struct {
         self.func = f;
         const start_offset = self.offset();
 
+        debug.log(.codegen, "Generating code for function '{s}', {d} blocks", .{ name, f.blocks.items.len });
+
         // Clear state for new function
         self.value_regs.clearRetainingCapacity();
         self.block_offsets.clearRetainingCapacity();
         self.branch_fixups.clearRetainingCapacity();
         self.next_reg = 0; // Reset register allocation
+
+        // Log frame size (set by setFrameSize from stackalloc)
+        debug.log(.codegen, "  Stack frame: {d} bytes", .{self.frame_size});
 
         // Add symbol (prepend underscore for macOS symbol naming convention)
         // All functions are external so they can be called from other functions
@@ -316,7 +336,8 @@ pub const ARM64CodeGen = struct {
         // before the phi block is generated
         try self.preAllocatePhiRegisters(f);
 
-        // Emit prologue
+        // Emit prologue (Go's approach: only save FP/LR)
+        debug.log(.codegen, "  Emitting prologue", .{});
         try self.emitPrologue();
 
         // Generate code for each block, recording offsets
@@ -326,6 +347,8 @@ pub const ARM64CodeGen = struct {
 
         // Apply branch fixups now that we know all block offsets
         try self.applyBranchFixups();
+
+        debug.log(.codegen, "  Function '{s}' done, code size: {d} bytes", .{ name, self.offset() - start_offset });
     }
 
     /// Pre-allocate registers for all phi nodes in the function.
@@ -378,19 +401,36 @@ pub const ARM64CodeGen = struct {
         }
     }
 
-    /// Emit function prologue
+    /// Emit function prologue.
+    /// Go's approach: only save FP (x29) and LR (x30).
+    /// Spilled values go to the stack frame, not callee-saved registers.
     fn emitPrologue(self: *ARM64CodeGen) !void {
-        // stp x29, x30, [sp, #-16]!
-        try self.emit(asm_mod.encodeSTPPre(29, 30, 31, -2)); // -2 * 8 = -16 bytes
+        // Use frame_size from stackalloc (already 16-byte aligned)
+        const aligned_frame = self.frame_size;
+
+        // STP x29, x30, [sp, #-frame_size]!
+        const frame_off: i7 = @intCast(-@divExact(@as(i32, @intCast(aligned_frame)), 8));
+        try self.emit(asm_mod.encodeSTPPre(29, 30, 31, frame_off));
+
+        // Set up frame pointer: ADD x29, sp, #0
+        // (In a full implementation, x29 would point to saved FP location)
+        try self.emit(asm_mod.encodeADDImm(29, 31, 0, 0));
     }
 
-    /// Emit function epilogue and return
+    /// Emit function epilogue and return.
+    /// Go's approach: only restore FP (x29) and LR (x30).
     fn emitEpilogue(self: *ARM64CodeGen) !void {
-        // ldp x29, x30, [sp], #16
-        try self.emit(asm_mod.encodeLDPPost(29, 30, 31, 2)); // 2 * 8 = 16 bytes
-        // ret
+        // Use frame_size from stackalloc (already 16-byte aligned)
+        const aligned_frame = self.frame_size;
+
+        // LDP x29, x30, [sp], #frame_size
+        const frame_off: i7 = @intCast(@divExact(@as(i32, @intCast(aligned_frame)), 8));
+        try self.emit(asm_mod.encodeLDPPost(29, 30, 31, frame_off));
+
+        // RET
         try self.emit(asm_mod.encodeRET(30));
     }
+
 
     /// Emit phi moves for an edge from current block to target block.
     /// For each phi in the target block, find this block's corresponding argument
@@ -506,6 +546,8 @@ pub const ARM64CodeGen = struct {
 
     /// Generate binary code for a block
     fn generateBlockBinary(self: *ARM64CodeGen, block: *const Block) !void {
+        debug.log(.codegen, "  Block b{d}: {d} values, kind={s}", .{ block.id, block.values.items.len, @tagName(block.kind) });
+
         // Record block start offset for branch calculations
         try self.block_offsets.put(self.allocator, block.id, self.offset());
 
@@ -588,12 +630,15 @@ pub const ARM64CodeGen = struct {
 
     /// Generate binary code for a value
     fn generateValueBinary(self: *ARM64CodeGen, value: *const Value) !void {
+        debug.log(.codegen, "    v{d} = {s}", .{ value.id, @tagName(value.op) });
+
         switch (value.op) {
             .const_int, .const_64 => {
                 // Get destination register from regalloc (or fallback to naive)
                 const dest_reg = self.getDestRegForValue(value);
                 try self.emitLoadImmediate(dest_reg, value.aux_int);
                 try self.value_regs.put(self.allocator, value, dest_reg);
+                debug.log(.codegen, "      -> x{d} = #{d}", .{ dest_reg, value.aux_int });
             },
 
             .const_bool => {
@@ -762,9 +807,60 @@ pub const ARM64CodeGen = struct {
 
                 // Emit BL with offset 0 (linker will fix)
                 try self.emit(asm_mod.encodeBL(0));
+                debug.log(.codegen, "      -> BL {s}, result in x0", .{raw_name});
 
-                // Result is in x0
+                // Result is in x0 - regalloc will handle spill/reload if needed
+                // Go's approach: don't move to callee-saved, let regalloc spill
                 try self.value_regs.put(self.allocator, value, 0);
+            },
+
+            .store_reg => {
+                // Spill a value to a stack slot (Go's approach)
+                // Stack offset assigned by stackalloc via f.setHome()
+                if (value.args.len > 0) {
+                    const src_value = value.args[0];
+
+                    // Get stack offset from stackalloc's assignment
+                    const loc = value.getHome() orelse {
+                        debug.log(.codegen, "      store_reg v{d}: NO stack location!", .{value.id});
+                        return;
+                    };
+                    // ARM64 LDR/STR unsigned offset is scaled by 8 for 64-bit ops
+                    const byte_off = loc.stackOffset();
+                    const spill_off: u12 = @intCast(@divExact(byte_off, 8));
+
+                    // Get the register holding the value to spill
+                    const src_reg = self.getRegForValue(src_value) orelse 0;
+
+                    // STR Xn, [SP, #offset]
+                    try self.emit(asm_mod.encodeLdrStr(src_reg, 31, spill_off, false)); // false = store
+                    debug.log(.codegen, "      -> STR x{d}, [SP, #{d}]", .{ src_reg, spill_off });
+                }
+            },
+
+            .load_reg => {
+                // Reload a value from a stack slot (Go's approach)
+                if (value.args.len > 0) {
+                    const spill_value = value.args[0];
+
+                    // Get stack offset from the store_reg value's location
+                    const loc = spill_value.getHome() orelse {
+                        debug.log(.codegen, "      load_reg v{d}: source store_reg has NO location!", .{value.id});
+                        return;
+                    };
+                    // ARM64 LDR/STR unsigned offset is scaled by 8 for 64-bit ops
+                    const byte_off = loc.stackOffset();
+                    const spill_off: u12 = @intCast(@divExact(byte_off, 8));
+
+                    // Get destination register from regalloc
+                    const dest_reg = self.getDestRegForValue(value);
+
+                    // LDR Xn, [SP, #offset]
+                    try self.emit(asm_mod.encodeLdrStr(dest_reg, 31, spill_off, true)); // true = load
+                    debug.log(.codegen, "      -> LDR x{d}, [SP, #{d}]", .{ dest_reg, spill_off });
+
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
             },
 
             else => {
@@ -781,6 +877,7 @@ pub const ARM64CodeGen = struct {
         return reg;
     }
 
+    /// Allocate a callee-saved register (x19-x28) for values that must survive calls.
     /// Ensure a value is in the specified register, regenerating if needed
     fn ensureInReg(self: *ARM64CodeGen, value: *const Value, dest: u5) !void {
         // Check regalloc first, then fallback tracking
@@ -808,19 +905,15 @@ pub const ARM64CodeGen = struct {
 
     /// Get register for a value from regalloc (preferred) or value_regs fallback
     fn getRegForValue(self: *ARM64CodeGen, value: *const Value) ?u5 {
-        // Check regalloc state FIRST (this is the proper Go-inspired pipeline)
-        if (self.regalloc_state) |state| {
-            if (value.id < state.values.len) {
-                const val_state = state.values[value.id];
-                if (val_state.firstReg()) |reg| {
-                    return @intCast(reg);
-                }
-            }
-        }
-
-        // Fallback to simple tracking (for values not in regalloc)
+        // Check value_regs FIRST for values we've explicitly placed
+        // (like static_call results saved to callee-saved registers)
         if (self.value_regs.get(value)) |reg| {
             return reg;
+        }
+
+        // Use the new Go-style API: value.regOrNull() looks up f.reg_alloc[v.id]
+        if (value.regOrNull()) |reg| {
+            return @intCast(reg);
         }
 
         return null;
@@ -828,22 +921,21 @@ pub const ARM64CodeGen = struct {
 
     /// Get destination register for a value from regalloc, or allocate naively
     fn getDestRegForValue(self: *ARM64CodeGen, value: *const Value) u5 {
-        // Check regalloc state FIRST
-        if (self.regalloc_state) |state| {
-            if (value.id < state.values.len) {
-                const val_state = state.values[value.id];
-                if (val_state.firstReg()) |reg| {
-                    return @intCast(reg);
-                }
-            }
+        // Use the new Go-style API: value.regOrNull() looks up f.reg_alloc[v.id]
+        if (value.regOrNull()) |reg| {
+            debug.log(.codegen, "        getDestReg v{d}: from regalloc -> x{d}", .{ value.id, reg });
+            return @intCast(reg);
         }
 
         // Fallback: naive allocation (shouldn't happen if regalloc is working)
-        return self.allocateReg();
+        const reg = self.allocateReg();
+        debug.log(.codegen, "        getDestReg v{d}: FALLBACK to naive -> x{d}", .{ value.id, reg });
+        return reg;
     }
 
     /// Ensure value is in x0
     fn moveToX0(self: *ARM64CodeGen, value: *const Value) !void {
+        debug.log(.codegen, "    moveToX0: v{d} (op={s})", .{ value.id, @tagName(value.op) });
         try self.moveToReg(0, value);
     }
 
@@ -851,11 +943,13 @@ pub const ARM64CodeGen = struct {
     fn moveToReg(self: *ARM64CodeGen, dest: u5, value: *const Value) !void {
         // Check if value is already in a register (check regalloc first, then simple tracking)
         if (self.getRegForValue(value)) |src_reg| {
+            debug.log(.codegen, "      v{d} in x{d}, moving to x{d}", .{ value.id, src_reg, dest });
             if (src_reg == dest) return;
             // mov dest, src (via ADD with #0)
             try self.emit(asm_mod.encodeADDImm(dest, src_reg, 0, 0));
             return;
         }
+        debug.log(.codegen, "      v{d} not in reg, regenerating to x{d}", .{ value.id, dest });
 
         // Value not in register - regenerate it
         switch (value.op) {

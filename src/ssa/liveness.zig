@@ -37,6 +37,7 @@ const Value = @import("value.zig").Value;
 const Block = @import("block.zig").Block;
 const Func = @import("func.zig").Func;
 const Op = @import("op.zig").Op;
+const debug = @import("../pipeline_debug.zig");
 
 const ID = types.ID;
 const Pos = types.Pos;
@@ -205,6 +206,12 @@ pub const BlockLiveness = struct {
     /// Values live at the START of this block (after phi nodes)
     live_in: []LiveInfo,
 
+    /// For each instruction index i, next_call[i] is the index of the next
+    /// call instruction at or after i within this block.
+    /// std.math.maxInt(u32) if no call follows.
+    /// Go reference: regalloc.go lines 1053-1082
+    next_call: []u32,
+
     /// Allocator that owns the slices
     allocator: std.mem.Allocator,
 
@@ -212,6 +219,7 @@ pub const BlockLiveness = struct {
         return .{
             .live_out = &.{},
             .live_in = &.{},
+            .next_call = &.{},
             .allocator = allocator,
         };
     }
@@ -222,6 +230,44 @@ pub const BlockLiveness = struct {
         }
         if (self.live_in.len > 0) {
             self.allocator.free(self.live_in);
+        }
+        if (self.next_call.len > 0) {
+            self.allocator.free(self.next_call);
+        }
+    }
+
+    /// Compute the nextCall array for a block.
+    /// Go reference: regalloc.go lines 1053-1082
+    ///
+    /// For each instruction i, nextCall[i] = index of next call at or after i.
+    /// If no call follows, nextCall[i] = maxInt(u32).
+    pub fn computeNextCall(self: *BlockLiveness, block: *const Block) !void {
+        const num_values = block.values.items.len;
+        if (num_values == 0) {
+            self.next_call = &.{};
+            return;
+        }
+
+        // Free old array if present
+        if (self.next_call.len > 0) {
+            self.allocator.free(self.next_call);
+        }
+
+        self.next_call = try self.allocator.alloc(u32, num_values);
+
+        // Process backwards: track the next call we've seen
+        var current_next_call: u32 = std.math.maxInt(u32);
+        var i: usize = num_values;
+        while (i > 0) {
+            i -= 1;
+            const v = block.values.items[i];
+
+            // Check if this instruction is a call
+            if (v.op.info().call) {
+                current_next_call = @intCast(i);
+            }
+
+            self.next_call[i] = current_next_call;
         }
     }
 
@@ -269,6 +315,32 @@ pub const LivenessResult = struct {
         if (block_id == 0 or block_id > self.blocks.len) return &.{};
         return self.blocks[block_id - 1].live_out;
     }
+
+    /// Get the next_call array for a block.
+    /// Returns the index of the next call at or after each instruction.
+    /// Go reference: regalloc.go lines 1053-1082
+    pub fn getNextCall(self: *const LivenessResult, block_id: ID) []const u32 {
+        if (block_id == 0 or block_id > self.blocks.len) return &.{};
+        return self.blocks[block_id - 1].next_call;
+    }
+
+    /// Check if instruction idx has a call following it (or is itself a call).
+    /// This is used to determine if a value's next use is "after a call".
+    pub fn hasCallAtOrAfter(self: *const LivenessResult, block_id: ID, idx: usize) bool {
+        const next_call = self.getNextCall(block_id);
+        if (idx >= next_call.len) return false;
+        return next_call[idx] != std.math.maxInt(u32);
+    }
+
+    /// Get the index of the next call at or after instruction idx.
+    /// Returns null if no call follows.
+    pub fn getNextCallIdx(self: *const LivenessResult, block_id: ID, idx: usize) ?u32 {
+        const next_call = self.getNextCall(block_id);
+        if (idx >= next_call.len) return null;
+        const nc = next_call[idx];
+        if (nc == std.math.maxInt(u32)) return null;
+        return nc;
+    }
 };
 
 // =========================================
@@ -284,17 +356,31 @@ pub const LivenessResult = struct {
 /// 3. Apply distance penalties at branches and calls
 /// 4. Iterate to fixed point for loops
 pub fn computeLiveness(allocator: std.mem.Allocator, f: *Func) !LivenessResult {
+    debug.log(.regalloc, "=== Computing liveness for '{s}' ===", .{f.name});
+
     const num_blocks = f.blocks.items.len;
     if (num_blocks == 0) {
+        debug.log(.regalloc, "  No blocks, returning empty liveness", .{});
         return LivenessResult.init(allocator, 0);
     }
+
+    debug.log(.regalloc, "  {} blocks to analyze", .{num_blocks});
 
     var result = try LivenessResult.init(allocator, num_blocks);
     errdefer result.deinit();
 
+    // Compute nextCall array for each block
+    // Go reference: regalloc.go lines 1053-1082
+    for (f.blocks.items) |block| {
+        const block_idx = block.id - 1;
+        try result.blocks[block_idx].computeNextCall(block);
+        debug.log(.regalloc, "  Block {} nextCall computed, {} values", .{ block.id, block.values.items.len });
+    }
+
     // Get postorder traversal (leaves first)
     const postorder = try computePostorder(allocator, f);
     defer allocator.free(postorder);
+    debug.log(.regalloc, "  Postorder: {} blocks", .{postorder.len});
 
     // Working live set
     var live = LiveMap.init();
@@ -308,10 +394,12 @@ pub fn computeLiveness(allocator: std.mem.Allocator, f: *Func) !LivenessResult {
     while (changed and iterations < max_iterations) {
         changed = false;
         iterations += 1;
+        debug.log(.regalloc, "  Liveness iteration {}", .{iterations});
 
         // Process blocks in postorder
         for (postorder) |block| {
             const block_idx = block.id - 1;
+            debug.log(.regalloc, "    Processing block {} (kind={})", .{ block.id, @intFromEnum(block.kind) });
 
             // Initialize live set from known live-out
             live.clear();
@@ -320,9 +408,11 @@ pub fn computeLiveness(allocator: std.mem.Allocator, f: *Func) !LivenessResult {
             }
 
             const old_size = live.size();
+            debug.log(.regalloc, "      Initial live-out: {} values", .{old_size});
 
             // Process successors: add phi arguments
             try processSuccessorPhis(allocator, &live, block);
+            debug.log(.regalloc, "      After phi args: {} live", .{live.size()});
 
             // Adjust distances for block length
             const block_len: i32 = @intCast(block.values.items.len);
@@ -331,6 +421,7 @@ pub fn computeLiveness(allocator: std.mem.Allocator, f: *Func) !LivenessResult {
             // Add control values to live set
             for (block.controlValues()) |ctrl| {
                 if (needsRegister(ctrl)) {
+                    debug.log(.regalloc, "      Adding control v{} at dist={}", .{ ctrl.id, block_len });
                     try live.set(allocator, ctrl.id, block_len, block.pos);
                 }
             }
@@ -343,12 +434,14 @@ pub fn computeLiveness(allocator: std.mem.Allocator, f: *Func) !LivenessResult {
 
                 // Value is defined here - no longer live above this point
                 live.remove(v.id);
+                debug.log(.regalloc, "      v{} (op={}) defined at idx={}, removed from live", .{ v.id, @intFromEnum(v.op), idx });
 
                 // Skip phi nodes (handled separately)
                 if (v.op == .phi) continue;
 
                 // Handle calls: add unlikely_distance penalty
                 if (isCall(v.op)) {
+                    debug.log(.regalloc, "        CALL: adding unlikely_distance={} to all live", .{unlikely_distance});
                     live.addDistanceToAll(unlikely_distance);
                     // TODO: Remove rematerializable values
                 }
@@ -356,10 +449,12 @@ pub fn computeLiveness(allocator: std.mem.Allocator, f: *Func) !LivenessResult {
                 // Add arguments to live set
                 for (v.args) |arg| {
                     if (needsRegister(arg)) {
+                        debug.log(.regalloc, "        arg v{} now live at dist={}", .{ arg.id, i });
                         try live.set(allocator, arg.id, i, v.pos);
                     }
                 }
             }
+            debug.log(.regalloc, "      After processing values: {} live", .{live.size()});
 
             // Propagate to predecessors
             for (block.preds) |pred_edge| {
@@ -367,6 +462,7 @@ pub fn computeLiveness(allocator: std.mem.Allocator, f: *Func) !LivenessResult {
 
                 const pred_idx = pred.id - 1;
                 const delta = branchDistance(pred, block);
+                debug.log(.regalloc, "      Propagating to pred block {}, delta={}", .{ pred.id, delta });
 
                 // Check if any new values need to be added to predecessor's live-out
                 for (live.items()) |info| {
@@ -383,12 +479,14 @@ pub fn computeLiveness(allocator: std.mem.Allocator, f: *Func) !LivenessResult {
                             if (new_dist != unknown_distance and
                                 (e.dist == unknown_distance or new_dist < e.dist))
                             {
+                                debug.log(.regalloc, "        v{} dist updated: {} -> {}", .{ info.id, e.dist, new_dist });
                                 changed = true;
                             }
                             break;
                         }
                     }
                     if (!found) {
+                        debug.log(.regalloc, "        v{} NEW to pred {} live-out, dist={}", .{ info.id, pred.id, new_dist });
                         changed = true;
                     }
                 }
@@ -397,7 +495,18 @@ pub fn computeLiveness(allocator: std.mem.Allocator, f: *Func) !LivenessResult {
             // Update live-out if changed
             if (live.size() != old_size or changed) {
                 try result.blocks[block_idx].updateLiveOut(&live);
+                debug.log(.regalloc, "      Updated live-out for block {}: {} values", .{ block.id, live.size() });
             }
+        }
+    }
+
+    debug.log(.regalloc, "  Liveness converged after {} iterations", .{iterations});
+
+    // Log final liveness results
+    for (result.blocks, 0..) |bl, idx| {
+        debug.log(.regalloc, "  Block {} live-out: {} values", .{ idx + 1, bl.live_out.len });
+        for (bl.live_out) |info| {
+            debug.log(.regalloc, "    v{} dist={}", .{ info.id, info.dist });
         }
     }
 
@@ -468,7 +577,7 @@ fn needsRegister(v: *Value) bool {
 
 /// Check if an operation is a call
 fn isCall(op: Op) bool {
-    return op == .call;
+    return op.info().call;
 }
 
 /// Compute postorder traversal of blocks
@@ -725,4 +834,90 @@ test "computeLiveness with loop" {
 
     // The phi should be live across the back edge
     // (this tests that fixed-point iteration works for loops)
+}
+
+test "nextCall tracking" {
+    const allocator = std.testing.allocator;
+    const test_helpers = @import("test_helpers.zig");
+
+    var builder = try test_helpers.TestFuncBuilder.init(allocator, "next_call_test");
+    defer builder.deinit();
+
+    const linear = try builder.createLinearCFG(1);
+    defer allocator.free(linear.blocks);
+
+    const entry = linear.entry;
+
+    // Create: v1 = const; v2 = call; v3 = add; v4 = call
+    // Expected nextCall: [1, 1, 3, 3]
+    const v1 = try builder.func.newValue(.const_int, types.PrimitiveTypes.i64_type, entry, .{});
+    v1.aux_int = 42;
+    try entry.addValue(allocator, v1);
+
+    const v2 = try builder.func.newValue(.static_call, types.PrimitiveTypes.i64_type, entry, .{});
+    try entry.addValue(allocator, v2);
+
+    const v3 = try builder.func.newValue(.add, types.PrimitiveTypes.i64_type, entry, .{});
+    v3.addArg(v1);
+    v3.addArg(v2);
+    try entry.addValue(allocator, v3);
+
+    const v4 = try builder.func.newValue(.static_call, types.PrimitiveTypes.i64_type, entry, .{});
+    try entry.addValue(allocator, v4);
+
+    entry.setControl(v4);
+
+    var result = try computeLiveness(allocator, builder.func);
+    defer result.deinit();
+
+    // Check nextCall array
+    const next_call = result.getNextCall(entry.id);
+    try std.testing.expectEqual(@as(usize, 4), next_call.len);
+
+    // Instruction 0 (const): next call is at 1
+    try std.testing.expectEqual(@as(u32, 1), next_call[0]);
+    // Instruction 1 (call): next call is at 1 (itself)
+    try std.testing.expectEqual(@as(u32, 1), next_call[1]);
+    // Instruction 2 (add): next call is at 3
+    try std.testing.expectEqual(@as(u32, 3), next_call[2]);
+    // Instruction 3 (call): next call is at 3 (itself)
+    try std.testing.expectEqual(@as(u32, 3), next_call[3]);
+}
+
+test "nextCall no calls" {
+    const allocator = std.testing.allocator;
+    const test_helpers = @import("test_helpers.zig");
+
+    var builder = try test_helpers.TestFuncBuilder.init(allocator, "no_calls_test");
+    defer builder.deinit();
+
+    const linear = try builder.createLinearCFG(1);
+    defer allocator.free(linear.blocks);
+
+    const entry = linear.entry;
+
+    // No calls in this block
+    const v1 = try builder.func.newValue(.const_int, types.PrimitiveTypes.i64_type, entry, .{});
+    v1.aux_int = 42;
+    try entry.addValue(allocator, v1);
+
+    const v2 = try builder.func.newValue(.add, types.PrimitiveTypes.i64_type, entry, .{});
+    v2.addArg(v1);
+    v2.addArg(v1);
+    try entry.addValue(allocator, v2);
+
+    entry.setControl(v2);
+
+    var result = try computeLiveness(allocator, builder.func);
+    defer result.deinit();
+
+    // Check nextCall array - all should be maxInt (no calls)
+    const next_call = result.getNextCall(entry.id);
+    try std.testing.expectEqual(@as(usize, 2), next_call.len);
+    try std.testing.expectEqual(std.math.maxInt(u32), next_call[0]);
+    try std.testing.expectEqual(std.math.maxInt(u32), next_call[1]);
+
+    // hasCallAtOrAfter should return false for all
+    try std.testing.expect(!result.hasCallAtOrAfter(entry.id, 0));
+    try std.testing.expect(!result.hasCallAtOrAfter(entry.id, 1));
 }

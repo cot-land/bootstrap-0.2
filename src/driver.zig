@@ -22,9 +22,11 @@ const source_mod = @import("frontend/source.zig");
 // Backend modules
 const arm64_codegen = @import("codegen/arm64.zig");
 const regalloc_mod = @import("ssa/regalloc.zig");
+const stackalloc_mod = @import("ssa/stackalloc.zig");
 
 // Debug infrastructure
 const pipeline_debug = @import("pipeline_debug.zig");
+const debug = pipeline_debug;
 
 const Allocator = std.mem.Allocator;
 
@@ -50,6 +52,9 @@ pub const Driver = struct {
 
     /// Compile source code to machine code bytes.
     pub fn compileSource(self: *Driver, source_text: []const u8) ![]u8 {
+        debug.log(.parse, "=== Starting compilation ===", .{});
+        debug.log(.parse, "Source length: {} bytes", .{source_text.len});
+
         // Create source wrapper
         var src = source_mod.Source.init(self.allocator, "<input>", source_text);
         defer src.deinit();
@@ -68,9 +73,11 @@ pub const Driver = struct {
         };
 
         if (err_reporter.hasErrors()) {
+            debug.log(.parse, "Parse failed with errors", .{});
             return error.ParseError;
         }
 
+        debug.log(.parse, "Parse complete: {} nodes", .{tree.nodes.items.len});
         self.debug.afterParse(&tree);
 
         // Phase 2: Type check
@@ -88,9 +95,11 @@ pub const Driver = struct {
         };
 
         if (err_reporter.hasErrors()) {
+            debug.log(.check, "Type check failed with errors", .{});
             return error.TypeCheckError;
         }
 
+        debug.log(.check, "Type check complete", .{});
         self.debug.afterCheck(&tree);
 
         // Phase 3: Lower to IR
@@ -103,28 +112,37 @@ pub const Driver = struct {
         defer ir.deinit();
 
         if (err_reporter.hasErrors()) {
+            debug.log(.lower, "Lower failed with errors", .{});
             return error.LowerError;
         }
 
+        debug.log(.lower, "Lower complete: {} functions", .{ir.funcs.len});
         self.debug.afterLower(&ir);
 
         // Phase 4: Generate code for each function
         var codegen = arm64_codegen.ARM64CodeGen.init(self.allocator);
         defer codegen.deinit();
 
-        for (ir.funcs) |*ir_func| {
+        for (ir.funcs, 0..) |*ir_func, func_idx| {
+            debug.log(.ssa, "=== Processing function {} '{s}' ===", .{ func_idx, ir_func.name });
+
             // Phase 4a: Convert IR to SSA
+            debug.log(.ssa, "Building SSA...", .{});
             var ssa_builder = try ssa_builder_mod.SSABuilder.init(self.allocator, ir_func, &type_reg);
             errdefer ssa_builder.deinit();
 
             const ssa_func = ssa_builder.build() catch |e| {
+                debug.log(.ssa, "SSA build failed: {}", .{e});
                 return e;
             };
 
+            debug.log(.ssa, "SSA build complete: {} blocks", .{ssa_func.numBlocks()});
             self.debug.afterSSA(ssa_func, "build");
 
             // Phase 4b: Register allocation (includes liveness)
+            debug.log(.regalloc, "Starting register allocation...", .{});
             var regalloc_state = regalloc_mod.regalloc(self.allocator, ssa_func) catch |e| {
+                debug.log(.regalloc, "Regalloc failed: {}", .{e});
                 ssa_func.deinit();
                 self.allocator.destroy(ssa_func);
                 ssa_builder.deinit();
@@ -132,16 +150,31 @@ pub const Driver = struct {
             };
             defer regalloc_state.deinit();
 
+            debug.log(.regalloc, "Regalloc complete: {} spills", .{regalloc_state.num_spills});
             self.debug.afterSSA(ssa_func, "regalloc");
 
-            // Phase 4c: Code generation
-            codegen.setRegAllocState(&regalloc_state);
-            codegen.generateBinary(ssa_func, ir_func.name) catch |e| {
+            // Phase 4b.5: Stack allocation (assigns spill slot offsets)
+            const stack_result = stackalloc_mod.stackalloc(ssa_func) catch |e| {
+                debug.log(.regalloc, "Stackalloc failed: {}", .{e});
                 ssa_func.deinit();
                 self.allocator.destroy(ssa_func);
                 ssa_builder.deinit();
                 return e;
             };
+            debug.log(.regalloc, "Stackalloc complete: frame_size={} bytes", .{stack_result.frame_size});
+
+            // Phase 4c: Code generation
+            debug.log(.codegen, "Generating machine code for '{s}'...", .{ir_func.name});
+            codegen.setRegAllocState(&regalloc_state);
+            codegen.setFrameSize(stack_result.frame_size);
+            codegen.generateBinary(ssa_func, ir_func.name) catch |e| {
+                debug.log(.codegen, "Codegen failed: {}", .{e});
+                ssa_func.deinit();
+                self.allocator.destroy(ssa_func);
+                ssa_builder.deinit();
+                return e;
+            };
+            debug.log(.codegen, "Codegen complete for '{s}'", .{ir_func.name});
 
             // Clean up SSA func
             ssa_func.deinit();

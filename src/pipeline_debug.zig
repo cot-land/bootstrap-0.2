@@ -74,7 +74,7 @@ pub const DebugPhases = struct {
     }
 };
 
-const Phase = enum {
+pub const Phase = enum {
     parse,
     check,
     lower,
@@ -82,6 +82,42 @@ const Phase = enum {
     regalloc,
     codegen,
 };
+
+// ============================================================================
+// Global Debug State
+// Go reference: s.f.pass.debug in regalloc.go
+//
+// This provides a simple way for passes to check debug levels without
+// threading PipelineDebug through every function. Initialized once from
+// COT_DEBUG environment variable.
+// ============================================================================
+
+var global_phases: ?DebugPhases = null;
+
+/// Initialize global debug state. Call once at startup.
+pub fn initGlobal() void {
+    global_phases = DebugPhases.fromEnv();
+}
+
+/// Check if a phase has debug output enabled.
+/// Returns false if not initialized.
+pub fn isEnabled(phase: Phase) bool {
+    const phases = global_phases orelse return false;
+    return phases.isEnabled(phase);
+}
+
+/// Log a message if the phase is enabled.
+/// Usage: debug.log(.regalloc, "spilling v{d} to stack", .{v.id});
+pub fn log(phase: Phase, comptime fmt: []const u8, args: anytype) void {
+    if (!isEnabled(phase)) return;
+    std.debug.print("[{s}] " ++ fmt ++ "\n", .{@tagName(phase)} ++ args);
+}
+
+/// Log without phase prefix (for continuation lines).
+pub fn logRaw(phase: Phase, comptime fmt: []const u8, args: anytype) void {
+    if (!isEnabled(phase)) return;
+    std.debug.print(fmt, args);
+}
 
 /// Pipeline debugger - outputs intermediate representations after each phase.
 /// Go reference: f.Logf() and printFunc() in compile.go
