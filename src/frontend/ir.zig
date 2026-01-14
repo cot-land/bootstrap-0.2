@@ -1017,6 +1017,16 @@ pub const FuncBuilder = struct {
         return self.emit(Node.init(.{ .store_index_value = .{ .base = base, .index = index, .value = value, .elem_size = elem_size } }, TypeRegistry.VOID, span));
     }
 
+    /// Emit slice from local array.
+    pub fn emitSliceLocal(self: *FuncBuilder, local_idx: LocalIdx, start: ?NodeIndex, end: ?NodeIndex, elem_size: u32, type_idx: TypeIndex, span: Span) !NodeIndex {
+        return self.emit(Node.init(.{ .slice_local = .{ .local_idx = local_idx, .start = start, .end = end, .elem_size = elem_size } }, type_idx, span));
+    }
+
+    /// Emit slice from computed value.
+    pub fn emitSliceValue(self: *FuncBuilder, base: NodeIndex, start: ?NodeIndex, end: ?NodeIndex, elem_size: u32, type_idx: TypeIndex, span: Span) !NodeIndex {
+        return self.emit(Node.init(.{ .slice_value = .{ .base = base, .start = start, .end = end, .elem_size = elem_size } }, type_idx, span));
+    }
+
     /// Emit pointer load through local.
     pub fn emitPtrLoad(self: *FuncBuilder, ptr_local: LocalIdx, type_idx: TypeIndex, span: Span) !NodeIndex {
         return self.emit(Node.init(.{ .ptr_load = .{ .ptr_local = ptr_local } }, type_idx, span));

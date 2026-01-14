@@ -458,6 +458,13 @@ pub const Op = enum(u16) {
     /// Create string from pointer and length. Takes (*u8, i64), returns string.
     string_make,
 
+    /// Extract length from slice. Takes slice value, returns i64.
+    slice_len,
+    /// Extract pointer from slice. Takes slice value, returns *T.
+    slice_ptr,
+    /// Create slice from pointer and length. Takes (*T, i64), returns []T.
+    slice_make,
+
     // ═══════════════════════════════════════════════════════════════════════════
     // SECTION 11: Function Calls
     // All call operations have side effects and may clobber registers.
@@ -1065,6 +1072,10 @@ const op_info_table = blk: {
     table[@intFromEnum(Op.string_len)] = .{ .name = "StringLen", .arg_len = 1 };
     table[@intFromEnum(Op.string_ptr)] = .{ .name = "StringPtr", .arg_len = 1 };
     table[@intFromEnum(Op.string_make)] = .{ .name = "StringMake", .arg_len = 2 };
+
+    table[@intFromEnum(Op.slice_len)] = .{ .name = "SliceLen", .arg_len = 1 };
+    table[@intFromEnum(Op.slice_ptr)] = .{ .name = "SlicePtr", .arg_len = 1 };
+    table[@intFromEnum(Op.slice_make)] = .{ .name = "SliceMake", .arg_len = 2 };
 
     // Calls
     table[@intFromEnum(Op.call)] = .{

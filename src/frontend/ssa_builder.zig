@@ -828,6 +828,119 @@ pub const SSABuilder = struct {
                 break :blk store_val;
             },
 
+            // === Slice Operations ===
+            // Slices are (ptr, len) pairs. Creating a slice from an array:
+            // 1. Compute start address (base + start * elem_size)
+            // 2. Compute length (end - start, or array_len - start if end is null)
+            // 3. Create slice_make(ptr, len)
+
+            .slice_local => |s| blk: {
+                // Create slice from local array: arr[start..end]
+                // Get address of array
+                const arr_addr = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                arr_addr.aux_int = @intCast(s.local_idx);
+                try cur.addValue(self.allocator, arr_addr);
+
+                // Compute start offset and slice pointer
+                const start_val: *Value = if (s.start) |start_idx| start_blk: {
+                    break :start_blk try self.convertNode(start_idx) orelse return error.MissingValue;
+                } else zero_blk: {
+                    // Default start is 0
+                    const zero = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                    zero.aux_int = 0;
+                    try cur.addValue(self.allocator, zero);
+                    break :zero_blk zero;
+                };
+
+                // Compute offset = start * elem_size
+                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                elem_size_val.aux_int = @intCast(s.elem_size);
+                try cur.addValue(self.allocator, elem_size_val);
+
+                const offset = try self.func.newValue(.mul, TypeRegistry.I64, cur, .{});
+                offset.addArg2(start_val, elem_size_val);
+                try cur.addValue(self.allocator, offset);
+
+                // Compute slice pointer = arr_addr + offset
+                const slice_ptr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, .{});
+                slice_ptr.addArg2(arr_addr, offset);
+                try cur.addValue(self.allocator, slice_ptr);
+
+                // Compute length
+                // TODO: For now, we need the array length from the type system
+                // For MVP, require explicit end index
+                const len_val: *Value = if (s.end) |end_idx| len_blk: {
+                    const end_val = try self.convertNode(end_idx) orelse return error.MissingValue;
+                    const len = try self.func.newValue(.sub, TypeRegistry.I64, cur, .{});
+                    len.addArg2(end_val, start_val);
+                    try cur.addValue(self.allocator, len);
+                    break :len_blk len;
+                } else {
+                    // No end specified - need to get array length from type
+                    // For now, return error
+                    return error.MissingValue;
+                };
+
+                // Create slice value using slice_make(ptr, len)
+                const slice_val = try self.func.newValue(.slice_make, node.type_idx, cur, .{});
+                slice_val.addArg2(slice_ptr, len_val);
+                try cur.addValue(self.allocator, slice_val);
+
+                debug.log(.ssa, "    slice_local local={d} -> v{}", .{ s.local_idx, slice_val.id });
+                break :blk slice_val;
+            },
+
+            .slice_value => |s| blk: {
+                // Create slice from computed value: expr[start..end]
+                const base_val = try self.convertNode(s.base) orelse return error.MissingValue;
+
+                // Compute start offset and slice pointer
+                const start_val: *Value = if (s.start) |start_idx| start_blk: {
+                    break :start_blk try self.convertNode(start_idx) orelse return error.MissingValue;
+                } else zero_blk: {
+                    // Default start is 0
+                    const zero = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                    zero.aux_int = 0;
+                    try cur.addValue(self.allocator, zero);
+                    break :zero_blk zero;
+                };
+
+                // Compute offset = start * elem_size
+                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                elem_size_val.aux_int = @intCast(s.elem_size);
+                try cur.addValue(self.allocator, elem_size_val);
+
+                const offset = try self.func.newValue(.mul, TypeRegistry.I64, cur, .{});
+                offset.addArg2(start_val, elem_size_val);
+                try cur.addValue(self.allocator, offset);
+
+                // Compute slice pointer = base_val + offset
+                const slice_ptr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, .{});
+                slice_ptr.addArg2(base_val, offset);
+                try cur.addValue(self.allocator, slice_ptr);
+
+                // Compute length
+                const len_val: *Value = if (s.end) |end_idx| len_blk: {
+                    const end_val = try self.convertNode(end_idx) orelse return error.MissingValue;
+                    const len = try self.func.newValue(.sub, TypeRegistry.I64, cur, .{});
+                    len.addArg2(end_val, start_val);
+                    try cur.addValue(self.allocator, len);
+                    break :len_blk len;
+                } else {
+                    // No end specified - need to get slice/array length
+                    // For now, return error
+                    return error.MissingValue;
+                };
+
+                // Create slice value using slice_make(ptr, len)
+                const slice_val = try self.func.newValue(.slice_make, node.type_idx, cur, .{});
+                slice_val.addArg2(slice_ptr, len_val);
+                try cur.addValue(self.allocator, slice_val);
+
+                debug.log(.ssa, "    slice_value base=v{} -> v{}", .{ base_val.id, slice_val.id });
+                break :blk slice_val;
+            },
+
             // Unhandled cases - add as needed
             else => blk: {
                 // For now, return null for unhandled ops

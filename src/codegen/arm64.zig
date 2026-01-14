@@ -834,6 +834,58 @@ pub const ARM64CodeGen = struct {
                 }
             },
 
+            // === Slice Operations ===
+            // Slices are (ptr, len) pairs. For MVP, we track just the pointer.
+            // slice_make creates a slice from ptr and len arguments.
+            // We store ptr in the dest register and len in the next register.
+
+            .slice_make => {
+                // slice_make(ptr, len) -> creates a slice value
+                // For MVP: track ptr in dest_reg, ignore len for now
+                // (Full impl would need stack storage for 16-byte slice)
+                const args = value.args;
+                if (args.len >= 2) {
+                    const ptr_reg = self.getRegForValue(args[0]) orelse blk: {
+                        try self.ensureInReg(args[0], 0);
+                        break :blk @as(u5, 0);
+                    };
+                    const dest_reg = self.getDestRegForValue(value);
+                    // Copy ptr to dest
+                    if (ptr_reg != dest_reg) {
+                        try self.emit(asm_mod.encodeADDImm(dest_reg, ptr_reg, 0, 0));
+                    }
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                    debug.log(.codegen, "      slice_make ptr=x{d} -> x{d}", .{ ptr_reg, dest_reg });
+                }
+            },
+
+            .slice_ptr => {
+                // slice_ptr(slice) -> extract pointer from slice
+                // For MVP: slice is stored as ptr, so just copy
+                const args = value.args;
+                if (args.len >= 1) {
+                    const slice_reg = self.getRegForValue(args[0]) orelse blk: {
+                        try self.ensureInReg(args[0], 0);
+                        break :blk @as(u5, 0);
+                    };
+                    const dest_reg = self.getDestRegForValue(value);
+                    if (slice_reg != dest_reg) {
+                        try self.emit(asm_mod.encodeADDImm(dest_reg, slice_reg, 0, 0));
+                    }
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
+            .slice_len => {
+                // slice_len(slice) -> extract length from slice
+                // For MVP: we'd need to track len separately
+                // For now, return 0 as placeholder
+                const dest_reg = self.getDestRegForValue(value);
+                try self.emitLoadImmediate(dest_reg, 0);
+                try self.value_regs.put(self.allocator, value, dest_reg);
+                debug.log(.codegen, "      slice_len -> x{d} (placeholder 0)", .{dest_reg});
+            },
+
             .neg => {
                 // NEG Rd, Rm is an alias for SUB Rd, XZR, Rm
                 const args = value.args;

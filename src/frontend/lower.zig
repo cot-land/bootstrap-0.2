@@ -678,6 +678,9 @@ pub const Lowerer = struct {
             .array_literal => |al| {
                 return try self.lowerArrayLiteral(al);
             },
+            .slice_expr => |se| {
+                return try self.lowerSliceExpr(se);
+            },
             else => return ir.null_node,
         }
     }
@@ -904,6 +907,53 @@ pub const Lowerer = struct {
 
         // Return the local address (arrays are passed by reference)
         return try fb.emitAddrLocal(local_idx, array_type, al.span);
+    }
+
+    /// Lower slice expression: arr[start..end]
+    fn lowerSliceExpr(self: *Lowerer, se: ast.SliceExpr) Error!ir.NodeIndex {
+        debug.log(.lower, "lowerSliceExpr", .{});
+
+        const fb = self.current_func orelse return ir.null_node;
+
+        // Get base type to find element type
+        const base_type_idx = self.inferExprType(se.base);
+        const base_type = self.type_reg.get(base_type_idx);
+
+        // Determine element type and size
+        const elem_type_idx: TypeIndex = switch (base_type) {
+            .array => |a| a.elem,
+            .slice => |s| s.elem,
+            else => return ir.null_node,
+        };
+        const elem_size = self.type_reg.sizeOf(elem_type_idx);
+
+        // Create slice type
+        const slice_type = self.type_reg.makeSlice(elem_type_idx) catch return ir.null_node;
+
+        // Lower start and end indices (may be null)
+        var start_node: ?ir.NodeIndex = null;
+        var end_node: ?ir.NodeIndex = null;
+
+        if (se.start != null_node) {
+            start_node = try self.lowerExprNode(se.start);
+        }
+        if (se.end != null_node) {
+            end_node = try self.lowerExprNode(se.end);
+        }
+
+        // Check if base is local identifier
+        const base_node = self.tree.getNode(se.base) orelse return ir.null_node;
+        const base_expr = base_node.asExpr() orelse return ir.null_node;
+
+        if (base_expr == .ident) {
+            if (fb.lookupLocal(base_expr.ident.name)) |local_idx| {
+                return try fb.emitSliceLocal(local_idx, start_node, end_node, elem_size, slice_type, se.span);
+            }
+        }
+
+        // Base is a computed expression
+        const base_val = try self.lowerExprNode(se.base);
+        return try fb.emitSliceValue(base_val, start_node, end_node, elem_size, slice_type, se.span);
     }
 
     fn lowerCall(self: *Lowerer, call: ast.Call) Error!ir.NodeIndex {

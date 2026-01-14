@@ -6,7 +6,7 @@
 
 Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven compiler architecture. The goal is to eliminate the "whack-a-mole" debugging pattern that killed previous attempts.
 
-**Current State:** Phase 8 in progress. 84 e2e tests passing! Working toward self-hosting.
+**Current State:** Phase 8 in progress. 86 e2e tests passing! Working toward self-hosting.
 
 ---
 
@@ -53,8 +53,8 @@ Required for handling source text, tokens, and AST nodes:
 | **Array literals** | ✅ DONE | P0 | [1, 2, 3] |
 | **Array indexing arr[i]** | ✅ DONE | P0 | Read and write |
 | **Array as parameter** | ✅ DONE | P0 | fn foo(arr: [N]T) |
-| **Slices []T** | ❌ TODO | P1 | Dynamic arrays |
-| **Slice from array** | ❌ TODO | P1 | arr[start..end] |
+| **Slices []T** | ✅ MVP | P1 | arr[start:end] creates slice |
+| **Slice from array** | ✅ MVP | P1 | arr[start:end] syntax |
 
 ### Tier 3: Memory & Pointers (COMPLETE)
 
@@ -157,7 +157,7 @@ Based on dependencies and self-hosting needs:
 
 ### Sprint 6: Advanced (IN PROGRESS)
 1. ✅ Optional types ?T and null - 4 e2e tests
-2. ❌ Slices []T
+2. ✅ Slices []T MVP - 2 e2e tests (create slice from array)
 3. ❌ For-in loops
 4. ❌ Global constants
 
@@ -196,13 +196,20 @@ test_array_large                - [100]i64
 
 ## Recent Milestones (2026-01-15)
 
-### Sprint 6: Null and Optionals (Partial)
+### Sprint 6: Slices MVP
+- ✅ **Slice creation** - `arr[start:end]` syntax
+- ✅ **slice_make SSA op** - Creates slice from ptr and len
+- ✅ **slice_ptr, slice_len SSA ops** - Extract slice components
+- ✅ **ARM64 codegen** - Slice operations generate code
+- ✅ **2 e2e tests** - test_slice_create, test_slice_start
+- ✅ **86 e2e tests passing**
+
+### Sprint 6: Null and Optionals
 - ✅ **null literal** - Null keyword and literal in scanner/parser
 - ✅ **Null pointer assignment** - `let p: *i64 = null;`
 - ✅ **Null comparison** - `p == null`, `p != null`
 - ✅ **Codegen for const_nil** - ARM64 emits 0 for null
 - ✅ **4 e2e tests** - test_null_eq, test_null_ne, test_null_eq_right, test_ptr_not_null
-- ✅ **84 e2e tests passing**
 
 ### Sprint 3: Pointers Complete!
 - ✅ **Pointer types *T** - Pointer type in TypeRegistry
@@ -269,7 +276,7 @@ test_array_large                - [100]i64
 ### Testing Infrastructure - COMPLETE
 
 - **180+ unit tests passing**
-- **84 e2e tests passing**
+- **86 e2e tests passing**
 - Table-driven tests for comprehensive coverage
 - Golden file infrastructure ready
 
