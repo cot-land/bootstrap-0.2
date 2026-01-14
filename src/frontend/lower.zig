@@ -527,6 +527,19 @@ pub const Lowerer = struct {
 
                 if (base_expr == .ident) {
                     if (fb.lookupLocal(base_expr.ident.name)) |local_idx| {
+                        const local = fb.locals.items[local_idx];
+                        const local_type = self.type_reg.get(local.type_idx);
+
+                        // Check if local is a POINTER to struct (ptr.field = val)
+                        // Following Go's ODOTPTR pattern: load ptr, add offset, store
+                        if (local_type == .pointer) {
+                            // Load the pointer value from local
+                            const ptr_val = try fb.emitLoadLocal(local_idx, local.type_idx, assign.span);
+                            // Store value at ptr + field_offset using store_field
+                            _ = try fb.emitStoreField(ptr_val, field_idx, field_offset, value_node, assign.span);
+                            return;
+                        }
+
                         // Emit StoreLocalField for direct store to struct local
                         _ = try fb.emitStoreLocalField(local_idx, field_idx, field_offset, value_node, assign.span);
                         return;
@@ -543,7 +556,7 @@ pub const Lowerer = struct {
                     return;
                 }
 
-                // TODO: Handle pointer field store (PtrFieldStore)
+                // Pointer field store handled above via ident check
             },
             .index => |idx| {
                 // Array index assignment: arr[i] = x

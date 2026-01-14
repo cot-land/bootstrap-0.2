@@ -2,7 +2,7 @@
 // COT END-TO-END TEST SUITE
 // ============================================================================
 //
-// Progress: 104 / 104 tests passing (slice return + computed base!)
+// Progress: 105 / 105 tests passing (slice return + computed base + ptr field store!)
 //
 // ============================================================================
 // STATUS TRACKER
@@ -732,6 +732,19 @@ fn test_ptr_expr() i64 {
     return pa.* + pb.*;
 }
 
+// Test pointer field store: ptr.field = value
+fn set_point_x(p: *Point, val: i64) void {
+    p.x = val;  // Store through pointer to struct field
+}
+
+fn test_ptr_field_store() i64 {
+    var pt: Point;
+    pt.x = 0;
+    pt.y = 0;
+    set_point_x(&pt, 42);
+    return pt.x;  // Should be 42
+}
+
 // ============================================================================
 // TIER 11: Bitwise Operators
 // ============================================================================
@@ -1238,6 +1251,7 @@ fn main() i64 {
     if test_ptr_modify() == 50 { passed = passed + 1; }
     if test_ptr_param() == 42 { passed = passed + 1; }
     if test_ptr_expr() == 42 { passed = passed + 1; }
+    if test_ptr_field_store() == 42 { passed = passed + 1; }
 
     // TIER 11: Bitwise operators
     if test_bitwise_and() == 10 { passed = passed + 1; }
