@@ -103,16 +103,40 @@ pub const SSABuilder = struct {
         // Initialize vars map to track parameters
         var vars = std.AutoHashMap(ir.LocalIdx, *Value).init(allocator);
 
-        // Initialize parameter values as arg ops and track them
+        // Initialize parameter values as arg ops and store them to stack
+        // With memory-based SSA, parameters need to be stored to their stack slots
+        // so that load_local (which uses local_addr + load) can read them.
+        //
+        // CRITICAL: Emit ALL arg ops FIRST, then ALL stores SECOND.
+        // This ensures arg registers (x0-x7) aren't overwritten by local_addr
+        // computations before we can store them.
+        //
+        // Phase 1: Create all arg values (captures values from ABI registers)
+        var param_values = std.ArrayListUnmanaged(*Value){};
+        var param_indices = std.ArrayListUnmanaged(usize){};
         for (ir_func.locals, 0..) |local, i| {
             if (local.is_param) {
                 const param_val = try func.newValue(.arg, local.type_idx, entry, .{});
                 param_val.aux_int = @intCast(local.param_idx);
                 try entry.addValue(allocator, param_val);
-                // Track parameter in vars so load_local can find it
+                try param_values.append(allocator, param_val);
+                try param_indices.append(allocator, i);
                 try vars.put(@intCast(i), param_val);
             }
         }
+
+        // Phase 2: Store all args to their stack slots
+        for (param_values.items, param_indices.items) |param_val, local_idx| {
+            const addr_val = try func.newValue(.local_addr, TypeRegistry.VOID, entry, .{});
+            addr_val.aux_int = @intCast(local_idx);
+            try entry.addValue(allocator, addr_val);
+
+            const store_val = try func.newValue(.store, TypeRegistry.VOID, entry, .{});
+            store_val.addArg2(addr_val, param_val);
+            try entry.addValue(allocator, store_val);
+        }
+        param_values.deinit(allocator);
+        param_indices.deinit(allocator);
 
         // Initialize block_map with entry block
         var block_map = std.AutoHashMap(ir.BlockIndex, *Block).init(allocator);
@@ -372,10 +396,42 @@ pub const SSABuilder = struct {
             },
 
             // === Variable Access ===
-            .load_local => |l| try self.variable(l.local_idx, node.type_idx),
+            .load_local => |l| blk: {
+                // Always emit actual load from memory for variables that might
+                // have their address taken. This is conservative but correct.
+                // TODO: Add escape analysis to use SSA variables when safe.
+
+                // Get address of local
+                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                addr_val.aux_int = @intCast(l.local_idx);
+                try cur.addValue(self.allocator, addr_val);
+
+                // Load value from address
+                const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
+                load_val.addArg(addr_val);
+                try cur.addValue(self.allocator, load_val);
+
+                break :blk load_val;
+            },
 
             .store_local => |s| blk: {
                 const value = try self.convertNode(s.value) orelse return error.MissingValue;
+
+                // Always emit actual store to memory for variables that might
+                // have their address taken. This is conservative but correct.
+                // TODO: Add escape analysis to avoid stores for purely SSA variables.
+
+                // Get address of local
+                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                addr_val.aux_int = @intCast(s.local_idx);
+                try cur.addValue(self.allocator, addr_val);
+
+                // Store value to address
+                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                store_val.addArg2(addr_val, value);
+                try cur.addValue(self.allocator, store_val);
+
+                // Also track in SSA for direct reads (when no address is taken)
                 self.assign(s.local_idx, value);
                 break :blk value; // Store returns the value for chaining
             },
@@ -486,6 +542,16 @@ pub const SSABuilder = struct {
                 load_val.addArg(ptr_val);
                 try cur.addValue(self.allocator, load_val);
                 break :blk load_val;
+            },
+
+            .ptr_store_value => |p| blk: {
+                // Store through computed pointer: ptr.* = value
+                const ptr_val = try self.convertNode(p.ptr) orelse return error.MissingValue;
+                const value = try self.convertNode(p.value) orelse return error.MissingValue;
+                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                store_val.addArg2(ptr_val, value);
+                try cur.addValue(self.allocator, store_val);
+                break :blk store_val;
             },
 
             // === Struct Field Operations ===
@@ -609,6 +675,153 @@ pub const SSABuilder = struct {
 
             // === Nop ===
             .nop => null,
+
+            // === Array Operations ===
+            // Following Go's pattern: arrays are stack-allocated,
+            // indexing is address calculation + memory load/store
+            // Go uses OpPtrIndex = base + index * elemSize
+
+            .index_local => |i| blk: {
+                // Read array element from local:
+                // 1. Get address of array (local_addr)
+                // 2. Convert index and compute offset (index * elem_size)
+                // 3. Add offset to base address (add_ptr)
+                // 4. Load the value
+                const index_val = try self.convertNode(i.index) orelse return error.MissingValue;
+
+                // Get base address of the array local
+                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                addr_val.aux_int = @intCast(i.local_idx);
+                try cur.addValue(self.allocator, addr_val);
+
+                // Create constant for element size
+                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                elem_size_val.aux_int = @intCast(i.elem_size);
+                try cur.addValue(self.allocator, elem_size_val);
+
+                // Compute offset: index * elem_size
+                const offset_val = try self.func.newValue(.mul, TypeRegistry.I64, cur, .{});
+                offset_val.addArg2(index_val, elem_size_val);
+                try cur.addValue(self.allocator, offset_val);
+
+                // Compute element address: base + offset
+                const elem_addr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, .{});
+                elem_addr.addArg2(addr_val, offset_val);
+                try cur.addValue(self.allocator, elem_addr);
+
+                // Load the value from the element address
+                const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
+                load_val.addArg(elem_addr);
+                try cur.addValue(self.allocator, load_val);
+
+                debug.log(.ssa, "    index_local local={d} index=v{} elem_size={d} -> v{}", .{ i.local_idx, index_val.id, i.elem_size, load_val.id });
+                break :blk load_val;
+            },
+
+            .store_index_local => |s| blk: {
+                // Store to array element:
+                // 1. Get address of array (local_addr)
+                // 2. Convert index and compute offset (index * elem_size)
+                // 3. Add offset to base address (add_ptr)
+                // 4. Store the value
+                const index_val = try self.convertNode(s.index) orelse return error.MissingValue;
+                const value = try self.convertNode(s.value) orelse return error.MissingValue;
+
+                // Get base address of the array local
+                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                addr_val.aux_int = @intCast(s.local_idx);
+                try cur.addValue(self.allocator, addr_val);
+
+                // Create constant for element size
+                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                elem_size_val.aux_int = @intCast(s.elem_size);
+                try cur.addValue(self.allocator, elem_size_val);
+
+                // Compute offset: index * elem_size
+                const offset_val = try self.func.newValue(.mul, TypeRegistry.I64, cur, .{});
+                offset_val.addArg2(index_val, elem_size_val);
+                try cur.addValue(self.allocator, offset_val);
+
+                // Compute element address: base + offset
+                const elem_addr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, .{});
+                elem_addr.addArg2(addr_val, offset_val);
+                try cur.addValue(self.allocator, elem_addr);
+
+                // Store the value to the element address
+                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                store_val.addArg2(elem_addr, value);
+                try cur.addValue(self.allocator, store_val);
+
+                debug.log(.ssa, "    store_index_local local={d} index=v{} value=v{}", .{ s.local_idx, index_val.id, value.id });
+                break :blk store_val;
+            },
+
+            .index_value => |i| blk: {
+                // Read array element from computed address:
+                // 1. Convert base (already an address)
+                // 2. Convert index and compute offset (index * elem_size)
+                // 3. Add offset to base address (add_ptr)
+                // 4. Load the value
+                const base_val = try self.convertNode(i.base) orelse return error.MissingValue;
+                const index_val = try self.convertNode(i.index) orelse return error.MissingValue;
+
+                // Create constant for element size
+                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                elem_size_val.aux_int = @intCast(i.elem_size);
+                try cur.addValue(self.allocator, elem_size_val);
+
+                // Compute offset: index * elem_size
+                const offset_val = try self.func.newValue(.mul, TypeRegistry.I64, cur, .{});
+                offset_val.addArg2(index_val, elem_size_val);
+                try cur.addValue(self.allocator, offset_val);
+
+                // Compute element address: base + offset
+                const elem_addr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, .{});
+                elem_addr.addArg2(base_val, offset_val);
+                try cur.addValue(self.allocator, elem_addr);
+
+                // Load the value from the element address
+                const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
+                load_val.addArg(elem_addr);
+                try cur.addValue(self.allocator, load_val);
+
+                debug.log(.ssa, "    index_value base=v{} index=v{} elem_size={d} -> v{}", .{ base_val.id, index_val.id, i.elem_size, load_val.id });
+                break :blk load_val;
+            },
+
+            .store_index_value => |s| blk: {
+                // Store to array element through computed address:
+                // 1. Convert base (pointer to array)
+                // 2. Convert index and compute offset (index * elem_size)
+                // 3. Add offset to base address (add_ptr)
+                // 4. Store the value
+                const base_val = try self.convertNode(s.base) orelse return error.MissingValue;
+                const index_val = try self.convertNode(s.index) orelse return error.MissingValue;
+                const value = try self.convertNode(s.value) orelse return error.MissingValue;
+
+                // Create constant for element size
+                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                elem_size_val.aux_int = @intCast(s.elem_size);
+                try cur.addValue(self.allocator, elem_size_val);
+
+                // Compute offset: index * elem_size
+                const offset_val = try self.func.newValue(.mul, TypeRegistry.I64, cur, .{});
+                offset_val.addArg2(index_val, elem_size_val);
+                try cur.addValue(self.allocator, offset_val);
+
+                // Compute element address: base + offset
+                const elem_addr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, .{});
+                elem_addr.addArg2(base_val, offset_val);
+                try cur.addValue(self.allocator, elem_addr);
+
+                // Store the value to the element address
+                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                store_val.addArg2(elem_addr, value);
+                try cur.addValue(self.allocator, store_val);
+
+                debug.log(.ssa, "    store_index_value base=v{} index=v{} value=v{}", .{ base_val.id, index_val.id, value.id });
+                break :blk store_val;
+            },
 
             // Unhandled cases - add as needed
             else => blk: {
@@ -1244,9 +1457,9 @@ test "SSABuilder integration: if-else control flow" {
     try std.testing.expectEqual(BlockKind.ret, succ2.kind);
 }
 
-test "SSABuilder integration: if-else with merge (phi needed)" {
+test "SSABuilder integration: if-else with merge (memory-based)" {
     // Test: fn test(cond: bool) i64 { var x: i64; if (cond) { x = 1; } else { x = 2; } return x; }
-    // This tests phi insertion for variable defined in different branches
+    // With conservative memory-based SSA, variables are loaded from memory (no phi needed)
     const allocator = std.testing.allocator;
 
     var type_reg = try TypeRegistry.init(allocator);
@@ -1311,32 +1524,30 @@ test "SSABuilder integration: if-else with merge (phi needed)" {
 
     // Find the merge block (ret block with 2 predecessors)
     var merge_found = false;
-    var phi_found = false;
+    var load_found = false;
     for (ssa_func.blocks.items) |block| {
         if (block.kind == .ret and block.preds.len == 2) {
             merge_found = true;
 
-            // The load_local in merge block should have been resolved
-            // Since different values come from different branches, we expect a phi
+            // With memory-based approach, load_local becomes local_addr + load
+            // No phi is needed - memory holds the correct value from whichever branch ran
             for (block.values.items) |val| {
                 // Should NOT have unresolved fwd_ref
                 try std.testing.expect(val.op != .fwd_ref);
-                // Look for phi node (or copy if values happened to be same)
-                if (val.op == .phi) {
-                    phi_found = true;
-                    // Phi should have 2 args (one from each predecessor)
-                    try std.testing.expectEqual(@as(usize, 2), val.argsLen());
+                // Look for load (memory load replaces phi)
+                if (val.op == .load) {
+                    load_found = true;
                 }
             }
         }
     }
     try std.testing.expect(merge_found);
-    try std.testing.expect(phi_found); // Different values from branches should create phi
+    try std.testing.expect(load_found); // Memory load used instead of phi
 }
 
-test "SSABuilder integration: phi with same value becomes copy" {
+test "SSABuilder integration: unmodified variable uses memory load" {
     // Test: fn test(x: i64) i64 { if (true) { } else { } return x; }
-    // When the same variable value is used without modification, phi should become copy
+    // With memory-based SSA, unmodified variables are loaded from memory
     const allocator = std.testing.allocator;
 
     var type_reg = try TypeRegistry.init(allocator);
@@ -1384,21 +1595,21 @@ test "SSABuilder integration: phi with same value becomes copy" {
     }
     builder.deinit();
 
-    // Find the merge block and check for copy (not phi)
-    var copy_found = false;
+    // Find the merge block and check for load (memory-based approach)
+    var load_found = false;
     for (ssa_func.blocks.items) |block| {
         if (block.kind == .ret and block.preds.len == 2) {
             for (block.values.items) |val| {
                 // Should NOT have unresolved fwd_ref
                 try std.testing.expect(val.op != .fwd_ref);
-                // Since x is unchanged, FwdRef should become copy (same value from both preds)
-                if (val.op == .copy) {
-                    copy_found = true;
+                // With memory-based approach, load_local becomes local_addr + load
+                if (val.op == .load) {
+                    load_found = true;
                 }
             }
         }
     }
-    try std.testing.expect(copy_found);
+    try std.testing.expect(load_found);
 }
 
 // ============================================================================

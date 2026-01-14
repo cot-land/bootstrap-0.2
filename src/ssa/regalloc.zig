@@ -550,6 +550,16 @@ pub const RegAllocState = struct {
                         self.freeReg(0);
                     }
                     try self.assignReg(v, 0);
+                } else if (v.op == .arg) {
+                    // Function argument - fixed register per ABI (x0, x1, ..., x7)
+                    const arg_reg: RegNum = @intCast(v.aux_int);
+                    if (self.regs[arg_reg].v != null) {
+                        // Another value is in this register - need to spill it
+                        if (try self.spillReg(arg_reg, block)) |spill| {
+                            try new_values.append(self.allocator, spill);
+                        }
+                    }
+                    try self.assignReg(v, arg_reg);
                 } else {
                     const reg = try self.allocReg(ARM64Regs.allocatable, block);
                     try self.assignReg(v, reg);

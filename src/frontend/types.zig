@@ -444,8 +444,37 @@ pub const TypeRegistry = struct {
         };
     }
 
+    /// Check if a type is an array.
+    pub fn isArray(self: *const TypeRegistry, idx: TypeIndex) bool {
+        const t = self.get(idx);
+        return t == .array;
+    }
+
+    /// Get the element type of an array.
+    pub fn arrayElem(self: *const TypeRegistry, idx: TypeIndex) TypeIndex {
+        const t = self.get(idx);
+        return switch (t) {
+            .array => |a| a.elem,
+            else => invalid_type,
+        };
+    }
+
+    /// Get the length of an array.
+    pub fn arrayLen(self: *const TypeRegistry, idx: TypeIndex) u64 {
+        const t = self.get(idx);
+        return switch (t) {
+            .array => |a| a.length,
+            else => 0,
+        };
+    }
+
     /// Get the size of a type in bytes.
     pub fn sizeOf(self: *const TypeRegistry, idx: TypeIndex) u32 {
+        // Handle untyped constants by defaulting to their concrete types
+        // Following Go's pattern: untyped int defaults to int (64-bit), untyped float to float64
+        if (idx == UNTYPED_INT) return 8; // Default to i64
+        if (idx == UNTYPED_FLOAT) return 8; // Default to f64
+
         const t = self.get(idx);
         return switch (t) {
             .basic => |k| k.size(),
@@ -559,6 +588,12 @@ pub const TypeRegistry = struct {
         // Pointer types
         if (from_t == .pointer and to_t == .pointer) {
             return self.equal(from_t.pointer.elem, to_t.pointer.elem);
+        }
+
+        // Array types - compare element type and length
+        if (from_t == .array and to_t == .array) {
+            return from_t.array.length == to_t.array.length and
+                self.isAssignable(from_t.array.elem, to_t.array.elem);
         }
 
         return false;

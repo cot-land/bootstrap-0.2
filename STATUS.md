@@ -1,12 +1,12 @@
 # Bootstrap 0.2 - Project Status
 
-**Last Updated: 2026-01-14**
+**Last Updated: 2026-01-15**
 
 ## Executive Summary
 
 Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven compiler architecture. The goal is to eliminate the "whack-a-mole" debugging pattern that killed previous attempts.
 
-**Current State:** Phase 8 in progress. 50 e2e tests passing! Working toward self-hosting.
+**Current State:** Phase 8 in progress. 59 e2e tests passing! Working toward self-hosting.
 
 ---
 
@@ -49,21 +49,23 @@ Required for handling source text, tokens, and AST nodes:
 | **len() builtin** | ✅ DONE | P0 | Works on literals and variables |
 | **Character literals** | ✅ DONE | P0 | 'a', '\n', '\\' |
 | **u8 type** | ✅ DONE | P0 | For characters/bytes |
-| **Fixed arrays [N]T** | ❌ TODO | P0 | [256]u8 for buffers |
-| **Array literals** | ❌ TODO | P0 | [1, 2, 3] |
-| **Array indexing arr[i]** | ❌ TODO | P0 | Read and write |
+| **Fixed arrays [N]T** | ✅ DONE | P0 | [256]u8 for buffers |
+| **Array literals** | ✅ DONE | P0 | [1, 2, 3] |
+| **Array indexing arr[i]** | ✅ DONE | P0 | Read and write |
+| **Array as parameter** | ✅ DONE | P0 | fn foo(arr: [N]T) |
 | **Slices []T** | ❌ TODO | P1 | Dynamic arrays |
 | **Slice from array** | ❌ TODO | P1 | arr[start..end] |
 
-### Tier 3: Memory & Pointers (TODO)
+### Tier 3: Memory & Pointers (COMPLETE)
 
 Required for tree structures and dynamic allocation:
 
 | Feature | Status | Priority | Notes |
 |---------|--------|----------|-------|
-| **Pointer types *T** | ❌ TODO | P0 | *i64, *Node |
-| **Address-of &x** | ❌ TODO | P0 | Get pointer to value |
-| **Dereference ptr.*** | ❌ TODO | P0 | Read through pointer |
+| **Pointer types *T** | ✅ DONE | P0 | *i64, *Node |
+| **Address-of &x** | ✅ DONE | P0 | Get pointer to value |
+| **Dereference ptr.*** | ✅ DONE | P0 | Read/write through pointer |
+| **Pointer as parameter** | ✅ DONE | P0 | fn foo(p: *i64) |
 | **Pointer arithmetic** | ❌ TODO | P2 | ptr + offset (maybe) |
 | **Optional types ?T** | ❌ TODO | P1 | Nullable values |
 | **null literal** | ❌ TODO | P1 | For optionals |
@@ -127,19 +129,21 @@ Based on dependencies and self-hosting needs:
 6. ✅ len() builtin for string literals (compile-time)
 7. ✅ len() builtin for string variables (runtime)
 
-### Sprint 2: Arrays
-1. ❌ Fixed array types [N]T
-2. ❌ Array literals [1, 2, 3]
-3. ❌ Array indexing arr[i]
-4. ❌ Array assignment arr[i] = x
+### Sprint 2: Arrays ✅ COMPLETE
+1. ✅ Fixed array types [N]T
+2. ✅ Array literals [1, 2, 3]
+3. ✅ Array indexing arr[i]
+4. ✅ Array assignment arr[i] = x
+5. ✅ Array as function parameter
 
-### Sprint 3: Pointers
-1. ❌ Pointer types *T
-2. ❌ Address-of operator &x
-3. ❌ Dereference operator ptr.*
-4. ❌ Pointer to struct fields
+### Sprint 3: Pointers ✅ COMPLETE
+1. ✅ Pointer types *T
+2. ✅ Address-of operator &x
+3. ✅ Dereference operator ptr.* (read and write)
+4. ✅ Pointer as function parameter
+5. ✅ Memory-based SSA (Go's pattern for address-taken variables)
 
-### Sprint 4: Bitwise & Logical
+### Sprint 4: Bitwise & Logical (IN PROGRESS)
 1. ❌ Bitwise operators (&, |, ^, ~, <<, >>)
 2. ❌ Logical operators (and, or, not)
 3. ❌ Short-circuit evaluation
@@ -188,32 +192,38 @@ test_array_large                - [100]i64
 
 ---
 
-## Recent Milestones (2026-01-14)
+## Recent Milestones (2026-01-15)
 
+### Sprint 3: Pointers Complete!
+- ✅ **Pointer types *T** - Pointer type in TypeRegistry
+- ✅ **Address-of &x** - Takes address of local variables
+- ✅ **Dereference ptr.*** - Read and write through pointers
+- ✅ **Pointer as parameter** - Pass pointers to functions
+- ✅ **Memory-based SSA** - Following Go's pattern for address-taken variables
+- ✅ **59 e2e tests passing**
+
+### Sprint 2: Arrays Complete! (2026-01-14)
+- ✅ **Fixed arrays [N]T** - Array types in TypeRegistry
+- ✅ **Array literals [1, 2, 3]** - Initialize arrays
+- ✅ **Array indexing arr[i]** - Read with constants and variables
+- ✅ **Array assignment arr[i] = x** - Write to array elements
+- ✅ **Array as parameter** - Pass arrays to functions
+- ✅ **54 e2e tests passing**
+
+### Earlier Milestones (2026-01-14)
 - ✅ `fn main() i64 { return 42; }` compiles and runs correctly
-- ✅ `fn main() i64 { return 20 + 22; }` compiles and runs (returns 42)
 - ✅ **Function calls work!** `add_one(41)` returns 42
 - ✅ **Local variables work!** `let x: i64 = 42; return x;`
 - ✅ **Comparisons work!** `==, !=, <, <=, >, >=` with CMP + CSET
 - ✅ **Conditionals work!** `if 1 == 2 { return 0; } else { return 42; }`
 - ✅ **While loops with phi nodes work!** Variable mutation in loops
 - ✅ **Fibonacci compiles and returns 55!** (10th Fibonacci number)
-- ✅ **Nested function calls work!** Register allocator properly spills
-- ✅ **Unary minus (-x)** - NEG instruction via SUB Rd, XZR, Rm
-- ✅ **Modulo operator (%)** - Implemented as a - (a/b)*b
-- ✅ **Recursive functions** - factorial(5) returns 120
-- ✅ **Boolean type** - `let b: bool = true; if b { ... }`
-- ✅ **9+ function arguments** - Stack argument passing beyond x0-x7
-- ✅ **Nested while loops** - Multiple loop nesting works
-- ✅ **Break/continue** - Loop control flow statements
-- ✅ **Void functions** - Functions with no return value
 - ✅ **Structs!** - Simple, nested, and large structs (64+ bytes) all working
-- ✅ **43 e2e tests passing** - Comprehensive test suite
 
-### Regalloc Fixes (2026-01-14)
-- Fixed register freeing for live-out values (Go's pattern)
-- Fixed use-count based register freeing
-- Found by investigating Go's regalloc.go implementation
+### Key Architecture Changes
+- **Memory-based SSA:** Variables use local_addr + load/store instead of pure SSA
+- **Regalloc arg handling:** Function args use fixed ABI registers (x0-x7)
+- **Two-phase parameter init:** All args captured first, then stored to stack
 
 ---
 
@@ -248,8 +258,8 @@ test_array_large                - [100]i64
 
 ### Testing Infrastructure - COMPLETE
 
-- **185+ unit tests passing**
-- **43 e2e tests passing**
+- **180+ unit tests passing**
+- **59 e2e tests passing**
 - Table-driven tests for comprehensive coverage
 - Golden file infrastructure ready
 

@@ -221,6 +221,22 @@ pub const IndexValue = struct {
     elem_size: u32,
 };
 
+/// Store to local array element. (Go: arr[i] = x)
+pub const StoreIndexLocal = struct {
+    local_idx: LocalIdx,
+    index: NodeIndex,
+    value: NodeIndex,
+    elem_size: u32,
+};
+
+/// Store to array element through computed address. (Go: arr[i] = x where arr is pointer)
+pub const StoreIndexValue = struct {
+    base: NodeIndex,
+    index: NodeIndex,
+    value: NodeIndex,
+    elem_size: u32,
+};
+
 /// Slice operation on local. (Go: OSLICE on local)
 pub const SliceLocal = struct {
     local_idx: LocalIdx,
@@ -474,6 +490,10 @@ pub const Node = struct {
         index_local: IndexLocal,
         /// Index into computed array/slice.
         index_value: IndexValue,
+        /// Store to local array element.
+        store_index_local: StoreIndexLocal,
+        /// Store to array element through computed address.
+        store_index_value: StoreIndexValue,
         /// Create slice from local.
         slice_local: SliceLocal,
         /// Create slice from computed value.
@@ -987,6 +1007,16 @@ pub const FuncBuilder = struct {
         return self.emit(Node.init(.{ .index_value = .{ .base = base, .index = index, .elem_size = elem_size } }, type_idx, span));
     }
 
+    /// Emit store to local array element.
+    pub fn emitStoreIndexLocal(self: *FuncBuilder, local_idx: LocalIdx, index: NodeIndex, value: NodeIndex, elem_size: u32, span: Span) !NodeIndex {
+        return self.emit(Node.init(.{ .store_index_local = .{ .local_idx = local_idx, .index = index, .value = value, .elem_size = elem_size } }, TypeRegistry.VOID, span));
+    }
+
+    /// Emit store to array element through computed address (for array parameters).
+    pub fn emitStoreIndexValue(self: *FuncBuilder, base: NodeIndex, index: NodeIndex, value: NodeIndex, elem_size: u32, span: Span) !NodeIndex {
+        return self.emit(Node.init(.{ .store_index_value = .{ .base = base, .index = index, .value = value, .elem_size = elem_size } }, TypeRegistry.VOID, span));
+    }
+
     /// Emit pointer load through local.
     pub fn emitPtrLoad(self: *FuncBuilder, ptr_local: LocalIdx, type_idx: TypeIndex, span: Span) !NodeIndex {
         return self.emit(Node.init(.{ .ptr_load = .{ .ptr_local = ptr_local } }, type_idx, span));
@@ -1000,6 +1030,11 @@ pub const FuncBuilder = struct {
     /// Emit pointer load through computed pointer value.
     pub fn emitPtrLoadValue(self: *FuncBuilder, ptr: NodeIndex, type_idx: TypeIndex, span: Span) !NodeIndex {
         return self.emit(Node.init(.{ .ptr_load_value = .{ .ptr = ptr } }, type_idx, span));
+    }
+
+    /// Emit pointer store through computed pointer value.
+    pub fn emitPtrStoreValue(self: *FuncBuilder, ptr: NodeIndex, value: NodeIndex, span: Span) !NodeIndex {
+        return self.emit(Node.init(.{ .ptr_store_value = .{ .ptr = ptr, .value = value } }, TypeRegistry.VOID, span));
     }
 
     /// Emit function call.
@@ -1316,6 +1351,7 @@ pub fn debugPrintNode(node: *const Node, writer: anytype) !void {
 
         .index_local => |i| try writer.print("index_local local={d} index={d}", .{ i.local_idx, i.index }),
         .index_value => |i| try writer.print("index_value base={d} index={d}", .{ i.base, i.index }),
+        .store_index_local => |s| try writer.print("store_index_local local={d} index={d} value={d}", .{ s.local_idx, s.index, s.value }),
 
         .ptr_load => |p| try writer.print("ptr_load local={d}", .{p.ptr_local}),
         .ptr_store => |p| try writer.print("ptr_store local={d} value={d}", .{ p.ptr_local, p.value }),

@@ -19,6 +19,7 @@ const source = @import("source.zig");
 const errors = @import("errors.zig");
 const checker = @import("checker.zig");
 const token = @import("token.zig");
+const debug = @import("../pipeline_debug.zig");
 
 const Allocator = std.mem.Allocator;
 const Ast = ast.Ast;
@@ -299,13 +300,61 @@ pub const Lowerer = struct {
 
         // Initialize if there's a value
         if (var_stmt.value != null_node) {
+            const is_array = self.type_reg.isArray(type_idx);
+            debug.log(.lower, "lowerLocalVarDecl var='{s}' type={d} isArray={}", .{ var_stmt.name, type_idx, is_array });
+
             // Special handling for string type: store (ptr, len) pair
             if (type_idx == TypeRegistry.STRING) {
+                debug.log(.lower, "  -> string path", .{});
                 try self.lowerStringInit(local_idx, var_stmt.value, var_stmt.span);
+            } else if (is_array) {
+                debug.log(.lower, "  -> array path", .{});
+                // Special handling for array literals: initialize directly into variable storage
+                try self.lowerArrayInit(local_idx, var_stmt.value, var_stmt.span);
             } else {
+                debug.log(.lower, "  -> default path", .{});
                 const value_node = try self.lowerExprNode(var_stmt.value);
                 _ = try fb.emitStoreLocal(local_idx, value_node, var_stmt.span);
             }
+        }
+    }
+
+    /// Lower array initialization: store elements directly into local variable storage.
+    /// Following Go's pattern from cmd/compile/internal/walk/complit.go:
+    /// Array literals are initialized element-by-element directly into the destination.
+    fn lowerArrayInit(self: *Lowerer, local_idx: ir.LocalIdx, value_idx: NodeIndex, span: source.Span) !void {
+        debug.log(.lower, "lowerArrayInit local_idx={d}", .{local_idx});
+
+        const fb = self.current_func orelse return;
+
+        const value_node = self.tree.getNode(value_idx) orelse return;
+        const value_expr = value_node.asExpr() orelse return;
+
+        debug.log(.lower, "  value_expr tag={s}", .{@tagName(value_expr)});
+
+        // Check if it's an array literal using switch (more reliable than == comparison)
+        switch (value_expr) {
+            .array_literal => |al| {
+                // Get element type and size
+                if (al.elements.len == 0) return;
+                const first_elem_type = self.inferExprType(al.elements[0]);
+                const elem_size = self.type_reg.sizeOf(first_elem_type);
+                debug.log(.lower, "  elem_type={d} elem_size={d} count={d}", .{ first_elem_type, elem_size, al.elements.len });
+
+                // Initialize each element directly into the destination local
+                // This follows Go's fixedlit pattern: var[index] = value for each element
+                for (al.elements, 0..) |elem_idx, i| {
+                    const elem_node = try self.lowerExprNode(elem_idx);
+                    const idx_node = try fb.emitConstInt(@intCast(i), TypeRegistry.I64, span);
+                    _ = try fb.emitStoreIndexLocal(local_idx, idx_node, elem_node, elem_size, span);
+                }
+            },
+            else => {
+                // Not an array literal - this would be array copy (Go: b = a copies all elements)
+                // For now, just store the value (TODO: implement proper array copy)
+                const value_node_ir = try self.lowerExprNode(value_idx);
+                _ = try fb.emitStoreLocal(local_idx, value_node_ir, span);
+            },
         }
     }
 
@@ -439,12 +488,47 @@ pub const Lowerer = struct {
                 // TODO: Handle pointer field store (PtrFieldStore)
             },
             .index => |idx| {
-                // TODO: implement index assignment
-                _ = idx;
+                // Array index assignment: arr[i] = x
+                // Get array type info
+                const base_type_idx = self.inferExprType(idx.base);
+                const base_type = self.type_reg.get(base_type_idx);
+
+                const elem_type: TypeIndex = switch (base_type) {
+                    .array => |a| a.elem,
+                    .slice => |s| s.elem,
+                    else => return,
+                };
+                const elem_size = self.type_reg.sizeOf(elem_type);
+
+                // Lower the index and value
+                const index_node = try self.lowerExprNode(idx.idx);
+                const value_node = try self.lowerExprNode(assign.value);
+
+                // Check if base is a local variable
+                const base_node = self.tree.getNode(idx.base) orelse return;
+                const base_expr = base_node.asExpr() orelse return;
+
+                if (base_expr == .ident) {
+                    if (fb.lookupLocal(base_expr.ident.name)) |local_idx| {
+                        const local = fb.locals.items[local_idx];
+                        // Array parameters are passed by reference - the local contains a pointer
+                        if (local.is_param and self.type_reg.isArray(local.type_idx)) {
+                            const ptr_val = try fb.emitLoadLocal(local_idx, local.type_idx, assign.span);
+                            _ = try fb.emitStoreIndexValue(ptr_val, index_node, value_node, elem_size, assign.span);
+                            return;
+                        }
+                        _ = try fb.emitStoreIndexLocal(local_idx, index_node, value_node, elem_size, assign.span);
+                        return;
+                    }
+                }
+                // TODO: Handle computed base (index into expression)
             },
             .deref => |d| {
-                // TODO: implement deref assignment
-                _ = d;
+                // Dereference assignment: ptr.* = value
+                // Lower the pointer expression, then emit ptr_store_value
+                const ptr_node = try self.lowerExprNode(d.operand);
+                const value_node = try self.lowerExprNode(assign.value);
+                _ = try fb.emitPtrStoreValue(ptr_node, value_node, assign.span);
             },
             else => {},
         }
@@ -589,9 +673,10 @@ pub const Lowerer = struct {
                 return try self.lowerFieldAccess(fa);
             },
             .index => |idx| {
-                // TODO: implement index expression
-                _ = idx;
-                return ir.null_node;
+                return try self.lowerIndex(idx);
+            },
+            .array_literal => |al| {
+                return try self.lowerArrayLiteral(al);
             },
             else => return ir.null_node,
         }
@@ -647,6 +732,11 @@ pub const Lowerer = struct {
         // Look up local variable
         if (fb.lookupLocal(ident.name)) |local_idx| {
             const local_type = fb.locals.items[local_idx].type_idx;
+            // Arrays are passed by reference - emit address instead of load
+            // Following Go's pattern: arrays decay to pointers when used as values
+            if (self.type_reg.isArray(local_type)) {
+                return try fb.emitAddrLocal(local_idx, local_type, ident.span);
+            }
             return try fb.emitLoadLocal(local_idx, local_type, ident.span);
         }
 
@@ -725,6 +815,83 @@ pub const Lowerer = struct {
         // Base is a computed expression - lower it and emit FieldValue
         const base_val = try self.lowerExprNode(fa.base);
         return try fb.emitFieldValue(base_val, field_idx, field_offset, field_type, fa.span);
+    }
+
+    /// Lower array index expression: arr[i]
+    /// Following Go's pattern: compute element address, then load
+    fn lowerIndex(self: *Lowerer, idx: ast.Index) Error!ir.NodeIndex {
+        const fb = self.current_func orelse return ir.null_node;
+
+        // Get array type info
+        const base_type_idx = self.inferExprType(idx.base);
+        const base_type = self.type_reg.get(base_type_idx);
+
+        // Get element type and size
+        const elem_type: TypeIndex = switch (base_type) {
+            .array => |a| a.elem,
+            .slice => |s| s.elem,
+            else => return ir.null_node,
+        };
+        const elem_size = self.type_reg.sizeOf(elem_type);
+
+        // Lower the index expression
+        const index_node = try self.lowerExprNode(idx.idx);
+
+        // Check if base is a local variable (optimized path)
+        const base_node = self.tree.getNode(idx.base) orelse return ir.null_node;
+        const base_expr = base_node.asExpr() orelse return ir.null_node;
+
+        if (base_expr == .ident) {
+            if (fb.lookupLocal(base_expr.ident.name)) |local_idx| {
+                const local = fb.locals.items[local_idx];
+                // Array parameters are passed by reference - the local contains a pointer
+                // We need to load the pointer and use index_value instead of index_local
+                if (local.is_param and self.type_reg.isArray(local.type_idx)) {
+                    const ptr_val = try fb.emitLoadLocal(local_idx, local.type_idx, idx.span);
+                    return try fb.emitIndexValue(ptr_val, index_node, elem_size, elem_type, idx.span);
+                }
+                // Regular local array - emit index_local for direct access
+                return try fb.emitIndexLocal(local_idx, index_node, elem_size, elem_type, idx.span);
+            }
+        }
+
+        // Base is a computed expression - lower it and emit IndexValue
+        const base_val = try self.lowerExprNode(idx.base);
+        return try fb.emitIndexValue(base_val, index_node, elem_size, elem_type, idx.span);
+    }
+
+    /// Lower array literal: [a, b, c]
+    /// Creates a temp local, stores each element, returns the local
+    fn lowerArrayLiteral(self: *Lowerer, al: ast.ArrayLiteral) Error!ir.NodeIndex {
+        debug.log(.lower, "lowerArrayLiteral count={d}", .{al.elements.len});
+
+        const fb = self.current_func orelse return ir.null_node;
+
+        if (al.elements.len == 0) {
+            return ir.null_node;
+        }
+
+        // Get element type from first element
+        const first_elem_type = self.inferExprType(al.elements[0]);
+        const elem_size = self.type_reg.sizeOf(first_elem_type);
+
+        // Create array type
+        const array_type = self.type_reg.makeArray(first_elem_type, al.elements.len) catch return ir.null_node;
+        const array_size = self.type_reg.sizeOf(array_type);
+
+        // Create temp local for the array
+        const temp_name = try std.fmt.allocPrint(self.allocator, "__arr_{d}", .{fb.locals.items.len});
+        const local_idx = try fb.addLocalWithSize(temp_name, array_type, false, array_size);
+
+        // Store each element
+        for (al.elements, 0..) |elem_idx, i| {
+            const elem_node = try self.lowerExprNode(elem_idx);
+            const idx_node = try fb.emitConstInt(@intCast(i), TypeRegistry.I64, al.span);
+            _ = try fb.emitStoreIndexLocal(local_idx, idx_node, elem_node, elem_size, al.span);
+        }
+
+        // Return the local address (arrays are passed by reference)
+        return try fb.emitAddrLocal(local_idx, array_type, al.span);
     }
 
     fn lowerCall(self: *Lowerer, call: ast.Call) Error!ir.NodeIndex {
@@ -842,6 +1009,18 @@ pub const Lowerer = struct {
             .slice => |inner| {
                 const inner_type = self.resolveTypeNode(inner);
                 return self.type_reg.makeSlice(inner_type) catch TypeRegistry.VOID;
+            },
+            .array => |arr| {
+                // Array type: [size]elem
+                const elem_type = self.resolveTypeNode(arr.elem);
+                // Get size from the literal node
+                const size_node = self.tree.getNode(arr.size) orelse return TypeRegistry.VOID;
+                const size_expr = size_node.asExpr() orelse return TypeRegistry.VOID;
+                if (size_expr == .literal and size_expr.literal.kind == .int) {
+                    const length = std.fmt.parseInt(u64, size_expr.literal.value, 10) catch return TypeRegistry.VOID;
+                    return self.type_reg.makeArray(elem_type, length) catch TypeRegistry.VOID;
+                }
+                return TypeRegistry.VOID;
             },
             else => return TypeRegistry.VOID,
         }

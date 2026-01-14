@@ -14,6 +14,7 @@ const types = @import("types.zig");
 const errors = @import("errors.zig");
 const source = @import("source.zig");
 const token = @import("token.zig");
+const debug = @import("../pipeline_debug.zig");
 
 const Ast = ast.Ast;
 const Node = ast.Node;
@@ -401,6 +402,8 @@ pub const Checker = struct {
 
     /// Check function declaration.
     fn checkFnDecl(self: *Checker, f: ast.FnDecl, idx: NodeIndex) CheckError!void {
+        debug.log(.check, "checkFnDecl: {s}", .{f.name});
+
         const sym = self.scope.lookup(f.name) orelse return;
         const func_type = self.types.get(sym.type_idx);
         const return_type = switch (func_type) {
@@ -434,6 +437,7 @@ pub const Checker = struct {
 
         // Check body if present
         if (f.body != null_node) {
+            debug.log(.check, "  body node: {d}", .{f.body});
             try self.checkBlockExpr(f.body);
         }
 
@@ -1058,23 +1062,29 @@ pub const Checker = struct {
 
     /// Check block expression or statement (from function body).
     fn checkBlockExpr(self: *Checker, idx: NodeIndex) CheckError!void {
+        debug.log(.check, "checkBlockExpr n{d}", .{idx});
         const node = self.tree.getNode(idx) orelse return;
 
         // Handle block_expr
         if (node.asExpr()) |expr| {
             if (expr == .block_expr) {
+                debug.log(.check, "  -> block_expr", .{});
                 _ = try self.checkBlock(expr.block_expr);
                 return;
             }
+            debug.log(.check, "  -> expr kind: {s}", .{@tagName(expr)});
         }
 
         // Handle block_stmt (function bodies use this)
         if (node.asStmt()) |stmt| {
             if (stmt == .block_stmt) {
+                debug.log(.check, "  -> block_stmt", .{});
                 try self.checkBlockStmt(stmt.block_stmt);
                 return;
             }
+            debug.log(.check, "  -> stmt kind: {s}", .{@tagName(stmt)});
         }
+        debug.log(.check, "  -> nothing matched!", .{});
     }
 
     /// Check string interpolation.
@@ -1115,7 +1125,12 @@ pub const Checker = struct {
     /// Check a statement.
     fn checkStmt(self: *Checker, idx: NodeIndex) CheckError!void {
         const node = self.tree.getNode(idx) orelse return;
-        const stmt = node.asStmt() orelse return;
+        const stmt = node.asStmt() orelse {
+            debug.log(.check, "checkStmt n{d}: not a statement", .{idx});
+            return;
+        };
+
+        debug.log(.check, "checkStmt n{d}: {s}", .{ idx, @tagName(stmt) });
 
         switch (stmt) {
             .expr_stmt => |es| {
@@ -1281,13 +1296,16 @@ pub const Checker = struct {
 
     /// Check block statement.
     fn checkBlockStmt(self: *Checker, bs: ast.BlockStmt) CheckError!void {
+        debug.log(.check, "checkBlockStmt: {d} statements", .{bs.stmts.len});
+
         var block_scope = Scope.init(self.allocator, self.scope);
         defer block_scope.deinit();
 
         const old_scope = self.scope;
         self.scope = &block_scope;
 
-        for (bs.stmts) |stmt_idx| {
+        for (bs.stmts, 0..) |stmt_idx, i| {
+            debug.log(.check, "  checking stmt {d}: node idx={d}", .{ i, stmt_idx });
             try self.checkStmt(stmt_idx);
         }
 

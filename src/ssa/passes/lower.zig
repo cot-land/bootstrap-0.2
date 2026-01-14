@@ -132,6 +132,7 @@ pub fn lowerOp(op: Op, aux_int: i64) LowerResult {
 
         // Arithmetic
         .add => .{ .primary = .add },
+        .add_ptr => .{ .primary = .add }, // Pointer addition is just regular add
         .sub => .{ .primary = .sub },
         .mul => .{ .primary = .mul },
         .div => .{ .primary = .sdiv },

@@ -653,7 +653,16 @@ pub const Parser = struct {
         const start = self.pos();
 
         switch (self.tok.tok) {
-            .sub, .lnot, .@"and", .not => {
+            .@"and" => {
+                // Address-of: &expr
+                self.advance();
+                const operand = try self.parseUnaryExpr() orelse return null;
+                return try self.tree.addExpr(.{ .addr_of = .{
+                    .operand = operand,
+                    .span = Span.init(start, self.pos()),
+                } });
+            },
+            .sub, .lnot, .not => {
                 const op = self.tok.tok;
                 self.advance();
                 const operand = try self.parseUnaryExpr() orelse return null;
@@ -671,29 +680,26 @@ pub const Parser = struct {
     fn parsePrimaryExpr(self: *Parser) ParseError!?NodeIndex {
         var expr = try self.parseOperand() orelse return null;
 
-        // Parse postfix operators: .field, [index], (args)
+        // Parse postfix operators: .field, [index], (args), .*, .?
         while (true) {
-            if (self.match(.period)) {
+            if (self.match(.period_star)) {
+                // Dereference: expr.*
+                const expr_span = self.tree.getNode(expr).?.span();
+                expr = try self.tree.addExpr(.{ .deref = .{
+                    .operand = expr,
+                    .span = Span.init(expr_span.start, self.pos()),
+                } });
+            } else if (self.match(.period_question)) {
+                // Optional unwrap: expr.?
+                const expr_span = self.tree.getNode(expr).?.span();
+                expr = try self.tree.addExpr(.{ .unary = .{
+                    .op = .question,
+                    .operand = expr,
+                    .span = Span.init(expr_span.start, self.pos()),
+                } });
+            } else if (self.match(.period)) {
                 // Field access or method call
-                if (self.check(.mul)) {
-                    // Dereference: expr.*
-                    self.advance();
-                    const expr_span = self.tree.getNode(expr).?.span();
-                    expr = try self.tree.addExpr(.{ .deref = .{
-                        .operand = expr,
-                        .span = Span.init(expr_span.start, self.pos()),
-                    } });
-                } else if (self.check(.question)) {
-                    // Optional unwrap: expr.?
-                    // Represented as unary with ? op
-                    self.advance();
-                    const expr_span = self.tree.getNode(expr).?.span();
-                    expr = try self.tree.addExpr(.{ .unary = .{
-                        .op = .question,
-                        .operand = expr,
-                        .span = Span.init(expr_span.start, self.pos()),
-                    } });
-                } else if (self.check(.ident)) {
+                if (self.check(.ident)) {
                     // Field access: expr.field
                     const field = self.tok.text;
                     self.advance();
@@ -931,15 +937,6 @@ pub const Parser = struct {
                 return try self.tree.addExpr(.{ .field_access = .{
                     .base = null_node,
                     .field = name,
-                    .span = Span.init(start, self.pos()),
-                } });
-            },
-            .@"and" => {
-                // Address-of: &expr
-                self.advance();
-                const operand = try self.parseUnaryExpr() orelse return null;
-                return try self.tree.addExpr(.{ .addr_of = .{
-                    .operand = operand,
                     .span = Span.init(start, self.pos()),
                 } });
             },

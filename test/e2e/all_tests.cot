@@ -2,7 +2,7 @@
 // COT END-TO-END TEST SUITE
 // ============================================================================
 //
-// Progress: 49 / 113 tests passing (targeting 49 with len() builtin)
+// Progress: 59 / 113 tests passing (pointers complete)
 //
 // ============================================================================
 // STATUS TRACKER
@@ -59,12 +59,21 @@
 //   [x] test_len_string     - len() builtin with string literals
 //   [x] test_len_escape     - len() with escape sequences
 //   [x] test_len_string_var - len() with string variables (runtime)
+//   [x] test_array_index    - array indexing with constants
+//   [x] test_array_assign   - array element assignment
+//   [x] test_array_var_index - array indexing with variables
+//   [x] test_array_param    - array as function parameter
+//   [x] test_ptr_read       - pointer read (dereference)
+//   [x] test_ptr_write      - pointer write (dereference assignment)
+//   [x] test_ptr_modify     - pointer modifying original variable
+//   [x] test_ptr_param      - pointer as function parameter
+//   [x] test_ptr_expr       - multiple dereferences in expression
 //
 // BLOCKED - Need more struct features (16):
 //   [ ] test_struct_init, test_struct_param, test_struct_return, ...
 //
-// BLOCKED - Need advanced features (41):
-//   [ ] enums, unions, arrays, slices, strings, pointers, for loops, ...
+// BLOCKED - Need advanced features (32):
+//   [ ] enums, unions, slices, for loops, ...
 //
 // ============================================================================
 // IMPLEMENTATION ORDER
@@ -598,8 +607,113 @@ fn test_len_string_var() i64 {
 }
 
 // ============================================================================
-// TIER 8+: BLOCKED - Advanced Features
-// Need: enums, unions, arrays, slices, strings, pointers, etc.
+// TIER 9: Arrays
+// ============================================================================
+
+// Test array declaration and indexing
+fn test_array_index() i64 {
+    var arr: [3]i64 = [10, 20, 30];
+    if arr[0] == 10 {
+        if arr[1] == 20 {
+            if arr[2] == 30 {
+                return 42;
+            }
+        }
+    }
+    return 0;
+}
+
+// Test array element assignment
+fn test_array_assign() i64 {
+    var arr: [3]i64 = [0, 0, 0];
+    arr[0] = 10;
+    arr[1] = 20;
+    arr[2] = 12;
+    return arr[0] + arr[1] + arr[2];
+}
+
+// Test array with variable index
+fn test_array_var_index() i64 {
+    var arr: [5]i64 = [1, 2, 3, 4, 5];
+    var sum: i64 = 0;
+    var i: i64 = 0;
+    while i < 5 {
+        sum = sum + arr[i];
+        i = i + 1;
+    }
+    if sum == 15 {
+        return 42;
+    }
+    return 0;
+}
+
+// Test array sum helper for array test
+fn array_sum(arr: [4]i64) i64 {
+    return arr[0] + arr[1] + arr[2] + arr[3];
+}
+
+// Test array as function parameter
+fn test_array_param() i64 {
+    var arr: [4]i64 = [10, 11, 12, 9];
+    if array_sum(arr) == 42 {
+        return 42;
+    }
+    return 0;
+}
+
+// ============================================================================
+// TIER 10: Pointers
+// ============================================================================
+
+// Test pointer read (dereference)
+fn test_ptr_read() i64 {
+    var x: i64 = 42;
+    let ptr: *i64 = &x;
+    return ptr.*;
+}
+
+// Test pointer write (dereference assignment)
+fn test_ptr_write() i64 {
+    var x: i64 = 10;
+    let ptr: *i64 = &x;
+    ptr.* = 42;
+    return x;
+}
+
+// Test pointer modifying original variable
+fn test_ptr_modify() i64 {
+    var a: i64 = 10;
+    var b: i64 = 20;
+    let ptr_a: *i64 = &a;
+    let ptr_b: *i64 = &b;
+    ptr_a.* = ptr_a.* + ptr_b.*;
+    return a + b;
+}
+
+// Test pointer as function parameter
+fn add_via_ptr(ptr: *i64, val: i64) void {
+    ptr.* = ptr.* + val;
+    return;
+}
+
+fn test_ptr_param() i64 {
+    var x: i64 = 10;
+    add_via_ptr(&x, 32);
+    return x;
+}
+
+// Test multiple dereferences in expression
+fn test_ptr_expr() i64 {
+    var a: i64 = 20;
+    var b: i64 = 22;
+    let pa: *i64 = &a;
+    let pb: *i64 = &b;
+    return pa.* + pb.*;
+}
+
+// ============================================================================
+// TIER 11+: BLOCKED - Advanced Features
+// Need: enums, unions, slices, for loops, etc.
 // ============================================================================
 
 // (many more tests to add as we implement features)
@@ -680,6 +794,19 @@ fn main() i64 {
     if test_len_string() == 42 { passed = passed + 1; }
     if test_len_escape() == 42 { passed = passed + 1; }
     if test_len_string_var() == 42 { passed = passed + 1; }
+
+    // TIER 9: Arrays
+    if test_array_index() == 42 { passed = passed + 1; }
+    if test_array_assign() == 42 { passed = passed + 1; }
+    if test_array_var_index() == 42 { passed = passed + 1; }
+    if test_array_param() == 42 { passed = passed + 1; }
+
+    // TIER 10: Pointers
+    if test_ptr_read() == 42 { passed = passed + 1; }
+    if test_ptr_write() == 42 { passed = passed + 1; }
+    if test_ptr_modify() == 50 { passed = passed + 1; }
+    if test_ptr_param() == 42 { passed = passed + 1; }
+    if test_ptr_expr() == 42 { passed = passed + 1; }
 
     return passed;
 }

@@ -806,6 +806,27 @@ pub const ARM64CodeGen = struct {
                 }
             },
 
+            .add_ptr => {
+                // Pointer arithmetic - same as add but for addresses
+                // Go uses OpPtrIndex which is: ptr + index * elemSize
+                // Our add_ptr receives pre-computed offset: ptr + offset
+                const args = value.args;
+                if (args.len >= 2) {
+                    const ptr_reg = self.getRegForValue(args[0]) orelse blk: {
+                        try self.ensureInReg(args[0], 0);
+                        break :blk @as(u5, 0);
+                    };
+                    const off_reg = self.getRegForValue(args[1]) orelse blk: {
+                        try self.ensureInReg(args[1], 1);
+                        break :blk @as(u5, 1);
+                    };
+                    const dest_reg = self.getDestRegForValue(value);
+                    try self.emit(asm_mod.encodeADDReg(dest_reg, ptr_reg, off_reg));
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                    debug.log(.codegen, "      -> ADD x{d}, x{d}, x{d} (add_ptr)", .{ dest_reg, ptr_reg, off_reg });
+                }
+            },
+
             .neg => {
                 // NEG Rd, Rm is an alias for SUB Rd, XZR, Rm
                 const args = value.args;
