@@ -408,9 +408,26 @@ pub const ARM64CodeGen = struct {
         // Use frame_size from stackalloc (already 16-byte aligned)
         const aligned_frame = self.frame_size;
 
-        // STP x29, x30, [sp, #-frame_size]!
-        const frame_off: i7 = @intCast(-@divExact(@as(i32, @intCast(aligned_frame)), 8));
-        try self.emit(asm_mod.encodeSTPPre(29, 30, 31, frame_off));
+        // STP pre-index can handle up to 504 bytes (7-bit signed * 8)
+        // For larger frames, use SUB sp first, then STP with signed offset
+        if (aligned_frame <= 504) {
+            // STP x29, x30, [sp, #-frame_size]!
+            const frame_off: i7 = @intCast(-@divExact(@as(i32, @intCast(aligned_frame)), 8));
+            try self.emit(asm_mod.encodeSTPPre(29, 30, 31, frame_off));
+        } else {
+            // Large frame: SUB sp, sp, #frame_size; STP x29, x30, [sp]
+            // SUB immediate can handle up to 4095
+            if (aligned_frame <= 4095) {
+                try self.emit(asm_mod.encodeSUBImm(31, 31, @intCast(aligned_frame), 0));
+            } else {
+                // Very large frame: need to use a temp register
+                // MOV x16, #frame_size; SUB sp, sp, x16
+                try self.emitLoadImmediate(16, @intCast(aligned_frame));
+                try self.emit(asm_mod.encodeSUBReg(31, 31, 16));
+            }
+            // STP x29, x30, [sp] (signed offset 0)
+            try self.emit(asm_mod.encodeLdpStp(29, 30, 31, 0, .signed_offset, false));
+        }
 
         // Set up frame pointer: ADD x29, sp, #0
         // (In a full implementation, x29 would point to saved FP location)
@@ -423,9 +440,25 @@ pub const ARM64CodeGen = struct {
         // Use frame_size from stackalloc (already 16-byte aligned)
         const aligned_frame = self.frame_size;
 
-        // LDP x29, x30, [sp], #frame_size
-        const frame_off: i7 = @intCast(@divExact(@as(i32, @intCast(aligned_frame)), 8));
-        try self.emit(asm_mod.encodeLDPPost(29, 30, 31, frame_off));
+        // For frames <= 504 bytes, use LDP post-index
+        // For larger frames, use LDP with offset 0, then ADD sp
+        if (aligned_frame <= 504) {
+            // LDP x29, x30, [sp], #frame_size
+            const frame_off: i7 = @intCast(@divExact(@as(i32, @intCast(aligned_frame)), 8));
+            try self.emit(asm_mod.encodeLDPPost(29, 30, 31, frame_off));
+        } else {
+            // Large frame: LDP x29, x30, [sp]; ADD sp, sp, #frame_size
+            // LDP x29, x30, [sp] (signed offset 0)
+            try self.emit(asm_mod.encodeLdpStp(29, 30, 31, 0, .signed_offset, true));
+            // ADD sp, sp, #frame_size
+            if (aligned_frame <= 4095) {
+                try self.emit(asm_mod.encodeADDImm(31, 31, @intCast(aligned_frame), 0));
+            } else {
+                // Very large frame: use temp register
+                try self.emitLoadImmediate(16, @intCast(aligned_frame));
+                try self.emit(asm_mod.encodeADDReg(31, 31, 16));
+            }
+        }
 
         // RET
         try self.emit(asm_mod.encodeRET(30));
@@ -783,12 +816,10 @@ pub const ARM64CodeGen = struct {
                 // Function call - ARM64 ABI: args in x0-x7, result in x0
                 const args = value.args;
 
-                // Move arguments to x0-x7
-                for (args, 0..) |arg, i| {
-                    if (i >= 8) break; // Only first 8 args in registers
-                    const arg_reg: u5 = @intCast(i);
-                    try self.ensureInReg(arg, arg_reg);
-                }
+                // Use parallel copy to move arguments to x0-x7
+                // This prevents clobbering when args are in each other's target registers
+                // E.g., if arg0 is in x1 and arg1 is in x0, naive sequential moves fail
+                try self.setupCallArgs(args);
 
                 // Get target function name from aux.string
                 const raw_name = switch (value.aux) {
@@ -934,6 +965,126 @@ pub const ARM64CodeGen = struct {
     }
 
     /// Ensure value is in x0
+    /// Setup call arguments using parallel copy to avoid clobbering
+    /// Uses x16 as scratch register for breaking cycles
+    fn setupCallArgs(self: *ARM64CodeGen, args: []*Value) !void {
+        if (args.len == 0) return;
+
+        const max_args = @min(args.len, 8);
+
+        // Collect moves: (src_reg or null, dest_reg, value)
+        const Move = struct {
+            src: ?u5, // null if value needs regeneration (const, etc.)
+            dest: u5,
+            value: *Value,
+            done: bool,
+        };
+
+        var moves: [8]Move = undefined;
+        var num_moves: usize = 0;
+
+        for (args[0..max_args], 0..) |arg, i| {
+            const dest: u5 = @intCast(i);
+            const src = self.getRegForValue(arg);
+            moves[num_moves] = .{
+                .src = src,
+                .dest = dest,
+                .value = arg,
+                .done = (src != null and src.? == dest), // Already in correct register
+            };
+            num_moves += 1;
+        }
+
+        // Process moves that don't conflict first (src not in any dest)
+        // Then handle cycles using x16 as temp
+        var progress = true;
+        while (progress) {
+            progress = false;
+            for (0..num_moves) |mi| {
+                if (moves[mi].done) continue;
+
+                // Check if this move's dest would clobber a source we still need
+                var would_clobber = false;
+                for (0..num_moves) |oi| {
+                    if (moves[oi].done) continue;
+                    if (moves[oi].src) |other_src| {
+                        if (other_src == moves[mi].dest and oi != mi) {
+                            would_clobber = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!would_clobber) {
+                    // Safe to do this move
+                    if (moves[mi].src) |src| {
+                        try self.emit(asm_mod.encodeADDImm(moves[mi].dest, src, 0, 0));
+                        debug.log(.codegen, "      arg move: x{d} -> x{d}", .{ src, moves[mi].dest });
+                    } else {
+                        // Regenerate value (const, etc.)
+                        try self.regenerateValue(moves[mi].dest, moves[mi].value);
+                    }
+                    moves[mi].done = true;
+                    progress = true;
+                }
+            }
+        }
+
+        // Handle any remaining cycles using x16 as temp
+        // A cycle exists if we have moves like: x0->x1, x1->x0
+        for (0..num_moves) |mi| {
+            if (moves[mi].done) continue;
+
+            // This move is part of a cycle - break it using x16
+            if (moves[mi].src) |src| {
+                // Save our source to x16
+                try self.emit(asm_mod.encodeADDImm(16, src, 0, 0));
+                debug.log(.codegen, "      cycle: save x{d} -> x16", .{src});
+
+                // Find the move that was blocking us (has dest == our src)
+                for (0..num_moves) |oi| {
+                    if (moves[oi].done) continue;
+                    if (moves[oi].dest == src) {
+                        // Do that move first
+                        if (moves[oi].src) |os| {
+                            try self.emit(asm_mod.encodeADDImm(moves[oi].dest, os, 0, 0));
+                            debug.log(.codegen, "      cycle: x{d} -> x{d}", .{ os, moves[oi].dest });
+                        } else {
+                            try self.regenerateValue(moves[oi].dest, moves[oi].value);
+                        }
+                        moves[oi].done = true;
+                        break;
+                    }
+                }
+
+                // Now do our move from x16
+                try self.emit(asm_mod.encodeADDImm(moves[mi].dest, 16, 0, 0));
+                debug.log(.codegen, "      cycle: x16 -> x{d}", .{moves[mi].dest});
+                moves[mi].done = true;
+            } else {
+                // No source register - just regenerate
+                try self.regenerateValue(moves[mi].dest, moves[mi].value);
+                moves[mi].done = true;
+            }
+        }
+    }
+
+    /// Regenerate a value into a register (for consts, etc.)
+    fn regenerateValue(self: *ARM64CodeGen, dest: u5, value: *Value) !void {
+        switch (value.op) {
+            .const_int, .const_64 => try self.emitLoadImmediate(dest, value.aux_int),
+            .const_bool => {
+                const imm: i64 = if (value.aux_int != 0) 1 else 0;
+                try self.emitLoadImmediate(dest, imm);
+            },
+            else => {
+                // Fallback: emit 0
+                debug.log(.codegen, "      WARNING: regenerating unknown op {s} as 0", .{@tagName(value.op)});
+                try self.emit(asm_mod.encodeMOVZ(dest, 0, 0));
+            },
+        }
+    }
+
     fn moveToX0(self: *ARM64CodeGen, value: *const Value) !void {
         debug.log(.codegen, "    moveToX0: v{d} (op={s})", .{ value.id, @tagName(value.op) });
         try self.moveToReg(0, value);
