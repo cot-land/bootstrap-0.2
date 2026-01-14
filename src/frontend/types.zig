@@ -429,6 +429,13 @@ pub const TypeRegistry = struct {
         return try self.add(.{ .list = .{ .elem = elem } });
     }
 
+    /// Create a function type.
+    pub fn makeFunc(self: *TypeRegistry, params: []const FuncParam, return_type: TypeIndex) !TypeIndex {
+        // Dupe params to ensure they persist
+        const duped_params = try self.allocator.dupe(FuncParam, params);
+        return try self.add(.{ .func = .{ .params = duped_params, .return_type = return_type } });
+    }
+
     /// Check if a type is a pointer.
     pub fn isPointer(self: *const TypeRegistry, idx: TypeIndex) bool {
         const t = self.get(idx);
@@ -605,6 +612,23 @@ pub const TypeRegistry = struct {
         if (from_t == .array and to_t == .array) {
             return from_t.array.length == to_t.array.length and
                 self.isAssignable(from_t.array.elem, to_t.array.elem);
+        }
+
+        // Function types - compare signatures
+        if (from_t == .func and to_t == .func) {
+            const from_func = from_t.func;
+            const to_func = to_t.func;
+
+            // Check parameter count
+            if (from_func.params.len != to_func.params.len) return false;
+
+            // Check each parameter type
+            for (from_func.params, to_func.params) |from_param, to_param| {
+                if (!self.equal(from_param.type_idx, to_param.type_idx)) return false;
+            }
+
+            // Check return type
+            return self.equal(from_func.return_type, to_func.return_type);
         }
 
         return false;

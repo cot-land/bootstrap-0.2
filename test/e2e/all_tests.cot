@@ -2,7 +2,7 @@
 // COT END-TO-END TEST SUITE
 // ============================================================================
 //
-// Progress: 105 / 105 tests passing (slice return + computed base + ptr field store!)
+// Progress: 106 / 106 tests passing (function types in checker!)
 //
 // ============================================================================
 // STATUS TRACKER
@@ -745,6 +745,20 @@ fn test_ptr_field_store() i64 {
     return pt.x;  // Should be 42
 }
 
+// Test function type declaration and assignment
+fn helper_add(a: i64, b: i64) i64 {
+    return a + b;
+}
+
+fn test_fn_type() i64 {
+    // Declare a variable of function type
+    var f: fn(i64, i64) -> i64;
+    f = helper_add;  // Assign function to variable
+    // Note: Indirect calls through function pointers not yet supported
+    // Just verify the type checking and assignment work
+    return helper_add(20, 22);  // Should be 42
+}
+
 // ============================================================================
 // TIER 11: Bitwise Operators
 // ============================================================================
@@ -1252,6 +1266,7 @@ fn main() i64 {
     if test_ptr_param() == 42 { passed = passed + 1; }
     if test_ptr_expr() == 42 { passed = passed + 1; }
     if test_ptr_field_store() == 42 { passed = passed + 1; }
+    if test_fn_type() == 42 { passed = passed + 1; }
 
     // TIER 11: Bitwise operators
     if test_bitwise_and() == 10 { passed = passed + 1; }

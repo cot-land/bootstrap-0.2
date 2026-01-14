@@ -147,6 +147,13 @@ const StringRef = struct {
     string_data: []const u8, // Actual string data (owned copy)
 };
 
+/// Reference to a function address that needs relocation
+const FuncRef = struct {
+    adrp_offset: u32, // Code offset of ADRP instruction
+    add_offset: u32, // Code offset of ADD instruction
+    func_name: []const u8, // Function name (owned copy)
+};
+
 pub const ARM64CodeGen = struct {
     allocator: std.mem.Allocator,
     func: *const Func,
@@ -191,6 +198,9 @@ pub const ARM64CodeGen = struct {
     /// Used to add relocations during finalize()
     string_refs: std.ArrayListUnmanaged(StringRef),
 
+    /// Pending function address references
+    func_refs: std.ArrayListUnmanaged(FuncRef),
+
     /// Data relocations for ADRP/ADD pairs (added during finalize)
     data_relocations: std.ArrayListUnmanaged(macho.ExtRelocation),
 
@@ -207,6 +217,7 @@ pub const ARM64CodeGen = struct {
             .block_offsets = .{},
             .branch_fixups = .{},
             .string_refs = .{},
+            .func_refs = .{},
             .data_relocations = .{},
         };
     }
@@ -224,6 +235,11 @@ pub const ARM64CodeGen = struct {
             self.allocator.free(str_ref.string_data);
         }
         self.string_refs.deinit(self.allocator);
+        // Free function name copies
+        for (self.func_refs.items) |func_ref| {
+            self.allocator.free(func_ref.func_name);
+        }
+        self.func_refs.deinit(self.allocator);
         self.data_relocations.deinit(self.allocator);
         // regalloc_state is borrowed, not owned - don't deinit
     }
@@ -1254,6 +1270,36 @@ pub const ARM64CodeGen = struct {
                 try self.value_regs.put(self.allocator, value, dest_reg);
             },
 
+            .addr => {
+                // Address of a symbol (function for function pointers)
+                // aux.string contains the symbol name
+                const dest_reg = self.getDestRegForValue(value);
+                const func_name = switch (value.aux) {
+                    .string => |s| s,
+                    else => "unknown",
+                };
+
+                // Emit ADRP + ADD to load the function address
+                // Linker will fix up the actual address via relocations
+                const adrp_offset = self.offset();
+                try self.emit(asm_mod.encodeADRP(dest_reg, 0));
+
+                const add_offset = self.offset();
+                try self.emit(asm_mod.encodeADDImm(dest_reg, dest_reg, 0, 0));
+
+                // Record function reference for relocation during finalize()
+                // Prepend underscore for macOS symbol naming convention
+                const mangled_name = try std.fmt.allocPrint(self.allocator, "_{s}", .{func_name});
+                try self.func_refs.append(self.allocator, .{
+                    .adrp_offset = adrp_offset,
+                    .add_offset = add_offset,
+                    .func_name = mangled_name,
+                });
+
+                debug.log(.codegen, "      -> ADRP+ADD x{d}, _{s}", .{ dest_reg, func_name });
+                try self.value_regs.put(self.allocator, value, dest_reg);
+            },
+
             .off_ptr => {
                 // Add field offset to base pointer
                 // aux_int contains the offset, arg[0] is the base pointer
@@ -1614,6 +1660,15 @@ pub const ARM64CodeGen = struct {
 
             // Add ADD relocation (PAGEOFF12)
             try writer.addDataRelocation(str_ref.add_offset, sym_name, macho.ARM64_RELOC_PAGEOFF12);
+        }
+
+        // Process function address references: create relocations to function symbols
+        for (self.func_refs.items) |func_ref| {
+            // Add ADRP relocation (PAGE21) for function symbol
+            try writer.addDataRelocation(func_ref.adrp_offset, func_ref.func_name, macho.ARM64_RELOC_PAGE21);
+
+            // Add ADD relocation (PAGEOFF12) for function symbol
+            try writer.addDataRelocation(func_ref.add_offset, func_ref.func_name, macho.ARM64_RELOC_PAGEOFF12);
         }
 
         // Write to buffer

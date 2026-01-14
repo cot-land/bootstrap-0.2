@@ -615,6 +615,15 @@ pub const SSABuilder = struct {
                 break :blk val;
             },
 
+            .func_addr => |f| blk: {
+                // Function address: use addr op with function name in aux
+                const val = try self.func.newValue(.addr, node.type_idx, cur, .{});
+                val.aux = .{ .string = f.name };
+                try cur.addValue(self.allocator, val);
+                debug.log(.ssa, "    n{} -> v{} func_addr '{s}'", .{ node_idx, val.id, f.name });
+                break :blk val;
+            },
+
             // === Pointer Operations ===
             .ptr_load => |p| blk: {
                 // Load through pointer stored in local

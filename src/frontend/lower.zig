@@ -998,6 +998,13 @@ pub const Lowerer = struct {
             return try fb.emitLoadLocal(local_idx, local_type, ident.span);
         }
 
+        // Check if it's a function name (for function pointers)
+        if (self.chk.scope.lookup(ident.name)) |sym| {
+            if (sym.kind == .function) {
+                return try fb.emitFuncAddr(ident.name, sym.type_idx, ident.span);
+            }
+        }
+
         return ir.null_node;
     }
 

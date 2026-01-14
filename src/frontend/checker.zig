@@ -1399,9 +1399,25 @@ pub const Checker = struct {
                 const elem = try self.resolveTypeExpr(elem_idx);
                 return try self.types.makeList(elem);
             },
-            .function => {
-                // TODO: function types
-                return invalid_type;
+            .function => |f| {
+                // Resolve function type: fn(param_types...) return_type
+                var func_params = std.ArrayListUnmanaged(types.FuncParam){};
+                defer func_params.deinit(self.allocator);
+
+                for (f.params) |param_type_idx| {
+                    const param_type = try self.resolveTypeExpr(param_type_idx);
+                    try func_params.append(self.allocator, .{
+                        .name = "", // Type expressions don't have parameter names
+                        .type_idx = param_type,
+                    });
+                }
+
+                const ret_type: TypeIndex = if (f.ret != null_node)
+                    try self.resolveTypeExpr(f.ret)
+                else
+                    TypeRegistry.VOID;
+
+                return try self.types.makeFunc(func_params.items, ret_type);
             },
         };
     }

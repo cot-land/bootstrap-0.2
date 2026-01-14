@@ -158,6 +158,11 @@ pub const GlobalRef = struct {
     name: []const u8, // For debug/linking
 };
 
+/// Reference to a function (for function pointers). (Go: ONAME for funcs)
+pub const FuncAddr = struct {
+    name: []const u8, // Function name for linking
+};
+
 /// Binary operation with two operands. (Go: BinaryExpr)
 pub const Binary = struct {
     op: BinaryOp,
@@ -474,6 +479,8 @@ pub const Node = struct {
         local_ref: LocalRef,
         /// Reference to global variable.
         global_ref: GlobalRef,
+        /// Reference to function address (for function pointers).
+        func_addr: FuncAddr,
         /// Get address of local variable.
         addr_local: AddrLocal,
         /// Load value from local.
@@ -966,6 +973,11 @@ pub const FuncBuilder = struct {
         return self.emit(Node.init(.{ .const_slice = .{ .string_index = string_index } }, TypeRegistry.STRING, span));
     }
 
+    /// Emit function address (for function pointers).
+    pub fn emitFuncAddr(self: *FuncBuilder, name: []const u8, type_idx: TypeIndex, span: Span) !NodeIndex {
+        return self.emit(Node.init(.{ .func_addr = .{ .name = name } }, type_idx, span));
+    }
+
     /// Emit load from local variable.
     pub fn emitLoadLocal(self: *FuncBuilder, local_idx: LocalIdx, type_idx: TypeIndex, span: Span) !NodeIndex {
         return self.emit(Node.init(.{ .load_local = .{ .local_idx = local_idx } }, type_idx, span));
@@ -1373,6 +1385,7 @@ pub fn debugPrintNode(node: *const Node, writer: anytype) !void {
 
         .local_ref => |l| try writer.print("local_ref local={d}", .{l.local_idx}),
         .global_ref => |g| try writer.print("global_ref {s}", .{g.name}),
+        .func_addr => |f| try writer.print("func_addr {s}", .{f.name}),
         .addr_local => |l| try writer.print("addr_local local={d}", .{l.local_idx}),
         .load_local => |l| try writer.print("load_local local={d}", .{l.local_idx}),
         .store_local => |s| try writer.print("store_local local={d} value={d}", .{ s.local_idx, s.value }),
