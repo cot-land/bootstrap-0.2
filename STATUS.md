@@ -6,7 +6,7 @@
 
 Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven compiler architecture. The goal is to eliminate the "whack-a-mole" debugging pattern that killed previous attempts.
 
-**Current State:** Phase 8 in progress. 92 e2e tests passing! Working toward self-hosting.
+**Current State:** Phase 8 in progress. 103 e2e tests passing! Working toward self-hosting.
 
 ---
 
@@ -38,7 +38,7 @@ These features are working with 43+ e2e tests:
 | Structs (nested) | ✅ DONE | test_struct_nested |
 | Structs (large, 64+ bytes) | ✅ DONE | test_struct_large |
 
-### Tier 2: Data Types (IN PROGRESS)
+### Tier 2: Data Types (COMPLETE)
 
 Required for handling source text, tokens, and AST nodes:
 
@@ -46,15 +46,18 @@ Required for handling source text, tokens, and AST nodes:
 |---------|--------|----------|-------|
 | **String literals** | ✅ DONE | P0 | "hello", escape sequences |
 | **String type** | ✅ DONE | P0 | Pointer + length pair |
+| **String variable copy** | ✅ DONE | P0 | s2 = s1 copies (ptr, len) |
 | **len() builtin** | ✅ DONE | P0 | Works on literals and variables |
 | **Character literals** | ✅ DONE | P0 | 'a', '\n', '\\' |
 | **u8 type** | ✅ DONE | P0 | For characters/bytes |
 | **Fixed arrays [N]T** | ✅ DONE | P0 | [256]u8 for buffers |
 | **Array literals** | ✅ DONE | P0 | [1, 2, 3] |
 | **Array indexing arr[i]** | ✅ DONE | P0 | Read and write |
+| **Array copy** | ✅ DONE | P0 | b = a copies elements |
 | **Array as parameter** | ✅ DONE | P0 | fn foo(arr: [N]T) |
 | **Slices []T** | ✅ DONE | P1 | Create, index, len(), write |
 | **Slice from array** | ✅ DONE | P1 | arr[start:end] syntax |
+| **Implicit slice end** | ✅ DONE | P1 | arr[:], arr[start:], arr[:end] |
 
 ### Tier 3: Memory & Pointers (COMPLETE)
 
@@ -100,11 +103,11 @@ Required for bit manipulation, flags:
 | **Logical NOT (not)** | ✅ DONE | P0 | !x already works |
 | **Compound assign +=, -=** | ❌ TODO | P2 | Convenience |
 
-### Tier 6: Control Flow (TODO)
+### Tier 6: Control Flow (MOSTLY COMPLETE)
 
 | Feature | Status | Priority | Notes |
 |---------|--------|----------|-------|
-| **For-in loops** | ❌ TODO | P1 | for item in items { } |
+| **For-in loops** | ✅ DONE | P1 | for item in items { } - 4 e2e tests |
 | **Else-if chains** | ✅ DONE | - | Already working |
 | **Defer statement** | ❌ TODO | P2 | Cleanup on scope exit |
 
@@ -158,7 +161,7 @@ Based on dependencies and self-hosting needs:
 ### Sprint 6: Advanced (IN PROGRESS)
 1. ✅ Optional types ?T and null - 4 e2e tests
 2. ✅ Slices []T - 8 e2e tests (create, index, len, write)
-3. ❌ For-in loops
+3. ✅ For-in loops - 4 e2e tests (array, break, continue, slice)
 4. ❌ Global constants
 
 ---
@@ -278,7 +281,7 @@ test_array_large                - [100]i64
 ### Testing Infrastructure - COMPLETE
 
 - **180+ unit tests passing**
-- **92 e2e tests passing**
+- **103 e2e tests passing**
 - Table-driven tests for comprehensive coverage
 - Golden file infrastructure ready
 

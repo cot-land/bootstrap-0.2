@@ -350,10 +350,49 @@ pub const Lowerer = struct {
                 }
             },
             else => {
-                // Not an array literal - this would be array copy (Go: b = a copies all elements)
-                // For now, just store the value (TODO: implement proper array copy)
-                const value_node_ir = try self.lowerExprNode(value_idx);
-                _ = try fb.emitStoreLocal(local_idx, value_node_ir, span);
+                // Array copy: var b: [N]T = a
+                // Following Go's pattern from ssagen/ssa.go: arrays use memory operations
+                // For multi-element arrays, copy element-by-element: b[i] = a[i] for i in 0..N
+                // This follows Go's moveWhichMayOverlap pattern
+
+                // Get array type info for element size and count
+                const local = fb.locals.items[local_idx];
+                const arr_type = self.type_reg.get(local.type_idx);
+                if (arr_type == .array) {
+                    const elem_type = arr_type.array.elem;
+                    const elem_size = self.type_reg.sizeOf(elem_type);
+                    const arr_len = arr_type.array.length;
+
+                    // Check if source is a local identifier (most common case)
+                    if (value_expr == .ident) {
+                        if (fb.lookupLocal(value_expr.ident.name)) |src_local_idx| {
+                            // Copy each element: dst[i] = src[i]
+                            for (0..arr_len) |i| {
+                                const idx_node = try fb.emitConstInt(@intCast(i), TypeRegistry.I64, span);
+                                // Load src[i]
+                                const src_elem = try fb.emitIndexLocal(src_local_idx, idx_node, elem_size, elem_type, span);
+                                // Store to dst[i]
+                                _ = try fb.emitStoreIndexLocal(local_idx, idx_node, src_elem, elem_size, span);
+                            }
+                            return;
+                        }
+                    }
+
+                    // Fallback: evaluate expression once, treat result as base address
+                    // This handles cases like: var b = getArray()
+                    const src_val = try self.lowerExprNode(value_idx);
+                    for (0..arr_len) |i| {
+                        const idx_node = try fb.emitConstInt(@intCast(i), TypeRegistry.I64, span);
+                        // Index into the computed value
+                        const src_elem = try fb.emitIndexValue(src_val, idx_node, elem_size, elem_type, span);
+                        // Store to dst[i]
+                        _ = try fb.emitStoreIndexLocal(local_idx, idx_node, src_elem, elem_size, span);
+                    }
+                } else {
+                    // Not an array type, use default store
+                    const value_node_ir = try self.lowerExprNode(value_idx);
+                    _ = try fb.emitStoreLocal(local_idx, value_node_ir, span);
+                }
             },
         }
     }
@@ -392,9 +431,28 @@ pub const Lowerer = struct {
 
             // Store len at offset 8 (field 1)
             _ = try fb.emitStoreLocalField(local_idx, 1, 8, len_node, span);
+        } else if (value_expr == .ident) {
+            // String variable copy: var s2 = s1
+            // Strings are (ptr, len) pairs - copy both fields
+            // Following Go's pattern: string = struct { ptr *byte, len int }
+            if (fb.lookupLocal(value_expr.ident.name)) |src_local_idx| {
+                // Load source ptr (field 0, offset 0)
+                const src_ptr = try fb.emitFieldLocal(src_local_idx, 0, 0, TypeRegistry.I64, span);
+                // Load source len (field 1, offset 8)
+                const src_len = try fb.emitFieldLocal(src_local_idx, 1, 8, TypeRegistry.I64, span);
+
+                // Store ptr to destination field 0
+                _ = try fb.emitStoreLocalField(local_idx, 0, 0, src_ptr, span);
+                // Store len to destination field 1
+                _ = try fb.emitStoreLocalField(local_idx, 1, 8, src_len, span);
+                return;
+            }
+
+            // Fallback for unknown identifiers
+            const value_node_ir = try self.lowerExprNode(value_idx);
+            _ = try fb.emitStoreLocal(local_idx, value_node_ir, span);
         } else {
-            // Non-literal string - just lower normally for now
-            // TODO: handle string variables properly
+            // Other expressions - lower normally
             const value_node_ir = try self.lowerExprNode(value_idx);
             _ = try fb.emitStoreLocal(local_idx, value_node_ir, span);
         }
@@ -620,11 +678,159 @@ pub const Lowerer = struct {
         fb.setBlock(exit_block);
     }
 
+    /// Lower for-in loop by desugaring to while loop.
+    /// Following Go's cmd/compile/internal/walk/range.go pattern:
+    ///
+    /// for item in arr { body }
+    ///
+    /// Desugars to:
+    ///   var __idx: i64 = 0;
+    ///   var __len: i64 = len(arr);  // compile-time for arrays, runtime for slices
+    ///   while __idx < __len {
+    ///       let item = arr[__idx];
+    ///       body
+    ///       __idx = __idx + 1;
+    ///   }
     fn lowerFor(self: *Lowerer, for_stmt: ast.ForStmt) !void {
-        // For-loop desugaring: for x in iter => while loop with iterator
-        // TODO: implement proper iterator lowering
-        _ = self;
-        _ = for_stmt;
+        const fb = self.current_func orelse return;
+
+        // Get iterable type and element type
+        const iter_type = self.inferExprType(for_stmt.iterable);
+        const iter_info = self.type_reg.get(iter_type);
+
+        const elem_type: TypeIndex = switch (iter_info) {
+            .array => |a| a.elem,
+            .slice => |s| s.elem,
+            else => TypeRegistry.VOID,
+        };
+
+        if (elem_type == TypeRegistry.VOID) {
+            // Type checker should have caught this
+            return;
+        }
+
+        const elem_size = self.type_reg.sizeOf(elem_type);
+
+        // Generate unique names for temp variables
+        const idx_name = try std.fmt.allocPrint(self.allocator, "__for_idx_{d}", .{self.temp_counter});
+        self.temp_counter += 1;
+        const len_name = try std.fmt.allocPrint(self.allocator, "__for_len_{d}", .{self.temp_counter});
+        self.temp_counter += 1;
+
+        // Create index variable: var __idx: i64 = 0;
+        const idx_local = try fb.addLocalWithSize(idx_name, TypeRegistry.I64, true, 8);
+        const zero = try fb.emitConstInt(0, TypeRegistry.I64, for_stmt.span);
+        _ = try fb.emitStoreLocal(idx_local, zero, for_stmt.span);
+
+        // Create length variable based on iterable type
+        const len_local = try fb.addLocalWithSize(len_name, TypeRegistry.I64, false, 8);
+
+        switch (iter_info) {
+            .array => |a| {
+                // For arrays, length is compile-time constant
+                const len_val = try fb.emitConstInt(@intCast(a.length), TypeRegistry.I64, for_stmt.span);
+                _ = try fb.emitStoreLocal(len_local, len_val, for_stmt.span);
+            },
+            .slice => {
+                // For slices, call len() at runtime
+                // First load the slice, then get its length
+                const iter_node = self.tree.getNode(for_stmt.iterable) orelse return;
+                const iter_expr = iter_node.asExpr() orelse return;
+
+                if (iter_expr == .ident) {
+                    if (fb.lookupLocal(iter_expr.ident.name)) |slice_local| {
+                        const slice_val = try fb.emitLoadLocal(slice_local, iter_type, for_stmt.span);
+                        const len_val = try fb.emitSliceLen(slice_val, for_stmt.span);
+                        _ = try fb.emitStoreLocal(len_local, len_val, for_stmt.span);
+                    }
+                }
+            },
+            else => return,
+        }
+
+        // Create loop blocks
+        const cond_block = try fb.newBlock("for.cond");
+        const body_block = try fb.newBlock("for.body");
+        const incr_block = try fb.newBlock("for.incr");
+        const exit_block = try fb.newBlock("for.end");
+
+        // Jump to condition
+        _ = try fb.emitJump(cond_block, for_stmt.span);
+
+        // Condition block: __idx < __len
+        fb.setBlock(cond_block);
+        const idx_val = try fb.emitLoadLocal(idx_local, TypeRegistry.I64, for_stmt.span);
+        const len_val_cond = try fb.emitLoadLocal(len_local, TypeRegistry.I64, for_stmt.span);
+        const cond = try fb.emitBinary(.lt, idx_val, len_val_cond, TypeRegistry.BOOL, for_stmt.span);
+        _ = try fb.emitBranch(cond, body_block, exit_block, for_stmt.span);
+
+        // Push loop context for break/continue
+        // Note: continue goes to incr_block (increment then check), break goes to exit_block
+        try self.loop_stack.append(self.allocator, .{
+            .cond_block = incr_block, // continue -> increment
+            .exit_block = exit_block, // break -> exit
+        });
+
+        // Body block
+        fb.setBlock(body_block);
+
+        // Create binding variable: let item = arr[__idx];
+        const binding_local = try fb.addLocalWithSize(for_stmt.binding, elem_type, false, elem_size);
+
+        // Load current index
+        const cur_idx = try fb.emitLoadLocal(idx_local, TypeRegistry.I64, for_stmt.span);
+
+        // Get element at index based on iterable type
+        switch (iter_info) {
+            .array => {
+                // For arrays: arr[__idx]
+                const iter_node = self.tree.getNode(for_stmt.iterable) orelse return;
+                const iter_expr = iter_node.asExpr() orelse return;
+
+                if (iter_expr == .ident) {
+                    if (fb.lookupLocal(iter_expr.ident.name)) |arr_local| {
+                        const elem_val = try fb.emitIndexLocal(arr_local, cur_idx, elem_size, elem_type, for_stmt.span);
+                        _ = try fb.emitStoreLocal(binding_local, elem_val, for_stmt.span);
+                    }
+                }
+            },
+            .slice => {
+                // For slices: load slice, get ptr, index through ptr
+                const iter_node = self.tree.getNode(for_stmt.iterable) orelse return;
+                const iter_expr = iter_node.asExpr() orelse return;
+
+                if (iter_expr == .ident) {
+                    if (fb.lookupLocal(iter_expr.ident.name)) |slice_local| {
+                        const slice_val = try fb.emitLoadLocal(slice_local, iter_type, for_stmt.span);
+                        const ptr_type = self.type_reg.makePointer(elem_type) catch TypeRegistry.I64;
+                        const ptr_val = try fb.emitSlicePtr(slice_val, ptr_type, for_stmt.span);
+                        const elem_val = try fb.emitIndexValue(ptr_val, cur_idx, elem_size, elem_type, for_stmt.span);
+                        _ = try fb.emitStoreLocal(binding_local, elem_val, for_stmt.span);
+                    }
+                }
+            },
+            else => {},
+        }
+
+        // Lower body
+        const body_terminated = try self.lowerBlockNode(for_stmt.body);
+        if (!body_terminated) {
+            _ = try fb.emitJump(incr_block, for_stmt.span);
+        }
+
+        // Increment block: __idx = __idx + 1
+        fb.setBlock(incr_block);
+        const idx_before_incr = try fb.emitLoadLocal(idx_local, TypeRegistry.I64, for_stmt.span);
+        const one = try fb.emitConstInt(1, TypeRegistry.I64, for_stmt.span);
+        const idx_after_incr = try fb.emitBinary(.add, idx_before_incr, one, TypeRegistry.I64, for_stmt.span);
+        _ = try fb.emitStoreLocal(idx_local, idx_after_incr, for_stmt.span);
+        _ = try fb.emitJump(cond_block, for_stmt.span);
+
+        // Pop loop context
+        _ = self.loop_stack.pop();
+
+        // Continue in exit block
+        fb.setBlock(exit_block);
     }
 
     fn lowerBreak(self: *Lowerer) !void {
@@ -939,6 +1145,8 @@ pub const Lowerer = struct {
     }
 
     /// Lower slice expression: arr[start..end]
+    /// Lower slice expression following Go's pattern from ssagen/ssa.go slice() function.
+    /// Default indices: start defaults to 0, end defaults to len(base).
     fn lowerSliceExpr(self: *Lowerer, se: ast.SliceExpr) Error!ir.NodeIndex {
         debug.log(.lower, "lowerSliceExpr", .{});
 
@@ -959,15 +1167,39 @@ pub const Lowerer = struct {
         // Create slice type
         const slice_type = self.type_reg.makeSlice(elem_type_idx) catch return ir.null_node;
 
-        // Lower start and end indices (may be null)
+        // Lower start index (defaults to 0 if not specified)
+        // Following Go: if i == nil { i = s.constInt(types.Types[types.TINT], 0) }
         var start_node: ?ir.NodeIndex = null;
-        var end_node: ?ir.NodeIndex = null;
-
         if (se.start != null_node) {
             start_node = try self.lowerExprNode(se.start);
         }
+
+        // Lower end index
+        // Following Go: if j == nil { j = len }
+        var end_node: ?ir.NodeIndex = null;
         if (se.end != null_node) {
             end_node = try self.lowerExprNode(se.end);
+        } else {
+            // End not specified - use length of base
+            switch (base_type) {
+                .array => |a| {
+                    // For arrays, length is compile-time constant
+                    end_node = try fb.emitConstInt(@intCast(a.length), TypeRegistry.I64, se.span);
+                },
+                .slice => {
+                    // For slices, need to get runtime length via SliceLen
+                    const base_node = self.tree.getNode(se.base) orelse return ir.null_node;
+                    const base_expr = base_node.asExpr() orelse return ir.null_node;
+
+                    if (base_expr == .ident) {
+                        if (fb.lookupLocal(base_expr.ident.name)) |slice_local| {
+                            const slice_val = try fb.emitLoadLocal(slice_local, base_type_idx, se.span);
+                            end_node = try fb.emitSliceLen(slice_val, se.span);
+                        }
+                    }
+                },
+                else => {},
+            }
         }
 
         // Check if base is local identifier
@@ -1011,8 +1243,18 @@ pub const Lowerer = struct {
             try args.append(self.allocator, arg_node);
         }
 
-        // Determine return type (TODO: look up in symbol table)
-        const return_type = TypeRegistry.VOID;
+        // Look up function return type in symbol table
+        // Following Go's pattern: functions are stored as symbols with function types
+        var return_type: TypeIndex = TypeRegistry.VOID;
+
+        if (self.chk.scope.lookup(func_name)) |sym| {
+            if (sym.kind == .function) {
+                const func_type = self.type_reg.get(sym.type_idx);
+                if (func_type == .func) {
+                    return_type = func_type.func.return_type;
+                }
+            }
+        }
 
         return try fb.emitCall(func_name, args.items, false, return_type, call.span);
     }

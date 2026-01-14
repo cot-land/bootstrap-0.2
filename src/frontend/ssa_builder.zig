@@ -927,9 +927,10 @@ pub const SSABuilder = struct {
                 slice_ptr.addArg2(arr_addr, offset);
                 try cur.addValue(self.allocator, slice_ptr);
 
-                // Compute length
-                // TODO: For now, we need the array length from the type system
-                // For MVP, require explicit end index
+                // Compute length = end - start
+                // Note: Default indices are computed in lowerer following Go's pattern:
+                // - Start defaults to 0
+                // - End defaults to len(base) (computed as compile-time constant for arrays)
                 const len_val: *Value = if (s.end) |end_idx| len_blk: {
                     const end_val = try self.convertNode(end_idx) orelse return error.MissingValue;
                     const len = try self.func.newValue(.sub, TypeRegistry.I64, cur, .{});
@@ -937,8 +938,9 @@ pub const SSABuilder = struct {
                     try cur.addValue(self.allocator, len);
                     break :len_blk len;
                 } else {
-                    // No end specified - need to get array length from type
-                    // For now, return error
+                    // Lowerer should always provide end index (defaults computed there)
+                    // This branch shouldn't be reached in normal operation
+                    debug.log(.ssa, "    slice_local: end index not provided (unexpected)", .{});
                     return error.MissingValue;
                 };
 

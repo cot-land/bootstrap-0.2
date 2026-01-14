@@ -2,7 +2,7 @@
 // COT END-TO-END TEST SUITE
 // ============================================================================
 //
-// Progress: 92 / 113 tests passing (full slices)
+// Progress: 103 / 103 tests passing (string var copy complete!)
 //
 // ============================================================================
 // STATUS TRACKER
@@ -1015,9 +1015,120 @@ fn test_slice_write() i64 {
     return arr[0];  // Should return 42 (shared memory)
 }
 
+// Test implicit end: arr[start:] slices to end
+fn test_slice_implicit_end() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50];
+    let s: []i64 = arr[2:];  // Same as arr[2:5]
+    return s[0];  // Should return 30 (arr[2])
+}
+
+// Test implicit start and end: arr[:] slices full array
+fn test_slice_full() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50];
+    let s: []i64 = arr[:];  // Same as arr[0:5]
+    return len(s);  // Should return 5
+}
+
+// Test implicit start: arr[:end]
+fn test_slice_implicit_start() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50];
+    let s: []i64 = arr[:3];  // Same as arr[0:3]
+    return s[2];  // Should return 30 (arr[2])
+}
+
 // ============================================================================
-// TIER 16+: BLOCKED - Advanced Features
-// Need: for loops, etc.
+// TIER 15.5: Array Copy Semantics
+// ============================================================================
+
+// Test array copy - modifying copy doesn't affect original
+fn test_array_copy() i64 {
+    var a: [3]i64 = [10, 20, 30];
+    var b: [3]i64 = a;  // Copy a to b
+    b[0] = 99;          // Modify b
+    return a[0];        // a[0] should still be 10
+}
+
+// Test array copy - verify copy has correct values
+fn test_array_copy_values() i64 {
+    var a: [3]i64 = [10, 20, 30];
+    var b: [3]i64 = a;  // Copy a to b
+    return b[0] + b[1] + b[2];  // Should be 60 (10+20+30)
+}
+
+// ============================================================================
+// TIER 15.6: String Variable Assignment
+// ============================================================================
+
+// Test string variable copy - verify len works on copy
+fn test_string_var_copy() i64 {
+    let s1: string = "hello";
+    let s2: string = s1;  // Copy string variable
+    return len(s2);       // Should return 5
+}
+
+// Test string variable copy - different string
+fn test_string_var_copy2() i64 {
+    let a: string = "abc";
+    let b: string = a;
+    let c: string = "defgh";
+    let d: string = c;
+    return len(b) + len(d);  // Should return 8 (3+5)
+}
+
+// ============================================================================
+// TIER 16: For-In Loops
+// ============================================================================
+
+// Test basic for-in loop over array - sum elements
+fn test_for_array() i64 {
+    var arr: [5]i64 = [1, 2, 3, 4, 5];
+    var sum: i64 = 0;
+    for x in arr {
+        sum = sum + x;
+    }
+    return sum;  // 1+2+3+4+5 = 15
+}
+
+// Test for-in with break
+fn test_for_break() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50];
+    var sum: i64 = 0;
+    for x in arr {
+        if x == 30 {
+            break;
+        }
+        sum = sum + x;
+    }
+    return sum;  // 10+20 = 30
+}
+
+// Test for-in with continue
+fn test_for_continue() i64 {
+    var arr: [5]i64 = [1, 2, 3, 4, 5];
+    var sum: i64 = 0;
+    for x in arr {
+        if x == 3 {
+            continue;
+        }
+        sum = sum + x;
+    }
+    return sum;  // 1+2+4+5 = 12
+}
+
+// Test for-in with slice
+fn test_for_slice() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50];
+    let s: []i64 = arr[1:4];
+    var sum: i64 = 0;
+    for x in s {
+        sum = sum + x;
+    }
+    return sum;  // 20+30+40 = 90
+}
+
+// ============================================================================
+// TIER 17+: BLOCKED - Advanced Features
+// Need: more features...
 // ============================================================================
 
 // (many more tests to add as we implement features)
@@ -1154,6 +1265,23 @@ fn main() i64 {
     if test_slice_len() == 3 { passed = passed + 1; }
     if test_slice_len_full() == 5 { passed = passed + 1; }
     if test_slice_write() == 42 { passed = passed + 1; }
+    if test_slice_implicit_end() == 30 { passed = passed + 1; }
+    if test_slice_full() == 5 { passed = passed + 1; }
+    if test_slice_implicit_start() == 30 { passed = passed + 1; }
+
+    // TIER 15.5: Array Copy
+    if test_array_copy() == 10 { passed = passed + 1; }
+    if test_array_copy_values() == 60 { passed = passed + 1; }
+
+    // TIER 15.6: String Variable Assignment
+    if test_string_var_copy() == 5 { passed = passed + 1; }
+    if test_string_var_copy2() == 8 { passed = passed + 1; }
+
+    // TIER 16: For-In Loops
+    if test_for_array() == 15 { passed = passed + 1; }
+    if test_for_break() == 30 { passed = passed + 1; }
+    if test_for_continue() == 12 { passed = passed + 1; }
+    if test_for_slice() == 90 { passed = passed + 1; }
 
     return passed;
 }
