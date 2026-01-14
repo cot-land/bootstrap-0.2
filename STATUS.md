@@ -6,24 +6,211 @@
 
 Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven compiler architecture. The goal is to eliminate the "whack-a-mole" debugging pattern that killed previous attempts.
 
-**Current State:** Phase 8 NEARLY COMPLETE. All core language features working, Fibonacci compiles correctly!
+**Current State:** Phase 8 in progress. 47 e2e tests passing! Working toward self-hosting.
 
-### Recent Milestones (2026-01-14)
+---
+
+## Self-Hosting Feature Checklist
+
+**Goal:** Compiler compiles itself. All features below are required.
+
+### Tier 1: Core Language (COMPLETE)
+
+These features are working with 43+ e2e tests:
+
+| Feature | Status | Tests |
+|---------|--------|-------|
+| Integer literals (decimal, hex, binary, octal) | ✅ DONE | test_return, test_large_number |
+| Arithmetic (+, -, *, /, %) | ✅ DONE | test_add, test_sub, test_mul, test_div, test_mod |
+| Unary minus (-x) | ✅ DONE | test_unary_minus |
+| Comparison operators (==, !=, <, <=, >, >=) | ✅ DONE | test_eq, test_ne, test_lt, etc. |
+| Boolean type (true, false) | ✅ DONE | test_bool_* |
+| Local variables (let, var) | ✅ DONE | test_let, test_var_mutation |
+| Function declarations | ✅ DONE | All tests |
+| Function calls (0-8 args) | ✅ DONE | test_call, test_fibonacci |
+| Function calls (9+ args) | ✅ DONE | test_many_args |
+| If/else conditionals | ✅ DONE | test_if_*, test_else_if |
+| While loops | ✅ DONE | test_while_*, test_nested_while |
+| Break/continue | ✅ DONE | test_break, test_continue |
+| Void functions | ✅ DONE | test_void_* |
+| Recursive functions | ✅ DONE | test_factorial, test_fibonacci |
+| Structs (simple) | ✅ DONE | test_struct_simple |
+| Structs (nested) | ✅ DONE | test_struct_nested |
+| Structs (large, 64+ bytes) | ✅ DONE | test_struct_large |
+
+### Tier 2: Data Types (IN PROGRESS)
+
+Required for handling source text, tokens, and AST nodes:
+
+| Feature | Status | Priority | Notes |
+|---------|--------|----------|-------|
+| **String literals** | ❌ TODO | P0 | "hello", escape sequences |
+| **String type** | ❌ TODO | P0 | Pointer + length |
+| **Character literals** | ✅ DONE | P0 | 'a', '\n', '\\' |
+| **u8 type** | ✅ DONE | P0 | For characters/bytes |
+| **Fixed arrays [N]T** | ❌ TODO | P0 | [256]u8 for buffers |
+| **Array literals** | ❌ TODO | P0 | [1, 2, 3] |
+| **Array indexing arr[i]** | ❌ TODO | P0 | Read and write |
+| **Slices []T** | ❌ TODO | P1 | Dynamic arrays |
+| **Slice from array** | ❌ TODO | P1 | arr[start..end] |
+
+### Tier 3: Memory & Pointers (TODO)
+
+Required for tree structures and dynamic allocation:
+
+| Feature | Status | Priority | Notes |
+|---------|--------|----------|-------|
+| **Pointer types *T** | ❌ TODO | P0 | *i64, *Node |
+| **Address-of &x** | ❌ TODO | P0 | Get pointer to value |
+| **Dereference ptr.*** | ❌ TODO | P0 | Read through pointer |
+| **Pointer arithmetic** | ❌ TODO | P2 | ptr + offset (maybe) |
+| **Optional types ?T** | ❌ TODO | P1 | Nullable values |
+| **null literal** | ❌ TODO | P1 | For optionals |
+
+### Tier 4: Enums & Pattern Matching (TODO)
+
+Required for token types, AST node kinds:
+
+| Feature | Status | Priority | Notes |
+|---------|--------|----------|-------|
+| **Enum declaration** | ❌ TODO | P0 | enum Color { Red, Green } |
+| **Enum value access** | ❌ TODO | P0 | Color.Red |
+| **Enum as integer** | ❌ TODO | P1 | @enumToInt |
+| **Switch statement** | ❌ TODO | P1 | Or use if/else chains |
+
+### Tier 5: Operators (TODO)
+
+Required for bit manipulation, flags:
+
+| Feature | Status | Priority | Notes |
+|---------|--------|----------|-------|
+| **Bitwise AND &** | ❌ TODO | P0 | Flags, masks |
+| **Bitwise OR \|** | ❌ TODO | P0 | Combining flags |
+| **Bitwise XOR ^** | ❌ TODO | P1 | |
+| **Bitwise NOT ~** | ❌ TODO | P1 | |
+| **Left shift <<** | ❌ TODO | P0 | Bit manipulation |
+| **Right shift >>** | ❌ TODO | P0 | Bit manipulation |
+| **Logical AND (and)** | ❌ TODO | P0 | Short-circuit |
+| **Logical OR (or)** | ❌ TODO | P0 | Short-circuit |
+| **Logical NOT (not)** | ❌ TODO | P0 | !x already works |
+| **Compound assign +=, -=** | ❌ TODO | P2 | Convenience |
+
+### Tier 6: Control Flow (TODO)
+
+| Feature | Status | Priority | Notes |
+|---------|--------|----------|-------|
+| **For-in loops** | ❌ TODO | P1 | for item in items { } |
+| **Else-if chains** | ✅ DONE | - | Already working |
+| **Defer statement** | ❌ TODO | P2 | Cleanup on scope exit |
+
+### Tier 7: Module System (TODO)
+
+| Feature | Status | Priority | Notes |
+|---------|--------|----------|-------|
+| **Global constants** | ❌ TODO | P1 | const MAX = 100; |
+| **Import statement** | ❌ TODO | P2 | import "file.cot" |
+| **Multiple files** | ❌ TODO | P2 | Compile multiple .cot |
+
+---
+
+## Implementation Order
+
+Based on dependencies and self-hosting needs:
+
+### Sprint 1: Strings & Characters
+1. ✅ u8 type support
+2. ✅ Character literals ('a', '\n')
+3. 🔄 String type (ptr + len) - address works, need len handling
+4. 🔄 String literals ("hello") - compiles, ADRP/ADD relocation works
+5. ✅ String escape sequences (in parser)
+
+### Sprint 2: Arrays
+1. ❌ Fixed array types [N]T
+2. ❌ Array literals [1, 2, 3]
+3. ❌ Array indexing arr[i]
+4. ❌ Array assignment arr[i] = x
+
+### Sprint 3: Pointers
+1. ❌ Pointer types *T
+2. ❌ Address-of operator &x
+3. ❌ Dereference operator ptr.*
+4. ❌ Pointer to struct fields
+
+### Sprint 4: Bitwise & Logical
+1. ❌ Bitwise operators (&, |, ^, ~, <<, >>)
+2. ❌ Logical operators (and, or, not)
+3. ❌ Short-circuit evaluation
+
+### Sprint 5: Enums
+1. ❌ Enum declarations
+2. ❌ Enum value access
+3. ❌ Enum in conditionals
+
+### Sprint 6: Advanced
+1. ❌ Optional types ?T
+2. ❌ Slices []T
+3. ❌ For-in loops
+4. ❌ Global constants
+
+---
+
+## Test Requirements
+
+**Each feature must have comprehensive tests before implementation is complete.**
+
+### Test Categories Per Feature:
+
+1. **Basic functionality** - Does it work at all?
+2. **Edge cases** - Empty, zero, max values
+3. **Interaction** - With other features (structs, functions, loops)
+4. **Large scale** - Many elements, deep nesting
+5. **Error cases** - Invalid inputs (parser/checker tests)
+
+### Example: Array Feature Tests
+```
+test_array_literal_empty        - []
+test_array_literal_one          - [42]
+test_array_literal_many         - [1, 2, 3, 4, 5]
+test_array_index_first          - arr[0]
+test_array_index_last           - arr[len-1]
+test_array_index_middle         - arr[2]
+test_array_assign               - arr[0] = 99
+test_array_in_struct            - struct { data: [10]i64 }
+test_array_as_param             - fn foo(arr: [5]i64)
+test_array_as_return            - fn bar() [3]i64
+test_array_nested               - [[1,2], [3,4]]
+test_array_of_structs           - [Point{}, Point{}]
+test_array_large                - [100]i64
+```
+
+---
+
+## Recent Milestones (2026-01-14)
+
 - ✅ `fn main() i64 { return 42; }` compiles and runs correctly
 - ✅ `fn main() i64 { return 20 + 22; }` compiles and runs (returns 42)
 - ✅ **Function calls work!** `add_one(41)` returns 42
-- ✅ Mach-O relocations for inter-function calls
-- ✅ ARM64 asm.zig redesigned following Go's parameterized patterns
 - ✅ **Local variables work!** `let x: i64 = 42; return x;`
 - ✅ **Comparisons work!** `==, !=, <, <=, >, >=` with CMP + CSET
 - ✅ **Conditionals work!** `if 1 == 2 { return 0; } else { return 42; }`
-- ✅ **While loops with phi nodes work!** Variable mutation in loops now supported
+- ✅ **While loops with phi nodes work!** Variable mutation in loops
 - ✅ **Fibonacci compiles and returns 55!** (10th Fibonacci number)
-- ✅ Parallel copy algorithm for phi moves prevents register clobbering
-- ✅ Go-inspired iterative phi insertion using work list pattern
-- ✅ **Nested function calls work!** Register allocator properly spills values across calls
-- ✅ Complete rewrite of regalloc following Go's Use linked list + nextCall pattern
-- ✅ Debug infrastructure with COT_DEBUG environment variable (zero-cost when disabled)
+- ✅ **Nested function calls work!** Register allocator properly spills
+- ✅ **Unary minus (-x)** - NEG instruction via SUB Rd, XZR, Rm
+- ✅ **Modulo operator (%)** - Implemented as a - (a/b)*b
+- ✅ **Recursive functions** - factorial(5) returns 120
+- ✅ **Boolean type** - `let b: bool = true; if b { ... }`
+- ✅ **9+ function arguments** - Stack argument passing beyond x0-x7
+- ✅ **Nested while loops** - Multiple loop nesting works
+- ✅ **Break/continue** - Loop control flow statements
+- ✅ **Void functions** - Functions with no return value
+- ✅ **Structs!** - Simple, nested, and large structs (64+ bytes) all working
+- ✅ **43 e2e tests passing** - Comprehensive test suite
+
+### Regalloc Fixes (2026-01-14)
+- Fixed register freeing for live-out values (Go's pattern)
+- Fixed use-count based register freeing
+- Found by investigating Go's regalloc.go implementation
 
 ---
 
@@ -46,63 +233,22 @@ Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven
 
 ### Frontend (Phase 6) - COMPLETE
 
-| Component | Location | Lines | Status |
-|-----------|----------|-------|--------|
-| Token system | `src/frontend/token.zig` | ~400 | Done |
-| Source/Position | `src/frontend/source.zig` | ~200 | Done |
-| Error handling | `src/frontend/errors.zig` | ~250 | Done |
-| Scanner | `src/frontend/scanner.zig` | ~600 | Done |
-| AST definitions | `src/frontend/ast.zig` | ~700 | Done |
-| Parser | `src/frontend/parser.zig` | ~1200 | Done |
-| Type system | `src/frontend/types.zig` | ~500 | Done |
-| Type checker | `src/frontend/checker.zig` | ~1400 | Done |
-| IR definitions | `src/frontend/ir.zig` | ~1300 | Done |
-| AST lowering | `src/frontend/lower.zig` | ~800 | Done |
-| IR→SSA builder | `src/frontend/ssa_builder.zig` | ~700 | Done |
+| Component | Location | Status |
+|-----------|----------|--------|
+| Token system | `src/frontend/token.zig` | Done |
+| Scanner | `src/frontend/scanner.zig` | Done |
+| Parser | `src/frontend/parser.zig` | Done |
+| Type checker | `src/frontend/checker.zig` | Done |
+| IR definitions | `src/frontend/ir.zig` | Done |
+| AST lowering | `src/frontend/lower.zig` | Done |
+| IR→SSA builder | `src/frontend/ssa_builder.zig` | Done |
 
 ### Testing Infrastructure - COMPLETE
 
-- **185+ tests passing** as of 2026-01-14
+- **185+ unit tests passing**
+- **43 e2e tests passing**
 - Table-driven tests for comprehensive coverage
 - Golden file infrastructure ready
-- Allocation tracking with CountingAllocator
-- End-to-end pipeline test: Parse → Check → Lower → SSA
-
----
-
-## Remaining Work
-
-### Phase 7: End-to-End Integration ✅ COMPLETE
-
-| Task | Status |
-|------|--------|
-| Connect frontend IR to SSA backend | ✅ Done |
-| Compile simple function (`return 42`) | ✅ Done |
-| Run compiled binary | ✅ Done |
-| Verify correct output | ✅ Done |
-| Port bootstrap test cases | TODO |
-
-### Phase 8: Language Expansion (Current)
-
-| Task | Status |
-|------|--------|
-| Function calls with ABI | ✅ DONE |
-| Local variables (let/var/const) | ✅ DONE |
-| Comparison operators (==, !=, <, <=, >, >=) | ✅ DONE |
-| Conditionals (if/else) | ✅ DONE |
-| Simple while loops (no variable mutation) | ✅ DONE |
-| While loops with variable mutation | ✅ DONE (phi nodes implemented) |
-| Parallel copy for phi moves | ✅ DONE |
-| Structs | TODO |
-
-### Phase 9: Self-Hosting
-
-| Task | Status |
-|------|--------|
-| Compiler compiles simple .cot | ✅ Done |
-| Compiler compiles fibonacci | ✅ DONE (returns 55 correctly!) |
-| Compiler compiles scanner.cot | TODO |
-| Compiler compiles itself | TODO |
 
 ---
 
@@ -128,252 +274,12 @@ Source → Scanner → Parser → AST
 
 ### Debug Infrastructure
 
-Set `COT_DEBUG` environment variable to trace pipeline:
-
 ```bash
-# Trace all phases
 COT_DEBUG=all ./zig-out/bin/cot input.cot -o output
-
-# Trace specific phases
 COT_DEBUG=parse,lower,ssa ./zig-out/bin/cot input.cot -o output
 ```
 
 Available phases: `parse`, `check`, `lower`, `ssa`, `regalloc`, `codegen`
-
----
-
-## File Structure
-
-```
-bootstrap-0.2/
-├── src/
-│   ├── main.zig              # Entry point, CLI
-│   ├── driver.zig            # Compilation pipeline orchestration
-│   ├── pipeline_debug.zig    # Debug infrastructure (COT_DEBUG)
-│   │
-│   ├── core/                 # Foundation
-│   │   ├── types.zig         # ID, TypeInfo, RegMask
-│   │   ├── errors.zig        # Error types
-│   │   └── testing.zig       # Test utilities
-│   │
-│   ├── ssa/                  # SSA representation
-│   │   ├── value.zig         # SSA values
-│   │   ├── block.zig         # Basic blocks
-│   │   ├── func.zig          # SSA function
-│   │   ├── op.zig            # Operations
-│   │   ├── dom.zig           # Dominators
-│   │   ├── compile.zig       # Pass infrastructure
-│   │   ├── debug.zig         # Debug output
-│   │   ├── test_helpers.zig  # Test fixtures
-│   │   ├── liveness.zig      # Liveness analysis
-│   │   ├── regalloc.zig      # Register allocator
-│   │   ├── stackalloc.zig    # Stack slot assignment
-│   │   └── passes/
-│   │       └── lower.zig     # Lowering pass
-│   │
-│   ├── codegen/              # Code generation
-│   │   ├── generic.zig       # Reference implementation
-│   │   └── arm64.zig         # ARM64 codegen
-│   │
-│   ├── arm64/                # ARM64 specifics
-│   │   └── asm.zig           # Instruction encoding
-│   │
-│   ├── obj/                  # Object output
-│   │   └── macho.zig         # Mach-O format
-│   │
-│   └── frontend/             # Frontend
-│       ├── token.zig         # Token types
-│       ├── source.zig        # Source positions
-│       ├── errors.zig        # Error handling
-│       ├── scanner.zig       # Lexer
-│       ├── ast.zig           # AST nodes
-│       ├── parser.zig        # Parser
-│       ├── types.zig         # Type system
-│       ├── checker.zig       # Type checker
-│       ├── ir.zig            # IR definitions
-│       ├── lower.zig         # AST to IR
-│       └── ssa_builder.zig   # IR to SSA
-│
-├── test/
-│   ├── golden/               # Golden file snapshots
-│   ├── cases/                # Directive tests
-│   └── integration/          # Cross-module tests
-│
-├── CLAUDE.md                 # Development guidelines
-├── STATUS.md                 # This file
-├── REGISTER_ALLOC.md         # Go's regalloc algorithm
-├── DATA_STRUCTURES.md        # Go-to-Zig translations
-└── TESTING_FRAMEWORK.md      # Testing infrastructure
-```
-
----
-
-## Key Design Decisions
-
-1. **Go-Influenced Architecture**: Following Go 1.22's compiler patterns with pragmatic simplifications
-2. **Index-Based IR**: Using indices instead of pointers (better for self-hosting, no GC needed)
-3. **FwdRef Pattern**: Go's deferred phi insertion for correct SSA construction
-4. **Type Interning**: TypeRegistry with indices for efficient type comparison
-5. **Arena Allocation**: Using Zig 0.15's ArrayListUnmanaged pattern
-6. **Pipeline Debugging**: Go-inspired phase tracing via environment variable
-7. **Parameterized Encoding**: Following Go's `opldpstp()` pattern - related instructions share ONE function with explicit parameters for critical bits
-
-### Lesson Learned: Parameterized Encoding (2026-01-14)
-
-We had a bug where `encodeLDPPost` emitted STP (store) instead of LDP (load) because we forgot to set bit 22. This corrupted the stack and caused crashes.
-
-**Root cause:** We wrote separate functions for LDP and STP, making it easy to forget a bit.
-
-**Go's solution:** One function `opldpstp()` with an explicit `ldp` parameter:
-```go
-// Go: impossible to forget the load/store bit
-o1 = c.opldpstp(p, o, v, rf, rt1, rt2, 1)  // 1 = load
-o1 = c.opldpstp(p, o, v, rt, rf1, rf2, 0)  // 0 = store
-```
-
-**Our fix:** Rewrote `asm.zig` with parameterized functions:
-```zig
-// New: explicit is_load parameter makes it impossible to forget
-pub fn encodeLdpStp(..., is_load: bool) u32 {
-    const load_bit: u32 = if (is_load) 1 else 0;
-    return ... | (load_bit << 22) | ...;
-}
-```
-
-**Lesson:** When encoding instructions, related variants should share ONE function with explicit parameters. Never trust implicit defaults for critical bits.
-
-### Lesson Learned: Phi Insertion and Parallel Copy (2026-01-14)
-
-Implementing proper phi insertion for loops with variable mutation required two key insights from Go:
-
-**1. Iterative FwdRef Resolution:**
-Instead of a single pass, use a work list that processes FwdRef values iteratively. When resolving a FwdRef creates a new phi that needs more arguments, those new FwdRefs are added to the work list. This naturally handles complex control flow.
-
-**2. Parallel Copy Algorithm:**
-When multiple phi nodes need to be resolved at block boundaries, naive sequential moves can clobber registers. If phi1 writes to x1 and phi2 reads from x1, emitting phi1's move first destroys phi2's source.
-
-**Solution:** Two-phase parallel copy:
-```zig
-// Phase 1: Save conflicting sources to temp registers
-for (moves) |m| if (m.needs_temp) emit(mov temp, m.src);
-// Phase 2: Emit actual moves (from temps or sources)
-for (moves) |m| emit(mov m.dest, m.temp_or_src);
-```
-
-**Result:** Fibonacci now compiles correctly, returning 55 (10th Fibonacci number).
-
-### Lesson Learned: Register Allocator LoadReg Integration (2026-01-14)
-
-When a value is spilled before a call and later reloaded, we create a `load_reg` SSA value that represents the reloaded value. Initially we made the mistake of assigning the register to the original value, not the load_reg.
-
-**The bug:**
-```zig
-// WRONG: Assigned register to original value v3, not to load_reg v12
-fn loadValue(self: *Self, v: *Value, block: *Block) void {
-    const load = self.f.newValue(.load_reg, ...);
-    self.assignReg(v, reg);  // BUG: v has no register after this!
-}
-```
-
-**What happened:** When codegen asked for v12's register, it found nothing (regs mask=0x0) and fell back to naive allocation.
-
-**The fix:**
-```zig
-// CORRECT: Assign register to the load_reg value and update control references
-fn loadValue(self: *Self, v: *Value, block: *Block) *Value {
-    const load = self.f.newValue(.load_reg, ...);
-    self.assignReg(load, reg);  // The load_reg has the register
-    return load;                 // Return so caller can update references
-}
-
-// Caller updates block control to point to load_reg
-const loaded = try self.loadValue(ctrl, block);
-if (loaded != ctrl) block.setControl(loaded);
-```
-
-**Key insight:** The `load_reg` instruction is what produces the value in the register. The original value (v3) is still "in memory" via its spill slot. All references that need the register value must use the load_reg.
-
-### Lesson Learned: Regalloc Value Ordering and Arg Updates (2026-01-14)
-
-Implementing proper register allocation for recursive functions (fibonacci) revealed several critical issues:
-
-**1. ARM64 LDR/STR Offset Scaling:**
-ARM64 LDR/STR with unsigned immediate scales the offset by operand size. For 64-bit operations, the encoding expects `offset/8`, not the raw byte offset.
-```zig
-// WRONG: Passing byte offset directly
-const spill_off: u12 = @intCast(loc.stackOffset());  // 16 bytes
-// Encodes as [sp, #128] because 16*8 = 128!
-
-// CORRECT: Scale for 64-bit operand
-const byte_off = loc.stackOffset();
-const spill_off: u12 = @intCast(@divExact(byte_off, 8));  // Now encodes as [sp, #16]
-```
-
-**2. Instruction Ordering with Spills/Loads:**
-Spills and loads must be inserted at the correct position in the instruction stream, not appended to the end of the block.
-```zig
-// WRONG: Appending to end - spills/loads happen after values that need them
-try block.values.append(self.allocator, load);
-
-// CORRECT: Build a new list with correct ordering
-var new_values = std.ArrayListUnmanaged(*Value){};
-// Insert loads BEFORE the value that needs the loaded arg
-// Insert spills BEFORE the call instruction
-```
-
-**3. Updating Value Args to Point to Reloads:**
-When a spilled value is reloaded, the value that uses it must have its arg updated to point to the `load_reg`, not the original value.
-```zig
-// WRONG: Original arg still points to spilled value
-const loaded = try self.loadValue(arg, block);  // Created load_reg
-// But v.args[i] still points to original, which has stale register
-
-// CORRECT: Update arg to point to reload
-const loaded = try self.loadValue(arg, block);
-if (loaded != arg) {
-    v.args[i] = loaded;  // Now points to load_reg with valid register
-}
-```
-
-**4. Pending Spills from allocReg:**
-When `loadValue` calls `allocReg` and allocReg needs to spill a value to free a register, that spill must also be inserted at the correct position.
-```zig
-// Track spills that occur during allocation
-pending_spills: std.ArrayListUnmanaged(*Value) = .{},
-
-// In allocReg, add spills to pending list
-if (try self.spillReg(reg, block)) |spill| {
-    try self.pending_spills.append(self.allocator, spill);
-}
-
-// In allocBlock, drain pending spills before inserting loads
-for (self.pending_spills.items) |spill| {
-    try new_values.append(self.allocator, spill);
-}
-self.pending_spills.clearRetainingCapacity();
-```
-
-**Result:** Fibonacci now returns correct result (55) with proper spill/reload ordering.
-
-### Go Divergences (Intentional)
-
-| Go Feature | Our Decision | Rationale |
-|------------|--------------|-----------|
-| Walk/Order phase | Deferred | Add when we need expression optimization |
-| Escape analysis | Deferred | Add when we need stack allocation |
-| 30 SSA passes | Minimal | Add incrementally for performance |
-| Pointer-based nodes | Index-based | Better for self-hosting without GC |
-
----
-
-## Success Criteria
-
-Bootstrap-0.2 succeeds when:
-
-1. **Frontend pipeline works** - Parse → Check → Lower → SSA
-2. **Backend pipeline works** - SSA → Lowered → RegAlloc → Codegen → Object
-3. **End-to-end works** - Compile and run simple programs
-4. **Self-hosting works** - Compiler compiles itself
 
 ---
 
@@ -386,11 +292,8 @@ zig build test
 # All tests including integration
 zig build test-all
 
-# Golden file tests only
-zig build test-golden
-
-# Update golden files after intentional changes
-COT_UPDATE_GOLDEN=1 zig build test-golden
+# Run e2e tests
+cd test/e2e && ./run_tests.sh
 ```
 
 ---
@@ -398,5 +301,4 @@ COT_UPDATE_GOLDEN=1 zig build test-golden
 ## References
 
 - Go compiler: `~/learning/go/src/cmd/compile/`
-- Bootstrap (reference): `~/cot-land/bootstrap/src/`
 - See also: [CLAUDE.md](CLAUDE.md), [REGISTER_ALLOC.md](REGISTER_ALLOC.md)

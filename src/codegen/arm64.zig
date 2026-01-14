@@ -140,6 +140,13 @@ const BranchFixup = struct {
 ///
 /// Generates ARM64 code using register allocation.
 /// Supports both text output (for debugging) and binary output (for object files).
+/// Reference to a string literal that needs relocation
+const StringRef = struct {
+    adrp_offset: u32, // Code offset of ADRP instruction
+    add_offset: u32, // Code offset of ADD instruction
+    string_data: []const u8, // Actual string data (owned copy)
+};
+
 pub const ARM64CodeGen = struct {
     allocator: std.mem.Allocator,
     func: *const Func,
@@ -180,6 +187,13 @@ pub const ARM64CodeGen = struct {
     /// Pending branch fixups (patched after all blocks are generated)
     branch_fixups: std.ArrayListUnmanaged(BranchFixup),
 
+    /// Pending string references: (adrp_offset, add_offset, string_index)
+    /// Used to add relocations during finalize()
+    string_refs: std.ArrayListUnmanaged(StringRef),
+
+    /// Data relocations for ADRP/ADD pairs (added during finalize)
+    data_relocations: std.ArrayListUnmanaged(macho.ExtRelocation),
+
     pub fn init(allocator: std.mem.Allocator) ARM64CodeGen {
         return .{
             .allocator = allocator,
@@ -192,6 +206,8 @@ pub const ARM64CodeGen = struct {
             .spill_slot_map = .{},
             .block_offsets = .{},
             .branch_fixups = .{},
+            .string_refs = .{},
+            .data_relocations = .{},
         };
     }
 
@@ -203,6 +219,12 @@ pub const ARM64CodeGen = struct {
         self.spill_slot_map.deinit(self.allocator);
         self.block_offsets.deinit(self.allocator);
         self.branch_fixups.deinit(self.allocator);
+        // Free string data copies
+        for (self.string_refs.items) |str_ref| {
+            self.allocator.free(str_ref.string_data);
+        }
+        self.string_refs.deinit(self.allocator);
+        self.data_relocations.deinit(self.allocator);
         // regalloc_state is borrowed, not owned - don't deinit
     }
 
@@ -681,6 +703,40 @@ pub const ARM64CodeGen = struct {
                 try self.value_regs.put(self.allocator, value, dest_reg);
             },
 
+            .const_string => {
+                // String literal: emit ADRP + ADD to load the string address.
+                // The actual address is filled in by the linker via relocations.
+                // The string index is in aux_int.
+                const string_index: usize = @intCast(value.aux_int);
+                const dest_reg = self.getDestRegForValue(value);
+
+                // Get the string data and make a copy (func may be deinit'd before finalize)
+                const str_data = if (string_index < self.func.string_literals.len)
+                    self.func.string_literals[string_index]
+                else
+                    "";
+
+                // Record the offsets for relocation fixup
+                const adrp_offset = self.offset();
+                // Emit ADRP with imm=0 (linker will fix up)
+                try self.emit(asm_mod.encodeADRP(dest_reg, 0));
+
+                const add_offset = self.offset();
+                // Emit ADD with imm=0 (linker will fix up)
+                try self.emit(asm_mod.encodeADDImm(dest_reg, dest_reg, 0, 0));
+
+                // Record string reference with a copy of the data for relocation during finalize()
+                const str_copy = try self.allocator.dupe(u8, str_data);
+                try self.string_refs.append(self.allocator, .{
+                    .adrp_offset = adrp_offset,
+                    .add_offset = add_offset,
+                    .string_data = str_copy,
+                });
+
+                try self.value_regs.put(self.allocator, value, dest_reg);
+                debug.log(.codegen, "      -> x{d} = str[{d}] len={d} (pending reloc)", .{ dest_reg, string_index, str_data.len });
+            },
+
             .add => {
                 const args = value.args;
                 if (args.len >= 2) {
@@ -746,6 +802,43 @@ pub const ARM64CodeGen = struct {
                     };
                     const dest_reg = self.getDestRegForValue(value);
                     try self.emit(asm_mod.encodeSDIV(dest_reg, op1_reg, op2_reg));
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
+            .neg => {
+                // NEG Rd, Rm is an alias for SUB Rd, XZR, Rm
+                const args = value.args;
+                if (args.len >= 1) {
+                    const op_reg = self.getRegForValue(args[0]) orelse blk: {
+                        try self.ensureInReg(args[0], 0);
+                        break :blk @as(u5, 0);
+                    };
+                    const dest_reg = self.getDestRegForValue(value);
+                    // XZR is register 31
+                    try self.emit(asm_mod.encodeSUBReg(dest_reg, 31, op_reg));
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
+            .mod => {
+                // ARM64 doesn't have modulo, compute as: a % b = a - (a / b) * b
+                // Use x16 as scratch register
+                const args = value.args;
+                if (args.len >= 2) {
+                    const op1_reg = self.getRegForValue(args[0]) orelse blk: {
+                        try self.ensureInReg(args[0], 0);
+                        break :blk @as(u5, 0);
+                    };
+                    const op2_reg = self.getRegForValue(args[1]) orelse blk: {
+                        try self.ensureInReg(args[1], 1);
+                        break :blk @as(u5, 1);
+                    };
+                    const dest_reg = self.getDestRegForValue(value);
+                    // x16 is scratch (IP0)
+                    try self.emit(asm_mod.encodeSDIV(16, op1_reg, op2_reg)); // x16 = a / b
+                    try self.emit(asm_mod.encodeMUL(16, 16, op2_reg)); // x16 = (a / b) * b
+                    try self.emit(asm_mod.encodeSUBReg(dest_reg, op1_reg, 16)); // dest = a - x16
                     try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
@@ -891,6 +984,96 @@ pub const ARM64CodeGen = struct {
                     debug.log(.codegen, "      -> LDR x{d}, [SP, #{d}]", .{ dest_reg, spill_off });
 
                     try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
+            // === Struct Field Access Operations ===
+            // Following Go's pattern: LocalAddr + OffPtr + Load/Store
+
+            .local_addr => {
+                // Compute address of a local variable on the stack
+                // aux_int contains the local index
+                const local_idx: usize = @intCast(value.aux_int);
+                const dest_reg = self.getDestRegForValue(value);
+
+                // Get stack offset from local_offsets (set by stackalloc)
+                if (local_idx < self.func.local_offsets.len) {
+                    const byte_off = self.func.local_offsets[local_idx];
+                    // ADD Rd, SP, #offset
+                    try self.emit(asm_mod.encodeADDImm(dest_reg, 31, @intCast(byte_off), 0));
+                    debug.log(.codegen, "      -> ADD x{d}, SP, #{d} (local_addr {d})", .{ dest_reg, byte_off, local_idx });
+                } else {
+                    // Fallback: offset 0 (shouldn't happen)
+                    try self.emit(asm_mod.encodeADDImm(dest_reg, 31, 0, 0));
+                    debug.log(.codegen, "      -> ADD x{d}, SP, #0 (local_addr {d} - NO OFFSET!)", .{ dest_reg, local_idx });
+                }
+                try self.value_regs.put(self.allocator, value, dest_reg);
+            },
+
+            .off_ptr => {
+                // Add field offset to base pointer
+                // aux_int contains the offset, arg[0] is the base pointer
+                if (value.args.len > 0) {
+                    const base = value.args[0];
+                    const field_off: i64 = value.aux_int;
+                    const dest_reg = self.getDestRegForValue(value);
+
+                    const base_reg = self.getRegForValue(base) orelse blk: {
+                        // Need to get base into a register first
+                        try self.ensureInReg(base, dest_reg);
+                        break :blk dest_reg;
+                    };
+
+                    // ADD Rd, Rn, #offset
+                    try self.emit(asm_mod.encodeADDImm(dest_reg, base_reg, @intCast(field_off), 0));
+                    debug.log(.codegen, "      -> ADD x{d}, x{d}, #{d} (off_ptr)", .{ dest_reg, base_reg, field_off });
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
+            .load => {
+                // Load from memory address
+                // arg[0] is the address
+                if (value.args.len > 0) {
+                    const addr = value.args[0];
+                    const dest_reg = self.getDestRegForValue(value);
+
+                    const addr_reg = self.getRegForValue(addr) orelse blk: {
+                        // Address should already be computed, but fallback
+                        const temp_reg = self.allocateReg();
+                        try self.ensureInReg(addr, temp_reg);
+                        break :blk temp_reg;
+                    };
+
+                    // LDR Rd, [Rn]  (zero offset)
+                    try self.emit(asm_mod.encodeLdrStr(dest_reg, addr_reg, 0, true));
+                    debug.log(.codegen, "      -> LDR x{d}, [x{d}] (load)", .{ dest_reg, addr_reg });
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
+            .store => {
+                // Store to memory address
+                // arg[0] is the address, arg[1] is the value to store
+                if (value.args.len >= 2) {
+                    const addr = value.args[0];
+                    const val = value.args[1];
+
+                    const addr_reg = self.getRegForValue(addr) orelse blk: {
+                        const temp_reg = self.allocateReg();
+                        try self.ensureInReg(addr, temp_reg);
+                        break :blk temp_reg;
+                    };
+
+                    const val_reg = self.getRegForValue(val) orelse blk: {
+                        const temp_reg = self.allocateReg();
+                        try self.ensureInReg(val, temp_reg);
+                        break :blk temp_reg;
+                    };
+
+                    // STR Rn, [Rm]  (zero offset)
+                    try self.emit(asm_mod.encodeLdrStr(val_reg, addr_reg, 0, false));
+                    debug.log(.codegen, "      -> STR x{d}, [x{d}] (store)", .{ val_reg, addr_reg });
                 }
             },
 
@@ -1172,6 +1355,18 @@ pub const ARM64CodeGen = struct {
         // Add relocations for function calls
         for (self.relocations.items) |reloc| {
             try writer.addRelocation(reloc.offset, reloc.target);
+        }
+
+        // Process string references: add strings to data section and create relocations
+        for (self.string_refs.items) |str_ref| {
+            // Add string to data section and get its symbol name
+            const sym_name = try writer.addStringLiteral(str_ref.string_data);
+
+            // Add ADRP relocation (PAGE21)
+            try writer.addDataRelocation(str_ref.adrp_offset, sym_name, macho.ARM64_RELOC_PAGE21);
+
+            // Add ADD relocation (PAGEOFF12)
+            try writer.addDataRelocation(str_ref.add_offset, sym_name, macho.ARM64_RELOC_PAGEOFF12);
         }
 
         // Write to buffer

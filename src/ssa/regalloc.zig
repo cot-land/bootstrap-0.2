@@ -104,6 +104,7 @@ pub const ValState = struct {
     regs: RegMask = 0, // Which registers hold this value (PERSISTENT)
     spill: ?*Value = null, // StoreReg instruction
     spill_used: bool = false,
+    uses: i32 = 0, // Remaining uses - decremented as args are processed
 
     pub fn inReg(self: *const ValState) bool {
         return self.regs != 0;
@@ -554,6 +555,39 @@ pub const RegAllocState = struct {
                     try self.assignReg(v, reg);
                 }
             }
+
+            // CRITICAL: Free registers for args that are now dead (Go's pattern)
+            // After this value consumes its args, decrement their use counts
+            // and free registers for args whose use count reaches 0
+            // BUT: Don't free if the value is live-out (needed by successor phis)
+            const live_out = self.live.getLiveOut(block.id);
+            for (v.args) |arg| {
+                if (arg.id < self.values.len) {
+                    const vs = &self.values[arg.id];
+                    if (vs.uses > 0) {
+                        vs.uses -= 1;
+                        if (vs.uses == 0) {
+                            // Check if value is live-out before freeing
+                            var is_live_out = false;
+                            for (live_out) |info| {
+                                if (info.id == arg.id) {
+                                    is_live_out = true;
+                                    break;
+                                }
+                            }
+                            if (!is_live_out) {
+                                // This arg has no more uses - free its register
+                                if (vs.firstReg()) |reg| {
+                                    debug.log(.regalloc, "    free x{d} (v{d} dead)", .{ reg, arg.id });
+                                    self.freeReg(reg);
+                                }
+                            } else {
+                                debug.log(.regalloc, "    keep x{?d} (v{d} live-out)", .{ vs.firstReg(), arg.id });
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Handle control values - may need loads
@@ -676,6 +710,22 @@ pub const RegAllocState = struct {
 
     pub fn run(self: *Self) !void {
         debug.log(.regalloc, "=== Register Allocation ===", .{});
+
+        // Initialize use counts from values
+        for (self.f.blocks.items) |block| {
+            for (block.values.items) |v| {
+                if (v.id < self.values.len) {
+                    self.values[v.id].uses = v.uses;
+                }
+            }
+            // Also count control values
+            for (block.controlValues()) |ctrl| {
+                if (ctrl.id < self.values.len) {
+                    // Control values have an implicit use
+                    self.values[ctrl.id].uses = @max(self.values[ctrl.id].uses, 1);
+                }
+            }
+        }
 
         // Phase 2: Linear allocation (per block)
         for (self.f.blocks.items) |block| {

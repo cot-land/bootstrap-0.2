@@ -262,6 +262,22 @@ pub const SSABuilder = struct {
         debug.log(.ssa, "=== Building SSA for '{s}' ===", .{self.ir_func.name});
         debug.log(.ssa, "  IR has {} blocks, {} nodes", .{ self.ir_func.blocks.len, self.ir_func.nodes.len });
 
+        // Copy local sizes from IR for stack allocation
+        if (self.ir_func.locals.len > 0) {
+            const sizes = try self.allocator.alloc(u32, self.ir_func.locals.len);
+            for (self.ir_func.locals, 0..) |local, i| {
+                sizes[i] = local.size;
+            }
+            self.func.local_sizes = sizes;
+            debug.log(.ssa, "  Copied {} local sizes for stack allocation", .{sizes.len});
+        }
+
+        // Copy string literals from IR for codegen
+        if (self.ir_func.string_literals.len > 0) {
+            self.func.string_literals = self.ir_func.string_literals;
+            debug.log(.ssa, "  Copied {} string literals for codegen", .{self.ir_func.string_literals.len});
+        }
+
         // Walk all IR blocks in order
         for (self.ir_func.blocks, 0..) |ir_block, i| {
             debug.log(.ssa, "  Processing IR block {}, {} nodes", .{ i, ir_block.nodes.len });
@@ -343,6 +359,15 @@ pub const SSABuilder = struct {
             .const_null => blk: {
                 const val = try self.func.newValue(.const_nil, node.type_idx, cur, .{});
                 try cur.addValue(self.allocator, val);
+                break :blk val;
+            },
+
+            .const_slice => |c| blk: {
+                // String literal: store index in aux_int, string data stored separately
+                const val = try self.func.newValue(.const_string, node.type_idx, cur, .{});
+                val.aux_int = c.string_index;
+                try cur.addValue(self.allocator, val);
+                debug.log(.ssa, "    n{} -> v{} const_string idx={}", .{ node_idx, val.id, c.string_index });
                 break :blk val;
             },
 
@@ -460,6 +485,116 @@ pub const SSABuilder = struct {
                 const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
                 load_val.addArg(ptr_val);
                 try cur.addValue(self.allocator, load_val);
+                break :blk load_val;
+            },
+
+            // === Struct Field Operations ===
+            // Following Go's pattern: struct locals are stack-allocated,
+            // field access is address calculation + memory load/store
+
+            .field_local => |f| blk: {
+                // Access field from struct local:
+                // 1. Get address of struct (local_addr)
+                // 2. Add field offset (off_ptr)
+                // 3. If field is a struct, return address; otherwise load
+                const local = self.ir_func.locals[f.local_idx];
+                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                addr_val.aux_int = @intCast(f.local_idx);
+                try cur.addValue(self.allocator, addr_val);
+
+                const off_val = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, .{});
+                off_val.addArg(addr_val);
+                off_val.aux_int = f.offset;
+                try cur.addValue(self.allocator, off_val);
+
+                // Check if result is a struct - if so, return address (no load)
+                const field_type = self.type_registry.get(node.type_idx);
+                if (field_type == .struct_type) {
+                    // Nested struct - return address for further field access
+                    debug.log(.ssa, "    field_local local={d} offset={d} -> v{} (struct addr)", .{ f.local_idx, f.offset, off_val.id });
+                    _ = local;
+                    break :blk off_val;
+                }
+
+                // Primitive type - load the value
+                const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
+                load_val.addArg(off_val);
+                try cur.addValue(self.allocator, load_val);
+
+                debug.log(.ssa, "    field_local local={d} offset={d} -> v{}", .{ f.local_idx, f.offset, load_val.id });
+                _ = local;
+                break :blk load_val;
+            },
+
+            .store_local_field => |f| blk: {
+                // Store to struct field:
+                // 1. Get address of struct (local_addr)
+                // 2. Add field offset (off_ptr)
+                // 3. Store value to that address (store)
+                const value = try self.convertNode(f.value) orelse return error.MissingValue;
+
+                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                addr_val.aux_int = @intCast(f.local_idx);
+                try cur.addValue(self.allocator, addr_val);
+
+                const off_val = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, .{});
+                off_val.addArg(addr_val);
+                off_val.aux_int = f.offset;
+                try cur.addValue(self.allocator, off_val);
+
+                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                store_val.addArg2(off_val, value);
+                try cur.addValue(self.allocator, store_val);
+
+                debug.log(.ssa, "    store_local_field local={d} offset={d} value=v{}", .{ f.local_idx, f.offset, value.id });
+                break :blk store_val;
+            },
+
+            .store_field => |f| blk: {
+                // Store to nested struct field through computed address:
+                // 1. Convert base (already an address from field_local/field_value)
+                // 2. Add field offset (off_ptr)
+                // 3. Store value
+                const base_val = try self.convertNode(f.base) orelse return error.MissingValue;
+                const value = try self.convertNode(f.value) orelse return error.MissingValue;
+
+                const off_val = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, .{});
+                off_val.addArg(base_val);
+                off_val.aux_int = f.offset;
+                try cur.addValue(self.allocator, off_val);
+
+                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                store_val.addArg2(off_val, value);
+                try cur.addValue(self.allocator, store_val);
+
+                debug.log(.ssa, "    store_field base=v{} offset={d} value=v{}", .{ base_val.id, f.offset, value.id });
+                break :blk store_val;
+            },
+
+            .field_value => |f| blk: {
+                // Access field from computed struct address
+                // Base is already a pointer/address to a struct
+                const base_val = try self.convertNode(f.base) orelse return error.MissingValue;
+
+                const off_val = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, .{});
+                off_val.addArg(base_val);
+                off_val.aux_int = f.offset;
+                try cur.addValue(self.allocator, off_val);
+
+                // Check if result is a struct - if so, return address (no load)
+                const field_type = self.type_registry.get(node.type_idx);
+                if (field_type == .struct_type) {
+                    // Nested struct - return address for further field access
+                    debug.log(.ssa, "    field_value base=v{} offset={d} -> v{} (struct addr)", .{ base_val.id, f.offset, off_val.id });
+                    break :blk off_val;
+                }
+
+                // Primitive type - load the value
+                const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
+                load_val.addArg(off_val);
+                try cur.addValue(self.allocator, load_val);
+
+                debug.log(.ssa, "    field_value base=v{} offset={d} -> v{}", .{ base_val.id, f.offset, load_val.id });
                 break :blk load_val;
             },
 

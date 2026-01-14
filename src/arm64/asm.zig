@@ -138,6 +138,43 @@ pub fn encodeCMPReg(rn: u5, rm: u5) u32 {
 }
 
 // =========================================
+// PC-Relative Address (ADR/ADRP)
+// =========================================
+
+/// Encode ADR/ADRP instruction.
+/// ADR:  Forms PC-relative address (adds imm to PC)
+/// ADRP: Forms page address (adds imm*4096 to PC page)
+///
+/// For ADRP, the immediate is a 21-bit signed offset scaled by 4KB.
+/// The actual offset is typically fixed up by the linker via relocations.
+///
+/// Encoding: op immlo 10000 immhi Rd
+/// op=0: ADR, op=1: ADRP
+pub fn encodeAdrp(rd: u5, imm21: i21, is_page: bool) u32 {
+    const imm: u21 = @bitCast(imm21);
+    const immlo: u32 = @as(u32, imm & 0b11);
+    const immhi: u32 = @as(u32, imm >> 2);
+    const op: u32 = if (is_page) 1 else 0;
+
+    return (op << 31) |
+        (immlo << 29) |
+        (0b10000 << 24) |
+        (immhi << 5) |
+        encodeRd(rd);
+}
+
+/// ADRP: Address of 4KB page (PC-relative, page-aligned)
+/// Used with ADD to compute full address
+pub fn encodeADRP(rd: u5, imm21: i21) u32 {
+    return encodeAdrp(rd, imm21, true);
+}
+
+/// ADR: PC-relative address
+pub fn encodeADR(rd: u5, imm21: i21) u32 {
+    return encodeAdrp(rd, imm21, false);
+}
+
+// =========================================
 // Multiply/Divide
 // =========================================
 
@@ -563,6 +600,22 @@ test "encode RET" {
 test "encode NOP" {
     const inst = encodeNOP();
     try std.testing.expectEqual(@as(u32, 0xD503201F), inst);
+}
+
+test "encode ADRP" {
+    // ADRP X0, #0 - base case
+    const inst = encodeADRP(0, 0);
+    // Expected: op=1, immlo=0, 10000, immhi=0, Rd=0
+    // 1 00 10000 0000000000000000000 00000 = 0x90000000
+    try std.testing.expectEqual(@as(u32, 0x90000000), inst);
+}
+
+test "encode ADRP with offset" {
+    // ADRP X1, #1 (page offset 1 = 4KB away)
+    const inst = encodeADRP(1, 1);
+    // immlo = 1 & 3 = 1, immhi = 1 >> 2 = 0
+    // 1 01 10000 0000000000000000000 00001 = 0xB0000001
+    try std.testing.expectEqual(@as(u32, 0xB0000001), inst);
 }
 
 test "Emitter" {

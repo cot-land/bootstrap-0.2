@@ -192,6 +192,14 @@ pub const StoreLocalField = struct {
     value: NodeIndex,
 };
 
+/// Store to field through computed struct address.
+pub const StoreField = struct {
+    base: NodeIndex, // Address of struct
+    field_idx: u32,
+    offset: i64, // Field offset from base
+    value: NodeIndex,
+};
+
 /// Load field from computed struct value. (Go: ODOT on expression)
 pub const FieldValue = struct {
     base: NodeIndex,
@@ -456,6 +464,8 @@ pub const Node = struct {
         field_local: FieldLocal,
         /// Store to field in local struct.
         store_local_field: StoreLocalField,
+        /// Store to field through computed struct address.
+        store_field: StoreField,
         /// Load field from computed struct value.
         field_value: FieldValue,
 
@@ -955,6 +965,11 @@ pub const FuncBuilder = struct {
     /// Emit store to field in local struct.
     pub fn emitStoreLocalField(self: *FuncBuilder, local_idx: LocalIdx, field_idx: u32, offset: i64, value: NodeIndex, span: Span) !NodeIndex {
         return self.emit(Node.init(.{ .store_local_field = .{ .local_idx = local_idx, .field_idx = field_idx, .offset = offset, .value = value } }, TypeRegistry.VOID, span));
+    }
+
+    /// Emit store to field through computed address (for nested field access).
+    pub fn emitStoreField(self: *FuncBuilder, base: NodeIndex, field_idx: u32, offset: i64, value: NodeIndex, span: Span) !NodeIndex {
+        return self.emit(Node.init(.{ .store_field = .{ .base = base, .field_idx = field_idx, .offset = offset, .value = value } }, TypeRegistry.VOID, span));
     }
 
     /// Emit field access from computed value.

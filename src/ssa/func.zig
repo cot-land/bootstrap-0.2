@@ -131,6 +131,19 @@ pub const Func = struct {
     scheduled: bool = false,
     laidout: bool = false,
 
+    /// Local variable sizes (indexed by local index).
+    /// Set by SSA builder from IR locals.
+    local_sizes: []u32 = &.{},
+
+    /// Stack offsets for locals (indexed by local index).
+    /// Set by stackalloc pass after computing frame layout.
+    /// local_offsets[local_idx] = byte offset from SP
+    local_offsets: []i32 = &.{},
+
+    /// String literals (indexed by string index from const_string values).
+    /// Set by SSA builder from IR function's string literals.
+    string_literals: []const []const u8 = &.{},
+
     // =========================================
     // Initialization (Zero-Value Semantics - Go pattern)
     // =========================================
@@ -194,6 +207,16 @@ pub const Func = struct {
         // Free reg_alloc slice if allocated
         if (self.reg_alloc.len > 0) {
             self.allocator.free(self.reg_alloc);
+        }
+
+        // Free local_sizes slice if allocated
+        if (self.local_sizes.len > 0) {
+            self.allocator.free(self.local_sizes);
+        }
+
+        // Free local_offsets slice if allocated
+        if (self.local_offsets.len > 0) {
+            self.allocator.free(self.local_offsets);
         }
 
         var const_it = self.constants.valueIterator();

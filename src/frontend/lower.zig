@@ -333,8 +333,63 @@ pub const Lowerer = struct {
                 }
             },
             .field_access => |fa| {
-                // TODO: implement field assignment
-                _ = fa;
+                // Field assignment: struct.field = value
+                // Following Go's pattern for OASSIGN to field
+
+                // Get the base type
+                const base_type_idx = self.inferExprType(fa.base);
+                const base_type = self.type_reg.get(base_type_idx);
+
+                // Must be a struct type
+                const struct_type = switch (base_type) {
+                    .struct_type => |st| st,
+                    .pointer => |ptr| blk: {
+                        const elem_type = self.type_reg.get(ptr.elem);
+                        break :blk switch (elem_type) {
+                            .struct_type => |st| st,
+                            else => return,
+                        };
+                    },
+                    else => return,
+                };
+
+                // Find the field
+                var field_idx: u32 = 0;
+                var field_offset: i64 = 0;
+                for (struct_type.fields, 0..) |field, i| {
+                    if (std.mem.eql(u8, field.name, fa.field)) {
+                        field_idx = @intCast(i);
+                        field_offset = @intCast(field.offset);
+                        break;
+                    }
+                }
+
+                // Lower the value being assigned
+                const value_node = try self.lowerExprNode(assign.value);
+
+                // Check if base is a local variable (direct access)
+                const base_node = self.tree.getNode(fa.base) orelse return;
+                const base_expr = base_node.asExpr() orelse return;
+
+                if (base_expr == .ident) {
+                    if (fb.lookupLocal(base_expr.ident.name)) |local_idx| {
+                        // Emit StoreLocalField for direct store to struct local
+                        _ = try fb.emitStoreLocalField(local_idx, field_idx, field_offset, value_node, assign.span);
+                        return;
+                    }
+                }
+
+                // Handle nested field access (e.g., o.inner.field = value)
+                // The base is itself a field access, lower it to get an address
+                if (base_expr == .field_access) {
+                    // Lower the base field access - this returns an address for struct fields
+                    const base_addr = try self.lowerFieldAccess(base_expr.field_access);
+                    // Emit store to nested field
+                    _ = try fb.emitStoreField(base_addr, field_idx, field_offset, value_node, assign.span);
+                    return;
+                }
+
+                // TODO: Handle pointer field store (PtrFieldStore)
             },
             .index => |idx| {
                 // TODO: implement index assignment
@@ -484,9 +539,7 @@ pub const Lowerer = struct {
                 return try fb.emitPtrLoadValue(ptr_node, final_elem, d.span);
             },
             .field_access => |fa| {
-                // TODO: implement field access
-                _ = fa;
-                return ir.null_node;
+                return try self.lowerFieldAccess(fa);
             },
             .index => |idx| {
                 // TODO: implement index expression
@@ -513,12 +566,25 @@ pub const Lowerer = struct {
             .false_lit => return try fb.emitConstBool(false, lit.span),
             .null_lit => return try fb.emitConstNull(TypeRegistry.UNTYPED_NULL, lit.span),
             .string => {
-                // TODO: implement string literals
-                return ir.null_node;
+                // String literals become const_slice nodes.
+                // The string data is stored in the function's string table.
+                // Following Go's pattern: string = (ptr, len) pair.
+                //
+                // Process escape sequences and strip quotes
+                var buf: [4096]u8 = undefined;
+                const unescaped = parseStringLiteral(lit.value, &buf);
+
+                // Need to allocate a copy since buf is temporary
+                const copied = try self.allocator.dupe(u8, unescaped);
+
+                // Store in string table and get index
+                const str_idx = try fb.addStringLiteral(copied);
+                return try fb.emitConstSlice(str_idx, lit.span);
             },
             .char => {
-                // TODO: implement char literals
-                return ir.null_node;
+                // Parse char literal: 'a' or '\n' etc.
+                const value = parseCharLiteral(lit.value);
+                return try fb.emitConstInt(@intCast(value), TypeRegistry.U8, lit.span);
             },
         }
     }
@@ -559,6 +625,59 @@ pub const Lowerer = struct {
         const op = tokenToUnaryOp(un.op);
 
         return try fb.emitUnary(op, operand, result_type, un.span);
+    }
+
+    /// Lower field access expression (struct.field).
+    /// Following Go's ODOT pattern - distinguish local struct vs computed value.
+    fn lowerFieldAccess(self: *Lowerer, fa: ast.FieldAccess) Error!ir.NodeIndex {
+        const fb = self.current_func orelse return ir.null_node;
+
+        // Get the base type from the checker's cached types
+        const base_type_idx = self.inferExprType(fa.base);
+        const base_type = self.type_reg.get(base_type_idx);
+
+        // Must be a struct type
+        const struct_type = switch (base_type) {
+            .struct_type => |st| st,
+            .pointer => |ptr| blk: {
+                // Pointer to struct - auto-dereference (like Go's ODOTPTR)
+                const elem_type = self.type_reg.get(ptr.elem);
+                break :blk switch (elem_type) {
+                    .struct_type => |st| st,
+                    else => return ir.null_node,
+                };
+            },
+            else => return ir.null_node,
+        };
+
+        // Find the field by name
+        var field_idx: u32 = 0;
+        var field_offset: i64 = 0;
+        var field_type: TypeIndex = TypeRegistry.VOID;
+        for (struct_type.fields, 0..) |field, i| {
+            if (std.mem.eql(u8, field.name, fa.field)) {
+                field_idx = @intCast(i);
+                field_offset = @intCast(field.offset);
+                field_type = field.type_idx;
+                break;
+            }
+        }
+
+        // Check if base is a local variable (optimized path)
+        const base_node = self.tree.getNode(fa.base) orelse return ir.null_node;
+        const base_expr = base_node.asExpr() orelse return ir.null_node;
+
+        if (base_expr == .ident) {
+            // Base is an identifier - check if it's a local variable
+            if (fb.lookupLocal(base_expr.ident.name)) |local_idx| {
+                // Emit FieldLocal for direct access to struct local
+                return try fb.emitFieldLocal(local_idx, field_idx, field_offset, field_type, fa.span);
+            }
+        }
+
+        // Base is a computed expression - lower it and emit FieldValue
+        const base_val = try self.lowerExprNode(fa.base);
+        return try fb.emitFieldValue(base_val, field_idx, field_offset, field_type, fa.span);
     }
 
     fn lowerCall(self: *Lowerer, call: ast.Call) Error!ir.NodeIndex {
@@ -695,6 +814,90 @@ pub const Lowerer = struct {
         };
     }
 };
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+/// Parse a character literal string (e.g., "'a'" or "'\n'") and return its u8 value.
+fn parseCharLiteral(text: []const u8) u8 {
+    // Expect format: 'x' or '\x'
+    if (text.len < 3) return 0;
+    if (text[0] != '\'' or text[text.len - 1] != '\'') return 0;
+
+    const inner = text[1 .. text.len - 1];
+    if (inner.len == 0) return 0;
+
+    // Simple character
+    if (inner[0] != '\\') {
+        return inner[0];
+    }
+
+    // Escape sequence
+    if (inner.len < 2) return 0;
+    return switch (inner[1]) {
+        'n' => '\n',
+        't' => '\t',
+        'r' => '\r',
+        '\\' => '\\',
+        '\'' => '\'',
+        '"' => '"',
+        '0' => 0,
+        'x' => blk: {
+            // Hex escape \xNN
+            if (inner.len >= 4) {
+                break :blk std.fmt.parseInt(u8, inner[2..4], 16) catch 0;
+            }
+            break :blk 0;
+        },
+        else => inner[1],
+    };
+}
+
+/// Parse a string literal and return its unescaped content.
+/// Handles escape sequences like \n, \t, \r, \\, \", etc.
+fn parseStringLiteral(text: []const u8, out_buf: []u8) []const u8 {
+    // Expect format: "content" - skip opening and closing quotes
+    if (text.len < 2) return "";
+    if (text[0] != '"' or text[text.len - 1] != '"') return text;
+
+    const inner = text[1 .. text.len - 1];
+    var out_idx: usize = 0;
+    var i: usize = 0;
+
+    while (i < inner.len and out_idx < out_buf.len) {
+        if (inner[i] == '\\' and i + 1 < inner.len) {
+            const escaped = switch (inner[i + 1]) {
+                'n' => '\n',
+                't' => '\t',
+                'r' => '\r',
+                '\\' => '\\',
+                '"' => '"',
+                '\'' => '\'',
+                '0' => @as(u8, 0),
+                'x' => blk: {
+                    // Hex escape \xNN
+                    if (i + 3 < inner.len) {
+                        const val = std.fmt.parseInt(u8, inner[i + 2 .. i + 4], 16) catch 0;
+                        i += 2; // skip extra chars
+                        break :blk val;
+                    }
+                    break :blk inner[i + 1];
+                },
+                else => inner[i + 1],
+            };
+            out_buf[out_idx] = escaped;
+            out_idx += 1;
+            i += 2;
+        } else {
+            out_buf[out_idx] = inner[i];
+            out_idx += 1;
+            i += 1;
+        }
+    }
+
+    return out_buf[0..out_idx];
+}
 
 // ============================================================================
 // Tests

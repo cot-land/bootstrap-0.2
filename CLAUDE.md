@@ -8,6 +8,34 @@
 
 ---
 
+## INVESTIGATE GO'S IMPLEMENTATION FOR NON-TRIVIAL BUGS
+
+**When debugging is not straightforward, ALWAYS check `~/learning/go` first.**
+
+On 2026-01-14 we had a critical bug where the register allocator was spilling values incorrectly. After investigating Go's implementation, we found the key pattern:
+
+**Go's pattern (from `regalloc.go`):**
+```go
+// AFTER using an arg, decrement its use count
+// If use count reaches 0, FREE the register immediately
+for (v.args) |arg| {
+    vs.uses -= 1;
+    if (vs.uses == 0) {
+        freeReg(vs.firstReg());
+    }
+}
+```
+
+**The fix:** Added use count tracking to our ValState and decremented/freed after each value processes its args.
+
+**RULE:** When a bug is not a simple/obvious fix:
+1. **Search `~/learning/go`** for how Go handles the same scenario
+2. **Read the Go implementation** - they've solved these problems before
+3. **Adapt their pattern** to our Zig codebase
+4. Checking Go's approach prevents reinventing the wheel with subtle bugs
+
+---
+
 ## CRITICAL LESSON: FOLLOW GO'S PARAMETERIZED PATTERNS
 
 On 2026-01-14 we had a bug where `encodeLDPPost` emitted STP (store) instead of LDP (load) because we wrote separate functions and forgot to set bit 22. This caused crashes.
@@ -319,6 +347,18 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 
 ## CURRENT GOAL
 
-The frontend and IR→SSA pipeline are complete. The goal now is **end-to-end testing**: compile simple programs and verify they run correctly.
+**Self-hosting:** Implement remaining language features so the compiler can compile itself.
+
+See STATUS.md for the detailed checklist. Current sprint: **Strings & Characters**
+
+**Implementation order:**
+1. Sprint 1: Strings & Characters (u8, char literals, string type, string literals)
+2. Sprint 2: Arrays (fixed arrays, literals, indexing)
+3. Sprint 3: Pointers (*T, &x, ptr.*)
+4. Sprint 4: Bitwise & Logical operators
+5. Sprint 5: Enums
+6. Sprint 6: Advanced (optionals, slices, for-in)
+
+**ALWAYS check `~/learning/go` before implementing a feature.** The Go compiler has solved these problems already.
 
 The goal is not speed. The goal is **never having to rewrite again**.

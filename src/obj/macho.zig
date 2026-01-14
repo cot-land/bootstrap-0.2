@@ -148,7 +148,11 @@ pub const RelocationInfo = extern struct {
 };
 
 /// ARM64 relocation types
+pub const ARM64_RELOC_UNSIGNED: u4 = 0; // Absolute address
+pub const ARM64_RELOC_SUBTRACTOR: u4 = 1; // Subtractor for differences
 pub const ARM64_RELOC_BRANCH26: u4 = 2; // BL instruction
+pub const ARM64_RELOC_PAGE21: u4 = 3; // ADRP instruction (page address)
+pub const ARM64_RELOC_PAGEOFF12: u4 = 4; // ADD/LDR instruction (page offset)
 
 // =========================================
 // Writer
@@ -168,6 +172,21 @@ pub const Relocation = struct {
     target: []const u8, // Target symbol name
 };
 
+/// Extended relocation with type information
+pub const ExtRelocation = struct {
+    offset: u32, // Offset in text section
+    target: []const u8, // Symbol name
+    reloc_type: u4, // ARM64_RELOC_*
+    length: u2 = 2, // log2(size): 2 = 4 bytes
+    pc_rel: bool = false, // PC-relative?
+};
+
+/// String literal data with symbol name
+pub const StringLiteral = struct {
+    data: []const u8, // The actual string bytes
+    symbol: []const u8, // Symbol name for this string
+};
+
 /// Mach-O object file writer
 pub const MachOWriter = struct {
     allocator: std.mem.Allocator,
@@ -178,23 +197,39 @@ pub const MachOWriter = struct {
     /// Data section content
     data: std.ArrayListUnmanaged(u8),
 
+    /// Constant string literals (for __cstring section)
+    cstring_data: std.ArrayListUnmanaged(u8),
+
+    /// String literal symbols (offset in cstring_data -> symbol name)
+    string_literals: std.ArrayListUnmanaged(StringLiteral),
+
     /// Symbols
     symbols: std.ArrayListUnmanaged(Symbol),
 
-    /// Relocations for function calls
+    /// Relocations for function calls (branch)
     relocations: std.ArrayListUnmanaged(Relocation),
 
-    /// String table
+    /// Extended relocations for data references (PAGE21, PAGEOFF12)
+    data_relocations: std.ArrayListUnmanaged(ExtRelocation),
+
+    /// String table (for symbol names)
     strings: std.ArrayListUnmanaged(u8),
+
+    /// Counter for generating unique string symbol names
+    string_counter: u32 = 0,
 
     pub fn init(allocator: std.mem.Allocator) MachOWriter {
         var writer = MachOWriter{
             .allocator = allocator,
             .text_data = .{},
             .data = .{},
+            .cstring_data = .{},
+            .string_literals = .{},
             .symbols = .{},
             .relocations = .{},
+            .data_relocations = .{},
             .strings = .{},
+            .string_counter = 0,
         };
 
         // String table starts with null byte
@@ -206,8 +241,11 @@ pub const MachOWriter = struct {
     pub fn deinit(self: *MachOWriter) void {
         self.text_data.deinit(self.allocator);
         self.data.deinit(self.allocator);
+        self.cstring_data.deinit(self.allocator);
+        self.string_literals.deinit(self.allocator);
         self.symbols.deinit(self.allocator);
         self.relocations.deinit(self.allocator);
+        self.data_relocations.deinit(self.allocator);
         self.strings.deinit(self.allocator);
     }
 
@@ -239,6 +277,53 @@ pub const MachOWriter = struct {
         });
     }
 
+    /// Add a string literal to the data section.
+    /// Returns the symbol name for this string.
+    pub fn addStringLiteral(self: *MachOWriter, str: []const u8) ![]const u8 {
+        // Generate unique symbol name
+        const sym_name = try std.fmt.allocPrint(self.allocator, "L_.str.{d}", .{self.string_counter});
+        self.string_counter += 1;
+
+        // Record offset in data section
+        const offset: u32 = @intCast(self.data.items.len);
+
+        // Add string data (without null terminator - we store length separately)
+        try self.data.appendSlice(self.allocator, str);
+
+        // Align to 8 bytes for next item
+        while (self.data.items.len % 8 != 0) {
+            try self.data.append(self.allocator, 0);
+        }
+
+        // Add to string literals list (for tracking)
+        try self.string_literals.append(self.allocator, .{
+            .data = str,
+            .symbol = sym_name,
+        });
+
+        // Add symbol for this string (section 2 = __data)
+        // Mark as external for PAGE21/PAGEOFF12 relocations to work
+        try self.symbols.append(self.allocator, .{
+            .name = sym_name,
+            .value = offset,
+            .section = 2, // __data section
+            .external = true, // Required for PAGE21/PAGEOFF12 relocations
+        });
+
+        return sym_name;
+    }
+
+    /// Add a data relocation (PAGE21 or PAGEOFF12).
+    pub fn addDataRelocation(self: *MachOWriter, offset: u32, target: []const u8, reloc_type: u4) !void {
+        try self.data_relocations.append(self.allocator, .{
+            .offset = offset,
+            .target = target,
+            .reloc_type = reloc_type,
+            .length = 2, // 4 bytes
+            .pc_rel = reloc_type == ARM64_RELOC_PAGE21, // PAGE21 is PC-relative
+        });
+    }
+
     /// Add string to string table, return its offset.
     fn addString(self: *MachOWriter, s: []const u8) !u32 {
         const offset: u32 = @intCast(self.strings.items.len);
@@ -254,18 +339,22 @@ pub const MachOWriter = struct {
 
     /// Write the complete object file.
     pub fn write(self: *MachOWriter, writer: anytype) !void {
-        // Step 1: Collect unique relocation targets and add as undefined symbols
-        // Build map from target name to symbol index
-        var target_to_sym = std.StringHashMap(u32).init(self.allocator);
-        defer target_to_sym.deinit();
+        // Step 1: Build symbol name -> index map for existing symbols
+        var sym_name_to_idx = std.StringHashMap(u32).init(self.allocator);
+        defer sym_name_to_idx.deinit();
 
+        for (self.symbols.items, 0..) |sym, i| {
+            try sym_name_to_idx.put(sym.name, @intCast(i));
+        }
+
+        // Step 1b: Collect unique external relocation targets and add as undefined symbols
         const base_sym_count: u32 = @intCast(self.symbols.items.len);
         var extern_sym_count: u32 = 0;
 
         for (self.relocations.items) |reloc| {
-            if (!target_to_sym.contains(reloc.target)) {
+            if (!sym_name_to_idx.contains(reloc.target)) {
                 const sym_idx = base_sym_count + extern_sym_count;
-                try target_to_sym.put(reloc.target, sym_idx);
+                try sym_name_to_idx.put(reloc.target, sym_idx);
                 // Add undefined external symbol
                 try self.symbols.append(self.allocator, .{
                     .name = reloc.target,
@@ -274,6 +363,20 @@ pub const MachOWriter = struct {
                     .external = true,
                 });
                 extern_sym_count += 1;
+            }
+        }
+
+        // Also check data relocations for external symbols
+        for (self.data_relocations.items) |reloc| {
+            if (!sym_name_to_idx.contains(reloc.target)) {
+                const sym_idx: u32 = @intCast(self.symbols.items.len);
+                try sym_name_to_idx.put(reloc.target, sym_idx);
+                try self.symbols.append(self.allocator, .{
+                    .name = reloc.target,
+                    .value = 0,
+                    .section = 0, // N_UNDF
+                    .external = true,
+                });
             }
         }
 
@@ -302,7 +405,9 @@ pub const MachOWriter = struct {
 
         // Relocations come after data section
         const reloc_offset = alignTo(data_offset + data_size, 4);
-        const num_relocs: u32 = @intCast(self.relocations.items.len);
+        const num_branch_relocs: u32 = @intCast(self.relocations.items.len);
+        const num_data_relocs: u32 = @intCast(self.data_relocations.items.len);
+        const num_relocs: u32 = num_branch_relocs + num_data_relocs;
         const reloc_size: u64 = @as(u64, num_relocs) * @sizeOf(RelocationInfo);
 
         const symtab_offset = alignTo(reloc_offset + reloc_size, 8);
@@ -385,8 +490,9 @@ pub const MachOWriter = struct {
         }
 
         // Step 11: Write relocation entries
+        // First, branch relocations (BL instructions)
         for (self.relocations.items) |reloc| {
-            const sym_idx = target_to_sym.get(reloc.target) orelse 0;
+            const sym_idx = sym_name_to_idx.get(reloc.target) orelse 0;
             const reloc_entry = RelocationInfo{
                 .r_address = reloc.offset,
                 .r_info = RelocationInfo.makeInfo(
@@ -395,6 +501,27 @@ pub const MachOWriter = struct {
                     2, // length = 4 bytes (log2)
                     true, // external
                     ARM64_RELOC_BRANCH26, // BL instruction relocation
+                ),
+            };
+            try writer.writeAll(std.mem.asBytes(&reloc_entry));
+        }
+
+        // Then, data relocations (ADRP/ADD for addresses)
+        for (self.data_relocations.items) |reloc| {
+            const sym_idx = sym_name_to_idx.get(reloc.target) orelse 0;
+            // Use the external field from symbol for PAGE21/PAGEOFF12 to work
+            const is_external = if (sym_idx < self.symbols.items.len)
+                self.symbols.items[sym_idx].external
+            else
+                true;
+            const reloc_entry = RelocationInfo{
+                .r_address = reloc.offset,
+                .r_info = RelocationInfo.makeInfo(
+                    @intCast(sym_idx),
+                    reloc.pc_rel,
+                    reloc.length,
+                    is_external,
+                    reloc.reloc_type,
                 ),
             };
             try writer.writeAll(std.mem.asBytes(&reloc_entry));
