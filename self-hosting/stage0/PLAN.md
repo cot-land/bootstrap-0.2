@@ -4,6 +4,29 @@
 
 ---
 
+## CRITICAL: Fresh Implementation, Not a Copy
+
+**Stage0 files are NOT copied from `~/cot-land/bootstrap/src/bootstrap/`.**
+
+The old bootstrap had:
+- 34+ accumulated bugs
+- Tangled codegen + regalloc
+- Copy-vs-reference issues
+- Compiler workarounds
+
+Stage0 is a **fresh implementation** that:
+1. Follows bootstrap-0.2's cleaner Zig architecture
+2. Uses separated passes (regalloc is independent)
+3. References old bootstrap only for algorithm ideas
+4. Matches bootstrap-0.2's IR/SSA structure
+
+**For each file:**
+- Read the bootstrap-0.2 Zig code first (the correct design)
+- Reference old bootstrap only for "what needs to be done"
+- Write fresh cot code that matches the Zig structure
+
+---
+
 ## Architecture Overview
 
 Stage 0 follows bootstrap-0.2's **separated pass** architecture:

@@ -1,13 +1,57 @@
 # Bootstrap File Reuse Analysis
 
-**Goal**: Identify which files from `/Users/johnc/cot-land/bootstrap/src/bootstrap/` can be reused for stage0.
+**Goal**: Identify which files from `/Users/johnc/cot-land/bootstrap/src/bootstrap/` can inform stage0 design.
 
 ---
 
-## Reuse Categories
+## IMPORTANT: WE ARE NOT COPYING FILES
 
-### Category A: Directly Reusable (Frontend)
-These files are architecture-agnostic and can be adapted with minimal changes.
+**The old bootstrap (`~/cot-land/bootstrap`) had serious architectural problems:**
+- Tangled codegen + regalloc in one file
+- Copy-vs-reference bugs (BUG-036)
+- Workarounds for compiler bugs (BUG-022, BUG-024)
+- 34+ accumulated bugs
+
+**Stage0 files are being REWRITTEN to match bootstrap-0.2's cleaner architecture:**
+- Separated register allocation pass
+- Cleaner IR design
+- No workarounds needed
+- Following Go's proven patterns
+
+**What we take from old bootstrap:**
+- General structure and algorithm ideas
+- Knowledge of what language features are needed
+- Test cases and expected behavior
+
+**What we do NOT take:**
+- The actual code (it has bugs)
+- The tangled architecture
+- The workarounds
+
+**Every stage0 file is written fresh**, referencing both:
+1. The old bootstrap (for what needs to be done)
+2. Bootstrap-0.2's Zig code (for how to do it correctly)
+
+---
+
+## Reference Categories
+
+### Category A: Algorithm Reference (Frontend)
+These old files have useful algorithms, but we rewrite them cleanly.
+
+| old bootstrap file | stage0 file | What we learn from it |
+|-------------------|-------------|----------------------|
+| `token_boot.cot` | `token_s0.cot` | Token types needed |
+| `source_boot.cot` | (merge into scanner) | Position tracking approach |
+| `scanner_boot.cot` | `scanner_s0.cot` | Tokenization algorithm |
+| `parser_boot.cot` | `parser_s0.cot` | Recursive descent structure |
+
+**Reuse level**: Algorithm/structure only, rewrite the code
+
+---
+
+### Category B: Partial Reference (Middle-end)
+These files have useful patterns but need significant rethinking.
 
 | bootstrap file | stage0 file | Changes needed |
 |---------------|-------------|----------------|
