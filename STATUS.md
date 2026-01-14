@@ -6,7 +6,7 @@
 
 Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven compiler architecture. The goal is to eliminate the "whack-a-mole" debugging pattern that killed previous attempts.
 
-**Current State:** Phase 8 in progress. 75 e2e tests passing! Working toward self-hosting.
+**Current State:** Phase 8 in progress. 80 e2e tests passing! Working toward self-hosting.
 
 ---
 
@@ -70,14 +70,16 @@ Required for tree structures and dynamic allocation:
 | **Optional types ?T** | ❌ TODO | P1 | Nullable values |
 | **null literal** | ❌ TODO | P1 | For optionals |
 
-### Tier 4: Enums & Pattern Matching (TODO)
+### Tier 4: Enums & Pattern Matching (IN PROGRESS)
 
 Required for token types, AST node kinds:
 
 | Feature | Status | Priority | Notes |
 |---------|--------|----------|-------|
-| **Enum declaration** | ❌ TODO | P0 | enum Color { Red, Green } |
-| **Enum value access** | ❌ TODO | P0 | Color.Red |
+| **Enum declaration** | ✅ DONE | P0 | enum Status { Pending, Active } |
+| **Enum value access** | ✅ DONE | P0 | Status.Active |
+| **Enum comparison** | ✅ DONE | P0 | s == Status.Active |
+| **Enum as parameter** | ✅ DONE | P0 | fn foo(s: Status) |
 | **Enum as integer** | ❌ TODO | P1 | @enumToInt |
 | **Switch statement** | ❌ TODO | P1 | Or use if/else chains |
 
@@ -148,10 +150,10 @@ Based on dependencies and self-hosting needs:
 2. ❌ Bitwise NOT (~) - deferred
 3. ✅ Logical operators (and, or) with short-circuit evaluation - 8 e2e tests
 
-### Sprint 5: Enums
-1. ❌ Enum declarations
-2. ❌ Enum value access
-3. ❌ Enum in conditionals
+### Sprint 5: Enums (COMPLETE)
+1. ✅ Enum declarations
+2. ✅ Enum value access (Color.Red)
+3. ✅ Enum in conditionals - 5 e2e tests
 
 ### Sprint 6: Advanced
 1. ❌ Optional types ?T

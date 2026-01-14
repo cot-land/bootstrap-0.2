@@ -773,6 +773,18 @@ pub const Lowerer = struct {
         const base_type_idx = self.inferExprType(fa.base);
         const base_type = self.type_reg.get(base_type_idx);
 
+        // Check for enum type first (e.g., Color.Red)
+        if (base_type == .enum_type) {
+            const enum_type = base_type.enum_type;
+            // Find the variant by name and return its value as a constant
+            for (enum_type.variants) |variant| {
+                if (std.mem.eql(u8, variant.name, fa.field)) {
+                    return try fb.emitConstInt(variant.value, base_type_idx, fa.span);
+                }
+            }
+            return ir.null_node; // Variant not found
+        }
+
         // Must be a struct type
         const struct_type = switch (base_type) {
             .struct_type => |st| st,

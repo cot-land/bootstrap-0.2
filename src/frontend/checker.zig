@@ -527,9 +527,14 @@ pub const Checker = struct {
     /// Check identifier expression.
     fn checkIdentifier(self: *Checker, id: ast.Ident) TypeIndex {
         // First check if it's a type name in the registry
-        if (self.types.lookupBasic(id.name)) |_| {
-            // It's a type name being used as an expression - that's an error
-            // but let's be specific about it
+        if (self.types.lookupBasic(id.name)) |type_idx| {
+            // Check if it's an enum type - enums can be used in expressions
+            // for accessing variants (e.g., Color.Red)
+            const t = self.types.get(type_idx);
+            if (t == .enum_type) {
+                return type_idx; // Allow enum type for field access
+            }
+            // Other type names used as expressions is an error
             self.err.errorWithCode(id.span.start, .e301, "type name cannot be used as expression");
             return invalid_type;
         }

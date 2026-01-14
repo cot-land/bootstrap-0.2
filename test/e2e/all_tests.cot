@@ -2,7 +2,7 @@
 // COT END-TO-END TEST SUITE
 // ============================================================================
 //
-// Progress: 75 / 113 tests passing (logical operators complete)
+// Progress: 80 / 113 tests passing (enums complete)
 //
 // ============================================================================
 // STATUS TRACKER
@@ -84,6 +84,11 @@
 //   [x] test_logical_or_true_second - logical OR second true
 //   [x] test_logical_and_chain - chained AND
 //   [x] test_logical_or_chain - chained OR
+//   [x] test_enum_first - enum first variant
+//   [x] test_enum_second - enum second variant
+//   [x] test_enum_third - enum third variant
+//   [x] test_enum_ne - enum not equal comparison
+//   [x] test_enum_param - enum as function parameter
 //
 // BLOCKED - Need more struct features (16):
 //   [ ] test_struct_init, test_struct_param, test_struct_return, ...
@@ -850,6 +855,64 @@ fn test_logical_or_chain() i64 {
 }
 
 // ============================================================================
+// TIER 13: Enums
+// ============================================================================
+
+enum Status {
+    Pending,
+    Active,
+    Done,
+}
+
+// Test enum value (first variant = 0)
+fn test_enum_first() i64 {
+    let s: Status = Status.Pending;
+    if s == Status.Pending {
+        return 42;
+    }
+    return 0;
+}
+
+// Test enum value (second variant = 1)
+fn test_enum_second() i64 {
+    let s: Status = Status.Active;
+    if s == Status.Active {
+        return 42;
+    }
+    return 0;
+}
+
+// Test enum value (third variant = 2)
+fn test_enum_third() i64 {
+    let s: Status = Status.Done;
+    if s == Status.Done {
+        return 42;
+    }
+    return 0;
+}
+
+// Test enum comparison not equal
+fn test_enum_ne() i64 {
+    let s: Status = Status.Active;
+    if s != Status.Pending {
+        return 42;
+    }
+    return 0;
+}
+
+// Test enum as function parameter
+fn check_status(s: Status) i64 {
+    if s == Status.Done {
+        return 42;
+    }
+    return 0;
+}
+
+fn test_enum_param() i64 {
+    return check_status(Status.Done);
+}
+
+// ============================================================================
 // TIER 11+: BLOCKED - Advanced Features
 // Need: enums, unions, slices, for loops, etc.
 // ============================================================================
@@ -965,6 +1028,13 @@ fn main() i64 {
     if test_logical_or_true_second() == 42 { passed = passed + 1; }
     if test_logical_and_chain() == 42 { passed = passed + 1; }
     if test_logical_or_chain() == 42 { passed = passed + 1; }
+
+    // TIER 13: Enums
+    if test_enum_first() == 42 { passed = passed + 1; }
+    if test_enum_second() == 42 { passed = passed + 1; }
+    if test_enum_third() == 42 { passed = passed + 1; }
+    if test_enum_ne() == 42 { passed = passed + 1; }
+    if test_enum_param() == 42 { passed = passed + 1; }
 
     return passed;
 }
