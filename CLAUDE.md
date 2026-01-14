@@ -1,5 +1,34 @@
 # Bootstrap 0.2 - Development Guidelines
 
+## REFRESH YOUR KNOWLEDGE REGULARLY
+
+**Before implementing ANY feature, re-read [SYNTAX.md](SYNTAX.md)** to ensure you understand the exact Cot syntax. This prevents implementing wrong syntax or missing edge cases.
+
+**Use `COT_DEBUG=all`** to trace values through the pipeline when debugging.
+
+---
+
+## CRITICAL LESSON: FOLLOW GO'S PARAMETERIZED PATTERNS
+
+On 2026-01-14 we had a bug where `encodeLDPPost` emitted STP (store) instead of LDP (load) because we wrote separate functions and forgot to set bit 22. This caused crashes.
+
+**Go's pattern (from `asm7.go`):**
+```go
+// ONE function handles both LDP and STP
+// The load/store bit is an EXPLICIT parameter - impossible to forget
+o1 = c.opldpstp(p, o, v, rf, rt1, rt2, 1)  // 1 = load
+o1 = c.opldpstp(p, o, v, rt, rf1, rf2, 0)  // 0 = store
+```
+
+**Our fix:** All related ARM64 instructions now share ONE parameterized function in `src/arm64/asm.zig`:
+- `encodeLdpStp(..., is_load: bool)` - LDP/STP share one function
+- `encodeAddSubReg(..., is_sub: bool)` - ADD/SUB share one function
+- `encodeLdrStr(..., is_load: bool)` - LDR/STR share one function
+
+**RULE:** When adding new instruction encodings, NEVER create separate functions for related instructions. Use ONE function with explicit parameters for the critical bits.
+
+---
+
 ## THIS IS OUR THIRD REWRITE - READ THIS FIRST
 
 Cot has been through **three rewrites**:

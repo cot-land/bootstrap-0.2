@@ -135,7 +135,20 @@ pub const Nlist64 = extern struct {
 pub const RelocationInfo = extern struct {
     r_address: u32, // Offset in section
     r_info: u32, // Symbol index, pcrel, length, extern, type
+
+    /// Create a relocation info word
+    /// Format: symbolnum (24 bits) | pcrel (1) | length (2) | extern (1) | type (4)
+    pub fn makeInfo(symbolnum: u24, pcrel: bool, length: u2, ext: bool, reloc_type: u4) u32 {
+        return @as(u32, symbolnum) |
+            (@as(u32, @intFromBool(pcrel)) << 24) |
+            (@as(u32, length) << 25) |
+            (@as(u32, @intFromBool(ext)) << 27) |
+            (@as(u32, reloc_type) << 28);
+    }
 };
+
+/// ARM64 relocation types
+pub const ARM64_RELOC_BRANCH26: u4 = 2; // BL instruction
 
 // =========================================
 // Writer
@@ -145,8 +158,14 @@ pub const RelocationInfo = extern struct {
 pub const Symbol = struct {
     name: []const u8,
     value: u64,
-    section: u8, // 1 = text, 2 = data
+    section: u8, // 1 = text, 2 = data, 0 = undefined
     external: bool,
+};
+
+/// Relocation definition for the writer
+pub const Relocation = struct {
+    offset: u32, // Offset in text section
+    target: []const u8, // Target symbol name
 };
 
 /// Mach-O object file writer
@@ -162,6 +181,9 @@ pub const MachOWriter = struct {
     /// Symbols
     symbols: std.ArrayListUnmanaged(Symbol),
 
+    /// Relocations for function calls
+    relocations: std.ArrayListUnmanaged(Relocation),
+
     /// String table
     strings: std.ArrayListUnmanaged(u8),
 
@@ -171,6 +193,7 @@ pub const MachOWriter = struct {
             .text_data = .{},
             .data = .{},
             .symbols = .{},
+            .relocations = .{},
             .strings = .{},
         };
 
@@ -184,6 +207,7 @@ pub const MachOWriter = struct {
         self.text_data.deinit(self.allocator);
         self.data.deinit(self.allocator);
         self.symbols.deinit(self.allocator);
+        self.relocations.deinit(self.allocator);
         self.strings.deinit(self.allocator);
     }
 
@@ -207,6 +231,14 @@ pub const MachOWriter = struct {
         });
     }
 
+    /// Add a relocation for a function call.
+    pub fn addRelocation(self: *MachOWriter, offset: u32, target: []const u8) !void {
+        try self.relocations.append(self.allocator, .{
+            .offset = offset,
+            .target = target,
+        });
+    }
+
     /// Add string to string table, return its offset.
     fn addString(self: *MachOWriter, s: []const u8) !u32 {
         const offset: u32 = @intCast(self.strings.items.len);
@@ -222,7 +254,38 @@ pub const MachOWriter = struct {
 
     /// Write the complete object file.
     pub fn write(self: *MachOWriter, writer: anytype) !void {
-        // Calculate sizes and offsets
+        // Step 1: Collect unique relocation targets and add as undefined symbols
+        // Build map from target name to symbol index
+        var target_to_sym = std.StringHashMap(u32).init(self.allocator);
+        defer target_to_sym.deinit();
+
+        const base_sym_count: u32 = @intCast(self.symbols.items.len);
+        var extern_sym_count: u32 = 0;
+
+        for (self.relocations.items) |reloc| {
+            if (!target_to_sym.contains(reloc.target)) {
+                const sym_idx = base_sym_count + extern_sym_count;
+                try target_to_sym.put(reloc.target, sym_idx);
+                // Add undefined external symbol
+                try self.symbols.append(self.allocator, .{
+                    .name = reloc.target,
+                    .value = 0,
+                    .section = 0, // N_UNDF
+                    .external = true,
+                });
+                extern_sym_count += 1;
+            }
+        }
+
+        // Step 2: Pre-add all symbol names to string table
+        var symbol_strx = std.ArrayListUnmanaged(u32){};
+        defer symbol_strx.deinit(self.allocator);
+        for (self.symbols.items) |sym| {
+            const strx = try self.addString(sym.name);
+            try symbol_strx.append(self.allocator, strx);
+        }
+
+        // Step 3: Calculate sizes and offsets
         const header_size: u64 = @sizeOf(MachHeader64);
         const segment_cmd_size: u64 = @sizeOf(SegmentCommand64);
         const section_size: u64 = @sizeOf(Section64);
@@ -237,41 +300,50 @@ pub const MachOWriter = struct {
         const data_offset = alignTo(text_offset + text_size, 8);
         const data_size: u64 = self.data.items.len;
 
-        const symtab_offset = alignTo(data_offset + data_size, 8);
+        // Relocations come after data section
+        const reloc_offset = alignTo(data_offset + data_size, 4);
+        const num_relocs: u32 = @intCast(self.relocations.items.len);
+        const reloc_size: u64 = @as(u64, num_relocs) * @sizeOf(RelocationInfo);
+
+        const symtab_offset = alignTo(reloc_offset + reloc_size, 8);
         const num_syms: u32 = @intCast(self.symbols.items.len);
 
         const strtab_offset = symtab_offset + @as(u64, num_syms) * @sizeOf(Nlist64);
         const strtab_size: u32 = @intCast(self.strings.items.len);
 
-        // Write header
+        // Step 4: Write header
         var header = MachHeader64{
             .ncmds = 2, // segment + symtab
             .sizeofcmds = @intCast(load_cmds_size),
         };
         try writer.writeAll(std.mem.asBytes(&header));
 
-        // Write segment command
+        // Step 5: Write segment command
+        // Note: vmsize must be >= filesize for valid Mach-O
+        const segment_filesize = data_offset + data_size - text_offset;
         var segment = SegmentCommand64{
             .cmdsize = @intCast(segment_cmd_size + section_size * num_sections),
-            .vmsize = text_size + data_size,
+            .vmsize = segment_filesize, // Must match or exceed filesize
             .fileoff = text_offset,
-            .filesize = data_offset + data_size - text_offset,
+            .filesize = segment_filesize,
             .nsects = num_sections,
         };
         try writer.writeAll(std.mem.asBytes(&segment));
 
-        // Write __text section
+        // Step 6: Write __text section with relocation info
         var text_sect = Section64{
             .size = text_size,
             .offset = @intCast(text_offset),
             .@"align" = 2, // 4-byte aligned
+            .reloff = if (num_relocs > 0) @intCast(reloc_offset) else 0,
+            .nreloc = num_relocs,
             .flags = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS,
         };
         @memcpy(text_sect.sectname[0..6], "__text");
         @memcpy(text_sect.segname[0..6], "__TEXT");
         try writer.writeAll(std.mem.asBytes(&text_sect));
 
-        // Write __data section
+        // Step 7: Write __data section
         var data_sect = Section64{
             .size = data_size,
             .offset = @intCast(data_offset),
@@ -281,7 +353,7 @@ pub const MachOWriter = struct {
         @memcpy(data_sect.segname[0..6], "__DATA");
         try writer.writeAll(std.mem.asBytes(&data_sect));
 
-        // Write symtab command
+        // Step 8: Write symtab command
         var symtab = SymtabCommand{
             .symoff = @intCast(symtab_offset),
             .nsyms = num_syms,
@@ -290,7 +362,7 @@ pub const MachOWriter = struct {
         };
         try writer.writeAll(std.mem.asBytes(&symtab));
 
-        // Write text section content
+        // Step 9: Write text section content
         try writer.writeAll(self.text_data.items);
 
         // Pad to data section offset
@@ -301,23 +373,46 @@ pub const MachOWriter = struct {
             try writer.writeAll(padding[0..@intCast(pad_size)]);
         }
 
-        // Write data section content
+        // Step 10: Write data section content
         try writer.writeAll(self.data.items);
 
-        // Pad to symtab offset
+        // Pad to relocation table offset
         const data_end = data_offset + data_size;
-        const sym_pad = symtab_offset - data_end;
+        const reloc_pad = reloc_offset - data_end;
+        if (reloc_pad > 0) {
+            var padding: [8]u8 = .{ 0, 0, 0, 0, 0, 0, 0, 0 };
+            try writer.writeAll(padding[0..@intCast(reloc_pad)]);
+        }
+
+        // Step 11: Write relocation entries
+        for (self.relocations.items) |reloc| {
+            const sym_idx = target_to_sym.get(reloc.target) orelse 0;
+            const reloc_entry = RelocationInfo{
+                .r_address = reloc.offset,
+                .r_info = RelocationInfo.makeInfo(
+                    @intCast(sym_idx), // symbol index
+                    true, // PC-relative
+                    2, // length = 4 bytes (log2)
+                    true, // external
+                    ARM64_RELOC_BRANCH26, // BL instruction relocation
+                ),
+            };
+            try writer.writeAll(std.mem.asBytes(&reloc_entry));
+        }
+
+        // Pad to symtab offset
+        const reloc_end = reloc_offset + reloc_size;
+        const sym_pad = symtab_offset - reloc_end;
         if (sym_pad > 0) {
             var padding: [8]u8 = .{ 0, 0, 0, 0, 0, 0, 0, 0 };
             try writer.writeAll(padding[0..@intCast(sym_pad)]);
         }
 
-        // Write symbol table
-        for (self.symbols.items) |sym| {
-            const str_offset = try self.addString(sym.name);
+        // Step 12: Write symbol table
+        for (self.symbols.items, 0..) |sym, i| {
             var nlist = Nlist64{
-                .n_strx = str_offset,
-                .n_type = N_SECT | (if (sym.external) N_EXT else 0),
+                .n_strx = symbol_strx.items[i],
+                .n_type = if (sym.section == 0) N_EXT else (N_SECT | (if (sym.external) N_EXT else 0)),
                 .n_sect = sym.section,
                 .n_value = sym.value,
             };

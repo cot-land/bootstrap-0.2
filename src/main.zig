@@ -1,9 +1,13 @@
 //! Cot 0.2 Bootstrap Compiler
 //!
 //! A complete rewrite using Go's proven compiler architecture.
-//! See EXECUTION_PLAN.md for details.
+//! See STATUS.md for current status.
 
 const std = @import("std");
+
+// Compilation driver
+pub const driver = @import("driver.zig");
+pub const Driver = driver.Driver;
 
 // Core modules
 pub const core = struct {
@@ -140,30 +144,66 @@ pub const frontend = struct {
 };
 
 pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
     // Parse command-line arguments
     var args = std.process.args();
     _ = args.skip(); // Skip program name
 
     const input_file = args.next() orelse {
-        std.debug.print("Usage: cot <input.cot> -o <output>\n", .{});
+        std.debug.print("Usage: cot <input.cot> [-o <output>]\n", .{});
         return;
     };
 
+    // Parse output file option
+    var output_name: []const u8 = "a.out";
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "-o")) {
+            output_name = args.next() orelse {
+                std.debug.print("Error: -o requires an argument\n", .{});
+                return;
+            };
+        }
+    }
+
     std.debug.print("Cot 0.2 Bootstrap Compiler\n", .{});
     std.debug.print("Input: {s}\n", .{input_file});
+    std.debug.print("Output: {s}\n", .{output_name});
 
-    // TODO: Implement compilation pipeline
-    // 1. Parse source file
-    // 2. Type check
-    // 3. Lower to IR
-    // 4. Convert to SSA
-    // 5. Run optimization passes
-    // 6. Register allocation
-    // 7. Code generation
-    // 8. Write object file
+    // Compile the file
+    var compile_driver = Driver.init(allocator);
+    const obj_code = compile_driver.compileFile(input_file) catch |e| {
+        std.debug.print("Compilation failed: {any}\n", .{e});
+        return;
+    };
+    defer allocator.free(obj_code);
 
-    std.debug.print("\nCompilation pipeline not yet implemented.\n", .{});
-    std.debug.print("Run 'zig build test' to verify core data structures.\n", .{});
+    // Write object file
+    const obj_path = try std.fmt.allocPrint(allocator, "{s}.o", .{output_name});
+    defer allocator.free(obj_path);
+
+    std.fs.cwd().writeFile(.{ .sub_path = obj_path, .data = obj_code }) catch |e| {
+        std.debug.print("Failed to write object file: {any}\n", .{e});
+        return;
+    };
+
+    std.debug.print("Wrote object file: {s}\n", .{obj_path});
+
+    // Link with zig cc
+    std.debug.print("Linking...\n", .{});
+    var child = std.process.Child.init(&.{ "zig", "cc", "-o", output_name, obj_path }, allocator);
+    const result = child.spawnAndWait() catch |e| {
+        std.debug.print("Linker failed: {any}\n", .{e});
+        return;
+    };
+
+    if (result.Exited == 0) {
+        std.debug.print("Success! Created executable: {s}\n", .{output_name});
+    } else {
+        std.debug.print("Linker exited with code: {d}\n", .{result.Exited});
+    }
 }
 
 // =========================================

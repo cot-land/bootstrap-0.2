@@ -3,15 +3,13 @@
 //! Encodes ARM64 instructions into machine code bytes.
 //! Reference: ARM Architecture Reference Manual ARMv8-A
 //!
-//! ## Instruction Format
+//! ## Design Philosophy (following Go's cmd/internal/obj/arm64/asm7.go)
+//!
+//! 1. Related instructions share ONE encoding function with parameters
+//! 2. The parameter makes the critical bit EXPLICIT and impossible to forget
+//! 3. Every encoding has a test against known-good output
 //!
 //! ARM64 instructions are always 32 bits (4 bytes), little-endian.
-//! Major format groups based on bits [28:25]:
-//!
-//! - 100x: Data processing (immediate)
-//! - 101x: Branches
-//! - x1x0: Loads and stores
-//! - x101: Data processing (register)
 
 const std = @import("std");
 
@@ -19,84 +17,71 @@ const std = @import("std");
 // Register Encoding
 // =========================================
 
-/// Encode a general-purpose register (X0-X30, XZR/SP).
-pub fn encodeGPR(reg: u5) u32 {
-    return @as(u32, reg);
-}
-
-/// Encode register as Rd (destination).
+/// Encode register in Rd position (bits 4-0).
 pub fn encodeRd(reg: u5) u32 {
     return @as(u32, reg);
 }
 
-/// Encode register as Rn (first source).
+/// Encode register in Rn position (bits 9-5).
 pub fn encodeRn(reg: u5) u32 {
     return @as(u32, reg) << 5;
 }
 
-/// Encode register as Rm (second source).
+/// Encode register in Rm position (bits 20-16).
 pub fn encodeRm(reg: u5) u32 {
     return @as(u32, reg) << 16;
 }
 
 // =========================================
-// Data Processing - Immediate
+// Move Wide (MOVZ/MOVK/MOVN)
 // =========================================
 
-/// Encode MOVZ: Move wide with zero.
-/// MOVZ Xd, #imm16{, LSL #shift}
-/// Encoding: 1 10 100101 hw imm16 Rd
+/// Move wide opcode
+pub const MoveWideOp = enum(u2) {
+    movn = 0b00, // Move wide with NOT
+    movz = 0b10, // Move wide with zero
+    movk = 0b11, // Move wide with keep
+};
+
+/// Encode move wide instruction (MOVZ, MOVK, MOVN).
+/// Single function - opcode parameter makes the instruction type explicit.
+/// Go equivalent: handled in asmout() case dispatching
+pub fn encodeMoveWide(op: MoveWideOp, rd: u5, imm16: u16, shift: u2) u32 {
+    const sf: u32 = 1; // 64-bit
+    // Encoding: sf opc 100101 hw imm16 Rd
+    return (sf << 31) |
+        (@as(u32, @intFromEnum(op)) << 29) |
+        (0b100101 << 23) |
+        (@as(u32, shift) << 21) |
+        (@as(u32, imm16) << 5) |
+        encodeRd(rd);
+}
+
+// Convenience wrappers (but the core function is parameterized)
 pub fn encodeMOVZ(rd: u5, imm16: u16, shift: u2) u32 {
-    const sf: u32 = 1; // 64-bit
-    const opc: u32 = 0b10; // MOVZ
-    const hw: u32 = @as(u32, shift);
-
-    return (sf << 31) |
-        (opc << 29) |
-        (0b100101 << 23) |
-        (hw << 21) |
-        (@as(u32, imm16) << 5) |
-        encodeRd(rd);
+    return encodeMoveWide(.movz, rd, imm16, shift);
 }
 
-/// Encode MOVK: Move wide with keep.
-/// MOVK Xd, #imm16{, LSL #shift}
-/// Encoding: 1 11 100101 hw imm16 Rd
 pub fn encodeMOVK(rd: u5, imm16: u16, shift: u2) u32 {
-    const sf: u32 = 1;
-    const opc: u32 = 0b11; // MOVK
-
-    return (sf << 31) |
-        (opc << 29) |
-        (0b100101 << 23) |
-        (@as(u32, shift) << 21) |
-        (@as(u32, imm16) << 5) |
-        encodeRd(rd);
+    return encodeMoveWide(.movk, rd, imm16, shift);
 }
 
-/// Encode MOVN: Move wide with NOT.
-/// MOVN Xd, #imm16{, LSL #shift}
-/// Encoding: 1 00 100101 hw imm16 Rd
 pub fn encodeMOVN(rd: u5, imm16: u16, shift: u2) u32 {
-    const sf: u32 = 1;
-    const opc: u32 = 0b00; // MOVN
-
-    return (sf << 31) |
-        (opc << 29) |
-        (0b100101 << 23) |
-        (@as(u32, shift) << 21) |
-        (@as(u32, imm16) << 5) |
-        encodeRd(rd);
+    return encodeMoveWide(.movn, rd, imm16, shift);
 }
 
-/// Encode ADD immediate.
-/// ADD Xd, Xn, #imm12{, LSL #12}
-/// Encoding: 1 0 0 10001 sh imm12 Rn Rd
-pub fn encodeADDImm(rd: u5, rn: u5, imm12: u12, shift: u1) u32 {
+// =========================================
+// Add/Subtract Immediate
+// =========================================
+
+/// Encode ADD/SUB immediate.
+/// Single function - `is_sub` parameter makes it explicit.
+/// Go equivalent: opirr() with S/op bits
+pub fn encodeAddSubImm(rd: u5, rn: u5, imm12: u12, shift: u1, is_sub: bool, set_flags: bool) u32 {
     const sf: u32 = 1; // 64-bit
-    const op: u32 = 0; // ADD (not SUB)
-    const s: u32 = 0; // Don't set flags
-
+    const op: u32 = if (is_sub) 1 else 0;
+    const s: u32 = if (set_flags) 1 else 0;
+    // Encoding: sf op S 10001 sh imm12 Rn Rd
     return (sf << 31) |
         (op << 30) |
         (s << 29) |
@@ -107,75 +92,59 @@ pub fn encodeADDImm(rd: u5, rn: u5, imm12: u12, shift: u1) u32 {
         encodeRd(rd);
 }
 
-/// Encode SUB immediate.
-/// SUB Xd, Xn, #imm12{, LSL #12}
+pub fn encodeADDImm(rd: u5, rn: u5, imm12: u12, shift: u1) u32 {
+    return encodeAddSubImm(rd, rn, imm12, shift, false, false);
+}
+
 pub fn encodeSUBImm(rd: u5, rn: u5, imm12: u12, shift: u1) u32 {
-    const sf: u32 = 1;
-    const op: u32 = 1; // SUB (not ADD)
-    const s: u32 = 0;
+    return encodeAddSubImm(rd, rn, imm12, shift, true, false);
+}
 
+// =========================================
+// Add/Subtract Register
+// =========================================
+
+/// Encode ADD/SUB register (shifted).
+/// Single function - `is_sub` parameter makes it explicit.
+/// Go equivalent: oprrr() in asm7.go
+pub fn encodeAddSubReg(rd: u5, rn: u5, rm: u5, is_sub: bool, set_flags: bool) u32 {
+    const sf: u32 = 1; // 64-bit
+    const op: u32 = if (is_sub) 1 else 0;
+    const s: u32 = if (set_flags) 1 else 0;
+    // Encoding: sf op S 01011 shift 0 Rm imm6 Rn Rd
     return (sf << 31) |
         (op << 30) |
         (s << 29) |
-        (0b10001 << 24) |
-        (@as(u32, shift) << 22) |
-        (@as(u32, imm12) << 10) |
+        (0b01011 << 24) |
+        (0b00 << 22) | // LSL
+        (0 << 21) |
+        encodeRm(rm) |
+        (0 << 10) | // imm6 = 0
         encodeRn(rn) |
         encodeRd(rd);
 }
 
-// =========================================
-// Data Processing - Register
-// =========================================
-
-/// Encode ADD register (shifted).
-/// ADD Xd, Xn, Xm{, shift #amount}
-/// Encoding: 1 0 0 01011 shift 0 Rm imm6 Rn Rd
 pub fn encodeADDReg(rd: u5, rn: u5, rm: u5) u32 {
-    const sf: u32 = 1;
-    const op: u32 = 0; // ADD
-    const s: u32 = 0;
-    const shift: u32 = 0b00; // LSL
-    const imm6: u32 = 0; // No shift amount
-
-    return (sf << 31) |
-        (op << 30) |
-        (s << 29) |
-        (0b01011 << 24) |
-        (shift << 22) |
-        (0 << 21) |
-        encodeRm(rm) |
-        (imm6 << 10) |
-        encodeRn(rn) |
-        encodeRd(rd);
+    return encodeAddSubReg(rd, rn, rm, false, false);
 }
 
-/// Encode SUB register.
 pub fn encodeSUBReg(rd: u5, rn: u5, rm: u5) u32 {
-    const sf: u32 = 1;
-    const op: u32 = 1; // SUB
-    const s: u32 = 0;
-    const shift: u32 = 0b00;
-    const imm6: u32 = 0;
-
-    return (sf << 31) |
-        (op << 30) |
-        (s << 29) |
-        (0b01011 << 24) |
-        (shift << 22) |
-        (0 << 21) |
-        encodeRm(rm) |
-        (imm6 << 10) |
-        encodeRn(rn) |
-        encodeRd(rd);
+    return encodeAddSubReg(rd, rn, rm, true, false);
 }
 
-/// Encode MUL (alias for MADD with Xa=XZR).
-/// MUL Xd, Xn, Xm
-/// Encoding: MADD Xd, Xn, Xm, XZR
+/// CMP is SUBS with Rd=XZR
+pub fn encodeCMPReg(rn: u5, rm: u5) u32 {
+    return encodeAddSubReg(31, rn, rm, true, true);
+}
+
+// =========================================
+// Multiply/Divide
+// =========================================
+
+/// Encode MUL (alias for MADD with Ra=XZR).
 pub fn encodeMUL(rd: u5, rn: u5, rm: u5) u32 {
     const sf: u32 = 1;
-    // MADD: 1 00 11011 000 Rm 0 Ra Rn Rd
+    // MADD: sf 00 11011 000 Rm 0 Ra Rn Rd
     return (sf << 31) |
         (0b00 << 29) |
         (0b11011 << 24) |
@@ -187,46 +156,43 @@ pub fn encodeMUL(rd: u5, rn: u5, rm: u5) u32 {
         encodeRd(rd);
 }
 
-/// Encode SDIV.
-/// SDIV Xd, Xn, Xm
+/// Encode SDIV/UDIV.
+/// Single function - `is_signed` parameter makes it explicit.
+pub fn encodeDiv(rd: u5, rn: u5, rm: u5, is_signed: bool) u32 {
+    const sf: u32 = 1;
+    const o1: u32 = if (is_signed) 1 else 0;
+    // Encoding: sf 0 0 11010110 Rm 00001 o1 Rn Rd
+    return (sf << 31) |
+        (0 << 30) |
+        (0 << 29) |
+        (0b11010110 << 21) |
+        encodeRm(rm) |
+        (0b00001 << 11) |
+        (o1 << 10) |
+        encodeRn(rn) |
+        encodeRd(rd);
+}
+
 pub fn encodeSDIV(rd: u5, rn: u5, rm: u5) u32 {
-    const sf: u32 = 1;
-    // 1 0 0 11010110 Rm 00001 1 Rn Rd
-    return (sf << 31) |
-        (0 << 30) |
-        (0 << 29) |
-        (0b11010110 << 21) |
-        encodeRm(rm) |
-        (0b000011 << 10) |
-        encodeRn(rn) |
-        encodeRd(rd);
+    return encodeDiv(rd, rn, rm, true);
 }
 
-/// Encode UDIV.
 pub fn encodeUDIV(rd: u5, rn: u5, rm: u5) u32 {
-    const sf: u32 = 1;
-    return (sf << 31) |
-        (0 << 30) |
-        (0 << 29) |
-        (0b11010110 << 21) |
-        encodeRm(rm) |
-        (0b000010 << 10) |
-        encodeRn(rn) |
-        encodeRd(rd);
+    return encodeDiv(rd, rn, rm, false);
 }
 
 // =========================================
-// Loads and Stores
+// Load/Store Register
 // =========================================
 
-/// Encode LDR (unsigned offset).
-/// LDR Xd, [Xn, #offset]
-/// Encoding: 11 111 0 01 01 imm12 Rn Rt
-pub fn encodeLDR(rt: u5, rn: u5, offset: u12) u32 {
+/// Encode LDR/STR (unsigned offset).
+/// Single function - `is_load` parameter makes it explicit.
+/// Go equivalent: opldr() in asm7.go
+pub fn encodeLdrStr(rt: u5, rn: u5, offset: u12, is_load: bool) u32 {
     const size: u32 = 0b11; // 64-bit
     const v: u32 = 0; // Not SIMD
-    const opc: u32 = 0b01; // Load
-
+    const opc: u32 = if (is_load) 0b01 else 0b00;
+    // Encoding: size 111 V 01 opc imm12 Rn Rt
     return (size << 30) |
         (0b111 << 27) |
         (v << 26) |
@@ -237,110 +203,106 @@ pub fn encodeLDR(rt: u5, rn: u5, offset: u12) u32 {
         encodeRd(rt);
 }
 
-/// Encode STR (unsigned offset).
-/// STR Xt, [Xn, #offset]
+pub fn encodeLDR(rt: u5, rn: u5, offset: u12) u32 {
+    return encodeLdrStr(rt, rn, offset, true);
+}
+
 pub fn encodeSTR(rt: u5, rn: u5, offset: u12) u32 {
-    const size: u32 = 0b11;
-    const v: u32 = 0;
-    const opc: u32 = 0b00; // Store
+    return encodeLdrStr(rt, rn, offset, false);
+}
 
-    return (size << 30) |
-        (0b111 << 27) |
-        (v << 26) |
-        (0b01 << 24) |
-        (opc << 22) |
-        (@as(u32, offset) << 10) |
+// =========================================
+// Load/Store Pair (LDP/STP)
+// =========================================
+
+/// Addressing mode for load/store pair
+pub const LdStPairMode = enum(u2) {
+    post_index = 0b01, // [Xn], #imm
+    signed_offset = 0b10, // [Xn, #imm]
+    pre_index = 0b11, // [Xn, #imm]!
+};
+
+/// Encode LDP/STP with explicit load/store parameter.
+/// THIS IS THE KEY FUNCTION - Go's opldpstp() equivalent.
+/// The `is_load` parameter sets bit 22, making it IMPOSSIBLE to forget.
+pub fn encodeLdpStp(rt: u5, rt2: u5, rn: u5, offset: i7, mode: LdStPairMode, is_load: bool) u32 {
+    const opc: u32 = 0b10; // 64-bit
+    const imm7: u32 = @bitCast(@as(i32, offset) & 0x7F);
+    const load_bit: u32 = if (is_load) 1 else 0;
+    // Encoding: opc 101 V mode L imm7 Rt2 Rn Rt
+    //           31-30 29-27 26 25-23 22 21-15 14-10 9-5 4-0
+    return (opc << 30) |
+        (0b101 << 27) |
+        (0 << 26) | // V = 0 for GPR
+        (@as(u32, @intFromEnum(mode)) << 23) |
+        (load_bit << 22) | // *** THE CRITICAL BIT - explicit parameter ***
+        (imm7 << 15) |
+        (@as(u32, rt2) << 10) |
         encodeRn(rn) |
         encodeRd(rt);
 }
 
-/// Encode STP (pre-index) for prologue.
+/// STP pre-index for function prologue.
 /// STP Xt1, Xt2, [Xn, #offset]!
 pub fn encodeSTPPre(rt: u5, rt2: u5, rn: u5, offset: i7) u32 {
-    const opc: u32 = 0b10; // 64-bit
-    // 10 101 0 011 imm7 Rt2 Rn Rt
-    const imm7: u32 = @bitCast(@as(i32, offset) & 0x7F);
-
-    return (opc << 30) |
-        (0b101 << 27) |
-        (0 << 26) |
-        (0b011 << 23) |
-        (imm7 << 15) |
-        (@as(u32, rt2) << 10) |
-        encodeRn(rn) |
-        encodeRd(rt);
+    return encodeLdpStp(rt, rt2, rn, offset, .pre_index, false);
 }
 
-/// Encode LDP (post-index) for epilogue.
+/// LDP post-index for function epilogue.
 /// LDP Xt1, Xt2, [Xn], #offset
 pub fn encodeLDPPost(rt: u5, rt2: u5, rn: u5, offset: i7) u32 {
-    const opc: u32 = 0b10;
-    // 10 101 0 001 imm7 Rt2 Rn Rt
-    const imm7: u32 = @bitCast(@as(i32, offset) & 0x7F);
-
-    return (opc << 30) |
-        (0b101 << 27) |
-        (0 << 26) |
-        (0b001 << 23) |
-        (imm7 << 15) |
-        (@as(u32, rt2) << 10) |
-        encodeRn(rn) |
-        encodeRd(rt);
+    return encodeLdpStp(rt, rt2, rn, offset, .post_index, true);
 }
 
 // =========================================
 // Branches
 // =========================================
 
-/// Encode unconditional branch.
-/// B label (PC-relative)
-/// Encoding: 0 00101 imm26
+/// Encode B/BL (unconditional branch).
+/// Single function - `link` parameter makes it explicit.
+pub fn encodeBranch(offset: i26, link: bool) u32 {
+    const imm26: u32 = @bitCast(@as(i32, offset) & 0x3FFFFFF);
+    const op: u32 = if (link) 0b100101 else 0b000101;
+    return (op << 26) | imm26;
+}
+
 pub fn encodeB(offset: i26) u32 {
-    const imm26: u32 = @bitCast(@as(i32, offset) & 0x3FFFFFF);
-    return (0b000101 << 26) | imm26;
+    return encodeBranch(offset, false);
 }
 
-/// Encode branch with link (call).
-/// BL label
 pub fn encodeBL(offset: i26) u32 {
-    const imm26: u32 = @bitCast(@as(i32, offset) & 0x3FFFFFF);
-    return (0b100101 << 26) | imm26;
+    return encodeBranch(offset, true);
 }
 
-/// Encode branch register (indirect).
-/// BR Xn
+/// Branch register opcode
+pub const BranchRegOp = enum(u4) {
+    br = 0b0000, // Branch to register
+    blr = 0b0001, // Branch with link to register
+    ret = 0b0010, // Return
+};
+
+/// Encode BR/BLR/RET.
+/// Single function - opcode parameter makes it explicit.
+pub fn encodeBranchReg(rn: u5, op: BranchRegOp) u32 {
+    // Encoding: 1101011 opc 11111 000000 Rn 00000
+    return (0b1101011 << 25) |
+        (@as(u32, @intFromEnum(op)) << 21) |
+        (0b11111 << 16) |
+        (0b000000 << 10) |
+        encodeRn(rn) |
+        0b00000;
+}
+
 pub fn encodeBR(rn: u5) u32 {
-    // 1101011 0000 11111 000000 Rn 00000
-    return (0b1101011 << 25) |
-        (0b0000 << 21) |
-        (0b11111 << 16) |
-        (0b000000 << 10) |
-        encodeRn(rn) |
-        0b00000;
+    return encodeBranchReg(rn, .br);
 }
 
-/// Encode branch with link register (indirect call).
-/// BLR Xn
 pub fn encodeBLR(rn: u5) u32 {
-    // 1101011 0001 11111 000000 Rn 00000
-    return (0b1101011 << 25) |
-        (0b0001 << 21) |
-        (0b11111 << 16) |
-        (0b000000 << 10) |
-        encodeRn(rn) |
-        0b00000;
+    return encodeBranchReg(rn, .blr);
 }
 
-/// Encode return.
-/// RET {Xn} (default X30)
 pub fn encodeRET(rn: u5) u32 {
-    // 1101011 0010 11111 000000 Rn 00000
-    return (0b1101011 << 25) |
-        (0b0010 << 21) |
-        (0b11111 << 16) |
-        (0b000000 << 10) |
-        encodeRn(rn) |
-        0b00000;
+    return encodeBranchReg(rn, .ret);
 }
 
 /// Condition codes for conditional branches.
@@ -367,7 +329,7 @@ pub const Cond = enum(u4) {
 /// B.cond label
 pub fn encodeBCond(cond: Cond, offset: i19) u32 {
     const imm19: u32 = @bitCast(@as(i32, offset) & 0x7FFFF);
-    // 0101010 0 imm19 0 cond
+    // Encoding: 0101010 0 imm19 0 cond
     return (0b0101010 << 25) |
         (0 << 24) |
         (imm19 << 5) |
@@ -376,28 +338,62 @@ pub fn encodeBCond(cond: Cond, offset: i19) u32 {
 }
 
 // =========================================
-// Compare and Set
+// Conditional Set (CSET)
 // =========================================
 
-/// Encode CMP register (alias for SUBS with Rd=XZR).
-/// CMP Xn, Xm
-pub fn encodeCMPReg(rn: u5, rm: u5) u32 {
-    // SUBS XZR, Xn, Xm
-    const sf: u32 = 1;
-    const op: u32 = 1; // SUB
-    const s: u32 = 1; // Set flags
-
-    return (sf << 31) |
-        (op << 30) |
-        (s << 29) |
-        (0b01011 << 24) |
-        (0b00 << 22) | // LSL
-        (0 << 21) |
-        encodeRm(rm) |
-        (0 << 10) | // imm6
-        encodeRn(rn) |
-        encodeRd(31); // XZR
+/// Invert condition code for CSINC encoding.
+fn invertCond(cond: Cond) Cond {
+    // Invert by flipping the lowest bit
+    return @enumFromInt(@intFromEnum(cond) ^ 1);
 }
+
+/// Encode CSET (Conditional Set).
+/// CSET Rd, cond = CSINC Rd, XZR, XZR, invert(cond)
+/// Sets Rd to 1 if cond is true, 0 otherwise.
+pub fn encodeCSET(rd: u5, cond: Cond) u32 {
+    const sf: u32 = 1; // 64-bit
+    const inv_cond = invertCond(cond);
+    // CSINC: sf 0 0 11010100 Rm cond 0 1 Rn Rd
+    // For CSET: Rm = XZR (31), Rn = XZR (31)
+    return (sf << 31) |
+        (0b00 << 29) |
+        (0b11010100 << 21) |
+        (@as(u32, 31) << 16) | // Rm = XZR
+        (@as(u32, @intFromEnum(inv_cond)) << 12) |
+        (0b01 << 10) | // op = CSINC
+        (31 << 5) | // Rn = XZR
+        encodeRd(rd);
+}
+
+// =========================================
+// Compare and Branch (CBZ/CBNZ)
+// =========================================
+
+/// Encode CBZ/CBNZ (Compare and Branch on Zero/Nonzero).
+/// Single function - `is_nonzero` parameter makes it explicit.
+pub fn encodeCBZNZ(rt: u5, offset: i19, is_nonzero: bool) u32 {
+    const sf: u32 = 1; // 64-bit
+    const op: u32 = if (is_nonzero) 1 else 0;
+    const imm19: u32 = @bitCast(@as(i32, offset) & 0x7FFFF);
+    // Encoding: sf 011010 op imm19 Rt
+    return (sf << 31) |
+        (0b011010 << 25) |
+        (op << 24) |
+        (imm19 << 5) |
+        encodeRd(rt);
+}
+
+pub fn encodeCBNZ(rt: u5, offset: i19) u32 {
+    return encodeCBZNZ(rt, offset, true);
+}
+
+pub fn encodeCBZ(rt: u5, offset: i19) u32 {
+    return encodeCBZNZ(rt, offset, false);
+}
+
+// =========================================
+// Miscellaneous
+// =========================================
 
 /// Encode NOP.
 pub fn encodeNOP() u32 {
@@ -441,57 +437,127 @@ pub const Emitter = struct {
 };
 
 // =========================================
-// Tests
+// Tests - EVERY encoding must have a test
 // =========================================
 
 test "encode MOVZ" {
     // MOVZ X0, #42
     const inst = encodeMOVZ(0, 42, 0);
-    // Expected: 0xD2800540 = 1101_0010_1000_0000_0000_0101_0100_0000
+    // Expected: 0xD2800540
     try std.testing.expectEqual(@as(u32, 0xD2800540), inst);
+}
+
+test "encode MOVK" {
+    // MOVK X0, #0x1234, LSL #16
+    const inst = encodeMOVK(0, 0x1234, 1);
+    // Expected: 0xF2A24680
+    try std.testing.expectEqual(@as(u32, 0xF2A24680), inst);
 }
 
 test "encode ADD register" {
     // ADD X0, X1, X2
     const inst = encodeADDReg(0, 1, 2);
-    // Should be: 1 0 0 01011 00 0 00010 000000 00001 00000
-    // = 0x8B020020
+    // Expected: 0x8B020020
     try std.testing.expectEqual(@as(u32, 0x8B020020), inst);
 }
 
 test "encode SUB register" {
     // SUB X0, X1, X2
     const inst = encodeSUBReg(0, 1, 2);
-    // = 0xCB020020
+    // Expected: 0xCB020020
     try std.testing.expectEqual(@as(u32, 0xCB020020), inst);
+}
+
+test "encode CMP register" {
+    // CMP X1, X2 (SUBS XZR, X1, X2)
+    const inst = encodeCMPReg(1, 2);
+    // Expected: 0xEB02003F
+    try std.testing.expectEqual(@as(u32, 0xEB02003F), inst);
+}
+
+test "encode MUL" {
+    // MUL X0, X1, X2
+    const inst = encodeMUL(0, 1, 2);
+    // Expected: 0x9B027C20
+    try std.testing.expectEqual(@as(u32, 0x9B027C20), inst);
+}
+
+test "encode SDIV" {
+    // SDIV X0, X1, X2
+    const inst = encodeSDIV(0, 1, 2);
+    // Expected: 0x9AC20C20
+    try std.testing.expectEqual(@as(u32, 0x9AC20C20), inst);
+}
+
+test "encode UDIV" {
+    // UDIV X0, X1, X2
+    const inst = encodeUDIV(0, 1, 2);
+    // Expected: 0x9AC20820
+    try std.testing.expectEqual(@as(u32, 0x9AC20820), inst);
 }
 
 test "encode LDR" {
     // LDR X0, [X1, #0]
     const inst = encodeLDR(0, 1, 0);
-    // = 0xF9400020
+    // Expected: 0xF9400020
     try std.testing.expectEqual(@as(u32, 0xF9400020), inst);
 }
 
 test "encode STR" {
     // STR X0, [X1, #0]
     const inst = encodeSTR(0, 1, 0);
-    // = 0xF9000020
+    // Expected: 0xF9000020
     try std.testing.expectEqual(@as(u32, 0xF9000020), inst);
+}
+
+test "encode STP pre-index" {
+    // STP X29, X30, [SP, #-16]!
+    const inst = encodeSTPPre(29, 30, 31, -2);
+    // Expected: 0xA9BF7BFD
+    try std.testing.expectEqual(@as(u32, 0xA9BF7BFD), inst);
+}
+
+test "encode LDP post-index" {
+    // LDP X29, X30, [SP], #16
+    const inst = encodeLDPPost(29, 30, 31, 2);
+    // Expected: 0xA8C17BFD
+    try std.testing.expectEqual(@as(u32, 0xA8C17BFD), inst);
+}
+
+test "encode LDP vs STP - verify bit 22 difference" {
+    // This test explicitly verifies that LDP and STP differ by bit 22
+    const ldp = encodeLdpStp(29, 30, 31, 2, .post_index, true); // is_load = true
+    const stp = encodeLdpStp(29, 30, 31, 2, .post_index, false); // is_load = false
+
+    // They should differ ONLY in bit 22
+    const diff = ldp ^ stp;
+    try std.testing.expectEqual(@as(u32, 1 << 22), diff);
+
+    // LDP should have bit 22 set
+    try std.testing.expect((ldp & (1 << 22)) != 0);
+    // STP should NOT have bit 22 set
+    try std.testing.expect((stp & (1 << 22)) == 0);
+}
+
+test "encode B" {
+    // B +4 (offset in instructions)
+    const inst = encodeB(1);
+    // Expected: 0x14000001
+    try std.testing.expectEqual(@as(u32, 0x14000001), inst);
+}
+
+test "encode BL" {
+    // BL +4 (offset in instructions)
+    const inst = encodeBL(1);
+    // Expected: 0x94000001
+    try std.testing.expectEqual(@as(u32, 0x94000001), inst);
 }
 
 test "encode RET" {
     // RET (uses X30)
     const inst = encodeRET(30);
-    // = 0xD65F03C0
+    // Expected: 0xD65F03C0
     try std.testing.expectEqual(@as(u32, 0xD65F03C0), inst);
-}
-
-test "encode BL" {
-    // BL +4 (offset in instructions, not bytes)
-    const inst = encodeBL(1);
-    // = 0x94000001
-    try std.testing.expectEqual(@as(u32, 0x94000001), inst);
 }
 
 test "encode NOP" {

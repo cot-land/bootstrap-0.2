@@ -68,6 +68,9 @@ pub const SSABuilder = struct {
     /// IR block → SSA block mapping
     block_map: std.AutoHashMap(ir.BlockIndex, *Block),
 
+    /// IR node → SSA value mapping (prevents duplicate conversion)
+    node_values: std.AutoHashMap(ir.NodeIndex, *Value),
+
     // === Loop Context ===
 
     /// Stack of (continue_block, break_block) for nested loops
@@ -124,6 +127,7 @@ pub const SSABuilder = struct {
             .defvars = std.AutoHashMap(u32, std.AutoHashMap(ir.LocalIdx, *Value)).init(allocator),
             .cur_block = entry,
             .block_map = block_map,
+            .node_values = std.AutoHashMap(ir.NodeIndex, *Value).init(allocator),
             .loop_stack = .{},
         };
     }
@@ -142,6 +146,7 @@ pub const SSABuilder = struct {
         self.defvars.deinit();
 
         self.block_map.deinit();
+        self.node_values.deinit();
         self.loop_stack.deinit(self.allocator);
 
         // Free the SSA Func
@@ -291,11 +296,17 @@ pub const SSABuilder = struct {
     }
 
     /// Convert a single IR node to SSA.
+    /// Uses node_values cache to avoid converting the same node twice.
     fn convertNode(self: *SSABuilder, node_idx: ir.NodeIndex) !?*Value {
+        // Check if already converted
+        if (self.node_values.get(node_idx)) |existing| {
+            return existing;
+        }
+
         const node = self.ir_func.getNode(node_idx);
         const cur = self.cur_block orelse return error.NoCurrentBlock;
 
-        return switch (node.data) {
+        const result: ?*Value = switch (node.data) {
             // === Constants ===
             .const_int => |c| blk: {
                 const val = try self.func.newValue(.const_int, node.type_idx, cur, .{});
@@ -455,6 +466,13 @@ pub const SSABuilder = struct {
                 break :blk null;
             },
         };
+
+        // Cache the result if it produced a value
+        if (result) |val| {
+            try self.node_values.put(node_idx, val);
+        }
+
+        return result;
     }
 
     // ========================================================================

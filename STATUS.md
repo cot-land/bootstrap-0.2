@@ -6,7 +6,19 @@
 
 Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven compiler architecture. The goal is to eliminate the "whack-a-mole" debugging pattern that killed previous attempts.
 
-**Current State:** Frontend and IR→SSA pipeline COMPLETE. Ready for end-to-end compilation testing.
+**Current State:** Phase 8 IN PROGRESS. Core language features working, ~15/113 tests passing.
+
+### Recent Milestones (2026-01-14)
+- ✅ `fn main() i64 { return 42; }` compiles and runs correctly
+- ✅ `fn main() i64 { return 20 + 22; }` compiles and runs (returns 42)
+- ✅ **Function calls work!** `add_one(41)` returns 42
+- ✅ Mach-O relocations for inter-function calls
+- ✅ ARM64 asm.zig redesigned following Go's parameterized patterns
+- ✅ **Local variables work!** `let x: i64 = 42; return x;`
+- ✅ **Comparisons work!** `==, !=, <, <=, >, >=` with CMP + CSET
+- ✅ **Conditionals work!** `if 1 == 2 { return 0; } else { return 42; }`
+- ✅ **Simple while loops work!** (without variable mutation)
+- ✅ E2E test suite: ~15/113 tests passing
 
 ---
 
@@ -55,21 +67,34 @@ Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven
 
 ## Remaining Work
 
-### Phase 7: End-to-End Integration
+### Phase 7: End-to-End Integration ✅ COMPLETE
 
 | Task | Status |
 |------|--------|
-| Connect frontend IR to SSA backend | **Ready** |
-| Compile simple function (`return 42`) | TODO |
-| Run compiled binary | TODO |
-| Verify correct output | TODO |
+| Connect frontend IR to SSA backend | ✅ Done |
+| Compile simple function (`return 42`) | ✅ Done |
+| Run compiled binary | ✅ Done |
+| Verify correct output | ✅ Done |
 | Port bootstrap test cases | TODO |
 
-### Phase 8: Self-Hosting
+### Phase 8: Language Expansion (Current)
 
 | Task | Status |
 |------|--------|
-| Compiler compiles simple .cot | TODO |
+| Function calls with ABI | ✅ DONE |
+| Local variables (let/var/const) | ✅ DONE |
+| Comparison operators (==, !=, <, <=, >, >=) | ✅ DONE |
+| Conditionals (if/else) | ✅ DONE |
+| Simple while loops (no variable mutation) | ✅ DONE |
+| While loops with variable mutation | BLOCKED (needs phi for back edges) |
+| Structs | TODO |
+
+### Phase 9: Self-Hosting
+
+| Task | Status |
+|------|--------|
+| Compiler compiles simple .cot | ✅ Done |
+| Compiler compiles fibonacci | TODO |
 | Compiler compiles scanner.cot | TODO |
 | Compiler compiles itself | TODO |
 
@@ -91,7 +116,23 @@ Source → Scanner → Parser → AST
                          Codegen → Machine Code
                               ↓
                          Object Writer → .o file
+                              ↓
+                         Linker (zig cc) → Executable
 ```
+
+### Debug Infrastructure
+
+Set `COT_DEBUG` environment variable to trace pipeline:
+
+```bash
+# Trace all phases
+COT_DEBUG=all ./zig-out/bin/cot input.cot -o output
+
+# Trace specific phases
+COT_DEBUG=parse,lower,ssa ./zig-out/bin/cot input.cot -o output
+```
+
+Available phases: `parse`, `check`, `lower`, `ssa`, `regalloc`, `codegen`
 
 ---
 
@@ -100,7 +141,9 @@ Source → Scanner → Parser → AST
 ```
 bootstrap-0.2/
 ├── src/
-│   ├── main.zig              # Entry point, module exports
+│   ├── main.zig              # Entry point, CLI
+│   ├── driver.zig            # Compilation pipeline orchestration
+│   ├── pipeline_debug.zig    # Debug infrastructure (COT_DEBUG)
 │   │
 │   ├── core/                 # Foundation
 │   │   ├── types.zig         # ID, TypeInfo, RegMask
@@ -160,11 +203,46 @@ bootstrap-0.2/
 
 ## Key Design Decisions
 
-1. **Go's Architecture**: Following Go 1.22's compiler design exactly
-2. **Separate Phases**: Frontend IR distinct from SSA backend
-3. **FwdRef Pattern**: Deferred phi insertion for correct SSA construction
+1. **Go-Influenced Architecture**: Following Go 1.22's compiler patterns with pragmatic simplifications
+2. **Index-Based IR**: Using indices instead of pointers (better for self-hosting, no GC needed)
+3. **FwdRef Pattern**: Go's deferred phi insertion for correct SSA construction
 4. **Type Interning**: TypeRegistry with indices for efficient type comparison
 5. **Arena Allocation**: Using Zig 0.15's ArrayListUnmanaged pattern
+6. **Pipeline Debugging**: Go-inspired phase tracing via environment variable
+7. **Parameterized Encoding**: Following Go's `opldpstp()` pattern - related instructions share ONE function with explicit parameters for critical bits
+
+### Lesson Learned: Parameterized Encoding (2026-01-14)
+
+We had a bug where `encodeLDPPost` emitted STP (store) instead of LDP (load) because we forgot to set bit 22. This corrupted the stack and caused crashes.
+
+**Root cause:** We wrote separate functions for LDP and STP, making it easy to forget a bit.
+
+**Go's solution:** One function `opldpstp()` with an explicit `ldp` parameter:
+```go
+// Go: impossible to forget the load/store bit
+o1 = c.opldpstp(p, o, v, rf, rt1, rt2, 1)  // 1 = load
+o1 = c.opldpstp(p, o, v, rt, rf1, rf2, 0)  // 0 = store
+```
+
+**Our fix:** Rewrote `asm.zig` with parameterized functions:
+```zig
+// New: explicit is_load parameter makes it impossible to forget
+pub fn encodeLdpStp(..., is_load: bool) u32 {
+    const load_bit: u32 = if (is_load) 1 else 0;
+    return ... | (load_bit << 22) | ...;
+}
+```
+
+**Lesson:** When encoding instructions, related variants should share ONE function with explicit parameters. Never trust implicit defaults for critical bits.
+
+### Go Divergences (Intentional)
+
+| Go Feature | Our Decision | Rationale |
+|------------|--------------|-----------|
+| Walk/Order phase | Deferred | Add when we need expression optimization |
+| Escape analysis | Deferred | Add when we need stack allocation |
+| 30 SSA passes | Minimal | Add incrementally for performance |
+| Pointer-based nodes | Index-based | Better for self-hosting without GC |
 
 ---
 

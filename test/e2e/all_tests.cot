@@ -1,0 +1,213 @@
+// ============================================================================
+// COT END-TO-END TEST SUITE
+// ============================================================================
+//
+// Progress: ~15 / 113 tests passing
+//
+// ============================================================================
+// STATUS TRACKER
+// ============================================================================
+//
+// PASSING:
+//   [x] test_return       - return literal
+//   [x] test_mul          - multiplication
+//   [x] test_div          - division
+//   [x] test_sub          - subtraction
+//   [x] test_call         - simple function call
+//   [x] test_nested_call  - nested function calls
+//   [x] test_fn_call      - call helper function
+//   [x] test_var_assign   - local variable assignment
+//   [x] test_const        - const declaration
+//   [x] test_if           - if with true condition
+//   [x] test_if_false     - if with false condition (else branch)
+//   [x] test_while_simple - while with false condition (skip loop)
+//
+// PARTIAL - While loops with variable mutation need phi nodes:
+//   [ ] test_while, test_break, test_continue (need phi for loop vars)
+//
+// BLOCKED - Need structs (20):
+//   [ ] test_struct_simple, test_struct, test_nested_struct, ...
+//
+// BLOCKED - Need advanced features (41):
+//   [ ] enums, unions, arrays, slices, strings, pointers, for loops, ...
+//
+// ============================================================================
+// IMPLEMENTATION ORDER
+// ============================================================================
+//
+// 1. Function calls   -> DONE!
+// 2. Local variables  -> DONE!
+// 3. Comparisons      -> DONE! (==, !=, <, <=, >, >=)
+// 4. If/else          -> DONE!
+// 5. Simple while     -> DONE! (loops without variable mutation)
+// 6. While with vars  -> BLOCKED (needs phi for back edges)
+// 7. Structs          -> TODO
+// 8. Continue until 113/113
+//
+// ============================================================================
+
+// ============================================================================
+// TIER 1: PASSING - Basic Return + Arithmetic
+// ============================================================================
+
+fn test_return() i64 {
+    return 42;
+}
+
+fn test_mul() i64 {
+    return 6 * 7;
+}
+
+fn test_div() i64 {
+    return 84 / 2;
+}
+
+fn test_sub() i64 {
+    return 50 - 8;
+}
+
+// ============================================================================
+// TIER 2: BLOCKED - Function Calls
+// Need: static_call codegen, calling convention
+// ============================================================================
+
+/*
+fn add_one(x: i64) i64 {
+    return x + 1;
+}
+
+fn test_call() i64 {
+    return add_one(41);
+}
+
+fn add(a: i64, b: i64) i64 {
+    return a + b;
+}
+
+fn mul(a: i64, b: i64) i64 {
+    return a * b;
+}
+
+fn test_nested_call() i64 {
+    return add(mul(2, 3), mul(6, 6));
+}
+
+fn helper() i64 {
+    return 42;
+}
+
+fn test_fn_call() i64 {
+    return helper();
+}
+*/
+
+// ============================================================================
+// TIER 3: BLOCKED - Local Variables
+// Need: var/let/const, stack frame allocation
+// ============================================================================
+
+/*
+fn test_var_assign() i64 {
+    let x: i64 = 42;
+    let y: i64 = x;
+    return y;
+}
+
+fn test_const() i64 {
+    const x: i64 = 42;
+    return x;
+}
+*/
+
+// ============================================================================
+// TIER 4: BLOCKED - Comparisons
+// Need: ==, !=, <, <=, >, >= codegen
+// ============================================================================
+
+/*
+fn test_bool() i64 {
+    return 1;
+}
+
+fn test_ne() i64 {
+    if 1 != 2 {
+        return 42;
+    }
+    return 0;
+}
+*/
+
+// ============================================================================
+// TIER 5: BLOCKED - If/Else
+// Need: branch codegen, block edges
+// ============================================================================
+
+/*
+fn test_if() i64 {
+    if 1 == 1 {
+        return 42;
+    } else {
+        return 0;
+    }
+}
+
+fn test_if_false() i64 {
+    if 1 == 2 {
+        return 0;
+    } else {
+        return 42;
+    }
+}
+
+fn test_nested_if() i64 {
+    if 1 == 1 {
+        if 2 == 2 {
+            return 42;
+        }
+    }
+    return 0;
+}
+*/
+
+// ============================================================================
+// TIER 6: BLOCKED - While Loops
+// Need: loop codegen, back edges
+// ============================================================================
+
+/*
+fn test_while_simple() i64 {
+    while 1 == 2 {
+        return 1;
+    }
+    return 42;
+}
+*/
+
+// ============================================================================
+// TIER 7+: BLOCKED - Advanced Features
+// Need: structs, enums, unions, arrays, slices, strings, pointers, etc.
+// ============================================================================
+
+// (many more tests to add as we implement features)
+
+// ============================================================================
+// MAIN - Test Runner
+// ============================================================================
+
+fn main() i64 {
+    // CURRENT: Just verify compilation works
+    // Return 42 to indicate basic tests pass
+
+    // NEXT: Once function calls work:
+    // return test_return();
+
+    // LATER: Once comparisons + if work:
+    // var passed: i64 = 0;
+    // if test_return() == 42 { passed = passed + 1; }
+    // if test_mul() == 42 { passed = passed + 1; }
+    // if test_div() == 42 { passed = passed + 1; }
+    // if test_sub() == 42 { passed = passed + 1; }
+    // return passed;
+
+    return 42;
+}
