@@ -438,6 +438,11 @@ pub const SSABuilder = struct {
 
             // === Binary Operations ===
             .binary => |b| blk: {
+                // Check for short-circuit logical operators
+                if (b.op.isLogical()) {
+                    break :blk try self.convertLogicalOp(b, node.type_idx);
+                }
+
                 const left = try self.convertNode(b.left) orelse return error.MissingValue;
                 const right = try self.convertNode(b.right) orelse return error.MissingValue;
                 const op = binaryOpToSSA(b.op);
@@ -1092,6 +1097,89 @@ pub const SSABuilder = struct {
                 else => {},
             }
         }
+    }
+
+    // ========================================================================
+    // Helper: Short-Circuit Logical Operators
+    // ========================================================================
+
+    /// Convert logical AND/OR with short-circuit evaluation.
+    /// For `a and b`: if a is false, result is false; else result is b
+    /// For `a or b`: if a is true, result is true; else result is b
+    ///
+    /// Creates control flow blocks to avoid evaluating right operand unnecessarily.
+    fn convertLogicalOp(self: *SSABuilder, b: ir.Binary, result_type: TypeIndex) anyerror!*Value {
+        const is_and = (b.op == .@"and");
+        const cur = self.cur_block orelse return error.NoCurrentBlock;
+
+        // Evaluate left operand first
+        const left = try self.convertNode(b.left) orelse return error.MissingValue;
+
+        // Create blocks for control flow:
+        // - eval_right: evaluate right operand
+        // - short_circuit: use short-circuit value (false for AND, true for OR)
+        // - merge: phi node combining results
+        const eval_right_block = try self.func.newBlock(.plain);
+        const short_circuit_block = try self.func.newBlock(.plain);
+        const merge_block = try self.func.newBlock(.plain);
+
+        // Current block becomes conditional: branch based on left value
+        cur.kind = .if_;
+        cur.setControl(left);
+
+        if (is_and) {
+            // For AND: if left is true, evaluate right; if false, short-circuit to false
+            try cur.addEdgeTo(self.allocator, eval_right_block); // then: left is true
+            try cur.addEdgeTo(self.allocator, short_circuit_block); // else: left is false
+        } else {
+            // For OR: if left is true, short-circuit to true; if false, evaluate right
+            try cur.addEdgeTo(self.allocator, short_circuit_block); // then: left is true
+            try cur.addEdgeTo(self.allocator, eval_right_block); // else: left is false
+        }
+
+        _ = self.endBlock();
+
+        // Block: evaluate right operand
+        self.cur_block = eval_right_block;
+        const right = try self.convertNode(b.right) orelse return error.MissingValue;
+
+        // Jump to merge
+        const eval_cur = self.cur_block orelse return error.NoCurrentBlock;
+        try eval_cur.addEdgeTo(self.allocator, merge_block);
+        _ = self.endBlock();
+
+        // Block: short-circuit value (false for AND, true for OR)
+        self.cur_block = short_circuit_block;
+        const short_val_cur = self.cur_block orelse return error.NoCurrentBlock;
+        const short_val = try self.func.newValue(.const_bool, result_type, short_val_cur, .{});
+        short_val.aux_int = if (is_and) 0 else 1;
+        try short_val_cur.addValue(self.allocator, short_val);
+        try short_val_cur.addEdgeTo(self.allocator, merge_block);
+        _ = self.endBlock();
+
+        // Merge block: phi node for result
+        self.cur_block = merge_block;
+        const merge_cur = self.cur_block orelse return error.NoCurrentBlock;
+
+        // Create phi with 2 arguments.
+        // Preds order is always: [eval_right_block, short_circuit_block]
+        // (because eval_right jumps to merge first, then short_circuit)
+        const phi_val = try self.func.newValue(.phi, result_type, merge_cur, .{});
+        // pred0 = eval_right_block -> result is right operand
+        // pred1 = short_circuit_block -> result is short_val (false for AND, true for OR)
+        phi_val.addArg(right);
+        phi_val.addArg(short_val);
+        try merge_cur.addValue(self.allocator, phi_val);
+
+        debug.log(.ssa, "    logical {s}: left=v{d}, right=v{d}, short=v{d}, phi=v{d}", .{
+            if (is_and) "and" else "or",
+            left.id,
+            right.id,
+            short_val.id,
+            phi_val.id,
+        });
+
+        return phi_val;
     }
 
     // ========================================================================

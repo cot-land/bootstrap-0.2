@@ -137,6 +137,14 @@ pub fn lowerOp(op: Op, aux_int: i64) LowerResult {
         .mul => .{ .primary = .mul },
         .div => .{ .primary = .sdiv },
 
+        // Bitwise
+        .and_ => .{ .primary = .and_ },
+        .or_ => .{ .primary = .orr },
+        .xor => .{ .primary = .eor },
+        .shl => .{ .primary = .lsl },
+        .shr => .{ .primary = .lsr },
+        .sar => .{ .primary = .asr },
+
         // Memory
         .load => .{ .primary = .ldr },
         .store => .{ .primary = .str },
@@ -295,6 +303,15 @@ test "lowerOp arithmetic" {
 test "lowerOp memory" {
     try std.testing.expectEqual(ARM64Op.ldr, lowerOp(.load, 0).primary);
     try std.testing.expectEqual(ARM64Op.str, lowerOp(.store, 0).primary);
+}
+
+test "lowerOp bitwise" {
+    try std.testing.expectEqual(ARM64Op.and_, lowerOp(.and_, 0).primary);
+    try std.testing.expectEqual(ARM64Op.orr, lowerOp(.or_, 0).primary);
+    try std.testing.expectEqual(ARM64Op.eor, lowerOp(.xor, 0).primary);
+    try std.testing.expectEqual(ARM64Op.lsl, lowerOp(.shl, 0).primary);
+    try std.testing.expectEqual(ARM64Op.lsr, lowerOp(.shr, 0).primary);
+    try std.testing.expectEqual(ARM64Op.asr, lowerOp(.sar, 0).primary);
 }
 
 test "canEncodeImm12" {

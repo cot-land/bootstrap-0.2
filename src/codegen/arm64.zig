@@ -864,6 +864,92 @@ pub const ARM64CodeGen = struct {
                 }
             },
 
+            // === Bitwise Operations ===
+            .and_ => {
+                const args = value.args;
+                if (args.len >= 2) {
+                    const op1_reg = self.getRegForValue(args[0]) orelse blk: {
+                        try self.ensureInReg(args[0], 0);
+                        break :blk @as(u5, 0);
+                    };
+                    const op2_reg = self.getRegForValue(args[1]) orelse blk: {
+                        try self.ensureInReg(args[1], 1);
+                        break :blk @as(u5, 1);
+                    };
+                    const dest_reg = self.getDestRegForValue(value);
+                    try self.emit(asm_mod.encodeAND(dest_reg, op1_reg, op2_reg));
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
+            .or_ => {
+                const args = value.args;
+                if (args.len >= 2) {
+                    const op1_reg = self.getRegForValue(args[0]) orelse blk: {
+                        try self.ensureInReg(args[0], 0);
+                        break :blk @as(u5, 0);
+                    };
+                    const op2_reg = self.getRegForValue(args[1]) orelse blk: {
+                        try self.ensureInReg(args[1], 1);
+                        break :blk @as(u5, 1);
+                    };
+                    const dest_reg = self.getDestRegForValue(value);
+                    try self.emit(asm_mod.encodeORR(dest_reg, op1_reg, op2_reg));
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
+            .xor => {
+                const args = value.args;
+                if (args.len >= 2) {
+                    const op1_reg = self.getRegForValue(args[0]) orelse blk: {
+                        try self.ensureInReg(args[0], 0);
+                        break :blk @as(u5, 0);
+                    };
+                    const op2_reg = self.getRegForValue(args[1]) orelse blk: {
+                        try self.ensureInReg(args[1], 1);
+                        break :blk @as(u5, 1);
+                    };
+                    const dest_reg = self.getDestRegForValue(value);
+                    try self.emit(asm_mod.encodeEOR(dest_reg, op1_reg, op2_reg));
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
+            .shl => {
+                const args = value.args;
+                if (args.len >= 2) {
+                    const op1_reg = self.getRegForValue(args[0]) orelse blk: {
+                        try self.ensureInReg(args[0], 0);
+                        break :blk @as(u5, 0);
+                    };
+                    const op2_reg = self.getRegForValue(args[1]) orelse blk: {
+                        try self.ensureInReg(args[1], 1);
+                        break :blk @as(u5, 1);
+                    };
+                    const dest_reg = self.getDestRegForValue(value);
+                    try self.emit(asm_mod.encodeLSL(dest_reg, op1_reg, op2_reg));
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
+            .shr => {
+                const args = value.args;
+                if (args.len >= 2) {
+                    const op1_reg = self.getRegForValue(args[0]) orelse blk: {
+                        try self.ensureInReg(args[0], 0);
+                        break :blk @as(u5, 0);
+                    };
+                    const op2_reg = self.getRegForValue(args[1]) orelse blk: {
+                        try self.ensureInReg(args[1], 1);
+                        break :blk @as(u5, 1);
+                    };
+                    const dest_reg = self.getDestRegForValue(value);
+                    try self.emit(asm_mod.encodeLSR(dest_reg, op1_reg, op2_reg));
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
             .arg => {
                 // Function argument - already in register per ABI
                 const arg_idx: u5 = @intCast(value.aux_int);

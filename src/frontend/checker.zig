@@ -601,6 +601,13 @@ pub const Checker = struct {
                 }
                 return self.materializeType(left_type);
             },
+            .shl, .shr => {
+                if (!types.isInteger(left) or !types.isInteger(right)) {
+                    self.errInvalidOp(bin.span.start, "shift", left_type, right_type);
+                    return invalid_type;
+                }
+                return self.materializeType(left_type);
+            },
             .coalesce => {
                 if (left == .optional) {
                     return left.optional.elem;

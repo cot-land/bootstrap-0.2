@@ -429,6 +429,93 @@ pub fn encodeCBZ(rt: u5, offset: i19) u32 {
 }
 
 // =========================================
+// Logical (Shifted Register)
+// =========================================
+
+/// Logical operation type
+pub const LogicalOp = enum(u2) {
+    and_ = 0b00, // AND
+    orr = 0b01, // ORR (OR)
+    eor = 0b10, // EOR (XOR)
+    ands = 0b11, // ANDS (AND with flags - for TST)
+};
+
+/// Encode AND/ORR/EOR register (shifted).
+/// Single function - `op` parameter makes the operation type explicit.
+/// Go equivalent: oprrr() in asm7.go for logical ops
+pub fn encodeLogicalReg(rd: u5, rn: u5, rm: u5, op: LogicalOp, invert: bool) u32 {
+    const sf: u32 = 1; // 64-bit
+    const n: u32 = if (invert) 1 else 0; // N bit inverts Rm (for BIC, ORN, EON)
+    // Encoding: sf opc 01010 shift N Rm imm6 Rn Rd
+    return (sf << 31) |
+        (@as(u32, @intFromEnum(op)) << 29) |
+        (0b01010 << 24) |
+        (0b00 << 22) | // shift = LSL
+        (n << 21) |
+        encodeRm(rm) |
+        (0 << 10) | // imm6 = 0 (no shift amount)
+        encodeRn(rn) |
+        encodeRd(rd);
+}
+
+pub fn encodeAND(rd: u5, rn: u5, rm: u5) u32 {
+    return encodeLogicalReg(rd, rn, rm, .and_, false);
+}
+
+pub fn encodeORR(rd: u5, rn: u5, rm: u5) u32 {
+    return encodeLogicalReg(rd, rn, rm, .orr, false);
+}
+
+pub fn encodeEOR(rd: u5, rn: u5, rm: u5) u32 {
+    return encodeLogicalReg(rd, rn, rm, .eor, false);
+}
+
+/// TST is ANDS with Rd=XZR
+pub fn encodeTST(rn: u5, rm: u5) u32 {
+    return encodeLogicalReg(31, rn, rm, .ands, false);
+}
+
+// =========================================
+// Variable Shift
+// =========================================
+
+/// Variable shift operation type
+pub const ShiftOp = enum(u2) {
+    lsl = 0b00, // Logical shift left
+    lsr = 0b01, // Logical shift right
+    asr = 0b10, // Arithmetic shift right
+    ror = 0b11, // Rotate right
+};
+
+/// Encode LSLV/LSRV/ASRV/RORV.
+/// Single function - `op` parameter makes the shift type explicit.
+pub fn encodeShiftVar(rd: u5, rn: u5, rm: u5, op: ShiftOp) u32 {
+    const sf: u32 = 1; // 64-bit
+    // Encoding: sf 0 0 11010110 Rm 0010 op2 Rn Rd
+    return (sf << 31) |
+        (0b0 << 30) |
+        (0b0 << 29) |
+        (0b11010110 << 21) |
+        encodeRm(rm) |
+        (0b0010 << 12) |
+        (@as(u32, @intFromEnum(op)) << 10) |
+        encodeRn(rn) |
+        encodeRd(rd);
+}
+
+pub fn encodeLSL(rd: u5, rn: u5, rm: u5) u32 {
+    return encodeShiftVar(rd, rn, rm, .lsl);
+}
+
+pub fn encodeLSR(rd: u5, rn: u5, rm: u5) u32 {
+    return encodeShiftVar(rd, rn, rm, .lsr);
+}
+
+pub fn encodeASR(rd: u5, rn: u5, rm: u5) u32 {
+    return encodeShiftVar(rd, rn, rm, .asr);
+}
+
+// =========================================
 // Miscellaneous
 // =========================================
 
@@ -616,6 +703,54 @@ test "encode ADRP with offset" {
     // immlo = 1 & 3 = 1, immhi = 1 >> 2 = 0
     // 1 01 10000 0000000000000000000 00001 = 0xB0000001
     try std.testing.expectEqual(@as(u32, 0xB0000001), inst);
+}
+
+test "encode AND" {
+    // AND X0, X1, X2
+    const inst = encodeAND(0, 1, 2);
+    // sf=1 opc=00 01010 shift=00 N=0 Rm=2 imm6=0 Rn=1 Rd=0
+    // 1 00 01010 00 0 00010 000000 00001 00000 = 0x8A020020
+    try std.testing.expectEqual(@as(u32, 0x8A020020), inst);
+}
+
+test "encode ORR" {
+    // ORR X0, X1, X2
+    const inst = encodeORR(0, 1, 2);
+    // sf=1 opc=01 01010 shift=00 N=0 Rm=2 imm6=0 Rn=1 Rd=0
+    // 1 01 01010 00 0 00010 000000 00001 00000 = 0xAA020020
+    try std.testing.expectEqual(@as(u32, 0xAA020020), inst);
+}
+
+test "encode EOR" {
+    // EOR X0, X1, X2
+    const inst = encodeEOR(0, 1, 2);
+    // sf=1 opc=10 01010 shift=00 N=0 Rm=2 imm6=0 Rn=1 Rd=0
+    // 1 10 01010 00 0 00010 000000 00001 00000 = 0xCA020020
+    try std.testing.expectEqual(@as(u32, 0xCA020020), inst);
+}
+
+test "encode LSL" {
+    // LSL X0, X1, X2 (variable shift)
+    const inst = encodeLSL(0, 1, 2);
+    // sf=1 0 0 11010110 Rm=2 0010 op2=00 Rn=1 Rd=0
+    // 1 0 0 11010110 00010 0010 00 00001 00000 = 0x9AC22020
+    try std.testing.expectEqual(@as(u32, 0x9AC22020), inst);
+}
+
+test "encode LSR" {
+    // LSR X0, X1, X2 (variable shift)
+    const inst = encodeLSR(0, 1, 2);
+    // sf=1 0 0 11010110 Rm=2 0010 op2=01 Rn=1 Rd=0
+    // 1 0 0 11010110 00010 0010 01 00001 00000 = 0x9AC22420
+    try std.testing.expectEqual(@as(u32, 0x9AC22420), inst);
+}
+
+test "encode ASR" {
+    // ASR X0, X1, X2 (variable shift)
+    const inst = encodeASR(0, 1, 2);
+    // sf=1 0 0 11010110 Rm=2 0010 op2=10 Rn=1 Rd=0
+    // 1 0 0 11010110 00010 0010 10 00001 00000 = 0x9AC22820
+    try std.testing.expectEqual(@as(u32, 0x9AC22820), inst);
 }
 
 test "Emitter" {

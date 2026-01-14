@@ -6,7 +6,7 @@
 
 Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven compiler architecture. The goal is to eliminate the "whack-a-mole" debugging pattern that killed previous attempts.
 
-**Current State:** Phase 8 in progress. 59 e2e tests passing! Working toward self-hosting.
+**Current State:** Phase 8 in progress. 75 e2e tests passing! Working toward self-hosting.
 
 ---
 
@@ -81,21 +81,21 @@ Required for token types, AST node kinds:
 | **Enum as integer** | ❌ TODO | P1 | @enumToInt |
 | **Switch statement** | ❌ TODO | P1 | Or use if/else chains |
 
-### Tier 5: Operators (TODO)
+### Tier 5: Operators (IN PROGRESS)
 
 Required for bit manipulation, flags:
 
 | Feature | Status | Priority | Notes |
 |---------|--------|----------|-------|
-| **Bitwise AND &** | ❌ TODO | P0 | Flags, masks |
-| **Bitwise OR \|** | ❌ TODO | P0 | Combining flags |
-| **Bitwise XOR ^** | ❌ TODO | P1 | |
+| **Bitwise AND &** | ✅ DONE | P0 | Flags, masks |
+| **Bitwise OR \|** | ✅ DONE | P0 | Combining flags |
+| **Bitwise XOR ^** | ✅ DONE | P1 | test_bitwise_xor |
 | **Bitwise NOT ~** | ❌ TODO | P1 | |
-| **Left shift <<** | ❌ TODO | P0 | Bit manipulation |
-| **Right shift >>** | ❌ TODO | P0 | Bit manipulation |
-| **Logical AND (and)** | ❌ TODO | P0 | Short-circuit |
-| **Logical OR (or)** | ❌ TODO | P0 | Short-circuit |
-| **Logical NOT (not)** | ❌ TODO | P0 | !x already works |
+| **Left shift <<** | ✅ DONE | P0 | test_shl, test_shift_var |
+| **Right shift >>** | ✅ DONE | P0 | test_shr, test_mask_extract |
+| **Logical AND (and)** | ✅ DONE | P0 | Short-circuit, 8 e2e tests |
+| **Logical OR (or)** | ✅ DONE | P0 | Short-circuit, 8 e2e tests |
+| **Logical NOT (not)** | ✅ DONE | P0 | !x already works |
 | **Compound assign +=, -=** | ❌ TODO | P2 | Convenience |
 
 ### Tier 6: Control Flow (TODO)
@@ -143,10 +143,10 @@ Based on dependencies and self-hosting needs:
 4. ✅ Pointer as function parameter
 5. ✅ Memory-based SSA (Go's pattern for address-taken variables)
 
-### Sprint 4: Bitwise & Logical (IN PROGRESS)
-1. ❌ Bitwise operators (&, |, ^, ~, <<, >>)
-2. ❌ Logical operators (and, or, not)
-3. ❌ Short-circuit evaluation
+### Sprint 4: Bitwise & Logical (COMPLETE)
+1. ✅ Bitwise operators (&, |, ^, <<, >>) - 8 e2e tests
+2. ❌ Bitwise NOT (~) - deferred
+3. ✅ Logical operators (and, or) with short-circuit evaluation - 8 e2e tests
 
 ### Sprint 5: Enums
 1. ❌ Enum declarations

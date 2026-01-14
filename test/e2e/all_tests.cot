@@ -2,7 +2,7 @@
 // COT END-TO-END TEST SUITE
 // ============================================================================
 //
-// Progress: 59 / 113 tests passing (pointers complete)
+// Progress: 75 / 113 tests passing (logical operators complete)
 //
 // ============================================================================
 // STATUS TRACKER
@@ -68,6 +68,22 @@
 //   [x] test_ptr_modify     - pointer modifying original variable
 //   [x] test_ptr_param      - pointer as function parameter
 //   [x] test_ptr_expr       - multiple dereferences in expression
+//   [x] test_bitwise_and    - bitwise AND operator
+//   [x] test_bitwise_or     - bitwise OR operator
+//   [x] test_bitwise_xor    - bitwise XOR operator
+//   [x] test_shl            - left shift operator
+//   [x] test_shr            - right shift operator
+//   [x] test_bitwise_combo  - combined bitwise operations
+//   [x] test_shift_var      - shift with variable amount
+//   [x] test_mask_extract   - bit masking pattern
+//   [x] test_logical_and_true - logical AND both true
+//   [x] test_logical_and_false_first - logical AND short-circuit
+//   [x] test_logical_and_false_second - logical AND second false
+//   [x] test_logical_or_false - logical OR both false
+//   [x] test_logical_or_true_first - logical OR short-circuit
+//   [x] test_logical_or_true_second - logical OR second true
+//   [x] test_logical_and_chain - chained AND
+//   [x] test_logical_or_chain - chained OR
 //
 // BLOCKED - Need more struct features (16):
 //   [ ] test_struct_init, test_struct_param, test_struct_return, ...
@@ -712,6 +728,128 @@ fn test_ptr_expr() i64 {
 }
 
 // ============================================================================
+// TIER 11: Bitwise Operators
+// ============================================================================
+
+// Test bitwise AND
+fn test_bitwise_and() i64 {
+    // 0b1111 & 0b1010 = 0b1010 = 10
+    return 15 & 10;
+}
+
+// Test bitwise OR
+fn test_bitwise_or() i64 {
+    // 0b0101 | 0b1010 = 0b1111 = 15
+    return 5 | 10;
+}
+
+// Test bitwise XOR
+fn test_bitwise_xor() i64 {
+    // 0b1111 ^ 0b1010 = 0b0101 = 5
+    return 15 ^ 10;
+}
+
+// Test left shift
+fn test_shl() i64 {
+    // 1 << 5 = 32
+    return 1 << 5;
+}
+
+// Test right shift
+fn test_shr() i64 {
+    // 64 >> 4 = 4
+    return 64 >> 4;
+}
+
+// Test combined bitwise: (10 | 5) & 12 = 15 & 12 = 12
+fn test_bitwise_combo() i64 {
+    let a: i64 = 10;
+    let b: i64 = 5;
+    let c: i64 = 12;
+    return (a | b) & c;
+}
+
+// Test shift with variable: 1 << n where n = 6 -> 64
+fn test_shift_var() i64 {
+    let n: i64 = 6;
+    return 1 << n;
+}
+
+// Test masking: extract bits 4-7 of 0xFF -> 15
+fn test_mask_extract() i64 {
+    let val: i64 = 255;
+    return (val >> 4) & 15;
+}
+
+// ============================================================================
+// TIER 12: Logical Operators (Short-Circuit)
+// ============================================================================
+
+// Test logical AND - both true
+fn test_logical_and_true() i64 {
+    if 1 == 1 and 2 == 2 {
+        return 42;
+    }
+    return 0;
+}
+
+// Test logical AND - first false (short-circuit)
+fn test_logical_and_false_first() i64 {
+    if 1 == 2 and 2 == 2 {
+        return 0;
+    }
+    return 42;
+}
+
+// Test logical AND - second false
+fn test_logical_and_false_second() i64 {
+    if 1 == 1 and 2 == 3 {
+        return 0;
+    }
+    return 42;
+}
+
+// Test logical OR - both false
+fn test_logical_or_false() i64 {
+    if 1 == 2 or 3 == 4 {
+        return 0;
+    }
+    return 42;
+}
+
+// Test logical OR - first true (short-circuit)
+fn test_logical_or_true_first() i64 {
+    if 1 == 1 or 2 == 3 {
+        return 42;
+    }
+    return 0;
+}
+
+// Test logical OR - second true
+fn test_logical_or_true_second() i64 {
+    if 1 == 2 or 2 == 2 {
+        return 42;
+    }
+    return 0;
+}
+
+// Test chained AND
+fn test_logical_and_chain() i64 {
+    if 1 == 1 and 2 == 2 and 3 == 3 {
+        return 42;
+    }
+    return 0;
+}
+
+// Test chained OR
+fn test_logical_or_chain() i64 {
+    if 1 == 2 or 2 == 3 or 3 == 3 {
+        return 42;
+    }
+    return 0;
+}
+
+// ============================================================================
 // TIER 11+: BLOCKED - Advanced Features
 // Need: enums, unions, slices, for loops, etc.
 // ============================================================================
@@ -807,6 +945,26 @@ fn main() i64 {
     if test_ptr_modify() == 50 { passed = passed + 1; }
     if test_ptr_param() == 42 { passed = passed + 1; }
     if test_ptr_expr() == 42 { passed = passed + 1; }
+
+    // TIER 11: Bitwise operators
+    if test_bitwise_and() == 10 { passed = passed + 1; }
+    if test_bitwise_or() == 15 { passed = passed + 1; }
+    if test_bitwise_xor() == 5 { passed = passed + 1; }
+    if test_shl() == 32 { passed = passed + 1; }
+    if test_shr() == 4 { passed = passed + 1; }
+    if test_bitwise_combo() == 12 { passed = passed + 1; }
+    if test_shift_var() == 64 { passed = passed + 1; }
+    if test_mask_extract() == 15 { passed = passed + 1; }
+
+    // TIER 12: Logical operators (short-circuit)
+    if test_logical_and_true() == 42 { passed = passed + 1; }
+    if test_logical_and_false_first() == 42 { passed = passed + 1; }
+    if test_logical_and_false_second() == 42 { passed = passed + 1; }
+    if test_logical_or_false() == 42 { passed = passed + 1; }
+    if test_logical_or_true_first() == 42 { passed = passed + 1; }
+    if test_logical_or_true_second() == 42 { passed = passed + 1; }
+    if test_logical_and_chain() == 42 { passed = passed + 1; }
+    if test_logical_or_chain() == 42 { passed = passed + 1; }
 
     return passed;
 }
