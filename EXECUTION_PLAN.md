@@ -4,175 +4,297 @@
 
 This document outlines a complete rewrite of the Cot bootstrap compiler using Go's proven compiler architecture. The goal is to eliminate the "whack-a-mole" debugging pattern that plagued previous attempts.
 
-**This is Cot's third rewrite.** We will not need a fourth.
+**This is Cot's third rewrite.** We will not need a fourth - but only if we follow Go's architecture faithfully.
+
+**Key Insight:** Previous attempts failed in the BACKEND (register allocation, codegen), not the frontend. The frontend from bootstrap works. We must fix the backend FIRST.
 
 See also:
 - [CLAUDE.md](CLAUDE.md) - Development guidelines and Zig 0.15 API reference
-- [IMPROVEMENTS.md](IMPROVEMENTS.md) - Go patterns implemented
+- [IMPROVEMENTS.md](IMPROVEMENTS.md) - Honest assessment of current state
+- [REGISTER_ALLOC.md](REGISTER_ALLOC.md) - Go's 6-phase regalloc algorithm (3,137 lines)
+- [DATA_STRUCTURES.md](DATA_STRUCTURES.md) - Go-to-Zig data structure translations
 - [TESTING_FRAMEWORK.md](TESTING_FRAMEWORK.md) - Comprehensive testing infrastructure
+
+---
+
+## Implementation Approach
+
+**Zig → Zig with Go Patterns**
+
+We are porting the working bootstrap compiler (`~/cot-land/bootstrap/src/*.zig`) to a new, cleaner implementation (`bootstrap-0.2/src/`) following Go's compiler architecture patterns from `~/learning/go/src/cmd/compile/`.
+
+Key principles:
+- Port **concepts**, not line-by-line code
+- Follow Go's proven architecture (multi-phase, scope hierarchy, type interning)
+- Use Zig 0.15 idioms (ArrayListUnmanaged, arena allocators)
+- Write comprehensive tests as we go
+
+---
+
+## Why Backend First?
+
+Bootstrap's bugs tell the story:
+
+| Bug | Root Cause | Where |
+|-----|------------|-------|
+| BUG-019 | var declarations crash | Codegen |
+| BUG-020 | enum usage crashes | Codegen |
+| BUG-021 | switch returns wrong values | Codegen |
+| BUG-008 | String field access | Codegen |
+| BUG-009 | Field offset resolution | Codegen |
+| BUG-010 | Large struct handling | Codegen |
+
+The pattern is clear: **ALL the blocking bugs are in codegen/regalloc.**
+
+The frontend (parser, type checker) works. Porting it is straightforward. What failed is the MCValue-based integrated codegen approach - we must replace it with Go's proper 6-phase register allocator.
 
 ---
 
 ## Source Material
 
-All implementations reference Go 1.22 compiler source at `~/learning/go/src/cmd/compile/`:
-- `internal/ssa/` - SSA representation and passes
-- `internal/syntax/` - Lexer and parser
-- `internal/types2/` - Type checking
-- `internal/ir/` - Intermediate representation
-- `internal/ssagen/` - IR to SSA conversion
-- `internal/arm64/` - ARM64 code generation
-- `cmd/internal/obj/` - Object file generation
+All implementations reference:
 
----
+**Go 1.22 compiler** at `~/learning/go/src/cmd/compile/`:
+- `internal/ssa/regalloc.go` - 3,137 lines of register allocation
+- `internal/ssa/lower.go` - Generic to arch-specific lowering
+- `internal/arm64/ssa.go` - ARM64 code generation
+- `internal/syntax/` - Scanner, parser
+- `internal/types2/` - Type checking (go/types package)
 
-## Development Philosophy
-
-### Test-Driven Development (TDD)
-
-**Every feature follows this cycle:**
-
-```
-1. Write test → 2. Run test (fails) → 3. Implement → 4. Run test (passes) → 5. Commit
-```
-
-**Never:**
-- Write code without a test first
-- Fix a bug without a test that exposes it
-- Commit code that doesn't pass all tests
-
-### Why This Matters
-
-Previous rewrites failed because:
-- Cot 0.1: No tests. Bugs compounded.
-- Bootstrap 1.0: Weak tests. Whack-a-mole debugging.
-
-This time we have:
-- 60+ unit tests in SSA infrastructure
-- Golden file tests for output stability
-- Integration tests for cross-module flows
-- Table-driven tests for comprehensive coverage
+**Bootstrap compiler** at `~/cot-land/bootstrap/src/`:
+- `scanner.zig` - Working lexer
+- `parser.zig` - Working parser
+- `ast.zig` - AST definitions
+- `check.zig` - Type checker
+- `ir.zig` - IR definitions
+- `lower.zig` - AST to IR lowering
+- `driver.zig` - Compilation driver
 
 ---
 
 ## Current Status
 
-### Phase 1: Foundation - COMPLETE
+### Phase 0: SSA Foundation - COMPLETE ✓
 
-| Component | Status | Location | Tests |
-|-----------|--------|----------|-------|
-| Core types (ID, TypeRef) | **DONE** | `src/core/types.zig` | Unit tests |
-| Error types | **DONE** | `src/core/errors.zig` | Unit tests |
-| Test utilities | **DONE** | `src/core/testing.zig` | CountingAllocator |
-| SSA Value | **DONE** | `src/ssa/value.zig` | 10+ tests |
-| SSA Block | **DONE** | `src/ssa/block.zig` | Edge tests |
-| SSA Func | **DONE** | `src/ssa/func.zig` | Integration tests |
-| SSA Op | **DONE** | `src/ssa/op.zig` | Table-driven tests |
-| Dominators | **DONE** | `src/ssa/dom.zig` | Algorithm tests |
-| Pass infrastructure | **DONE** | `src/ssa/compile.zig` | Pass metadata |
-| Debug output | **DONE** | `src/ssa/debug.zig` | text/dot/html |
-| Phase snapshots | **DONE** | `src/ssa/debug.zig` | Comparison tests |
-| Test helpers | **DONE** | `src/ssa/test_helpers.zig` | Fixtures, validators |
-| Generic codegen | **DONE** | `src/codegen/generic.zig` | Golden files |
-| ARM64 codegen stub | **DONE** | `src/codegen/arm64.zig` | Basic tests |
+| Component | Status | Location | Go Reference |
+|-----------|--------|----------|--------------|
+| SSA Value | **DONE** | `src/ssa/value.zig` | `ssa/value.go` |
+| SSA Block | **DONE** | `src/ssa/block.zig` | `ssa/block.go` |
+| SSA Func | **DONE** | `src/ssa/func.zig` | `ssa/func.go` |
+| SSA Op | **DONE** | `src/ssa/op.zig` | `ssa/op.go` |
+| Dominator Tree | **DONE** | `src/ssa/dom.zig` | `ssa/dom.go` |
+| Pass Infrastructure | **DONE** | `src/ssa/compile.zig` | `ssa/compile.go` |
+| Debug/Verify | **DONE** | `src/ssa/debug.zig` | - |
+| Test Helpers | **DONE** | `src/ssa/test_helpers.zig` | - |
 
-**Test Results:** `zig build test-all` - 60+ tests passing
+### Phase 1: Liveness Analysis - COMPLETE ✓
+
+| Component | Status | Location |
+|-----------|--------|----------|
+| LiveInfo structure | **DONE** | `src/ssa/liveness.zig` |
+| LiveMap (block→live values) | **DONE** | `src/ssa/liveness.zig` |
+| Backward dataflow | **DONE** | `src/ssa/liveness.zig` |
+
+### Phase 2: Register Allocator - COMPLETE ✓
+
+| Component | Status | Location |
+|-----------|--------|----------|
+| ValState/RegState | **DONE** | `src/ssa/regalloc.zig` |
+| ARM64 register set | **DONE** | `src/ssa/regalloc.zig` |
+| Linear scan allocation | **DONE** | `src/ssa/regalloc.zig` |
+| Spill handling | **DONE** | `src/ssa/regalloc.zig` |
+
+### Phase 3: Lowering Pass - COMPLETE ✓
+
+| Component | Status | Location |
+|-----------|--------|----------|
+| Generic → ARM64 ops | **DONE** | `src/ssa/passes/lower.zig` |
+| ARM64Op enum | **DONE** | `src/ssa/passes/lower.zig` |
+| Lowering rules | **DONE** | `src/ssa/passes/lower.zig` |
+
+### Phase 4: Code Generation - COMPLETE ✓
+
+| Component | Status | Location |
+|-----------|--------|----------|
+| Generic codegen | **DONE** | `src/codegen/generic.zig` |
+| ARM64 codegen | **DONE** | `src/codegen/arm64.zig` |
+| ARM64 instruction encoding | **DONE** | `src/arm64/asm.zig` |
+
+### Phase 5: Object Output - COMPLETE ✓
+
+| Component | Status | Location |
+|-----------|--------|----------|
+| Mach-O writer | **DONE** | `src/obj/macho.zig` |
 
 ---
 
-## Remaining Phases
+## Phase 6: Frontend Port - IN PROGRESS
 
-### Phase 2: Frontend
+Porting the working frontend from `bootstrap/src/` to `bootstrap-0.2/src/frontend/` following Go's architecture patterns.
 
-**Objective:** Parse Cot source to AST
+### Phase 6.1: Token System - COMPLETE ✓
 
-| Component | File | Go Reference | Status |
-|-----------|------|--------------|--------|
-| Token types | `src/syntax/token.zig` | `syntax/token.go` | TODO |
-| Scanner | `src/syntax/scanner.zig` | `syntax/scanner.go` | TODO |
-| AST nodes | `src/syntax/nodes.zig` | `syntax/syntax.go` | TODO |
-| Parser | `src/syntax/parser.zig` | `syntax/parser.go` | TODO |
+| Component | Status | Location | Reference |
+|-----------|--------|----------|-----------|
+| Token enum | **DONE** | `src/frontend/token.zig` | `go/token/token.go` |
+| Precedence method | **DONE** | `src/frontend/token.zig` | `go/token/token.go` |
+| Keyword lookup | **DONE** | `src/frontend/token.zig` | `go/token/token.go` |
+| Token strings | **DONE** | `src/frontend/token.zig` | `go/token/token.go` |
 
-**Tests to write first:**
-- Scanner: tokenize all keywords, operators, literals
-- Parser: parse minimal function, expressions, statements
-- Golden files: AST dump format
+### Phase 6.2: Source Management - COMPLETE ✓
 
-### Phase 3: Type Checking
+| Component | Status | Location | Reference |
+|-----------|--------|----------|-----------|
+| Pos (offset) | **DONE** | `src/frontend/source.zig` | `go/token/position.go` |
+| Position (line:col) | **DONE** | `src/frontend/source.zig` | `go/token/position.go` |
+| Span (start:end) | **DONE** | `src/frontend/source.zig` | `go/token/position.go` |
+| Source file | **DONE** | `src/frontend/source.zig` | `go/token/position.go` |
 
-**Objective:** Semantic analysis and type inference
+### Phase 6.3: Error Handling - COMPLETE ✓
 
-| Component | File | Go Reference | Status |
-|-----------|------|--------------|--------|
-| Type interface | `src/types/type.zig` | `types2/type.go` | TODO |
-| Basic types | `src/types/basic.zig` | `types2/basic.go` | TODO |
-| Scope | `src/types/scope.zig` | `types2/scope.go` | TODO |
-| Checker | `src/types/checker.zig` | `types2/check.go` | TODO |
+| Component | Status | Location | Reference |
+|-----------|--------|----------|-----------|
+| ErrorCode enum | **DONE** | `src/frontend/errors.zig` | Go error patterns |
+| Error struct | **DONE** | `src/frontend/errors.zig` | Go error patterns |
+| ErrorReporter | **DONE** | `src/frontend/errors.zig` | Go error patterns |
 
-**Tests to write first:**
-- Type checking expressions (arithmetic, comparisons)
-- Error messages for type mismatches
-- Scope resolution for nested blocks
+### Phase 6.4: Scanner - COMPLETE ✓
 
-### Phase 4: IR Lowering
+| Component | Status | Location | Reference |
+|-----------|--------|----------|-----------|
+| Scanner struct | **DONE** | `src/frontend/scanner.zig` | `go/scanner/scanner.go` |
+| Token scanning | **DONE** | `src/frontend/scanner.zig` | `go/scanner/scanner.go` |
+| String literals | **DONE** | `src/frontend/scanner.zig` | - |
+| Number literals | **DONE** | `src/frontend/scanner.zig` | - |
+| Comments | **DONE** | `src/frontend/scanner.zig` | - |
 
-**Objective:** AST to intermediate representation
+### Phase 6.5: AST - COMPLETE ✓
 
-| Component | File | Go Reference | Status |
-|-----------|------|--------------|--------|
-| IR nodes | `src/ir/node.zig` | `ir/node.go` | TODO |
-| Expression IR | `src/ir/expr.zig` | `ir/expr.go` | TODO |
-| Statement IR | `src/ir/stmt.zig` | `ir/stmt.go` | TODO |
-| Walk phase | `src/walk/` | `walk/order.go` | TODO |
+| Component | Status | Location | Reference |
+|-----------|--------|----------|-----------|
+| Node types | **DONE** | `src/frontend/ast.zig` | `go/ast/ast.go` |
+| Decl union | **DONE** | `src/frontend/ast.zig` | `go/ast/ast.go` |
+| Expr union | **DONE** | `src/frontend/ast.zig` | `go/ast/ast.go` |
+| Stmt union | **DONE** | `src/frontend/ast.zig` | `go/ast/ast.go` |
+| Ast storage | **DONE** | `src/frontend/ast.zig` | - |
 
-### Phase 5: SSA Construction
+### Phase 6.6: Parser - COMPLETE ✓
 
-**Objective:** IR to SSA form
+| Component | Status | Location | Reference |
+|-----------|--------|----------|-----------|
+| Parser struct | **DONE** | `src/frontend/parser.zig` | `go/parser/parser.go` |
+| Declaration parsing | **DONE** | `src/frontend/parser.zig` | `go/parser/parser.go` |
+| Expression parsing | **DONE** | `src/frontend/parser.zig` | Pratt parsing |
+| Statement parsing | **DONE** | `src/frontend/parser.zig` | `go/parser/parser.go` |
+| Type parsing | **DONE** | `src/frontend/parser.zig` | `go/parser/parser.go` |
 
-| Component | File | Go Reference | Status |
-|-----------|------|--------------|--------|
-| SSA builder | `src/ssagen/ssa.zig` | `ssagen/ssa.go` | TODO |
-| Phi insertion | `src/ssagen/phi.zig` | `ssa/nilcheck.go` | TODO |
+### Phase 6.7: Type System - COMPLETE ✓
 
-### Phase 6: Optimization Passes
+| Component | Status | Location | Reference |
+|-----------|--------|----------|-----------|
+| BasicKind enum | **DONE** | `src/frontend/types.zig` | `go/types/basic.go` |
+| Type union | **DONE** | `src/frontend/types.zig` | `go/types/type.go` |
+| TypeRegistry | **DONE** | `src/frontend/types.zig` | `go/types/universe.go` |
+| Composite types | **DONE** | `src/frontend/types.zig` | `go/types/` |
+| Type predicates | **DONE** | `src/frontend/types.zig` | `go/types/predicates.go` |
+| Type equality | **DONE** | `src/frontend/types.zig` | `go/types/typeterm.go` |
+| Assignability | **DONE** | `src/frontend/types.zig` | `go/types/assignments.go` |
 
-**Objective:** Improve SSA quality
+### Phase 6.8: Type Checker - COMPLETE ✓
 
-| Pass | File | Status |
-|------|------|--------|
-| Dead code elimination | `src/ssa/passes/deadcode.zig` | TODO |
-| Common subexpression | `src/ssa/passes/cse.zig` | TODO |
-| Phi elimination | `src/ssa/passes/phielim.zig` | TODO |
-| Lower to machine ops | `src/ssa/passes/lower.zig` | TODO |
+| Component | Status | Location | Reference |
+|-----------|--------|----------|-----------|
+| Symbol struct | **DONE** | `src/frontend/checker.zig` | `go/types/object.go` |
+| Scope struct | **DONE** | `src/frontend/checker.zig` | `go/types/scope.go` |
+| Checker struct | **DONE** | `src/frontend/checker.zig` | `go/types/check.go` |
+| Two-phase checking | **DONE** | `src/frontend/checker.zig` | `go/types/resolver.go` |
+| Expression checking | **DONE** | `src/frontend/checker.zig` | `go/types/expr.go` |
+| Statement checking | **DONE** | `src/frontend/checker.zig` | `go/types/stmt.go` |
+| Type resolution | **DONE** | `src/frontend/checker.zig` | `go/types/typexpr.go` |
+| Method registry | **DONE** | `src/frontend/checker.zig` | `go/types/methodset.go` |
 
-### Phase 7: Register Allocation
+### Phase 6.9: IR Definitions - TODO
 
-**Objective:** Assign registers to SSA values
+| Component | Status | Location | Reference |
+|-----------|--------|----------|-----------|
+| IR Op enum | TODO | `src/frontend/ir.zig` | `bootstrap/ir.zig` |
+| IR Instruction | TODO | `src/frontend/ir.zig` | `bootstrap/ir.zig` |
+| IR Function | TODO | `src/frontend/ir.zig` | `bootstrap/ir.zig` |
+| IR Block | TODO | `src/frontend/ir.zig` | `bootstrap/ir.zig` |
 
-| Component | File | Go Reference | Status |
-|-----------|------|--------------|--------|
-| Linear scan | `src/ssa/regalloc.zig` | `ssa/regalloc.go` | TODO |
-| Stack slots | `src/ssa/stackalloc.zig` | `ssa/stackalloc.go` | TODO |
+Key IR operations to support:
+- Arithmetic: add, sub, mul, div, mod
+- Comparison: eq, ne, lt, le, gt, ge
+- Memory: load, store, alloca, get_field_ptr
+- Control: br, br_cond, ret, call
+- Constants: const_int, const_bool, const_string
+- Aggregates: struct_init, array_init
 
-### Phase 8: Code Generation
+### Phase 6.10: AST to IR Lowering - TODO
 
-**Objective:** SSA to machine code
+| Component | Status | Location | Reference |
+|-----------|--------|----------|-----------|
+| Lowerer struct | TODO | `src/frontend/lower.zig` | `bootstrap/lower.zig` |
+| Expr lowering | TODO | `src/frontend/lower.zig` | `bootstrap/lower.zig` |
+| Stmt lowering | TODO | `src/frontend/lower.zig` | `bootstrap/lower.zig` |
+| Decl lowering | TODO | `src/frontend/lower.zig` | `bootstrap/lower.zig` |
+| SSA conversion | TODO | `src/frontend/lower.zig` | Go's SSA builder |
 
-| Component | File | Status |
-|-----------|------|--------|
-| ARM64 codegen | `src/codegen/arm64.zig` | Stub exists |
-| Instruction encoding | `src/arm64/asm.zig` | TODO |
-| ABI handling | `src/arm64/abi.zig` | TODO |
+Key lowering patterns:
+- Binary ops → IR binary instructions
+- If statements → conditional branches + merge blocks
+- While loops → header + body + back-edge blocks
+- Function calls → IR call instruction with ABI handling
+- Struct access → get_field_ptr + load
 
-### Phase 9: Object Output
+### Phase 6.11: Compilation Driver - TODO
 
-**Objective:** Emit executable
+| Component | Status | Location | Reference |
+|-----------|--------|----------|-----------|
+| Driver struct | TODO | `src/frontend/driver.zig` | `bootstrap/driver.zig` |
+| Pipeline orchestration | TODO | `src/frontend/driver.zig` | - |
+| Debug output flags | TODO | `src/frontend/driver.zig` | - |
 
-| Component | File | Status |
-|-----------|------|--------|
-| Mach-O output | `src/obj/macho.zig` | TODO |
-| Symbol table | `src/obj/sym.zig` | TODO |
-| Relocations | `src/obj/reloc.zig` | TODO |
+Pipeline stages:
+1. Source → Scanner → Tokens
+2. Tokens → Parser → AST
+3. AST → Checker → Typed AST
+4. Typed AST → Lowerer → IR
+5. IR → SSA Builder → SSA
+6. SSA → Passes → Optimized SSA
+7. SSA → RegAlloc → Register-allocated SSA
+8. SSA → Codegen → Machine code
+9. Machine code → Object writer → .o file
+
+---
+
+## Phase 7: Integration & Testing
+
+### Phase 7.1: End-to-End Pipeline - TODO
+
+| Task | Status |
+|------|--------|
+| Connect frontend to SSA backend | TODO |
+| Compile simple function | TODO |
+| Run compiled binary | TODO |
+| Verify correct output | TODO |
+
+### Phase 7.2: Test Suite - TODO
+
+| Task | Status |
+|------|--------|
+| Port bootstrap test cases | TODO |
+| Golden file tests | TODO |
+| Error message tests | TODO |
+| Edge case tests | TODO |
+
+### Phase 7.3: Self-Hosting Preparation - TODO
+
+| Task | Status |
+|------|--------|
+| Compiler compiles simple .cot | TODO |
+| Compiler compiles scanner.cot | TODO |
+| Compiler compiles itself | TODO |
 
 ---
 
@@ -180,110 +302,190 @@ This time we have:
 
 ```
 bootstrap-0.2/
-├── build.zig                    # Build configuration
+├── build.zig
 ├── CLAUDE.md                    # Development guidelines
 ├── EXECUTION_PLAN.md            # This file
-├── IMPROVEMENTS.md              # Go patterns implemented
-├── TESTING_FRAMEWORK.md         # Testing documentation
+├── IMPROVEMENTS.md              # Honest assessment
+├── REGISTER_ALLOC.md            # Go's regalloc algorithm
+├── DATA_STRUCTURES.md           # Go-to-Zig translations
+├── TESTING_FRAMEWORK.md         # Testing infrastructure
 │
 ├── src/
 │   ├── main.zig                 # Entry point, module exports
 │   │
-│   ├── core/                    # Foundation
-│   │   ├── types.zig            # ID, TypeRef, shared types
-│   │   ├── errors.zig           # CompileError, VerifyError
-│   │   └── testing.zig          # CountingAllocator
+│   ├── core/                    # Foundation (DONE)
+│   │   ├── types.zig            # ID, TypeInfo, RegMask
+│   │   ├── errors.zig           # Error types
+│   │   └── testing.zig          # Test utilities
 │   │
-│   ├── ssa/                     # SSA representation (Phase 1 - DONE)
+│   ├── ssa/                     # SSA representation (DONE)
 │   │   ├── value.zig            # SSA values
 │   │   ├── block.zig            # Basic blocks
 │   │   ├── func.zig             # SSA function
-│   │   ├── op.zig               # Operation definitions
-│   │   ├── dom.zig              # Dominator tree
+│   │   ├── op.zig               # Operations
+│   │   ├── dom.zig              # Dominators
 │   │   ├── compile.zig          # Pass infrastructure
-│   │   ├── debug.zig            # Dump, verify, snapshots
-│   │   └── test_helpers.zig     # Test fixtures
+│   │   ├── debug.zig            # Debug output
+│   │   ├── test_helpers.zig     # Test fixtures
+│   │   ├── liveness.zig         # Liveness analysis (DONE)
+│   │   ├── regalloc.zig         # Register allocator (DONE)
+│   │   │
+│   │   └── passes/              # Optimization passes
+│   │       └── lower.zig        # Lowering (DONE)
 │   │
-│   └── codegen/                 # Code generation
-│       ├── generic.zig          # Reference implementation
-│       └── arm64.zig            # ARM64 (stub)
+│   ├── codegen/                 # Code generation (DONE)
+│   │   ├── generic.zig          # Reference implementation
+│   │   └── arm64.zig            # ARM64 codegen
+│   │
+│   ├── arm64/                   # ARM64 specifics (DONE)
+│   │   └── asm.zig              # Instruction encoding
+│   │
+│   ├── obj/                     # Object output (DONE)
+│   │   └── macho.zig            # Mach-O format
+│   │
+│   └── frontend/                # Frontend (IN PROGRESS)
+│       ├── token.zig            # Token types (DONE)
+│       ├── source.zig           # Source positions (DONE)
+│       ├── errors.zig           # Error handling (DONE)
+│       ├── scanner.zig          # Lexer (DONE)
+│       ├── ast.zig              # AST nodes (DONE)
+│       ├── parser.zig           # Parser (DONE)
+│       ├── types.zig            # Type system (DONE)
+│       ├── checker.zig          # Type checker (DONE)
+│       ├── ir.zig               # IR definitions (TODO)
+│       ├── lower.zig            # AST to IR (TODO)
+│       └── driver.zig           # Compilation driver (TODO)
 │
-├── test/                        # Test infrastructure
-│   ├── golden/                  # Golden file snapshots
-│   │   ├── ssa/                 # SSA dumps
-│   │   └── codegen/             # Codegen output
-│   ├── cases/                   # Directive tests
-│   ├── integration/             # Cross-module tests
-│   └── runners/                 # Test utilities
-│
-└── runtime/                     # Runtime library (TBD)
-```
-
----
-
-## Development Workflow
-
-### For Each Component
-
-1. **Read Go reference** - Understand the algorithm/data structure
-2. **Write tests first** - Define expected behavior
-3. **Implement** - Match Go's approach in Zig
-4. **Run tests** - `zig build test-all`
-5. **Add golden files** - Lock down output format
-6. **Update docs** - Mark complete in this file
-7. **Commit** - With descriptive message
-
-### Daily Routine
-
-```bash
-# Start of session
-zig build test-all           # Verify baseline
-
-# After changes
-zig build test               # Fast unit tests
-zig build test-all           # Full suite before commit
-
-# If golden files change
-COT_UPDATE_GOLDEN=1 zig build test-golden
-git diff test/golden/        # Review changes
+└── test/
+    ├── golden/                  # Golden file snapshots
+    ├── cases/                   # Directive tests
+    └── integration/             # Cross-module tests
 ```
 
 ---
 
 ## Success Criteria
 
-1. **All tests pass** - Unit, integration, golden, directive
-2. **No regressions** - Golden files catch unintended changes
-3. **Clear error messages** - Error tests verify quality
-4. **Go-equivalent architecture** - Each component matches reference
-5. **Self-hosting ready** - Compiler can compile itself
+Bootstrap-0.2 succeeds when:
+
+1. **Frontend pipeline works:**
+   - Source → AST (parser)
+   - AST → Typed AST (checker)
+   - Typed AST → IR (lowerer)
+
+2. **Backend pipeline works:**
+   - IR → SSA
+   - SSA → Lowered SSA
+   - SSA → Register-allocated SSA
+   - SSA → Machine code
+   - Machine code → Object file
+
+3. **End-to-end works:**
+   - Compile simple .cot programs
+   - Run and get correct output
+   - All bootstrap test cases pass
+
+4. **Self-hosting works:**
+   - Compiler compiles itself
+   - No crashes, no wrong values
 
 ---
 
-## Risk Mitigation
+## What NOT to Do
 
-| Risk | Mitigation |
-|------|------------|
-| Zig 0.15 API surprises | Document all API differences in CLAUDE.md |
-| Tests don't catch bugs | Golden files + table-driven tests |
-| Architecture drift | Reference Go source for every component |
-| Whack-a-mole debugging | Never fix without test first |
-| Scope creep | Only Cot bootstrap features |
+These patterns killed previous attempts:
+
+1. **Don't implement MCValue** - This integrated approach was tried and failed. Use Go's separated regalloc.
+
+2. **Don't guess at register contents** - Track explicitly with ValState and RegState.
+
+3. **Don't skip liveness analysis** - Required for correct spill selection.
+
+4. **Don't port line-by-line** - Port concepts, adapt to Go patterns.
+
+5. **Don't debug symptoms** - Understand the algorithm, then implement.
+
+6. **Don't cut corners** - Implement all phases. Partial implementations create subtle bugs.
 
 ---
 
-## Next Steps
+## Next Steps (Remaining Work)
 
-1. **Parser** (`src/syntax/`)
-   - Write scanner tests first
-   - Implement scanner
-   - Write parser tests
-   - Implement parser
-   - Add AST golden files
+### Immediate (Phase 6.9-6.11)
 
-2. **Type checker** (`src/types/`)
-   - Write type error tests first
-   - Implement type system
-   - Add error message golden files
+1. **Create IR definitions** (`src/frontend/ir.zig`)
+   - Port IR Op enum from bootstrap
+   - Create IR Instruction, Function, Block types
+   - Match bootstrap's IR structure
 
-The key is **test first, then implement**. No exceptions.
+2. **Create AST lowerer** (`src/frontend/lower.zig`)
+   - Lower expressions to IR
+   - Lower statements to IR
+   - Handle control flow (if, while, for)
+   - Handle function calls
+
+3. **Create compilation driver** (`src/frontend/driver.zig`)
+   - Connect all pipeline stages
+   - Add debug output flags
+   - Handle command-line arguments
+
+### Then (Phase 7)
+
+4. **Connect frontend to backend**
+   - IR → SSA conversion
+   - Run through backend pipeline
+   - Emit object file
+
+5. **Test end-to-end**
+   - Port bootstrap test cases
+   - Verify correct execution
+   - Fix any integration bugs
+
+### Finally (Self-hosting)
+
+6. **Self-hosting**
+   - Compile scanner.cot
+   - Compile parser.cot
+   - Compile the whole compiler
+
+---
+
+## Development Workflow
+
+### For Frontend Components
+
+1. **Read bootstrap source** - Understand what it does
+2. **Read Go reference** - Understand Go's architecture
+3. **Write tests first** - Define expected behavior
+4. **Implement** - Follow Go patterns, adapted to Zig
+5. **Run tests** - `zig build test`
+6. **Update this doc** - Mark component complete
+
+### Test Command
+
+```bash
+# Run all tests
+zig build test
+
+# Expected output: "Exit code: 0" with test output
+```
+
+---
+
+## Test Counts
+
+Current test status (as of Phase 6.8 completion):
+
+- **154+ tests passing**
+- Token tests: ~10
+- Source tests: ~5
+- Error tests: ~5
+- Scanner tests: ~30
+- AST tests: ~10
+- Parser tests: ~40
+- Types tests: ~10
+- Checker tests: ~5
+- SSA tests: ~30+
+- Integration tests: ~10
+
+All tests pass with `zig build test`.

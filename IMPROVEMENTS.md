@@ -1,367 +1,303 @@
-# Bootstrap 0.2 Improvements
+# Bootstrap 0.2 - Architecture Assessment
 
-Based on analysis of Go compiler best practices from `~/learning/go/src/cmd/compile/internal/ssa/`.
+**Assessed: 2026-01-14**
 
-**Philosophy**: We adopt PROVEN PATTERNS from Go's compiler. No invention. No speculation.
+This document provides an honest assessment of bootstrap-0.2's architecture compared to Go's compiler.
 
-See also:
-- [CLAUDE.md](CLAUDE.md) - Development guidelines and Zig 0.15 API reference
-- [TESTING_FRAMEWORK.md](TESTING_FRAMEWORK.md) - Comprehensive testing infrastructure
+## Executive Summary
 
----
+**Is the design solid?** YES. The SSA foundation correctly follows Go's architecture.
 
-## Implementation Status
+**Is the implementation complete?** NO. About 15% complete. The hardest parts are missing.
 
-| # | Improvement | Status | Location |
-|---|-------------|--------|----------|
-| 1 | Table-Driven Testing | **DONE** | `src/ssa/op.zig` |
-| 2 | Export Test Pattern | **DONE** | `src/ssa/test_helpers.zig` |
-| 3 | Error Context Enhancement | **DONE** | `src/core/errors.zig` |
-| 4 | Phase Snapshot Comparison | **DONE** | `src/ssa/debug.zig` |
-| 5 | Documentation Cross-References | **DONE** | All source files |
-| 6 | Pass Interface Abstraction | **DONE** | `src/ssa/compile.zig` |
-| 7 | Allocation Testing | **DONE** | `src/core/testing.zig` |
-| 8 | Zero-Value Semantics | **DONE** | `src/ssa/*.zig` |
-| 9 | Generic Fallback Pattern | **DONE** | `src/codegen/generic.zig` |
-| 10 | Const/Enum Organization | **DONE** | `src/ssa/op.zig` |
-
-**Test Results**: 60+ tests passing across all modules.
+**Are we set up for success?** YES, IF we implement the missing pieces correctly by following Go's algorithms precisely.
 
 ---
 
-## Improvement #1: Table-Driven Testing Patterns
+## Part 1: What's Done Right
 
-**Status**: DONE
+### 1.1 SSA Data Structures (CORRECT)
 
-**Go Pattern**: Table-driven tests with struct slices for comprehensive coverage.
+The core types match Go's design exactly:
 
-**Implementation** (`src/ssa/op.zig`):
-```zig
-const OpTestCase = struct {
-    op: Op,
-    name: []const u8,
-    arg_len: i8,
-    commutative: bool = false,
-    result_in_arg0: bool = false,
-    has_side_effects: bool = false,
-};
+| Our Type | Go Type | Status |
+|----------|---------|--------|
+| `Value` | `ssa.Value` | ✅ Correct |
+| `Block` | `ssa.Block` | ✅ Correct |
+| `Func` | `ssa.Func` | ✅ Correct |
+| `Op` | `ssa.Op` | ✅ Correct |
+| `ID` | dense u32 | ✅ Correct |
+| `Edge` | bidirectional | ✅ Correct |
 
-const op_test_cases = [_]OpTestCase{
-    .{ .op = .add, .name = "add", .arg_len = 2, .commutative = true },
-    .{ .op = .sub, .name = "sub", .arg_len = 2 },
-    .{ .op = .mul, .name = "mul", .arg_len = 2, .commutative = true },
-    // ... comprehensive coverage
-};
+Key invariants are maintained:
+- Use counting: incremented on addArg, decremented on resetArgs
+- Bidirectional edges: `b.succs[i].b.preds[j] = b` where `j = b.succs[i].i`
+- Constant caching: no duplicate const_int values
 
-test "Op properties match expected" {
-    for (op_test_cases) |tc| {
-        const info = tc.op.info();
-        std.testing.expectEqual(tc.commutative, info.commutative) catch |err| {
-            std.debug.print("FAILED: {s}\n", .{tc.name});
-            return err;
-        };
-    }
-}
+### 1.2 Pass Infrastructure (CORRECT)
+
+The pass system follows Go's pattern:
+- Pass registry with metadata
+- Phase tracking
+- Verification after passes
+- Debug output options
+
+### 1.3 Dominator Tree (CORRECT)
+
+The iterative algorithm matches Go's simple dominator computation.
+
+### 1.4 Testing Infrastructure (CORRECT)
+
+- Table-driven tests
+- Golden file tests
+- Test helpers (TestFuncBuilder)
+- Allocation counting
+
+---
+
+## Part 2: What's Missing
+
+### 2.1 Register Allocator (CRITICAL - 0% complete)
+
+Go's regalloc is **3,137 lines** implementing a 6-phase linear scan algorithm.
+We have: 0 lines (documented in REGISTER_ALLOC.md, not implemented).
+
+**Go's Algorithm (what we must implement):**
+
+```
+Phase 1: Initialization
+  - Identify allocatable registers (exclude SP, SB, g, FP, LR)
+  - Build block visit order (not control-flow order)
+  - Mark values needing registers
+
+Phase 2: Liveness Analysis
+  - Compute use distances for each value
+  - Distance = instructions until next use
+  - Distances: likely=1, normal=10, unlikely=100 (across calls)
+
+Phase 3: Desired Registers
+  - Backward scan through values
+  - Propagate register preferences
+  - Handle two-operand constraints
+
+Phase 4: Main Allocation Loop
+  For each block in visit order:
+    - Initialize from predecessor(s)
+    - Process phis (register or stack)
+    - For each value:
+      - Allocate input registers
+      - If register needed but none free: SPILL
+      - Spill selection: value with FARTHEST next use
+      - Allocate output register
+      - Free clobbered registers
+    - Save end state
+
+Phase 5: Spill Placement
+  - Walk dominator tree
+  - Place spill where it dominates all restores
+  - Prefer shallow loop nesting
+
+Phase 6: Merge Edge Fixup
+  - For edges to blocks with >1 predecessor
+  - Generate moves (OpCopy, OpLoadReg, OpStoreReg)
+  - Handle cycles with temporary registers
 ```
 
----
+**Key Data Structures Needed:**
 
-## Improvement #2: Export Test Pattern
-
-**Status**: DONE
-
-**Go Pattern**: `export_test.go` exposes internals for testing without polluting public API.
-
-**Implementation** (`src/ssa/test_helpers.zig`):
 ```zig
-pub const TestFuncBuilder = struct {
-    func: *Func,
-    allocator: std.mem.Allocator,
-
-    pub fn init(allocator: std.mem.Allocator, name: []const u8) !TestFuncBuilder { ... }
-    pub fn createDiamondCFG(self: *TestFuncBuilder) !DiamondCFG { ... }
-    pub fn createDiamondWithPhi(self: *TestFuncBuilder) !DiamondCFG { ... }
-    pub fn createLinearCFG(self: *TestFuncBuilder, count: usize) !LinearCFG { ... }
+const ValState = struct {
+    regs: RegMask,        // which registers hold this value
+    uses: ?*Use,          // linked list of uses (sorted by distance DESC)
+    spill: ?*Value,       // StoreReg if spilled
+    needReg: bool,        // needs a register?
+    rematerializeable: bool,  // can recompute instead of spill?
 };
 
-pub fn validateInvariants(f: *const Func, allocator: std.mem.Allocator) ![]VerifyError { ... }
-pub fn validateUseCounts(f: *const Func, allocator: std.mem.Allocator) ![]VerifyError { ... }
-```
-
----
-
-## Improvement #3: Error Context Enhancement
-
-**Status**: DONE
-
-**Go Pattern**: Error wrapping with context for debugging.
-
-**Implementation** (`src/core/errors.zig`):
-```zig
-pub const CompileError = struct {
-    kind: ErrorKind,
-    context: []const u8,
-    block_id: ?ID = null,
-    value_id: ?ID = null,
-    source_pos: ?Pos = null,
-    pass_name: []const u8 = "",
-
-    pub const ErrorKind = enum {
-        invalid_block_id,
-        invalid_value_id,
-        edge_invariant_violated,
-        use_count_mismatch,
-        type_mismatch,
-        pass_failed,
-    };
-
-    // Builder pattern
-    pub fn withBlock(self: CompileError, id: ID) CompileError { ... }
-    pub fn withValue(self: CompileError, id: ID) CompileError { ... }
-    pub fn withPass(self: CompileError, name: []const u8) CompileError { ... }
-};
-```
-
----
-
-## Improvement #4: Phase Snapshot Comparison
-
-**Status**: DONE
-
-**Go Pattern**: GOSSAFUNC shows changes between phases.
-
-**Implementation** (`src/ssa/debug.zig`):
-```zig
-pub const PhaseSnapshot = struct {
-    name: []const u8,
-    blocks: []BlockSnapshot,
-
-    pub fn capture(allocator: std.mem.Allocator, f: *const Func, name: []const u8) !PhaseSnapshot { ... }
-    pub fn compare(before: *const PhaseSnapshot, after: *const PhaseSnapshot) ChangeStats { ... }
+const RegState = struct {
+    v: ?*Value,           // value in this register (original)
+    c: ?*Value,           // current cached copy
 };
 
-pub const ChangeStats = struct {
-    values_added: usize = 0,
-    values_removed: usize = 0,
-    blocks_added: usize = 0,
-    blocks_removed: usize = 0,
-
-    pub fn hasChanges(self: ChangeStats) bool { ... }
+const Use = struct {
+    dist: i32,            // distance to this use
+    pos: Pos,             // source position
+    next: ?*Use,          // next use (increasing distance)
 };
 ```
 
----
+### 2.2 Lowering Pass (CRITICAL - 0% complete)
 
-## Improvement #5: Documentation Cross-References
+Converts generic ops to architecture-specific ops.
 
-**Status**: DONE
-
-**Go Pattern**: Clear references between related modules.
-
-**Example** (from `src/codegen/arm64.zig`):
-```zig
-//! ARM64-optimized code generation.
-//!
-//! Go reference: [cmd/compile/internal/arm64/ssa.go]
-//!
-//! ## Related Modules
-//!
-//! - [generic.zig] - Reference implementation (no optimization)
-//! - [ssa/op.zig] - ARM64-specific operations (arm64_*)
-//! - [ssa/compile.zig] - Pass infrastructure
+```
+add v1, v2  →  arm64_add v1, v2
+load v1     →  arm64_ldr v1
+const 42    →  arm64_movz 42
 ```
 
----
+Without this, we emit generic ops that don't map to real instructions.
 
-## Improvement #6: Pass Interface Abstraction
+### 2.3 Liveness Analysis (CRITICAL - 0% complete)
 
-**Status**: DONE
+Required for regalloc spill selection and dead code elimination.
 
-**Go Pattern**: Pass infrastructure with dependency tracking and analysis invalidation.
+**Go's Algorithm:**
+- Backward data flow analysis
+- Track live values at each program point
+- Compute distances to next use
+- Handle loops (iterate to fixed point)
 
-**Implementation** (`src/ssa/compile.zig`):
-```zig
-pub const AnalysisKind = enum { dominators, postorder, loop_info, liveness };
+### 2.4 Instruction Emission (INCOMPLETE)
 
-pub const Pass = struct {
-    name: []const u8,
-    fn_: PassFn,
-    required: bool = false,
-    disabled: bool = false,
-    requires: []const []const u8 = &.{},
-    invalidates: []const AnalysisKind = &.{},
-    preserves_cfg: bool = true,
-    preserves_uses: bool = true,
-};
+ARM64CodeGen has register definitions but no real instruction emission.
+Every instruction is a placeholder: `try writer.writeAll("    add ...\n")`
 
-pub const PassStats = struct {
-    pass_name: []const u8,
-    time_ns: u64 = 0,
-    values_before: usize = 0,
-    values_after: usize = 0,
-    blocks_before: usize = 0,
-    blocks_after: usize = 0,
-};
-```
+### 2.5 Phi Insertion (MISSING)
+
+Requires dominance frontier computation (not just dominator tree).
+Without this, can't convert IR to proper SSA form.
+
+### 2.6 Frontend (MISSING)
+
+No lexer, parser, type checker, or IR-to-SSA conversion.
+The SSA containers exist but have no way to populate them from source.
 
 ---
 
-## Improvement #7: Allocation Testing
+## Part 3: Implementation Order
 
-**Status**: DONE
+Based on Go's architecture and dependencies:
 
-**Go Pattern**: `testing.AllocsPerRun()` verifies allocation counts.
+### Phase 1: Complete SSA Pipeline (Current Focus)
 
-**Implementation** (`src/core/testing.zig`):
-```zig
-pub const CountingAllocator = struct {
-    inner: std.mem.Allocator,
-    alloc_count: usize = 0,
-    free_count: usize = 0,
-    bytes_allocated: usize = 0,
+1. **Liveness Analysis** - Required for everything else
+   - File: `src/ssa/liveness.zig`
+   - Go ref: `cmd/compile/internal/ssa/regalloc.go` lines 2833-3137
+   - Test: verify use distances computed correctly
 
-    pub fn init(inner: std.mem.Allocator) CountingAllocator { ... }
-    pub fn allocator(self: *CountingAllocator) std.mem.Allocator { ... }
-    pub fn reset(self: *CountingAllocator) void { ... }
-};
-```
+2. **Register Allocator** - The core algorithm
+   - File: `src/ssa/regalloc.zig`
+   - Go ref: `cmd/compile/internal/ssa/regalloc.go` (all 3,137 lines)
+   - Test: verify correct register assignment, proper spilling
 
-**Usage**:
-```zig
-test "allocation tracking" {
-    var counting = core.CountingAllocator.init(std.testing.allocator);
-    const allocator = counting.allocator();
+3. **Lowering Pass** - Generic to arch-specific
+   - File: `src/ssa/passes/lower.zig`
+   - Go ref: `cmd/compile/internal/ssa/lower.go`
+   - Test: verify all generic ops lowered
 
-    // ... operations ...
+4. **Instruction Emission** - Real ARM64 encoding
+   - File: `src/codegen/arm64.zig` (complete it)
+   - Go ref: `cmd/compile/internal/arm64/ssa.go`
+   - Test: verify correct machine code bytes
 
-    try std.testing.expect(counting.alloc_count < 100);
-}
-```
+### Phase 2: Frontend
 
----
-
-## Improvement #8: Zero-Value Semantics
-
-**Status**: DONE
-
-**Go Pattern**: Types usable immediately after declaration.
-
-**Implementation**: All types have sensible defaults:
-```zig
-// Works immediately - no explicit init required
-var output = std.ArrayListUnmanaged(u8){};
-defer output.deinit(allocator);
-```
+5. **Lexer/Parser** - Only after Phase 1 works
+6. **Type Checker**
+7. **IR-to-SSA Conversion** - Including phi insertion
 
 ---
 
-## Improvement #9: Generic Fallback Pattern
+## Part 4: Why Previous Attempts Failed
 
-**Status**: DONE
+### Bootstrap (first attempt) - MCValue Approach
 
-**Go Pattern**: Generic implementations alongside optimized ones.
+Tried Zig's integrated codegen approach:
+- Track value locations during emission
+- No separate regalloc pass
 
-**Implementation** (`src/codegen/generic.zig`):
-```zig
-pub const GenericCodeGen = struct {
-    allocator: std.mem.Allocator,
-    stack_slots: std.AutoHashMap(ID, i64),
-    stack_offset: i64 = 0,
+**Why it failed:**
+- Works for simple cases, breaks on complex code
+- No global view of register pressure
+- BUG-019, BUG-020, BUG-021 block self-hosting
+- "Whack-a-mole" debugging: fix one bug, create another
 
-    pub fn generate(self: *GenericCodeGen, f: *const Func, writer: anytype) !void {
-        // Stack-based, correct-by-construction code generation
-        // Every value goes to stack - no register allocation
-        // Used for testing and verification
-    }
-};
-```
+### The Root Cause
 
-**Example output**:
-```
-.func test_add:
-  ; b1 (ret)
-  stack[0] = const_int 40    ; v1
-  stack[8] = const_int 2    ; v2
-  r0 = stack[0]    ; load v1
-  r1 = stack[8]    ; load v2
-  stack[16] = add r0, r1    ; v3
-  return r0
-.end test_add
-```
+Both previous attempts implemented codegen **without understanding Go's regalloc algorithm**:
+- Guessed at spill selection (should be farthest-next-use)
+- Didn't track use distances
+- Didn't handle merge edges properly
+- Didn't understand the 6-phase structure
 
 ---
 
-## Improvement #10: Const/Enum Organization
+## Part 5: How to Implement Correctly
 
-**Status**: DONE
+### The Key Insight
 
-**Go Pattern**: Clear category separators with documentation.
+Go's regalloc works because of **use distance tracking**:
 
-**Implementation** (`src/ssa/op.zig`):
-```zig
-pub const Op = enum(u16) {
-    // =========================================
-    // Invalid / Placeholder
-    // =========================================
-    invalid,
-
-    // =========================================
-    // Constants (rematerializable)
-    // =========================================
-    const_bool,
-    const_int,
-    const_8, const_16, const_32, const_64,
-    const_float,
-    const_nil,
-    const_string,
-
-    // =========================================
-    // Integer Arithmetic
-    // =========================================
-    add, sub, mul, div, udiv, mod, umod, neg,
-
-    // =========================================
-    // ARM64-Specific Operations
-    // =========================================
-    arm64_add, arm64_sub, arm64_mul,
-    arm64_ldr, arm64_str, arm64_movz,
-
-    // ... organized by category
-};
+```
+v1 = const 1      ; use distance = 5 (used at instruction 5)
+v2 = const 2      ; use distance = 2 (used at instruction 2)
+v3 = add v1, v2   ; v2 used here
+v4 = mul v3, 10   ;
+v5 = sub v4, v1   ; v1 used here (distance was 5)
 ```
 
+When we need to spill at instruction 3 and only have 2 registers:
+- v1 has distance 2 (next use at 5, we're at 3)
+- v3 has distance 1 (next use at 4, we're at 3)
+- **Spill v1** because it has the FARTHEST next use
+
+This is provably optimal for single-use values.
+
+### Implementation Checklist
+
+Before implementing regalloc:
+
+- [ ] Understand the 6 phases completely
+- [ ] Implement ValState with use chains
+- [ ] Implement RegState tracking
+- [ ] Implement distance computation
+- [ ] Write tests for:
+  - [ ] Use distance calculation
+  - [ ] Spill selection (farthest wins)
+  - [ ] Merge edge fixup
+  - [ ] Two-operand constraints
+
 ---
 
-## Metrics Achieved
+## Part 6: Success Criteria
 
-| Metric | Before | After |
-|--------|--------|-------|
-| Unit tests | ~15 | **60+** |
-| Lines with doc comments | ~20% | **80%+** |
-| Test tables | 0 | **3** |
-| Allocation tests | 0 | **2** |
-| Error context coverage | 0% | **100%** |
-| Golden file tests | 0 | **2** |
-| Integration tests | 0 | **4** |
+Bootstrap-0.2 succeeds when:
+
+1. **Regalloc produces correct output** - Not just "tests pass" but invariants hold:
+   - Every value either in register or on stack
+   - No register conflicts
+   - Spills dominate restores
+   - Use distances never increase within a block
+
+2. **Lowering is complete** - Every generic op maps to arch-specific op
+
+3. **Instruction emission works** - Real machine code, not placeholders
+
+4. **Self-hosting works** - Compiler compiles itself without crashes
 
 ---
 
-## What's Next
+## Part 7: What NOT to Do
 
-With the infrastructure in place, we can now build the compiler proper:
+1. **Don't implement MCValue** - This was tried and failed
+2. **Don't guess at register contents** - Track explicitly
+3. **Don't skip liveness analysis** - Required for correct spilling
+4. **Don't implement frontend first** - Backend must work first
+5. **Don't debug symptoms** - Understand the algorithm
 
-1. **Parser** - Cot syntax to AST
-2. **Type Checker** - Semantic analysis
-3. **IR Lowering** - AST to IR
-4. **SSA Construction** - IR to SSA
-5. **Optimization Passes** - Using pass infrastructure
-6. **Register Allocation** - For ARM64 codegen
-7. **Object File Emission** - Mach-O / ELF output
+---
 
-Each phase will follow the test-driven pattern established here:
-1. Write tests first (table-driven where applicable)
-2. Implement to pass tests
-3. Add golden files for stability
-4. Move to next phase
+## Conclusion
 
-The goal is **never having to rewrite again**.
+**The design is correct.** Bootstrap-0.2's SSA foundation follows Go exactly.
+
+**The implementation is incomplete.** The hard parts (regalloc, lowering, liveness) are missing.
+
+**We ARE set up for success IF:**
+- We implement Go's regalloc algorithm faithfully (all 6 phases)
+- We don't cut corners on liveness analysis
+- We test invariants, not just outputs
+- We understand WHY Go's approach works before implementing
+
+The third time can be the last time - but only if we do the hard work of understanding the algorithm before writing code.

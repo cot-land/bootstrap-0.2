@@ -39,6 +39,24 @@ pub const ssa = struct {
     pub const DomTree = dom.DomTree;
     pub const computeDominators = dom.computeDominators;
 
+    pub const liveness = @import("ssa/liveness.zig");
+    pub const LiveInfo = liveness.LiveInfo;
+    pub const LiveMap = liveness.LiveMap;
+    pub const LivenessResult = liveness.LivenessResult;
+    pub const computeLiveness = liveness.computeLiveness;
+
+    pub const regalloc_mod = @import("ssa/regalloc.zig");
+    pub const RegAllocState = regalloc_mod.RegAllocState;
+    pub const ValState = regalloc_mod.ValState;
+    pub const RegState = regalloc_mod.RegState;
+    pub const ARM64Regs = regalloc_mod.ARM64Regs;
+    pub const regalloc = regalloc_mod.regalloc;
+
+    // Passes
+    pub const lower = @import("ssa/passes/lower.zig");
+    pub const ARM64Op = lower.ARM64Op;
+    pub const LoweringResult = lower.LoweringResult;
+
     // Debug
     pub const debug = @import("ssa/debug.zig");
 
@@ -58,6 +76,63 @@ pub const codegen = struct {
     pub const arm64 = @import("codegen/arm64.zig");
     pub const GenericCodeGen = generic.GenericCodeGen;
     pub const ARM64CodeGen = arm64.ARM64CodeGen;
+};
+
+// ARM64 instruction encoding
+pub const arm64_asm = @import("arm64/asm.zig");
+
+// Object file output
+pub const macho = @import("obj/macho.zig");
+
+// Frontend modules (ported from bootstrap using Go patterns)
+pub const frontend = struct {
+    pub const token = @import("frontend/token.zig");
+    pub const source = @import("frontend/source.zig");
+    pub const errors = @import("frontend/errors.zig");
+    pub const scanner = @import("frontend/scanner.zig");
+    pub const ast = @import("frontend/ast.zig");
+    pub const parser = @import("frontend/parser.zig");
+    pub const types = @import("frontend/types.zig");
+    pub const checker = @import("frontend/checker.zig");
+    pub const ir = @import("frontend/ir.zig");
+    pub const lower = @import("frontend/lower.zig");
+
+    pub const Token = token.Token;
+    pub const Pos = source.Pos;
+    pub const Position = source.Position;
+    pub const Span = source.Span;
+    pub const Source = source.Source;
+    pub const Error = errors.Error;
+    pub const ErrorCode = errors.ErrorCode;
+    pub const ErrorReporter = errors.ErrorReporter;
+    pub const Scanner = scanner.Scanner;
+    pub const TokenInfo = scanner.TokenInfo;
+    pub const Ast = ast.Ast;
+    pub const Node = ast.Node;
+    pub const NodeIndex = ast.NodeIndex;
+    pub const null_node = ast.null_node;
+    pub const Parser = parser.Parser;
+    pub const TypeIndex = types.TypeIndex;
+    pub const TypeRegistry = types.TypeRegistry;
+    pub const Type = types.Type;
+    pub const Checker = checker.Checker;
+    pub const Scope = checker.Scope;
+    pub const Symbol = checker.Symbol;
+
+    // IR types
+    pub const IR = ir.IR;
+    pub const IRNode = ir.Node;
+    pub const IRNodeIndex = ir.NodeIndex;
+    pub const IRLocalIdx = ir.LocalIdx;
+    pub const IRBlockIndex = ir.BlockIndex;
+    pub const IRFunc = ir.Func;
+    pub const IRFuncBuilder = ir.FuncBuilder;
+    pub const IRBuilder = ir.Builder;
+    pub const BinaryOp = ir.BinaryOp;
+    pub const UnaryOp = ir.UnaryOp;
+
+    // Lowerer
+    pub const Lowerer = lower.Lowerer;
 };
 
 pub fn main() !void {
@@ -108,10 +183,31 @@ test {
     _ = @import("ssa/dom.zig");
     _ = @import("ssa/debug.zig");
     _ = @import("ssa/test_helpers.zig");
+    _ = @import("ssa/liveness.zig");
+    _ = @import("ssa/regalloc.zig");
+    _ = @import("ssa/passes/lower.zig");
 
     // Code generation
     _ = @import("codegen/generic.zig");
     _ = @import("codegen/arm64.zig");
+
+    // ARM64 encoding
+    _ = @import("arm64/asm.zig");
+
+    // Object output
+    _ = @import("obj/macho.zig");
+
+    // Frontend modules
+    _ = @import("frontend/token.zig");
+    _ = @import("frontend/source.zig");
+    _ = @import("frontend/errors.zig");
+    _ = @import("frontend/scanner.zig");
+    _ = @import("frontend/ast.zig");
+    _ = @import("frontend/parser.zig");
+    _ = @import("frontend/types.zig");
+    _ = @import("frontend/checker.zig");
+    _ = @import("frontend/ir.zig");
+    _ = @import("frontend/lower.zig");
 }
 
 test "SSA integration: build simple function" {

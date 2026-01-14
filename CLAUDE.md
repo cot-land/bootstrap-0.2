@@ -363,8 +363,31 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 
 ---
 
+## CRITICAL: BACKEND FIRST
+
+**Previous attempts failed in the BACKEND, not the frontend.**
+
+Bootstrap's blocking bugs (BUG-019, BUG-020, BUG-021) are ALL in codegen/regalloc. The frontend (parser, type checker) works.
+
+**Implementation Order:**
+1. **Liveness Analysis** - Required for spill selection
+2. **Register Allocator** - Go's 6-phase linear scan (see [REGISTER_ALLOC.md](REGISTER_ALLOC.md))
+3. **Lowering Pass** - Generic → arch-specific ops
+4. **Instruction Emission** - Real ARM64 encoding
+5. **Object Output** - Mach-O files
+6. **Frontend (last)** - Port from bootstrap after backend works
+
+**DO NOT:**
+- Implement MCValue (Zig's integrated approach) - This was tried and FAILED
+- Skip liveness analysis - Required for correct spilling
+- Implement frontend first - Backend is the blocker
+
+See [EXECUTION_PLAN.md](EXECUTION_PLAN.md) for detailed phase breakdown.
+
+---
+
 ## CURRENT GOAL
 
-Build a solid foundation of **tested, verified infrastructure** before implementing the full compiler. The SSA framework, pass infrastructure, and codegen are the foundation. Get them right, with comprehensive tests, before building higher.
+Build a solid foundation of **tested, verified infrastructure** before implementing the full compiler. The SSA framework is done. Now we need liveness, regalloc, lowering, and codegen.
 
 The goal is not speed. The goal is **never having to rewrite again**.
