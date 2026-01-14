@@ -24,9 +24,10 @@ This document lists the **exact** language features needed to compile the stage0
 | Enums with backing type | P0 | TODO | token_s0.cot |
 | Enum comparison (==) | P0 | TODO | token_s0.cot |
 | Enum in struct fields | P0 | TODO | token_s0.cot |
-| Fixed arrays [N]T | P0 | TODO | scanner_s0.cot |
-| Array indexing arr[i] | P0 | TODO | scanner_s0.cot |
-| Array assignment arr[i] = x | P0 | TODO | scanner_s0.cot |
+| **String indexing str[i]** | P0 | TODO | scanner_s0.cot |
+| Fixed arrays [N]T | P0 | TODO | parser_s0.cot |
+| Array indexing arr[i] | P0 | TODO | parser_s0.cot |
+| Array assignment arr[i] = x | P0 | TODO | parser_s0.cot |
 | Pointer types *T | P0 | TODO | parser_s0.cot |
 | Address-of &x | P0 | TODO | parser_s0.cot |
 | Dereference ptr.* | P0 | TODO | parser_s0.cot |
@@ -137,10 +138,64 @@ fn test_enum_in_struct() i64 {
 
 ---
 
-### 3. Fixed-Size Arrays
+### 3. String Indexing
 
 **Priority**: P0 - BLOCKING
-**Needed by**: `scanner_s0.cot`, `parser_s0.cot`
+**Needed by**: `scanner_s0.cot`
+
+**Syntax**:
+```cot
+var c: u8 = str[index]    // Read character at position
+```
+
+**Stage0 usage**:
+```cot
+// Scanner peeks at current character
+fn scannerPeek(s: *Scanner) u8 {
+    if s.*.pos >= len(s.*.source) {
+        return 0
+    }
+    return s.*.source[s.*.pos]  // <-- String indexing
+}
+
+// Scanner checks for keywords by comparing characters
+fn isDigit(c: u8) bool {
+    return c >= 48 and c <= 57  // '0'-'9'
+}
+```
+
+**Test case**:
+```cot
+fn test_string_index() i64 {
+    var s: string = "hello"
+
+    // Read first character
+    var c0: u8 = s[0]
+    if c0 != 104 {  // 'h' = 104
+        return 1
+    }
+
+    // Read last character
+    var c4: u8 = s[4]
+    if c4 != 111 {  // 'o' = 111
+        return 2
+    }
+
+    return 42
+}
+```
+
+**Expected behavior**:
+- `str[i]` returns the byte (u8) at position i
+- Out-of-bounds access should trap or return 0 (implementation-defined for stage0)
+- Strings are UTF-8 but we only need byte access for the scanner
+
+---
+
+### 4. Fixed-Size Arrays
+
+**Priority**: P0 - BLOCKING
+**Needed by**: `parser_s0.cot`
 
 **Syntax**:
 ```cot
