@@ -253,6 +253,16 @@ pub const SliceValue = struct {
     elem_size: u32,
 };
 
+/// Extract pointer from slice. (Go: OpSlicePtr)
+pub const SlicePtr = struct {
+    slice: NodeIndex,
+};
+
+/// Extract length from slice. (Go: OpSliceLen)
+pub const SliceLen = struct {
+    slice: NodeIndex,
+};
+
 /// Load through pointer stored in local. (Go: ODEREF on local ptr)
 pub const PtrLoad = struct {
     ptr_local: LocalIdx,
@@ -498,6 +508,10 @@ pub const Node = struct {
         slice_local: SliceLocal,
         /// Create slice from computed value.
         slice_value: SliceValue,
+        /// Extract pointer from slice (Go: OpSlicePtr).
+        slice_ptr: SlicePtr,
+        /// Extract length from slice (Go: OpSliceLen).
+        slice_len: SliceLen,
 
         // ========== Pointer Operations (Go: ODEREF, OADDR) ==========
         /// Load through pointer in local.
@@ -1025,6 +1039,17 @@ pub const FuncBuilder = struct {
     /// Emit slice from computed value.
     pub fn emitSliceValue(self: *FuncBuilder, base: NodeIndex, start: ?NodeIndex, end: ?NodeIndex, elem_size: u32, type_idx: TypeIndex, span: Span) !NodeIndex {
         return self.emit(Node.init(.{ .slice_value = .{ .base = base, .start = start, .end = end, .elem_size = elem_size } }, type_idx, span));
+    }
+
+    /// Emit extract pointer from slice. (Go: OpSlicePtr)
+    /// ptr_type should be the pointer-to-element type
+    pub fn emitSlicePtr(self: *FuncBuilder, slice: NodeIndex, ptr_type: TypeIndex, span: Span) !NodeIndex {
+        return self.emit(Node.init(.{ .slice_ptr = .{ .slice = slice } }, ptr_type, span));
+    }
+
+    /// Emit extract length from slice. (Go: OpSliceLen)
+    pub fn emitSliceLen(self: *FuncBuilder, slice: NodeIndex, span: Span) !NodeIndex {
+        return self.emit(Node.init(.{ .slice_len = .{ .slice = slice } }, TypeRegistry.I64, span));
     }
 
     /// Emit pointer load through local.

@@ -511,6 +511,21 @@ pub const Lowerer = struct {
                 if (base_expr == .ident) {
                     if (fb.lookupLocal(base_expr.ident.name)) |local_idx| {
                         const local = fb.locals.items[local_idx];
+                        const local_type = self.type_reg.get(local.type_idx);
+
+                        // Slice variables: load slice, extract ptr, store through ptr
+                        // Following Go's pattern: slice element assignment
+                        if (local_type == .slice) {
+                            // Load the slice value (ptr + len)
+                            const slice_val = try fb.emitLoadLocal(local_idx, local.type_idx, assign.span);
+                            // Extract pointer from slice
+                            const ptr_type = self.type_reg.makePointer(elem_type) catch TypeRegistry.I64;
+                            const ptr_val = try fb.emitSlicePtr(slice_val, ptr_type, assign.span);
+                            // Store through the pointer
+                            _ = try fb.emitStoreIndexValue(ptr_val, index_node, value_node, elem_size, assign.span);
+                            return;
+                        }
+
                         // Array parameters are passed by reference - the local contains a pointer
                         if (local.is_param and self.type_reg.isArray(local.type_idx)) {
                             const ptr_val = try fb.emitLoadLocal(local_idx, local.type_idx, assign.span);
@@ -859,6 +874,20 @@ pub const Lowerer = struct {
         if (base_expr == .ident) {
             if (fb.lookupLocal(base_expr.ident.name)) |local_idx| {
                 const local = fb.locals.items[local_idx];
+                const local_type = self.type_reg.get(local.type_idx);
+
+                // Slice variables: load slice, extract ptr, then index
+                // Following Go's pattern: OpSlicePtr extracts pointer from slice
+                if (local_type == .slice) {
+                    // Load the slice value (ptr + len)
+                    const slice_val = try fb.emitLoadLocal(local_idx, local.type_idx, idx.span);
+                    // Extract pointer from slice (ptr_type is pointer to element)
+                    const ptr_type = self.type_reg.makePointer(elem_type) catch TypeRegistry.I64;
+                    const ptr_val = try fb.emitSlicePtr(slice_val, ptr_type, idx.span);
+                    // Index through the pointer
+                    return try fb.emitIndexValue(ptr_val, index_node, elem_size, elem_type, idx.span);
+                }
+
                 // Array parameters are passed by reference - the local contains a pointer
                 // We need to load the pointer and use index_value instead of index_local
                 if (local.is_param and self.type_reg.isArray(local.type_idx)) {
@@ -1016,15 +1045,30 @@ pub const Lowerer = struct {
         if (arg_expr == .ident) {
             const ident = arg_expr.ident;
             if (fb.lookupLocal(ident.name)) |local_idx| {
-                const local_type = fb.locals.items[local_idx].type_idx;
-                if (local_type == TypeRegistry.STRING) {
+                const local_type_idx = fb.locals.items[local_idx].type_idx;
+                const local_type = self.type_reg.get(local_type_idx);
+
+                if (local_type_idx == TypeRegistry.STRING) {
                     // Use field_local to access length at offset 8 (field index 1)
                     return try fb.emitFieldLocal(local_idx, 1, 8, TypeRegistry.I64, call.span);
+                }
+
+                // Slice variables: load slice and extract length
+                // Following Go's pattern: len(slice) -> OpSliceLen
+                if (local_type == .slice) {
+                    const slice_val = try fb.emitLoadLocal(local_idx, local_type_idx, call.span);
+                    return try fb.emitSliceLen(slice_val, call.span);
+                }
+
+                // Array variables: return compile-time constant length
+                if (local_type == .array) {
+                    const arr_len: i64 = @intCast(local_type.array.length);
+                    return try fb.emitConstInt(arr_len, TypeRegistry.INT, call.span);
                 }
             }
         }
 
-        // Other types (arrays, slices) not yet implemented
+        // Other types not yet implemented
         return ir.null_node;
     }
 

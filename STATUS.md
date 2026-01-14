@@ -6,7 +6,7 @@
 
 Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven compiler architecture. The goal is to eliminate the "whack-a-mole" debugging pattern that killed previous attempts.
 
-**Current State:** Phase 8 in progress. 86 e2e tests passing! Working toward self-hosting.
+**Current State:** Phase 8 in progress. 92 e2e tests passing! Working toward self-hosting.
 
 ---
 
@@ -53,8 +53,8 @@ Required for handling source text, tokens, and AST nodes:
 | **Array literals** | ✅ DONE | P0 | [1, 2, 3] |
 | **Array indexing arr[i]** | ✅ DONE | P0 | Read and write |
 | **Array as parameter** | ✅ DONE | P0 | fn foo(arr: [N]T) |
-| **Slices []T** | ✅ MVP | P1 | arr[start:end] creates slice |
-| **Slice from array** | ✅ MVP | P1 | arr[start:end] syntax |
+| **Slices []T** | ✅ DONE | P1 | Create, index, len(), write |
+| **Slice from array** | ✅ DONE | P1 | arr[start:end] syntax |
 
 ### Tier 3: Memory & Pointers (COMPLETE)
 
@@ -157,7 +157,7 @@ Based on dependencies and self-hosting needs:
 
 ### Sprint 6: Advanced (IN PROGRESS)
 1. ✅ Optional types ?T and null - 4 e2e tests
-2. ✅ Slices []T MVP - 2 e2e tests (create slice from array)
+2. ✅ Slices []T - 8 e2e tests (create, index, len, write)
 3. ❌ For-in loops
 4. ❌ Global constants
 
@@ -196,13 +196,15 @@ test_array_large                - [100]i64
 
 ## Recent Milestones (2026-01-15)
 
-### Sprint 6: Slices MVP
+### Sprint 6: Full Slices Implementation
 - ✅ **Slice creation** - `arr[start:end]` syntax
-- ✅ **slice_make SSA op** - Creates slice from ptr and len
-- ✅ **slice_ptr, slice_len SSA ops** - Extract slice components
-- ✅ **ARM64 codegen** - Slice operations generate code
-- ✅ **2 e2e tests** - test_slice_create, test_slice_start
-- ✅ **86 e2e tests passing**
+- ✅ **Slice storage** - 16-byte (ptr, len) pairs following Go's dec.rules
+- ✅ **Slice indexing** - `s[i]` reads/writes through slice pointer
+- ✅ **len(slice)** - Returns slice length via slice_len op
+- ✅ **Slice element assignment** - `s[i] = x` writes through slice pointer
+- ✅ **SSA decomposition** - SlicePtr/SliceLen optimized away on slice_make
+- ✅ **8 e2e tests** - create, index, len, write through slice
+- ✅ **92 e2e tests passing**
 
 ### Sprint 6: Null and Optionals
 - ✅ **null literal** - Null keyword and literal in scanner/parser
@@ -276,7 +278,7 @@ test_array_large                - [100]i64
 ### Testing Infrastructure - COMPLETE
 
 - **180+ unit tests passing**
-- **86 e2e tests passing**
+- **92 e2e tests passing**
 - Table-driven tests for comprehensive coverage
 - Golden file infrastructure ready
 

@@ -2,7 +2,7 @@
 // COT END-TO-END TEST SUITE
 // ============================================================================
 //
-// Progress: 86 / 113 tests passing (slices MVP)
+// Progress: 92 / 113 tests passing (full slices)
 //
 // ============================================================================
 // STATUS TRACKER
@@ -972,6 +972,49 @@ fn test_slice_start() i64 {
     return 42;
 }
 
+// Test slice indexing - read first element
+fn test_slice_index_first() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50];
+    let s: []i64 = arr[0:3];
+    return s[0];  // Should return 10
+}
+
+// Test slice indexing - read middle element
+fn test_slice_index_middle() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50];
+    let s: []i64 = arr[1:4];
+    return s[1];  // arr[2] = 30
+}
+
+// Test slice indexing with offset start
+fn test_slice_index_offset() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50];
+    let s: []i64 = arr[2:5];
+    return s[0];  // arr[2] = 30
+}
+
+// Test len() on slice
+fn test_slice_len() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50];
+    let s: []i64 = arr[1:4];
+    return len(s);  // Should return 3
+}
+
+// Test len() on full array slice
+fn test_slice_len_full() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50];
+    let s: []i64 = arr[0:5];
+    return len(s);  // Should return 5
+}
+
+// Test slice shares memory with array (write through slice)
+fn test_slice_write() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50];
+    let s: []i64 = arr[0:3];
+    s[0] = 42;
+    return arr[0];  // Should return 42 (shared memory)
+}
+
 // ============================================================================
 // TIER 16+: BLOCKED - Advanced Features
 // Need: for loops, etc.
@@ -1105,6 +1148,12 @@ fn main() i64 {
     // TIER 15: Slices
     if test_slice_create() == 42 { passed = passed + 1; }
     if test_slice_start() == 42 { passed = passed + 1; }
+    if test_slice_index_first() == 10 { passed = passed + 1; }
+    if test_slice_index_middle() == 30 { passed = passed + 1; }
+    if test_slice_index_offset() == 30 { passed = passed + 1; }
+    if test_slice_len() == 3 { passed = passed + 1; }
+    if test_slice_len_full() == 5 { passed = passed + 1; }
+    if test_slice_write() == 42 { passed = passed + 1; }
 
     return passed;
 }
