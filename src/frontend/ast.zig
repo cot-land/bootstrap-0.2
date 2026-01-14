@@ -513,6 +513,65 @@ pub const Ast = struct {
     }
 
     pub fn deinit(self: *Ast) void {
+        // Free file.decls if it was allocated
+        if (self.file) |file| {
+            if (file.decls.len > 0) {
+                self.allocator.free(file.decls);
+            }
+        }
+
+        // Free all internal slices allocated by the parser
+        for (self.nodes.items) |node| {
+            switch (node) {
+                .decl => |decl| switch (decl) {
+                    .fn_decl => |fn_d| {
+                        if (fn_d.params.len > 0) self.allocator.free(fn_d.params);
+                    },
+                    .struct_decl => |s| {
+                        if (s.fields.len > 0) self.allocator.free(s.fields);
+                    },
+                    .enum_decl => |e| {
+                        if (e.variants.len > 0) self.allocator.free(e.variants);
+                    },
+                    .union_decl => |u| {
+                        if (u.variants.len > 0) self.allocator.free(u.variants);
+                    },
+                    else => {},
+                },
+                .expr => |expr| switch (expr) {
+                    .type_expr => |t| switch (t.kind) {
+                        .function => |f| {
+                            if (f.params.len > 0) self.allocator.free(f.params);
+                        },
+                        else => {},
+                    },
+                    .call => |c| {
+                        if (c.args.len > 0) self.allocator.free(c.args);
+                    },
+                    .array_literal => |a| {
+                        if (a.elements.len > 0) self.allocator.free(a.elements);
+                    },
+                    .block_expr => |b| {
+                        if (b.stmts.len > 0) self.allocator.free(b.stmts);
+                    },
+                    .switch_expr => |s| {
+                        // Free each case's patterns
+                        for (s.cases) |case| {
+                            if (case.patterns.len > 0) self.allocator.free(case.patterns);
+                        }
+                        if (s.cases.len > 0) self.allocator.free(s.cases);
+                    },
+                    else => {},
+                },
+                .stmt => |stmt| switch (stmt) {
+                    .block_stmt => |b| {
+                        if (b.stmts.len > 0) self.allocator.free(b.stmts);
+                    },
+                    else => {},
+                },
+            }
+        }
+
         self.nodes.deinit(self.allocator);
     }
 
@@ -548,6 +607,14 @@ pub const Ast = struct {
     /// Get node count.
     pub fn nodeCount(self: *const Ast) usize {
         return self.nodes.items.len;
+    }
+
+    /// Get root declarations (top-level).
+    pub fn getRootDecls(self: *const Ast) []const NodeIndex {
+        if (self.file) |file| {
+            return file.decls;
+        }
+        return &.{};
     }
 };
 

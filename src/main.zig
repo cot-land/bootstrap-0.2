@@ -96,6 +96,7 @@ pub const frontend = struct {
     pub const checker = @import("frontend/checker.zig");
     pub const ir = @import("frontend/ir.zig");
     pub const lower = @import("frontend/lower.zig");
+    pub const ssa_builder = @import("frontend/ssa_builder.zig");
 
     pub const Token = token.Token;
     pub const Pos = source.Pos;
@@ -133,6 +134,9 @@ pub const frontend = struct {
 
     // Lowerer
     pub const Lowerer = lower.Lowerer;
+
+    // SSA Builder
+    pub const SSABuilder = ssa_builder.SSABuilder;
 };
 
 pub fn main() !void {
@@ -208,6 +212,7 @@ test {
     _ = @import("frontend/checker.zig");
     _ = @import("frontend/ir.zig");
     _ = @import("frontend/lower.zig");
+    _ = @import("frontend/ssa_builder.zig");
 }
 
 test "SSA integration: build simple function" {

@@ -538,7 +538,8 @@ pub const Parser = struct {
 
         // Named type or generic
         if (self.check(.ident) or self.tok.tok.isTypeKeyword()) {
-            const type_name = self.tok.text;
+            // For identifiers, use tok.text. For type keywords, text is empty - use tok.string()
+            const type_name = if (self.tok.text.len > 0) self.tok.text else self.tok.tok.string();
             self.advance();
 
             // Check for generic: Map<K, V> or List<T>

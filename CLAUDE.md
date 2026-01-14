@@ -19,21 +19,23 @@ Write test → Write code → Test passes → Commit → Next feature
 
 If you find yourself debugging without a test that exposes the bug, **STOP**. Write the test first.
 
+**Current Status:** See [STATUS.md](STATUS.md)
+
 ---
 
-## ⚠️ ZIG 0.15 API - CRITICAL
+## Zig 0.15 API - CRITICAL
 
 This project uses **Zig 0.15.2**. The API is DIFFERENT from tutorials and examples online.
 
 ### ArrayList - THE MOST COMMON MISTAKE
 
 ```zig
-// ❌ WRONG - Will NOT compile in Zig 0.15:
+// WRONG - Will NOT compile in Zig 0.15:
 var list = std.ArrayList(u32).init(allocator);
 list.append(item);
 list.deinit();
 
-// ✅ CORRECT - Zig 0.15 ArrayListUnmanaged:
+// CORRECT - Zig 0.15 ArrayListUnmanaged:
 var list = std.ArrayListUnmanaged(u32){};
 try list.append(allocator, item);   // allocator on EVERY method call
 list.deinit(allocator);             // allocator on deinit too
@@ -48,7 +50,7 @@ list.deinit(allocator);             // allocator on deinit too
 ### AutoHashMap - Same Pattern
 
 ```zig
-// ✅ CORRECT for Zig 0.15:
+// CORRECT for Zig 0.15:
 var map = std.AutoHashMap(K, V).init(allocator);  // init is OK here
 defer map.deinit();
 try map.put(key, value);  // no allocator needed on put
@@ -57,7 +59,7 @@ try map.put(key, value);  // no allocator needed on put
 ### Build System
 
 ```zig
-// ✅ CORRECT for Zig 0.15:
+// CORRECT for Zig 0.15:
 const exe = b.addExecutable(.{
     .name = "cot",
     .root_module = b.createModule(.{
@@ -67,7 +69,7 @@ const exe = b.addExecutable(.{
     }),
 });
 
-// ❌ WRONG (old API - root_source_file was top-level):
+// WRONG (old API - root_source_file was top-level):
 const exe = b.addExecutable(.{
     .name = "cot",
     .root_source_file = b.path("src/main.zig"),  // WRONG
@@ -77,7 +79,7 @@ const exe = b.addExecutable(.{
 ### Allocator VTable
 
 ```zig
-// ✅ CORRECT for Zig 0.15 custom allocators:
+// CORRECT for Zig 0.15 custom allocators:
 const vtable = std.mem.Allocator.VTable{
     .alloc = myAlloc,
     .resize = myResize,
@@ -109,16 +111,6 @@ const vtable = std.mem.Allocator.VTable{
 4. **Implement** the feature
 5. **Run test** - it should pass
 6. **Commit**
-
-### Test Categories We Use
-
-| Category | Location | When to Use |
-|----------|----------|-------------|
-| Unit tests | Inline in `.zig` files | Every function |
-| Table-driven tests | Inline with `TestCase` structs | Multiple inputs/outputs |
-| Integration tests | `test/integration/` | Cross-module flows |
-| Golden file tests | `test/golden/` | Output stability |
-| Directive tests | `test/cases/` | End-to-end compilation |
 
 ### Running Tests
 
@@ -181,19 +173,16 @@ Source → Parse → Type Check → Lower to IR → Convert to SSA → Optimize 
 | `src/ssa/value.zig` | SSA values with use counting | `cmd/compile/internal/ssa/value.go` |
 | `src/ssa/block.zig` | Basic blocks with edges | `cmd/compile/internal/ssa/block.go` |
 | `src/ssa/func.zig` | Functions as block containers | `cmd/compile/internal/ssa/func.go` |
-| `src/ssa/op.zig` | Operation definitions | `cmd/compile/internal/ssa/op.go` |
-| `src/ssa/dom.zig` | Dominator tree computation | `cmd/compile/internal/ssa/dom.go` |
-| `src/ssa/compile.zig` | Pass infrastructure | `cmd/compile/internal/ssa/compile.go` |
-| `src/codegen/generic.zig` | Reference codegen | Stack-based, correct by construction |
-| `src/codegen/arm64.zig` | Optimized ARM64 codegen | `cmd/compile/internal/arm64/ssa.go` |
+| `src/frontend/ir.zig` | Typed IR definitions | `cmd/compile/internal/ir/` |
+| `src/frontend/ssa_builder.zig` | IR→SSA with FwdRef pattern | `cmd/compile/internal/ssagen/` |
 
 ### Design Patterns We Use
 
-1. **Export test pattern** - `test_helpers.zig` exposes internals for testing
+1. **FwdRef pattern** - Deferred phi insertion for correct SSA
 2. **Table-driven tests** - Struct arrays with name, input, expected
 3. **Phase snapshots** - Capture before/after to verify pass effects
 4. **Golden files** - Known-good output for regression detection
-5. **Directive comments** - `// run`, `// errorcheck` for test specification
+5. **Type interning** - TypeRegistry with indices for fast comparison
 6. **Allocation tracking** - `CountingAllocator` for performance tests
 
 ---
@@ -236,11 +225,6 @@ Source → Parse → Type Check → Lower to IR → Convert to SSA → Optimize 
    // Now you can see exactly what changed
    ```
 
-4. **Golden file testing**
-   - Commit golden files for stable output
-   - If output changes unexpectedly, investigation is required
-   - Use `COT_UPDATE_GOLDEN=1` only after verifying change is correct
-
 ### When Stuck
 
 1. **Stop** - Don't keep trying random fixes
@@ -251,103 +235,33 @@ Source → Parse → Type Check → Lower to IR → Convert to SSA → Optimize 
 
 ---
 
-## BUG TRACKING PROCESS
-
-When you encounter a bug:
-
-1. **Document** - Add to `BUGLIST.md` with:
-   - Location (file:line)
-   - Description (what happens vs what should happen)
-   - Reproduction steps
-
-2. **Test** - Create a test that exposes it:
-   ```zig
-   test "regression: issue #123 - phi node args wrong order" {
-       // This test catches the bug from BUGLIST.md #123
-       var builder = try ssa.TestFuncBuilder.init(allocator, "regression_123");
-       defer builder.deinit();
-       // ... setup that triggers the bug ...
-       // Assert the correct behavior
-   }
-   ```
-
-3. **Fix** - Implement the fix
-
-4. **Verify** - Run full test suite, not just the new test
-
-5. **Mark fixed** - Update `BUGLIST.md`
-
----
-
-## FILE ORGANIZATION
-
-```
-bootstrap-0.2/
-├── src/
-│   ├── main.zig              # Entry point, module exports
-│   ├── core/
-│   │   ├── types.zig         # ID, TypeRef, shared types
-│   │   ├── errors.zig        # CompileError, VerifyError
-│   │   └── testing.zig       # CountingAllocator, test utils
-│   ├── ssa/
-│   │   ├── value.zig         # SSA Value type
-│   │   ├── block.zig         # Basic blocks
-│   │   ├── func.zig          # Functions
-│   │   ├── op.zig            # Operations enum
-│   │   ├── dom.zig           # Dominators
-│   │   ├── compile.zig       # Pass infrastructure
-│   │   ├── debug.zig         # Dump, verify, snapshots
-│   │   └── test_helpers.zig  # TestFuncBuilder, validators
-│   └── codegen/
-│       ├── generic.zig       # Reference implementation
-│       └── arm64.zig         # ARM64 optimized
-├── test/
-│   ├── golden/               # Golden file snapshots
-│   ├── cases/                # Directive-based tests
-│   ├── integration/          # Cross-module tests
-│   └── runners/              # Test infrastructure
-├── CLAUDE.md                 # This file
-├── TESTING_FRAMEWORK.md      # Detailed test documentation
-├── IMPROVEMENTS.md           # Go patterns implemented
-└── EXECUTION_PLAN.md         # Implementation roadmap
-```
-
----
-
 ## DEVELOPMENT WORKFLOW
 
 ### For Each Feature
 
-1. **Update todo list** - Mark as in_progress
-2. **Reference Go** - Find equivalent in `~/learning/go`
-3. **Write tests first** - What should this feature do?
-4. **Implement** - Match Go's approach, adapted to Zig
-5. **Run tests** - `zig build test-all`
-6. **Update documentation** - STATUS.md, IMPROVEMENTS.md
-7. **Mark complete** - Update todo list
+1. **Reference Go** - Find equivalent in `~/learning/go`
+2. **Write tests first** - What should this feature do?
+3. **Implement** - Match Go's approach, adapted to Zig
+4. **Run tests** - `zig build test`
+5. **Update documentation** - STATUS.md if major milestone
 
 ### For Each Bug Fix
 
 1. **Write failing test** - Proves the bug exists
 2. **Fix the bug** - Minimal change
 3. **Run full suite** - No regressions
-4. **Update BUGLIST.md** - Mark as fixed
 
 ### For Each Commit
 
 ```bash
 # Before committing
-zig build test-all
-
-# If adding new golden output
-COT_UPDATE_GOLDEN=1 zig build test-golden
-git diff test/golden/  # Review changes
+zig build test
 
 # Commit with descriptive message
 git commit -m "Fix phi node predecessor ordering
 
 Fixes issue where phi args didn't match block pred order.
-Added regression test in test_helpers.zig.
+Added regression test in ssa_builder.zig.
 
 Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 ```
@@ -363,31 +277,19 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 
 ---
 
-## CRITICAL: BACKEND FIRST
+## DOCUMENTATION
 
-**Previous attempts failed in the BACKEND, not the frontend.**
-
-Bootstrap's blocking bugs (BUG-019, BUG-020, BUG-021) are ALL in codegen/regalloc. The frontend (parser, type checker) works.
-
-**Implementation Order:**
-1. **Liveness Analysis** - Required for spill selection
-2. **Register Allocator** - Go's 6-phase linear scan (see [REGISTER_ALLOC.md](REGISTER_ALLOC.md))
-3. **Lowering Pass** - Generic → arch-specific ops
-4. **Instruction Emission** - Real ARM64 encoding
-5. **Object Output** - Mach-O files
-6. **Frontend (last)** - Port from bootstrap after backend works
-
-**DO NOT:**
-- Implement MCValue (Zig's integrated approach) - This was tried and FAILED
-- Skip liveness analysis - Required for correct spilling
-- Implement frontend first - Backend is the blocker
-
-See [EXECUTION_PLAN.md](EXECUTION_PLAN.md) for detailed phase breakdown.
+| Document | Purpose |
+|----------|---------|
+| [STATUS.md](STATUS.md) | Current project status and remaining work |
+| [REGISTER_ALLOC.md](REGISTER_ALLOC.md) | Go's 6-phase regalloc algorithm |
+| [DATA_STRUCTURES.md](DATA_STRUCTURES.md) | Go-to-Zig data structure translations |
+| [TESTING_FRAMEWORK.md](TESTING_FRAMEWORK.md) | Testing philosophy and patterns |
 
 ---
 
 ## CURRENT GOAL
 
-Build a solid foundation of **tested, verified infrastructure** before implementing the full compiler. The SSA framework is done. Now we need liveness, regalloc, lowering, and codegen.
+The frontend and IR→SSA pipeline are complete. The goal now is **end-to-end testing**: compile simple programs and verify they run correctly.
 
 The goal is not speed. The goal is **never having to rewrite again**.

@@ -627,27 +627,28 @@ pub const DiffResult = struct {
 
 ## Test Coverage Goals
 
-### Phase 1: Core Infrastructure (Before Parsing)
+### Phase 1: Core Infrastructure - COMPLETE
 - [x] SSA Value/Block/Func unit tests
 - [x] Op metadata table-driven tests
 - [x] Error type unit tests
 - [x] Test helpers (TestFuncBuilder, validateInvariants)
 - [x] Allocation tracking (CountingAllocator)
-- [ ] Golden test runner
-- [ ] Diff utility
+- [x] Golden test infrastructure
+- [x] Diff utility
 
-### Phase 2: Frontend (Parsing)
-- [ ] Lexer unit tests (token by token)
-- [ ] Parser unit tests (AST structure)
-- [ ] Parser error tests (all error paths)
-- [ ] Parser golden tests (AST dumps)
+### Phase 2: Frontend (Parsing) - COMPLETE
+- [x] Lexer unit tests (token by token)
+- [x] Parser unit tests (AST structure)
+- [x] Parser error tests (all error paths)
+- [x] Parser golden tests (AST dumps)
 - [ ] Parser fuzz tests
 
-### Phase 3: Middle-end (Type Checking, Lowering)
-- [ ] Type checker unit tests
-- [ ] Type error message tests
-- [ ] IR lowering tests
-- [ ] SSA construction tests
+### Phase 3: Middle-end (Type Checking, Lowering) - COMPLETE
+- [x] Type checker unit tests
+- [x] Type error message tests
+- [x] IR lowering tests
+- [x] SSA construction tests
+- [x] End-to-end pipeline test (Parse→Check→Lower→SSA)
 
 ### Phase 4: Backend (Optimization, Codegen)
 - [ ] Per-pass optimization tests

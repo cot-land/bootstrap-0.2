@@ -522,6 +522,13 @@ pub const Checker = struct {
 
     /// Check identifier expression.
     fn checkIdentifier(self: *Checker, id: ast.Ident) TypeIndex {
+        // First check if it's a type name in the registry
+        if (self.types.lookupBasic(id.name)) |_| {
+            // It's a type name being used as an expression - that's an error
+            // but let's be specific about it
+            self.err.errorWithCode(id.span.start, .e301, "type name cannot be used as expression");
+            return invalid_type;
+        }
         if (self.scope.lookup(id.name)) |sym| {
             return sym.type_idx;
         }
@@ -1042,12 +1049,24 @@ pub const Checker = struct {
         return TypeRegistry.VOID;
     }
 
-    /// Check block expression (from function body).
+    /// Check block expression or statement (from function body).
     fn checkBlockExpr(self: *Checker, idx: NodeIndex) CheckError!void {
         const node = self.tree.getNode(idx) orelse return;
-        const expr = node.asExpr() orelse return;
-        if (expr == .block_expr) {
-            _ = try self.checkBlock(expr.block_expr);
+
+        // Handle block_expr
+        if (node.asExpr()) |expr| {
+            if (expr == .block_expr) {
+                _ = try self.checkBlock(expr.block_expr);
+                return;
+            }
+        }
+
+        // Handle block_stmt (function bodies use this)
+        if (node.asStmt()) |stmt| {
+            if (stmt == .block_stmt) {
+                try self.checkBlockStmt(stmt.block_stmt);
+                return;
+            }
         }
     }
 
@@ -1278,7 +1297,21 @@ pub const Checker = struct {
 
         const node = self.tree.getNode(idx) orelse return invalid_type;
         const expr = node.asExpr() orelse return invalid_type;
-        if (expr != .type_expr) return invalid_type;
+        if (expr != .type_expr) {
+            // Maybe it's an ident that's a type name
+            if (expr == .ident) {
+                if (self.types.lookupBasic(expr.ident.name)) |tidx| {
+                    return tidx;
+                }
+                if (self.scope.lookup(expr.ident.name)) |sym| {
+                    if (sym.kind == .type_name) {
+                        return sym.type_idx;
+                    }
+                }
+                self.errUndefined(expr.ident.span.start, expr.ident.name);
+            }
+            return invalid_type;
+        }
 
         return self.resolveType(expr.type_expr);
     }

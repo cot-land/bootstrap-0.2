@@ -434,6 +434,11 @@ pub const Op = enum(u16) {
     phi,
     /// Copy value (inserted by register allocation)
     copy,
+    /// Forward reference placeholder (used during IR→SSA conversion).
+    /// Represents a use of a variable before its definition is known.
+    /// aux_int: local variable index (frontend ir.LocalIdx)
+    /// Resolved to phi or copy after all blocks are walked.
+    fwd_ref,
     /// Function argument. aux_int: argument index
     arg,
 
@@ -1040,6 +1045,7 @@ const op_info_table = blk: {
     // Control flow
     table[@intFromEnum(Op.phi)] = .{ .name = "Phi", .arg_len = -1 };
     table[@intFromEnum(Op.copy)] = .{ .name = "Copy", .arg_len = 1 };
+    table[@intFromEnum(Op.fwd_ref)] = .{ .name = "FwdRef", .aux_type = .int64 }; // aux_int = local idx
     table[@intFromEnum(Op.arg)] = .{ .name = "Arg", .aux_type = .int64 };
 
     // Tuple operations

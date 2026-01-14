@@ -826,6 +826,30 @@ pub const FuncBuilder = struct {
         return self.current_block;
     }
 
+    /// Check if the current block needs a terminator instruction.
+    /// Returns true if the block is empty or doesn't end with a terminator.
+    pub fn needsTerminator(self: *const FuncBuilder) bool {
+        const block_idx = self.current_block;
+        const block = &self.blocks.items[block_idx];
+
+        // Get nodes in this block
+        var last_node_in_block: ?NodeIndex = null;
+        for (self.nodes.items, 0..) |node, i| {
+            if (node.block == block_idx) {
+                last_node_in_block = @intCast(i);
+            }
+        }
+
+        if (last_node_in_block) |idx| {
+            const node = &self.nodes.items[idx];
+            return !node.isTerminator();
+        }
+
+        // Empty block needs terminator
+        _ = block;
+        return true;
+    }
+
     // ========================================================================
     // String Literals
     // ========================================================================
@@ -850,12 +874,20 @@ pub const FuncBuilder = struct {
 
         // Add to current block's node list
         var block = &self.blocks.items[self.current_block];
+
+        // Build new nodes list
         var nodes_list = std.ArrayListUnmanaged(NodeIndex){};
         defer nodes_list.deinit(self.allocator);
         for (block.nodes) |ni| {
             try nodes_list.append(self.allocator, ni);
         }
         try nodes_list.append(self.allocator, idx);
+
+        // Free old block.nodes before replacing (if it was allocated)
+        if (block.nodes.len > 0) {
+            self.allocator.free(block.nodes);
+        }
+
         block.nodes = try nodes_list.toOwnedSlice(self.allocator);
 
         return idx;
@@ -948,6 +980,11 @@ pub const FuncBuilder = struct {
     /// Emit pointer store through local.
     pub fn emitPtrStore(self: *FuncBuilder, ptr_local: LocalIdx, value: NodeIndex, span: Span) !NodeIndex {
         return self.emit(Node.init(.{ .ptr_store = .{ .ptr_local = ptr_local, .value = value } }, TypeRegistry.VOID, span));
+    }
+
+    /// Emit pointer load through computed pointer value.
+    pub fn emitPtrLoadValue(self: *FuncBuilder, ptr: NodeIndex, type_idx: TypeIndex, span: Span) !NodeIndex {
+        return self.emit(Node.init(.{ .ptr_load_value = .{ .ptr = ptr } }, type_idx, span));
     }
 
     /// Emit function call.
@@ -1108,6 +1145,35 @@ pub const IR = struct {
         };
     }
 
+    pub fn deinit(self: *IR) void {
+        // Free all internal function data
+        for (self.funcs) |*f| {
+            // Free each block's nodes
+            for (f.blocks) |*block| {
+                if (block.nodes.len > 0) {
+                    self.allocator.free(block.nodes);
+                }
+            }
+            // Free function-level slices
+            if (f.params.len > 0) self.allocator.free(f.params);
+            if (f.locals.len > 0) self.allocator.free(f.locals);
+            if (f.blocks.len > 0) self.allocator.free(f.blocks);
+            if (f.nodes.len > 0) self.allocator.free(f.nodes);
+            if (f.string_literals.len > 0) self.allocator.free(f.string_literals);
+        }
+
+        // Free top-level slices
+        if (self.funcs.len > 0) {
+            self.allocator.free(self.funcs);
+        }
+        if (self.globals.len > 0) {
+            self.allocator.free(self.globals);
+        }
+        if (self.structs.len > 0) {
+            self.allocator.free(self.structs);
+        }
+    }
+
     /// Get a function by name.
     pub fn getFunc(self: *const IR, name: []const u8) ?*const Func {
         for (self.funcs) |*f| {
@@ -1198,11 +1264,12 @@ pub const Builder = struct {
         try self.structs.append(self.allocator, s);
     }
 
-    /// Get the built IR.
-    pub fn getIR(self: *Builder) IR {
-        self.ir.funcs = self.funcs.items;
-        self.ir.globals = self.globals.items;
-        self.ir.structs = self.structs.items;
+    /// Get the built IR. Transfers ownership of all data to the IR.
+    pub fn getIR(self: *Builder) !IR {
+        // Use toOwnedSlice to transfer ownership - the ArrayLists become empty after this
+        self.ir.funcs = try self.funcs.toOwnedSlice(self.allocator);
+        self.ir.globals = try self.globals.toOwnedSlice(self.allocator);
+        self.ir.structs = try self.structs.toOwnedSlice(self.allocator);
         return self.ir;
     }
 };
@@ -1407,7 +1474,7 @@ test "IR builder" {
     // Add a global
     try builder.addGlobal(Global.init("counter", TypeRegistry.INT, false, Span.fromPos(Pos.zero)));
 
-    const ir = builder.getIR();
+    const ir = try builder.getIR();
     try std.testing.expectEqual(@as(usize, 1), ir.funcs.len);
     try std.testing.expectEqual(@as(usize, 1), ir.globals.len);
     try std.testing.expect(ir.getFunc("main") != null);
