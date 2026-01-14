@@ -692,6 +692,11 @@ pub const Lowerer = struct {
         else
             return ir.null_node;
 
+        // Handle builtin functions
+        if (std.mem.eql(u8, func_name, "len")) {
+            return try self.lowerBuiltinLen(call);
+        }
+
         // Lower arguments
         var args = std.ArrayListUnmanaged(ir.NodeIndex){};
         defer args.deinit(self.allocator);
@@ -705,6 +710,34 @@ pub const Lowerer = struct {
         const return_type = TypeRegistry.VOID;
 
         return try fb.emitCall(func_name, args.items, false, return_type, call.span);
+    }
+
+    /// Lower builtin len() function.
+    /// For string literals, returns compile-time constant length.
+    fn lowerBuiltinLen(self: *Lowerer, call: ast.Call) Error!ir.NodeIndex {
+        const fb = self.current_func orelse return ir.null_node;
+
+        if (call.args.len != 1) return ir.null_node;
+
+        const arg_idx = call.args[0];
+        const arg_node = self.tree.getNode(arg_idx) orelse return ir.null_node;
+        const arg_expr = arg_node.asExpr() orelse return ir.null_node;
+
+        // Check if argument is a string literal
+        if (arg_expr == .literal) {
+            const lit = arg_expr.literal;
+            if (lit.kind == .string) {
+                // Parse the string literal to get its actual length
+                var buf: [4096]u8 = undefined;
+                const unescaped = parseStringLiteral(lit.value, &buf);
+                const length: i64 = @intCast(unescaped.len);
+                return try fb.emitConstInt(length, TypeRegistry.INT, call.span);
+            }
+        }
+
+        // For non-literal strings, we'd need runtime support
+        // TODO: emit string_len operation for string variables
+        return ir.null_node;
     }
 
     fn lowerIfExpr(self: *Lowerer, if_expr: ast.IfExpr) Error!ir.NodeIndex {

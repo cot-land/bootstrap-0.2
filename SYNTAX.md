@@ -331,6 +331,13 @@ add(10, 20)
 greet()
 ```
 
+### Builtin Functions
+```cot
+len(s)              // Length of string, array, or slice
+len("hello")        // Returns 5
+len([1, 2, 3])      // Returns 3
+```
+
 ### Array Literals
 ```cot
 [1, 2, 3, 4, 5]
@@ -593,9 +600,6 @@ fn main() i64 {
 
 See `test/e2e/all_tests.cot` for the full test suite.
 
-**Current:** 5/113 tests passing
-- ✅ test_return (return literal)
-- ✅ test_mul (multiplication)
-- ✅ test_div (division)
-- ✅ test_sub (subtraction)
-- ✅ test_call (function calls)
+**Current:** 47/113 tests passing
+
+Including: arithmetic, function calls, local variables, comparisons, if/else, while loops, break/continue, structs, character literals, and string literals.

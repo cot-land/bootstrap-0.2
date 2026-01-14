@@ -709,6 +709,7 @@ pub const Checker = struct {
     }
 
     /// Check builtin len() function.
+    /// Following Go's pattern: len() works on strings, arrays, slices.
     fn checkBuiltinLen(self: *Checker, c: ast.Call) CheckError!TypeIndex {
         if (c.args.len != 1) {
             self.err.errorWithCode(c.span.start, .e300, "len() expects exactly one argument");
@@ -716,6 +717,12 @@ pub const Checker = struct {
         }
 
         const arg_type = try self.checkExpr(c.args[0]);
+
+        // String type - len() returns the byte length
+        if (arg_type == TypeRegistry.STRING) {
+            return TypeRegistry.INT;
+        }
+
         const arg = self.types.get(arg_type);
 
         switch (arg) {
@@ -723,7 +730,7 @@ pub const Checker = struct {
             else => {},
         }
 
-        self.err.errorWithCode(c.span.start, .e300, "len() argument must be array, slice, or list");
+        self.err.errorWithCode(c.span.start, .e300, "len() argument must be string, array, slice, or list");
         return invalid_type;
     }
 
