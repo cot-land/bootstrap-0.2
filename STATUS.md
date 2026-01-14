@@ -6,7 +6,7 @@
 
 Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven compiler architecture. The goal is to eliminate the "whack-a-mole" debugging pattern that killed previous attempts.
 
-**Current State:** Phase 8 in progress. 80 e2e tests passing! Working toward self-hosting.
+**Current State:** Phase 8 in progress. 84 e2e tests passing! Working toward self-hosting.
 
 ---
 
@@ -67,8 +67,8 @@ Required for tree structures and dynamic allocation:
 | **Dereference ptr.*** | ✅ DONE | P0 | Read/write through pointer |
 | **Pointer as parameter** | ✅ DONE | P0 | fn foo(p: *i64) |
 | **Pointer arithmetic** | ❌ TODO | P2 | ptr + offset (maybe) |
-| **Optional types ?T** | ❌ TODO | P1 | Nullable values |
-| **null literal** | ❌ TODO | P1 | For optionals |
+| **Optional types ?T** | ✅ DONE | P1 | Nullable values |
+| **null literal** | ✅ DONE | P1 | For pointers and optionals |
 
 ### Tier 4: Enums & Pattern Matching (IN PROGRESS)
 
@@ -155,8 +155,8 @@ Based on dependencies and self-hosting needs:
 2. ✅ Enum value access (Color.Red)
 3. ✅ Enum in conditionals - 5 e2e tests
 
-### Sprint 6: Advanced
-1. ❌ Optional types ?T
+### Sprint 6: Advanced (IN PROGRESS)
+1. ✅ Optional types ?T and null - 4 e2e tests
 2. ❌ Slices []T
 3. ❌ For-in loops
 4. ❌ Global constants
@@ -195,6 +195,14 @@ test_array_large                - [100]i64
 ---
 
 ## Recent Milestones (2026-01-15)
+
+### Sprint 6: Null and Optionals (Partial)
+- ✅ **null literal** - Null keyword and literal in scanner/parser
+- ✅ **Null pointer assignment** - `let p: *i64 = null;`
+- ✅ **Null comparison** - `p == null`, `p != null`
+- ✅ **Codegen for const_nil** - ARM64 emits 0 for null
+- ✅ **4 e2e tests** - test_null_eq, test_null_ne, test_null_eq_right, test_ptr_not_null
+- ✅ **84 e2e tests passing**
 
 ### Sprint 3: Pointers Complete!
 - ✅ **Pointer types *T** - Pointer type in TypeRegistry
@@ -261,7 +269,7 @@ test_array_large                - [100]i64
 ### Testing Infrastructure - COMPLETE
 
 - **180+ unit tests passing**
-- **59 e2e tests passing**
+- **84 e2e tests passing**
 - Table-driven tests for comprehensive coverage
 - Golden file infrastructure ready
 

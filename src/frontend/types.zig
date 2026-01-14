@@ -560,6 +560,17 @@ pub const TypeRegistry = struct {
             if (to_t == .basic and to_t.basic == .bool_type) return true;
         }
 
+        // Untyped null -> any optional type ?T or pointer *T
+        if (from_t == .basic and from_t.basic == .untyped_null) {
+            if (to_t == .optional) return true;
+            if (to_t == .pointer) return true; // Pointers can be null (like Go)
+        }
+
+        // T -> ?T (wrap value in optional)
+        if (to_t == .optional) {
+            return self.isAssignable(from, to_t.optional.elem);
+        }
+
         // Same numeric types
         if (from_t == .basic and to_t == .basic) {
             if (from_t.basic == to_t.basic) return true;

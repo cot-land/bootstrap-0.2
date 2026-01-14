@@ -913,8 +913,49 @@ fn test_enum_param() i64 {
 }
 
 // ============================================================================
-// TIER 11+: BLOCKED - Advanced Features
-// Need: enums, unions, slices, for loops, etc.
+// TIER 14: Null and Pointers
+// ============================================================================
+
+// Test null pointer assignment and comparison (== null)
+fn test_null_eq() i64 {
+    let p: *i64 = null;
+    if p == null {
+        return 42;
+    }
+    return 0;
+}
+
+// Test null pointer comparison (!= null)
+fn test_null_ne() i64 {
+    let p: *i64 = null;
+    if p != null {
+        return 0;
+    }
+    return 42;
+}
+
+// Test null on right side of comparison
+fn test_null_eq_right() i64 {
+    let p: *i64 = null;
+    if null == p {
+        return 42;
+    }
+    return 0;
+}
+
+// Test non-null pointer
+fn test_ptr_not_null() i64 {
+    var x: i64 = 42;
+    let p: *i64 = &x;
+    if p != null {
+        return p.*;
+    }
+    return 0;
+}
+
+// ============================================================================
+// TIER 15+: BLOCKED - Advanced Features
+// Need: optionals ?T, slices []T, for loops, etc.
 // ============================================================================
 
 // (many more tests to add as we implement features)
@@ -1035,6 +1076,12 @@ fn main() i64 {
     if test_enum_third() == 42 { passed = passed + 1; }
     if test_enum_ne() == 42 { passed = passed + 1; }
     if test_enum_param() == 42 { passed = passed + 1; }
+
+    // TIER 14: Null and Pointers
+    if test_null_eq() == 42 { passed = passed + 1; }
+    if test_null_ne() == 42 { passed = passed + 1; }
+    if test_null_eq_right() == 42 { passed = passed + 1; }
+    if test_ptr_not_null() == 42 { passed = passed + 1; }
 
     return passed;
 }

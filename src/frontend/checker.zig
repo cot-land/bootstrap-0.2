@@ -554,7 +554,7 @@ pub const Checker = struct {
             .string => TypeRegistry.STRING,
             .char => TypeRegistry.U8,
             .true_lit, .false_lit => TypeRegistry.UNTYPED_BOOL,
-            .null_lit => invalid_type,
+            .null_lit => TypeRegistry.UNTYPED_NULL,
         };
     }
 
@@ -1557,6 +1557,16 @@ pub const Checker = struct {
                 return true;
             }
         }
+
+        // Optional types can be compared with null
+        // ?T == null or null == ?T
+        if (ta == .optional and tb == .basic and tb.basic == .untyped_null) return true;
+        if (tb == .optional and ta == .basic and ta.basic == .untyped_null) return true;
+
+        // Pointers can be compared with null
+        // *T == null or null == *T
+        if (ta == .pointer and tb == .basic and tb.basic == .untyped_null) return true;
+        if (tb == .pointer and ta == .basic and ta.basic == .untyped_null) return true;
 
         return false;
     }

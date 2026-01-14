@@ -703,6 +703,13 @@ pub const ARM64CodeGen = struct {
                 try self.value_regs.put(self.allocator, value, dest_reg);
             },
 
+            .const_nil => {
+                // Null/nil is just 0 (like Go's nil)
+                const dest_reg = self.getDestRegForValue(value);
+                try self.emitLoadImmediate(dest_reg, 0);
+                try self.value_regs.put(self.allocator, value, dest_reg);
+            },
+
             .const_string => {
                 // String literal: emit ADRP + ADD to load the string address.
                 // The actual address is filled in by the linker via relocations.
@@ -1217,6 +1224,7 @@ pub const ARM64CodeGen = struct {
                 const imm: i64 = if (value.aux_int != 0) 1 else 0;
                 try self.emitLoadImmediate(dest, imm);
             },
+            .const_nil => try self.emitLoadImmediate(dest, 0),
             else => {
                 // Fallback: emit 0
                 try self.emit(asm_mod.encodeMOVZ(dest, 0, 0));
@@ -1367,6 +1375,7 @@ pub const ARM64CodeGen = struct {
                 const imm: i64 = if (value.aux_int != 0) 1 else 0;
                 try self.emitLoadImmediate(dest, imm);
             },
+            .const_nil => try self.emitLoadImmediate(dest, 0),
             else => {
                 // Fallback: emit 0
                 debug.log(.codegen, "      WARNING: regenerating unknown op {s} as 0", .{@tagName(value.op)});
@@ -1399,6 +1408,7 @@ pub const ARM64CodeGen = struct {
                 const imm: i64 = if (value.aux_int != 0) 1 else 0;
                 try self.emitLoadImmediate(dest, imm);
             },
+            .const_nil => try self.emitLoadImmediate(dest, 0),
             .phi => {
                 // Phi value should already be in a register from phi moves
                 // If we get here, something went wrong - but don't emit 0, emit first arg
