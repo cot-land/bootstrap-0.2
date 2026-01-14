@@ -450,6 +450,14 @@ pub const Op = enum(u16) {
     /// Create tuple from values
     make_tuple,
 
+    // --- String/Slice Decomposition (Go: OpStringLen, OpStringPtr, OpSliceLen, etc.) ---
+    /// Extract length from string. Takes string value, returns i64.
+    string_len,
+    /// Extract pointer from string. Takes string value, returns *u8.
+    string_ptr,
+    /// Create string from pointer and length. Takes (*u8, i64), returns string.
+    string_make,
+
     // ═══════════════════════════════════════════════════════════════════════════
     // SECTION 11: Function Calls
     // All call operations have side effects and may clobber registers.
@@ -1052,6 +1060,11 @@ const op_info_table = blk: {
     table[@intFromEnum(Op.select0)] = .{ .name = "Select0", .arg_len = 1 };
     table[@intFromEnum(Op.select1)] = .{ .name = "Select1", .arg_len = 1 };
     table[@intFromEnum(Op.make_tuple)] = .{ .name = "MakeTuple", .arg_len = 2 };
+
+    // String decomposition (Go: OpStringLen, OpStringPtr, OpStringMake)
+    table[@intFromEnum(Op.string_len)] = .{ .name = "StringLen", .arg_len = 1 };
+    table[@intFromEnum(Op.string_ptr)] = .{ .name = "StringPtr", .arg_len = 1 };
+    table[@intFromEnum(Op.string_make)] = .{ .name = "StringMake", .arg_len = 2 };
 
     // Calls
     table[@intFromEnum(Op.call)] = .{

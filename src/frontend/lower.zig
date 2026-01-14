@@ -299,8 +299,55 @@ pub const Lowerer = struct {
 
         // Initialize if there's a value
         if (var_stmt.value != null_node) {
-            const value_node = try self.lowerExprNode(var_stmt.value);
-            _ = try fb.emitStoreLocal(local_idx, value_node, var_stmt.span);
+            // Special handling for string type: store (ptr, len) pair
+            if (type_idx == TypeRegistry.STRING) {
+                try self.lowerStringInit(local_idx, var_stmt.value, var_stmt.span);
+            } else {
+                const value_node = try self.lowerExprNode(var_stmt.value);
+                _ = try fb.emitStoreLocal(local_idx, value_node, var_stmt.span);
+            }
+        }
+    }
+
+    /// Lower string initialization: store (ptr, len) pair to local variable.
+    /// Following Go's pattern: string = struct { ptr *byte, len int }
+    fn lowerStringInit(self: *Lowerer, local_idx: ir.LocalIdx, value_idx: NodeIndex, span: source.Span) !void {
+        const fb = self.current_func orelse return;
+
+        const value_node = self.tree.getNode(value_idx) orelse return;
+        const value_expr = value_node.asExpr() orelse return;
+
+        // Check if it's a string literal
+        if (value_expr == .literal and value_expr.literal.kind == .string) {
+            const lit = value_expr.literal;
+
+            // Parse the string to get unescaped content and length
+            var buf: [4096]u8 = undefined;
+            const unescaped = parseStringLiteral(lit.value, &buf);
+            const str_len: i64 = @intCast(unescaped.len);
+
+            // Allocate copy of string data
+            const copied = try self.allocator.dupe(u8, unescaped);
+
+            // Store in string table and get index
+            const str_idx = try fb.addStringLiteral(copied);
+
+            // Emit const_slice for the address
+            const ptr_node = try fb.emitConstSlice(str_idx, span);
+
+            // Emit const_int for the length
+            const len_node = try fb.emitConstInt(str_len, TypeRegistry.I64, span);
+
+            // Store ptr at offset 0 (field 0)
+            _ = try fb.emitStoreLocalField(local_idx, 0, 0, ptr_node, span);
+
+            // Store len at offset 8 (field 1)
+            _ = try fb.emitStoreLocalField(local_idx, 1, 8, len_node, span);
+        } else {
+            // Non-literal string - just lower normally for now
+            // TODO: handle string variables properly
+            const value_node_ir = try self.lowerExprNode(value_idx);
+            _ = try fb.emitStoreLocal(local_idx, value_node_ir, span);
         }
     }
 
@@ -735,8 +782,20 @@ pub const Lowerer = struct {
             }
         }
 
-        // For non-literal strings, we'd need runtime support
-        // TODO: emit string_len operation for string variables
+        // For string variables, access length field directly from local (like struct field access)
+        // String is stored as: [offset 0] ptr (8 bytes), [offset 8] len (8 bytes)
+        if (arg_expr == .ident) {
+            const ident = arg_expr.ident;
+            if (fb.lookupLocal(ident.name)) |local_idx| {
+                const local_type = fb.locals.items[local_idx].type_idx;
+                if (local_type == TypeRegistry.STRING) {
+                    // Use field_local to access length at offset 8 (field index 1)
+                    return try fb.emitFieldLocal(local_idx, 1, 8, TypeRegistry.I64, call.span);
+                }
+            }
+        }
+
+        // Other types (arrays, slices) not yet implemented
         return ir.null_node;
     }
 

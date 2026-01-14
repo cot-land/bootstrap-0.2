@@ -6,7 +6,7 @@
 
 Bootstrap-0.2 is a clean-slate rewrite of the Cot compiler following Go's proven compiler architecture. The goal is to eliminate the "whack-a-mole" debugging pattern that killed previous attempts.
 
-**Current State:** Phase 8 in progress. 49 e2e tests passing! Working toward self-hosting.
+**Current State:** Phase 8 in progress. 50 e2e tests passing! Working toward self-hosting.
 
 ---
 
@@ -44,8 +44,9 @@ Required for handling source text, tokens, and AST nodes:
 
 | Feature | Status | Priority | Notes |
 |---------|--------|----------|-------|
-| **String literals** | ❌ TODO | P0 | "hello", escape sequences |
-| **String type** | ❌ TODO | P0 | Pointer + length |
+| **String literals** | ✅ DONE | P0 | "hello", escape sequences |
+| **String type** | ✅ DONE | P0 | Pointer + length pair |
+| **len() builtin** | ✅ DONE | P0 | Works on literals and variables |
 | **Character literals** | ✅ DONE | P0 | 'a', '\n', '\\' |
 | **u8 type** | ✅ DONE | P0 | For characters/bytes |
 | **Fixed arrays [N]T** | ❌ TODO | P0 | [256]u8 for buffers |
@@ -117,13 +118,14 @@ Required for bit manipulation, flags:
 
 Based on dependencies and self-hosting needs:
 
-### Sprint 1: Strings & Characters
+### Sprint 1: Strings & Characters ✅ COMPLETE
 1. ✅ u8 type support
 2. ✅ Character literals ('a', '\n')
-3. 🔄 String type (ptr + len) - address works, need full pair storage
+3. ✅ String type (ptr + len pair)
 4. ✅ String literals ("hello") - compiles, ADRP/ADD relocation works
 5. ✅ String escape sequences (in parser)
 6. ✅ len() builtin for string literals (compile-time)
+7. ✅ len() builtin for string variables (runtime)
 
 ### Sprint 2: Arrays
 1. ❌ Fixed array types [N]T

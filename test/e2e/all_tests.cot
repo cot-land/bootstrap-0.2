@@ -58,6 +58,7 @@
 //   [x] test_string_simple  - string literal (address loading)
 //   [x] test_len_string     - len() builtin with string literals
 //   [x] test_len_escape     - len() with escape sequences
+//   [x] test_len_string_var - len() with string variables (runtime)
 //
 // BLOCKED - Need more struct features (16):
 //   [ ] test_struct_init, test_struct_param, test_struct_return, ...
@@ -581,6 +582,21 @@ fn test_len_escape() i64 {
     return 0;
 }
 
+// Test len() with string variables (runtime)
+fn test_len_string_var() i64 {
+    let s: string = "hello";
+    if len(s) == 5 {
+        let empty: string = "";
+        if len(empty) == 0 {
+            let escaped: string = "a\nb";
+            if len(escaped) == 3 {
+                return 42;
+            }
+        }
+    }
+    return 0;
+}
+
 // ============================================================================
 // TIER 8+: BLOCKED - Advanced Features
 // Need: enums, unions, arrays, slices, strings, pointers, etc.
@@ -663,6 +679,7 @@ fn main() i64 {
     if test_string_simple() == 42 { passed = passed + 1; }
     if test_len_string() == 42 { passed = passed + 1; }
     if test_len_escape() == 42 { passed = passed + 1; }
+    if test_len_string_var() == 42 { passed = passed + 1; }
 
     return passed;
 }
