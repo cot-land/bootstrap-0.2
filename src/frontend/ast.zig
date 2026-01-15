@@ -307,10 +307,11 @@ pub const NewExpr = struct {
     span: Span,
 };
 
-/// Builtin call: @sizeOf(T), @alignOf(T), etc.
+/// Builtin call: @sizeOf(T), @alignOf(T), @string(ptr, len), etc.
 pub const BuiltinCall = struct {
-    name: []const u8, // "sizeOf", "alignOf", etc.
+    name: []const u8, // "sizeOf", "alignOf", "string", etc.
     type_arg: NodeIndex, // Type argument (for @sizeOf, @alignOf)
+    args: [2]NodeIndex, // Expression arguments (for @string(ptr, len))
     span: Span,
 };
 

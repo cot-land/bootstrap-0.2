@@ -380,6 +380,38 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 
 ---
 
+## RUNTIME LIBRARY - IMPORTANT
+
+**String concatenation requires linking with the runtime library.**
+
+The Cot compiler generates calls to `___cot_str_concat` for string `+` operations. This function is in `runtime/cot_runtime.zig` and MUST be linked, or you'll get:
+```
+error: undefined symbol: ___cot_str_concat
+```
+
+**To compile and link programs using string concatenation:**
+```bash
+# 1. Build runtime once
+zig build-obj -OReleaseFast runtime/cot_runtime.zig -femit-bin=runtime/cot_runtime.o
+
+# 2. Compile Cot program
+./zig-out/bin/cot program.cot -o program
+
+# 3. Link with runtime
+zig cc program.o runtime/cot_runtime.o -o program -lSystem
+```
+
+**The e2e tests use string concatenation**, so to run all_tests.cot:
+```bash
+./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/all_tests
+zig cc /tmp/all_tests.o runtime/cot_runtime.o -o /tmp/all_tests -lSystem
+/tmp/all_tests  # Expected exit: 122
+```
+
+See [STATUS.md](STATUS.md) for more details on the runtime library.
+
+---
+
 ## DOCUMENTATION
 
 | Document | Purpose |

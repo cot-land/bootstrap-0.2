@@ -33,6 +33,7 @@
 
 const std = @import("std");
 const types = @import("../core/types.zig");
+const TypeRegistry = @import("../frontend/types.zig").TypeRegistry;
 const Value = @import("value.zig").Value;
 const Block = @import("block.zig").Block;
 const Func = @import("func.zig").Func;
@@ -700,8 +701,8 @@ test "needsRegister classification" {
     defer allocator.free(linear.blocks);
 
     const entry = linear.entry;
-    const const_val = try builder.func.newValue(.const_int, types.PrimitiveTypes.i64_type, entry, .{});
-    const add_val = try builder.func.newValue(.add, types.PrimitiveTypes.i64_type, entry, .{});
+    const const_val = try builder.func.newValue(.const_int, TypeRegistry.I64, entry, .{});
+    const add_val = try builder.func.newValue(.add, TypeRegistry.I64, entry, .{});
 
     // Add to block so they get cleaned up properly
     try entry.addValue(allocator, const_val);
@@ -757,10 +758,10 @@ test "computeLiveness straight-line code" {
     const entry = linear.entry;
 
     // Create: v1 = const 42; v2 = add v1, v1; block returns v2
-    const v1 = try builder.func.newValue(.const_int, types.PrimitiveTypes.i64_type, entry, .{});
+    const v1 = try builder.func.newValue(.const_int, TypeRegistry.I64, entry, .{});
     v1.aux_int = 42;
 
-    const v2 = try builder.func.newValue(.add, types.PrimitiveTypes.i64_type, entry, .{});
+    const v2 = try builder.func.newValue(.add, TypeRegistry.I64, entry, .{});
     v2.addArg(v1);
     v2.addArg(v1);
 
@@ -801,16 +802,16 @@ test "computeLiveness with loop" {
     try body.addEdgeTo(allocator, header);
 
     // Add a phi in the header (loop variable)
-    const phi = try builder.func.newValue(.phi, types.PrimitiveTypes.i64_type, header, .{});
+    const phi = try builder.func.newValue(.phi, TypeRegistry.I64, header, .{});
     try header.addValue(allocator, phi);
 
     // Initial value comes from "before" the loop (we'll simulate with a const)
-    const init_val = try builder.func.newValue(.const_int, types.PrimitiveTypes.i64_type, header, .{});
+    const init_val = try builder.func.newValue(.const_int, TypeRegistry.I64, header, .{});
     init_val.aux_int = 0;
     try header.addValue(allocator, init_val);
 
     // In body, increment the loop variable
-    const incr = try builder.func.newValue(.add, types.PrimitiveTypes.i64_type, body, .{});
+    const incr = try builder.func.newValue(.add, TypeRegistry.I64, body, .{});
     incr.addArg(phi);
     try body.addValue(allocator, incr);
 
@@ -819,7 +820,7 @@ test "computeLiveness with loop" {
     phi.addArg(incr);
 
     // Header branches on some condition
-    const cond = try builder.func.newValue(.const_bool, types.PrimitiveTypes.bool_type, header, .{});
+    const cond = try builder.func.newValue(.const_bool, TypeRegistry.BOOL, header, .{});
     try header.addValue(allocator, cond);
     header.setControl(cond);
 
@@ -850,19 +851,19 @@ test "nextCall tracking" {
 
     // Create: v1 = const; v2 = call; v3 = add; v4 = call
     // Expected nextCall: [1, 1, 3, 3]
-    const v1 = try builder.func.newValue(.const_int, types.PrimitiveTypes.i64_type, entry, .{});
+    const v1 = try builder.func.newValue(.const_int, TypeRegistry.I64, entry, .{});
     v1.aux_int = 42;
     try entry.addValue(allocator, v1);
 
-    const v2 = try builder.func.newValue(.static_call, types.PrimitiveTypes.i64_type, entry, .{});
+    const v2 = try builder.func.newValue(.static_call, TypeRegistry.I64, entry, .{});
     try entry.addValue(allocator, v2);
 
-    const v3 = try builder.func.newValue(.add, types.PrimitiveTypes.i64_type, entry, .{});
+    const v3 = try builder.func.newValue(.add, TypeRegistry.I64, entry, .{});
     v3.addArg(v1);
     v3.addArg(v2);
     try entry.addValue(allocator, v3);
 
-    const v4 = try builder.func.newValue(.static_call, types.PrimitiveTypes.i64_type, entry, .{});
+    const v4 = try builder.func.newValue(.static_call, TypeRegistry.I64, entry, .{});
     try entry.addValue(allocator, v4);
 
     entry.setControl(v4);
@@ -897,11 +898,11 @@ test "nextCall no calls" {
     const entry = linear.entry;
 
     // No calls in this block
-    const v1 = try builder.func.newValue(.const_int, types.PrimitiveTypes.i64_type, entry, .{});
+    const v1 = try builder.func.newValue(.const_int, TypeRegistry.I64, entry, .{});
     v1.aux_int = 42;
     try entry.addValue(allocator, v1);
 
-    const v2 = try builder.func.newValue(.add, types.PrimitiveTypes.i64_type, entry, .{});
+    const v2 = try builder.func.newValue(.add, TypeRegistry.I64, entry, .{});
     v2.addArg(v1);
     v2.addArg(v1);
     try entry.addValue(allocator, v2);

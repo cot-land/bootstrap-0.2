@@ -964,30 +964,59 @@ pub const Parser = struct {
                 } });
             },
             .at => {
-                // Builtin call: @sizeOf(Type), @alignOf(Type), etc.
+                // Builtin call: @sizeOf(Type), @alignOf(Type), @string(ptr, len), etc.
                 self.advance();
-                if (!self.check(.ident)) {
+                // Accept identifier OR kw_string (since "string" is a keyword)
+                if (!self.check(.ident) and !self.check(.kw_string)) {
                     self.syntaxError("expected builtin name after '@'");
                     return null;
                 }
-                const builtin_name = self.tok.text;
+                // Note: For keywords like kw_string, tok.text is "", so we need to check token type
+                const is_string_builtin = self.check(.kw_string);
+                const builtin_name = if (is_string_builtin) "string" else self.tok.text;
                 self.advance();
 
                 if (!self.expect(.lparen)) return null;
 
-                // Parse type argument for @sizeOf, @alignOf
-                const type_arg = try self.parseType() orelse {
-                    self.err.errorWithCode(self.pos(), .e202, "expected type argument");
-                    return null;
-                };
+                // Check builtin type to determine argument parsing
+                if (is_string_builtin) {
+                    // @string(ptr, len) - two expression arguments
+                    const ptr_arg = try self.parseExpr() orelse {
+                        self.err.errorWithCode(self.pos(), .e202, "expected pointer argument");
+                        return null;
+                    };
 
-                if (!self.expect(.rparen)) return null;
+                    if (!self.expect(.comma)) return null;
 
-                return try self.tree.addExpr(.{ .builtin_call = .{
-                    .name = builtin_name,
-                    .type_arg = type_arg,
-                    .span = Span.init(start, self.pos()),
-                } });
+                    const len_arg = try self.parseExpr() orelse {
+                        self.err.errorWithCode(self.pos(), .e202, "expected length argument");
+                        return null;
+                    };
+
+                    if (!self.expect(.rparen)) return null;
+
+                    return try self.tree.addExpr(.{ .builtin_call = .{
+                        .name = builtin_name,
+                        .type_arg = null_node,
+                        .args = .{ ptr_arg, len_arg },
+                        .span = Span.init(start, self.pos()),
+                    } });
+                } else {
+                    // @sizeOf(Type), @alignOf(Type) - type argument
+                    const type_arg = try self.parseType() orelse {
+                        self.err.errorWithCode(self.pos(), .e202, "expected type argument");
+                        return null;
+                    };
+
+                    if (!self.expect(.rparen)) return null;
+
+                    return try self.tree.addExpr(.{ .builtin_call = .{
+                        .name = builtin_name,
+                        .type_arg = type_arg,
+                        .args = .{ null_node, null_node },
+                        .span = Span.init(start, self.pos()),
+                    } });
+                }
             },
             else => {
                 // Check for type keywords used as expressions (for builtins)

@@ -450,6 +450,11 @@ pub const Op = enum(u16) {
     /// Create tuple from values
     make_tuple,
 
+    /// Select Nth element from multi-register return (Go: OpSelectN).
+    /// aux_int: index of element to select (0, 1, 2, ...)
+    /// Used by expand_calls pass to decompose aggregate returns.
+    select_n,
+
     /// Conditional select: if cond then arg1 else arg2
     /// Takes 3 args: condition (bool), then_value, else_value
     /// Lowered to ARM64 CSEL or x86-64 CMOV
@@ -469,6 +474,10 @@ pub const Op = enum(u16) {
     slice_ptr,
     /// Create slice from pointer and length. Takes (*T, i64), returns []T.
     slice_make,
+
+    /// String concatenation: takes 2 string args, returns new string.
+    /// Lowered to runtime call to __cot_str_concat.
+    string_concat,
 
     // ═══════════════════════════════════════════════════════════════════════════
     // SECTION 11: Function Calls
@@ -678,6 +687,13 @@ pub const Op = enum(u16) {
     /// Get operation info
     pub fn info(self: Op) OpInfo {
         return op_info_table[@intFromEnum(self)];
+    }
+
+    /// Returns true if this operation is a function call.
+    /// Used by regalloc to query AuxCall for register constraints.
+    /// Reference: Go's ssa/op.go opcodeTable[op].call
+    pub fn isCall(self: Op) bool {
+        return op_info_table[@intFromEnum(self)].call;
     }
 };
 
@@ -1072,6 +1088,11 @@ const op_info_table = blk: {
     table[@intFromEnum(Op.select0)] = .{ .name = "Select0", .arg_len = 1 };
     table[@intFromEnum(Op.select1)] = .{ .name = "Select1", .arg_len = 1 };
     table[@intFromEnum(Op.make_tuple)] = .{ .name = "MakeTuple", .arg_len = 2 };
+    table[@intFromEnum(Op.select_n)] = .{
+        .name = "SelectN",
+        .arg_len = 1,
+        .aux_type = .int64, // index of element to select
+    };
     table[@intFromEnum(Op.cond_select)] = .{ .name = "CondSelect", .arg_len = 3 };
 
     // String decomposition (Go: OpStringLen, OpStringPtr, OpStringMake)
@@ -1082,6 +1103,14 @@ const op_info_table = blk: {
     table[@intFromEnum(Op.slice_len)] = .{ .name = "SliceLen", .arg_len = 1 };
     table[@intFromEnum(Op.slice_ptr)] = .{ .name = "SlicePtr", .arg_len = 1 };
     table[@intFromEnum(Op.slice_make)] = .{ .name = "SliceMake", .arg_len = 2 };
+    table[@intFromEnum(Op.string_concat)] = .{
+        .name = "StringConcat",
+        .arg_len = 2,
+        .call = true, // Calls __cot_str_concat runtime
+        .has_side_effects = true,
+        .reads_memory = true,
+        .writes_memory = true,
+    };
 
     // Calls
     table[@intFromEnum(Op.call)] = .{

@@ -439,6 +439,14 @@ pub const StrConcat = struct {
     right: NodeIndex,
 };
 
+/// String header construction (like Go's OSTRINGHEADER)
+/// Constructs a string from raw ptr and len components.
+/// Used by __string_make builtin.
+pub const StringHeader = struct {
+    ptr: NodeIndex,
+    len: NodeIndex,
+};
+
 /// Union initialization
 pub const UnionInit = struct {
     variant_idx: u32,
@@ -580,6 +588,7 @@ pub const Node = struct {
 
         // ========== String Operations ==========
         str_concat: StrConcat,
+        string_header: StringHeader,
 
         // ========== Union Operations ==========
         union_init: UnionInit,

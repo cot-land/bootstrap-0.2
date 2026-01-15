@@ -4,7 +4,9 @@
 
 ## Current State
 
-**117 e2e tests passing.** Core language features complete. Now focused on features required for self-hosting.
+**122 e2e tests passing.** Core language features complete. Now focused on features required for self-hosting.
+
+**Runtime Library Required:** String concatenation requires linking with `runtime/cot_runtime.c`. See [Runtime Library](#runtime-library) section below.
 
 ---
 
@@ -29,7 +31,7 @@ A self-hosting Cot compiler needs to:
 | **Memory** | @sizeOf builtin | ✅ Done | P0 | Compile-time type sizes |
 | **Strings** | String comparison | ✅ Done | P0 | `s1 == s2` for keywords |
 | **Strings** | String indexing | ✅ Done | P0 | `s[i]` for char access |
-| **Strings** | String concatenation | ❌ TODO | P1 | Error messages |
+| **Strings** | String concatenation | ✅ Done | P1 | Requires runtime library |
 | **Control** | Switch statement | ✅ Done | P1 | Token/AST dispatch |
 | **Data** | Global constants | ✅ Done | P1 | Compile-time evaluation + inlining |
 | **Modules** | Import statement | ❌ TODO | P1 | Split code into files |
@@ -252,6 +254,46 @@ fn main() i64 {
 
 ---
 
+### Phase 6.5: String Concatenation (P1) - COMPLETE
+
+**Goal:** Concatenate strings with `+` operator.
+
+**Completed (2026-01-15):**
+- ✅ Type checker accepts `string + string` → `string`
+- ✅ SSA `string_concat` operation
+- ✅ `expand_calls` pass decomposes strings into ptr/len components
+- ✅ ARM64 codegen calls `__cot_str_concat` runtime function
+- ✅ `select_n` extracts ptr/len from call result
+- ✅ `string_make` reassembles string from components
+
+**Implementation Notes:**
+- String concatenation requires the runtime library (`runtime/cot_runtime.c`)
+- The `expand_calls` pass (following Go's pattern) decomposes aggregate types
+- `__cot_str_concat(ptr1, len1, ptr2, len2)` returns `(ptr, len)` in `(x0, x1)`
+- After call, results saved to x8/x9 to avoid register clobbering by select_n
+
+**Runtime Library:**
+The compiler generates calls to `___cot_str_concat` which must be linked:
+```bash
+# Compile runtime (once)
+zig build-obj -OReleaseFast runtime/cot_runtime.zig -femit-bin=runtime/cot_runtime.o
+
+# Compile Cot program
+./zig-out/bin/cot myprogram.cot -o myprogram
+
+# Link with runtime (linker error without this!)
+zig cc myprogram.o runtime/cot_runtime.o -o myprogram -lSystem
+```
+
+**Tests:**
+- `test_str_concat_basic` - `len("hello" + " world")` = 11
+- `test_str_concat_empty` - Concatenation with empty string
+- `test_str_concat_multi` - Multiple concatenations
+
+**Go Reference:** `~/learning/go/src/cmd/compile/internal/ssa/expand_calls.go`
+
+---
+
 ### Phase 7: Import/Multiple Files (P1)
 
 **Goal:** Split compiler into multiple source files.
@@ -343,6 +385,49 @@ let unsigned: u64 = @bitCast(u64, signed);  // Reinterpret bits
 ### Tier 6: Control Flow ✅
 - For-in loops (array, slice, range)
 - Else-if chains
+
+---
+
+## Runtime Library
+
+The Cot compiler requires a small runtime library for certain operations. This is `runtime/cot_runtime.zig`.
+
+### Functions Provided
+
+| Function | Signature | Purpose |
+|----------|-----------|---------|
+| `__cot_str_concat` | `(ptr1, len1, ptr2, len2) -> (ptr, len)` | String concatenation |
+
+### Building and Linking
+
+```bash
+# 1. Compile the runtime (once)
+zig build-obj -OReleaseFast runtime/cot_runtime.zig -femit-bin=runtime/cot_runtime.o
+
+# 2. Compile your Cot program
+./zig-out/bin/cot program.cot -o program
+
+# 3. Link together (REQUIRED for string concatenation)
+zig cc program.o runtime/cot_runtime.o -o program -lSystem
+
+# Or all in one:
+./zig-out/bin/cot program.cot -o program && zig cc program.o runtime/cot_runtime.o -o program -lSystem
+```
+
+### Common Error
+
+If you see:
+```
+error: undefined symbol: ___cot_str_concat
+```
+
+This means the runtime library wasn't linked. Use the linking command above.
+
+### Future Work
+
+- Bundle runtime into compiler binary
+- Auto-link runtime when needed
+- Add more runtime functions (string formatting, etc.)
 
 ---
 

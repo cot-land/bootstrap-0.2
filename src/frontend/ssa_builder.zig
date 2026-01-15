@@ -545,6 +545,19 @@ pub const SSABuilder = struct {
 
                 const left = try self.convertNode(b.left) orelse return error.MissingValue;
                 const right = try self.convertNode(b.right) orelse return error.MissingValue;
+
+                // Check for pointer arithmetic (Go: OpAddPtr)
+                // If result type is pointer and op is add/sub, use add_ptr/sub_ptr
+                const result_type = self.type_registry.get(node.type_idx);
+                if (result_type == .pointer and (b.op == .add or b.op == .sub)) {
+                    const ptr_op: Op = if (b.op == .add) .add_ptr else .sub_ptr;
+                    const val = try self.func.newValue(ptr_op, node.type_idx, cur, .{});
+                    val.addArg2(left, right);
+                    try cur.addValue(self.allocator, val);
+                    debug.log(.ssa, "    n{} -> v{} {s} (ptr arith)", .{ node_idx, val.id, @tagName(ptr_op) });
+                    break :blk val;
+                }
+
                 const op = binaryOpToSSA(b.op);
                 const val = try self.func.newValue(op, node.type_idx, cur, .{});
                 val.addArg2(left, right);
@@ -561,6 +574,32 @@ pub const SSABuilder = struct {
                 val.addArg(operand);
                 try cur.addValue(self.allocator, val);
                 break :blk val;
+            },
+
+            // === String Concatenation ===
+            .str_concat => |sc| blk: {
+                const left_val = try self.convertNode(sc.left) orelse return error.MissingValue;
+                const right_val = try self.convertNode(sc.right) orelse return error.MissingValue;
+
+                const concat_val = try self.func.newValue(.string_concat, node.type_idx, cur, .{});
+                concat_val.addArg2(left_val, right_val);
+                try cur.addValue(self.allocator, concat_val);
+                debug.log(.ssa, "    n{} -> v{} string_concat", .{ node_idx, concat_val.id });
+                break :blk concat_val;
+            },
+
+            // === String Header (like Go's OSTRINGHEADER) ===
+            // Constructs a string from raw ptr and len components.
+            // Used by __string_make builtin.
+            .string_header => |sh| blk: {
+                const ptr_val = try self.convertNode(sh.ptr) orelse return error.MissingValue;
+                const len_val = try self.convertNode(sh.len) orelse return error.MissingValue;
+
+                const string_val = try self.func.newValue(.string_make, node.type_idx, cur, .{});
+                string_val.addArg2(ptr_val, len_val);
+                try cur.addValue(self.allocator, string_val);
+                debug.log(.ssa, "    n{} -> v{} string_make (from string_header)", .{ node_idx, string_val.id });
+                break :blk string_val;
             },
 
             // === Control Flow ===

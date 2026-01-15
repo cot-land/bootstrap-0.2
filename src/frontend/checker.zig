@@ -683,13 +683,31 @@ pub const Checker = struct {
                 if (left_type == TypeRegistry.STRING and right_type == TypeRegistry.STRING) {
                     return TypeRegistry.STRING;
                 }
+                // Allow pointer + integer (pointer arithmetic, Go: OpAddPtr)
+                if (left == .pointer and types.isInteger(right)) {
+                    return left_type; // *T + int => *T
+                }
+                if (types.isInteger(left) and right == .pointer) {
+                    return right_type; // int + *T => *T
+                }
                 if (!types.isNumeric(left) or !types.isNumeric(right)) {
                     self.errInvalidOp(bin.span.start, "arithmetic", left_type, right_type);
                     return invalid_type;
                 }
                 return self.materializeType(left_type);
             },
-            .sub, .mul, .quo, .rem => {
+            .sub => {
+                // Allow pointer - integer (pointer arithmetic)
+                if (left == .pointer and types.isInteger(right)) {
+                    return left_type; // *T - int => *T
+                }
+                if (!types.isNumeric(left) or !types.isNumeric(right)) {
+                    self.errInvalidOp(bin.span.start, "arithmetic", left_type, right_type);
+                    return invalid_type;
+                }
+                return self.materializeType(left_type);
+            },
+            .mul, .quo, .rem => {
                 if (!types.isNumeric(left) or !types.isNumeric(right)) {
                     self.errInvalidOp(bin.span.start, "arithmetic", left_type, right_type);
                     return invalid_type;
@@ -770,6 +788,9 @@ pub const Checker = struct {
                     }
                     if (std.mem.eql(u8, name, "print") or std.mem.eql(u8, name, "println")) {
                         return self.checkBuiltinPrint(c);
+                    }
+                    if (std.mem.eql(u8, name, "__string_make")) {
+                        return self.checkBuiltinStringMake(c);
                     }
                 }
             }
@@ -872,7 +893,36 @@ pub const Checker = struct {
         return TypeRegistry.VOID;
     }
 
-    /// Check @builtin calls: @sizeOf(T), @alignOf(T), etc.
+    /// Check builtin __string_make(ptr, len) function.
+    /// Constructs a string from raw ptr and len components.
+    /// Following Go's unsafe.String(ptr, len) pattern.
+    fn checkBuiltinStringMake(self: *Checker, c: ast.Call) CheckError!TypeIndex {
+        if (c.args.len != 2) {
+            self.err.errorWithCode(c.span.start, .e300, "__string_make() expects exactly 2 arguments (ptr, len)");
+            return invalid_type;
+        }
+
+        // First arg should be *u8 (pointer to bytes)
+        const ptr_type = try self.checkExpr(c.args[0]);
+        const ptr_info = self.types.get(ptr_type);
+        if (ptr_info != .pointer) {
+            self.err.errorWithCode(c.span.start, .e300, "__string_make() first argument must be a pointer");
+            return invalid_type;
+        }
+
+        // Second arg should be i64 (length)
+        const len_type = try self.checkExpr(c.args[1]);
+        const len_info = self.types.get(len_type);
+        if (!types.isInteger(len_info)) {
+            self.err.errorWithCode(c.span.start, .e300, "__string_make() second argument must be an integer");
+            return invalid_type;
+        }
+
+        // Returns string type
+        return TypeRegistry.STRING;
+    }
+
+    /// Check @builtin calls: @sizeOf(T), @alignOf(T), @string(ptr, len), etc.
     fn checkBuiltinCall(self: *Checker, bc: ast.BuiltinCall) CheckError!TypeIndex {
         if (std.mem.eql(u8, bc.name, "sizeOf")) {
             // @sizeOf(T) returns the size of type T in bytes as i64
@@ -890,6 +940,25 @@ pub const Checker = struct {
                 return invalid_type;
             }
             return TypeRegistry.I64;
+        } else if (std.mem.eql(u8, bc.name, "string")) {
+            // @string(ptr, len) constructs a string from pointer and length
+            const ptr_type = try self.checkExpr(bc.args[0]);
+            const len_type = try self.checkExpr(bc.args[1]);
+
+            // ptr must be *u8
+            const ptr_info = self.types.get(ptr_type);
+            if (ptr_info != .pointer or ptr_info.pointer.elem != TypeRegistry.U8) {
+                self.err.errorWithCode(bc.span.start, .e300, "@string first argument must be *u8");
+                return invalid_type;
+            }
+
+            // len must be integer (i64)
+            if (!types.isInteger(self.types.get(len_type))) {
+                self.err.errorWithCode(bc.span.start, .e300, "@string second argument must be integer");
+                return invalid_type;
+            }
+
+            return TypeRegistry.STRING;
         } else {
             self.err.errorWithCode(bc.span.start, .e300, "unknown builtin");
             return invalid_type;

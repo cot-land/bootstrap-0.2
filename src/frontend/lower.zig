@@ -1079,6 +1079,17 @@ pub const Lowerer = struct {
         const left = try self.lowerExprNode(bin.left);
         const right = try self.lowerExprNode(bin.right);
         const result_type = self.inferBinaryType(bin.op, bin.left, bin.right);
+
+        // Special case: string + string → str_concat
+        if (result_type == TypeRegistry.STRING and bin.op == .add) {
+            debug.log(.lower, "lowerBinary: string concatenation", .{});
+            return try fb.emit(ir.Node.init(
+                .{ .str_concat = .{ .left = left, .right = right } },
+                result_type,
+                bin.span,
+            ));
+        }
+
         const op = tokenToBinaryOp(bin.op);
 
         return try fb.emitBinary(op, left, right, result_type, bin.span);
@@ -1362,6 +1373,9 @@ pub const Lowerer = struct {
         if (std.mem.eql(u8, func_name, "len")) {
             return try self.lowerBuiltinLen(call);
         }
+        if (std.mem.eql(u8, func_name, "__string_make")) {
+            return try self.lowerBuiltinStringMake(call);
+        }
 
         // Lower arguments
         var args = std.ArrayListUnmanaged(ir.NodeIndex){};
@@ -1460,6 +1474,26 @@ pub const Lowerer = struct {
         return ir.null_node;
     }
 
+    /// Lower builtin __string_make(ptr, len) function.
+    /// Constructs a string from raw ptr and len components.
+    /// Following Go's unsafe.String(ptr, len) pattern.
+    fn lowerBuiltinStringMake(self: *Lowerer, call: ast.Call) Error!ir.NodeIndex {
+        const fb = self.current_func orelse return ir.null_node;
+
+        if (call.args.len != 2) return ir.null_node;
+
+        // Lower ptr and len arguments
+        const ptr_val = try self.lowerExprNode(call.args[0]);
+        const len_val = try self.lowerExprNode(call.args[1]);
+
+        // Emit string_header IR node (like Go's OSTRINGHEADER)
+        return try fb.emit(ir.Node.init(
+            .{ .string_header = .{ .ptr = ptr_val, .len = len_val } },
+            TypeRegistry.STRING,
+            call.span,
+        ));
+    }
+
     fn lowerIfExpr(self: *Lowerer, if_expr: ast.IfExpr) Error!ir.NodeIndex {
         const fb = self.current_func orelse return ir.null_node;
 
@@ -1538,8 +1572,7 @@ pub const Lowerer = struct {
         return current_result;
     }
 
-    /// Lower builtin calls: @sizeOf(T), @alignOf(T), etc.
-    /// These are compile-time operations that evaluate to constant integers.
+    /// Lower builtin calls: @sizeOf(T), @alignOf(T), @string(ptr, len), etc.
     fn lowerBuiltinCall(self: *Lowerer, bc: ast.BuiltinCall) Error!ir.NodeIndex {
         const fb = self.current_func orelse return ir.null_node;
 
@@ -1555,6 +1588,16 @@ pub const Lowerer = struct {
             const alignment = self.type_reg.alignmentOf(type_idx);
             debug.log(.lower, "@alignOf({d}) = {d}", .{ type_idx, alignment });
             return try fb.emitConstInt(@intCast(alignment), TypeRegistry.I64, bc.span);
+        } else if (std.mem.eql(u8, bc.name, "string")) {
+            // @string(ptr, len) - construct string from ptr and len
+            const ptr_node = try self.lowerExprNode(bc.args[0]);
+            const len_node = try self.lowerExprNode(bc.args[1]);
+            debug.log(.lower, "@string(ptr, len) -> string_header", .{});
+            return try fb.emit(ir.Node.init(
+                .{ .string_header = .{ .ptr = ptr_node, .len = len_node } },
+                TypeRegistry.STRING,
+                bc.span,
+            ));
         }
 
         return ir.null_node;

@@ -23,6 +23,7 @@ const source_mod = @import("frontend/source.zig");
 const arm64_codegen = @import("codegen/arm64.zig");
 const regalloc_mod = @import("ssa/regalloc.zig");
 const stackalloc_mod = @import("ssa/stackalloc.zig");
+const expand_calls = @import("ssa/passes/expand_calls.zig");
 
 // Debug infrastructure
 const pipeline_debug = @import("pipeline_debug.zig");
@@ -138,6 +139,15 @@ pub const Driver = struct {
 
             debug.log(.ssa, "SSA build complete: {} blocks", .{ssa_func.numBlocks()});
             self.debug.afterSSA(ssa_func, "build");
+
+            // Phase 4a.5: Expand calls - decompose aggregate types before register allocation
+            debug.log(.ssa, "Running expand_calls...", .{});
+            expand_calls.expandCalls(ssa_func) catch |e| {
+                debug.log(.ssa, "expand_calls failed: {}", .{e});
+                return e;
+            };
+            debug.log(.ssa, "expand_calls complete", .{});
+            self.debug.afterSSA(ssa_func, "expand_calls");
 
             // Phase 4b: Register allocation (includes liveness)
             debug.log(.regalloc, "Starting register allocation...", .{});

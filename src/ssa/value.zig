@@ -35,6 +35,7 @@
 const std = @import("std");
 const types = @import("../core/types.zig");
 const Op = @import("op.zig").Op;
+const abi = @import("abi.zig");
 
 const ID = types.ID;
 const TypeIndex = types.TypeIndex;
@@ -76,14 +77,71 @@ pub const Aux = union(enum) {
 };
 
 /// Auxiliary data for function calls.
+/// Contains ABI information used by register allocation.
+///
+/// Reference: Go's ssa/op.go:118-122
 pub const AuxCall = struct {
+    /// Function name (for relocations/debugging)
+    fn_name: []const u8 = "",
+
     /// Function symbol (null for indirect calls)
     func_sym: ?*anyopaque = null,
-    /// Number of arguments
-    num_args: u32 = 0,
-    /// Number of results
-    num_results: u32 = 0,
-    // ABI information would go here
+
+    /// ABI information describing how parameters and results are passed.
+    /// Points to static ABI info (e.g., abi.str_concat_abi) or dynamically allocated.
+    abi_info: ?*const abi.ABIParamResultInfo = null,
+
+    /// Lazily-computed register info for regalloc.
+    /// Computed on first call to getRegInfo().
+    reg_info: ?abi.RegInfo = null,
+
+    /// Allocator for dynamic reg_info allocation
+    allocator: ?std.mem.Allocator = null,
+
+    /// Get the RegInfo for this call, computing it lazily if needed.
+    /// This is the key method called by register allocation.
+    ///
+    /// Reference: Go's ssa/op.go AuxCall.Reg() (lines 134-167)
+    pub fn getRegInfo(self: *AuxCall) !*const abi.RegInfo {
+        if (self.reg_info) |*ri| {
+            return ri;
+        }
+
+        if (self.abi_info) |abi_info| {
+            if (self.allocator) |alloc| {
+                self.reg_info = try abi.buildCallRegInfo(alloc, abi_info);
+                return &self.reg_info.?;
+            }
+        }
+
+        // No ABI info - return empty RegInfo
+        return &abi.RegInfo.empty;
+    }
+
+    /// Get the registers used for input argument N
+    pub fn regsOfArg(self: *const AuxCall, which: usize) []const abi.RegIndex {
+        if (self.abi_info) |info| {
+            return info.regsOfArg(which);
+        }
+        return &[_]abi.RegIndex{};
+    }
+
+    /// Get the registers used for output result N
+    pub fn regsOfResult(self: *const AuxCall, which: usize) []const abi.RegIndex {
+        if (self.abi_info) |info| {
+            return info.regsOfResult(which);
+        }
+        return &[_]abi.RegIndex{};
+    }
+
+    /// Create AuxCall for __cot_str_concat
+    pub fn strConcat(allocator: std.mem.Allocator) AuxCall {
+        return .{
+            .fn_name = "__cot_str_concat",
+            .abi_info = &abi.str_concat_abi,
+            .allocator = allocator,
+        };
+    }
 };
 
 /// SSA Value - represents a single operation's result.
@@ -109,6 +167,11 @@ pub const Value = struct {
 
     /// Generic auxiliary data
     aux: Aux = .none,
+
+    /// For calls: ABI information for register allocation.
+    /// Computed by expand_calls pass, used by regalloc.
+    /// Reference: Go's ssa/op.go AuxCall
+    aux_call: ?*AuxCall = null,
 
     /// Arguments to this operation.
     /// Length determined by Op's argLen property.

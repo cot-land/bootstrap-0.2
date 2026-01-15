@@ -323,68 +323,9 @@ pub const TypeInfo = struct {
 };
 
 // =========================================
-// Predefined Type Indices
+// NOTE: Type indices are defined in frontend/types.zig (TypeRegistry)
+// This is the SINGLE SOURCE OF TRUTH for type indices.
 // =========================================
-
-/// Well-known type indices for primitives and SSA pseudo-types.
-/// These are always at fixed positions in the type registry.
-pub const PrimitiveTypes = struct {
-    // Cot language primitives
-    pub const void_type: TypeIndex = 1;
-    pub const bool_type: TypeIndex = 2;
-    pub const i8_type: TypeIndex = 3;
-    pub const i16_type: TypeIndex = 4;
-    pub const i32_type: TypeIndex = 5;
-    pub const i64_type: TypeIndex = 6; // int
-    pub const u8_type: TypeIndex = 7; // byte
-    pub const u16_type: TypeIndex = 8;
-    pub const u32_type: TypeIndex = 9;
-    pub const u64_type: TypeIndex = 10;
-    pub const f32_type: TypeIndex = 11;
-    pub const f64_type: TypeIndex = 12; // float
-    pub const string_type: TypeIndex = 13;
-
-    // SSA pseudo-types (Go ref: ssa/types.go)
-    pub const ssa_mem: TypeIndex = 14;
-    pub const ssa_flags: TypeIndex = 15;
-    pub const ssa_tuple: TypeIndex = 16;
-    pub const ssa_results: TypeIndex = 17;
-
-    /// Alias: int = i64
-    pub const int_type: TypeIndex = i64_type;
-    /// Alias: byte = u8
-    pub const byte_type: TypeIndex = u8_type;
-    /// Alias: float = f64
-    pub const float_type: TypeIndex = f64_type;
-
-    /// First user-defined type index
-    pub const first_user_type: TypeIndex = 18;
-};
-
-/// Predefined TypeInfo for primitives and SSA pseudo-types.
-pub const PrimitiveTypeInfo = struct {
-    // Cot language primitives
-    pub const void_info = TypeInfo{ .kind = .void_type, .size = 0, .alignment = 1 };
-    pub const bool_info = TypeInfo{ .kind = .bool_type, .size = 1, .alignment = 1 };
-    pub const i8_info = TypeInfo{ .kind = .int_type, .size = 1, .alignment = 1 };
-    pub const i16_info = TypeInfo{ .kind = .int_type, .size = 2, .alignment = 2 };
-    pub const i32_info = TypeInfo{ .kind = .int_type, .size = 4, .alignment = 4 };
-    pub const i64_info = TypeInfo{ .kind = .int_type, .size = 8, .alignment = 8 };
-    pub const u8_info = TypeInfo{ .kind = .uint_type, .size = 1, .alignment = 1 };
-    pub const u16_info = TypeInfo{ .kind = .uint_type, .size = 2, .alignment = 2 };
-    pub const u32_info = TypeInfo{ .kind = .uint_type, .size = 4, .alignment = 4 };
-    pub const u64_info = TypeInfo{ .kind = .uint_type, .size = 8, .alignment = 8 };
-    pub const f32_info = TypeInfo{ .kind = .float_type, .size = 4, .alignment = 4 };
-    pub const f64_info = TypeInfo{ .kind = .float_type, .size = 8, .alignment = 8 };
-    pub const string_info = TypeInfo{ .kind = .string_type, .size = 16, .alignment = 8 }; // ptr(8) + len(8)
-
-    // SSA pseudo-types (Go ref: ssa/types.go lines 1600-1612)
-    // These have size 0 and don't occupy registers in the normal sense
-    pub const ssa_mem_info = TypeInfo{ .kind = .ssa_mem, .size = 0, .alignment = 1 };
-    pub const ssa_flags_info = TypeInfo{ .kind = .ssa_flags, .size = 0, .alignment = 1 };
-    pub const ssa_tuple_info = TypeInfo{ .kind = .ssa_tuple, .size = 0, .alignment = 1 };
-    pub const ssa_results_info = TypeInfo{ .kind = .ssa_results, .size = 0, .alignment = 1 };
-};
 
 /// Register mask - bit i set means register i is in the set.
 pub const RegMask = u64;
@@ -509,27 +450,40 @@ test "RegMaskIterator" {
 // =========================================
 
 test "primitive type sizes" {
-    // Cot type sizes per SPEC.md
-    try std.testing.expectEqual(@as(u32, 0), PrimitiveTypeInfo.void_info.sizeOf());
-    try std.testing.expectEqual(@as(u32, 1), PrimitiveTypeInfo.bool_info.sizeOf());
-    try std.testing.expectEqual(@as(u32, 1), PrimitiveTypeInfo.i8_info.sizeOf());
-    try std.testing.expectEqual(@as(u32, 2), PrimitiveTypeInfo.i16_info.sizeOf());
-    try std.testing.expectEqual(@as(u32, 4), PrimitiveTypeInfo.i32_info.sizeOf());
-    try std.testing.expectEqual(@as(u32, 8), PrimitiveTypeInfo.i64_info.sizeOf());
-    try std.testing.expectEqual(@as(u32, 1), PrimitiveTypeInfo.u8_info.sizeOf());
-    try std.testing.expectEqual(@as(u32, 8), PrimitiveTypeInfo.f64_info.sizeOf());
-    try std.testing.expectEqual(@as(u32, 16), PrimitiveTypeInfo.string_info.sizeOf()); // ptr + len!
+    // Cot type sizes per SPEC.md - construct TypeInfo directly
+    const void_info = TypeInfo{ .kind = .void_type, .size = 0, .alignment = 1 };
+    const bool_info = TypeInfo{ .kind = .bool_type, .size = 1, .alignment = 1 };
+    const i8_info = TypeInfo{ .kind = .int_type, .size = 1, .alignment = 1 };
+    const i16_info = TypeInfo{ .kind = .int_type, .size = 2, .alignment = 2 };
+    const i32_info = TypeInfo{ .kind = .int_type, .size = 4, .alignment = 4 };
+    const i64_info = TypeInfo{ .kind = .int_type, .size = 8, .alignment = 8 };
+    const u8_info = TypeInfo{ .kind = .uint_type, .size = 1, .alignment = 1 };
+    const f64_info = TypeInfo{ .kind = .float_type, .size = 8, .alignment = 8 };
+    const string_info = TypeInfo{ .kind = .string_type, .size = 16, .alignment = 8 };
+
+    try std.testing.expectEqual(@as(u32, 0), void_info.sizeOf());
+    try std.testing.expectEqual(@as(u32, 1), bool_info.sizeOf());
+    try std.testing.expectEqual(@as(u32, 1), i8_info.sizeOf());
+    try std.testing.expectEqual(@as(u32, 2), i16_info.sizeOf());
+    try std.testing.expectEqual(@as(u32, 4), i32_info.sizeOf());
+    try std.testing.expectEqual(@as(u32, 8), i64_info.sizeOf());
+    try std.testing.expectEqual(@as(u32, 1), u8_info.sizeOf());
+    try std.testing.expectEqual(@as(u32, 8), f64_info.sizeOf());
+    try std.testing.expectEqual(@as(u32, 16), string_info.sizeOf()); // ptr + len!
 }
 
 test "string type uses 2 registers" {
     // Bootstrap BUG-016: String params overflowed because we counted 1 reg instead of 2
-    try std.testing.expectEqual(@as(u32, 2), PrimitiveTypeInfo.string_info.registerCount());
-    try std.testing.expect(PrimitiveTypeInfo.string_info.isString());
+    const string_info = TypeInfo{ .kind = .string_type, .size = 16, .alignment = 8 };
+    try std.testing.expectEqual(@as(u32, 2), string_info.registerCount());
+    try std.testing.expect(string_info.isString());
 }
 
 test "primitive types fit in registers" {
-    try std.testing.expect(PrimitiveTypeInfo.i64_info.fitsInRegs());
-    try std.testing.expect(PrimitiveTypeInfo.string_info.fitsInRegs()); // 16 bytes = ok
+    const i64_info = TypeInfo{ .kind = .int_type, .size = 8, .alignment = 8 };
+    const string_info = TypeInfo{ .kind = .string_type, .size = 16, .alignment = 8 };
+    try std.testing.expect(i64_info.fitsInRegs());
+    try std.testing.expect(string_info.fitsInRegs()); // 16 bytes = ok
 }
 
 test "large struct does not fit in registers" {
@@ -543,9 +497,10 @@ test "large struct does not fit in registers" {
 }
 
 test "struct field lookup" {
+    // type_idx values from TypeRegistry: I64=5, U8=6
     const fields = [_]FieldInfo{
-        .{ .name = "x", .type_idx = PrimitiveTypes.i64_type, .offset = 0, .size = 8 },
-        .{ .name = "y", .type_idx = PrimitiveTypes.i64_type, .offset = 8, .size = 8 },
+        .{ .name = "x", .type_idx = 5, .offset = 0, .size = 8 }, // i64
+        .{ .name = "y", .type_idx = 5, .offset = 8, .size = 8 }, // i64
     };
 
     const point_type = TypeInfo{
@@ -570,10 +525,11 @@ test "struct field alignment and padding" {
     // struct { a: u8, b: u64, c: u8 }
     // Expected layout: a at 0 (1 byte), padding (7 bytes), b at 8 (8 bytes), c at 16 (1 byte)
     // Total size: 24 bytes (with trailing padding to 8-byte alignment)
+    // type_idx values from TypeRegistry: I64=5, U8=6
     const fields = [_]FieldInfo{
-        .{ .name = "a", .type_idx = PrimitiveTypes.u8_type, .offset = 0, .size = 1 },
-        .{ .name = "b", .type_idx = PrimitiveTypes.i64_type, .offset = 8, .size = 8 }, // Aligned to 8
-        .{ .name = "c", .type_idx = PrimitiveTypes.u8_type, .offset = 16, .size = 1 },
+        .{ .name = "a", .type_idx = 6, .offset = 0, .size = 1 }, // u8
+        .{ .name = "b", .type_idx = 5, .offset = 8, .size = 8 }, // i64, aligned to 8
+        .{ .name = "c", .type_idx = 6, .offset = 16, .size = 1 }, // u8
     };
 
     const padded_struct = TypeInfo{

@@ -313,6 +313,17 @@ pub const TypeRegistry = struct {
     // Commonly used composite types
     pub const STRING: TypeIndex = 17; // []u8
 
+    // SSA pseudo-types (Go ref: cmd/compile/internal/ssa/types.go)
+    // These represent SSA-specific concepts, not Cot language types.
+    // Size is 0 - they don't occupy registers in the normal sense.
+    pub const SSA_MEM: TypeIndex = 18; // Memory state
+    pub const SSA_FLAGS: TypeIndex = 19; // CPU flags
+    pub const SSA_TUPLE: TypeIndex = 20; // Multi-value tuple
+    pub const SSA_RESULTS: TypeIndex = 21; // Call results (decomposed by expand_calls)
+
+    // First user-defined type index (structs, enums, etc.)
+    pub const FIRST_USER_TYPE: TypeIndex = 22;
+
     // Default integer type (i64)
     pub const INT: TypeIndex = I64;
 
@@ -342,6 +353,10 @@ pub const TypeRegistry = struct {
             UNTYPED_BOOL => "untyped_bool",
             UNTYPED_NULL => "untyped_null",
             STRING => "string",
+            SSA_MEM => "ssa_mem",
+            SSA_FLAGS => "ssa_flags",
+            SSA_TUPLE => "ssa_tuple",
+            SSA_RESULTS => "ssa_results",
             else => "composite", // Pointers, slices, arrays, structs
         };
     }
@@ -351,6 +366,7 @@ pub const TypeRegistry = struct {
     /// CRITICAL for codegen: determines load/store instruction size.
     pub fn basicTypeSize(type_idx: TypeIndex) u8 {
         return switch (type_idx) {
+            VOID, SSA_MEM, SSA_FLAGS, SSA_TUPLE, SSA_RESULTS => 0,
             BOOL, I8, U8 => 1,
             I16, U16 => 2,
             I32, U32, F32 => 4,

@@ -1164,6 +1164,42 @@ fn test_string_slice_content() i64 {
 }
 
 // ============================================================================
+// TIER 15.8: String Concatenation
+// ============================================================================
+
+// Note: String concatenation requires the runtime library (cot_runtime.c)
+// which provides __cot_str_concat(ptr1, len1, ptr2, len2) -> (ptr, len)
+
+// Test basic string concatenation
+fn test_str_concat_basic() i64 {
+    let a: string = "hello";
+    let b: string = " world";
+    let c: string = a + b;
+    if len(c) == 11 { return 42; }
+    return 0;
+}
+
+// Test empty string concatenation
+fn test_str_concat_empty() i64 {
+    let a: string = "foo";
+    let b: string = "";
+    let c: string = a + b;
+    if len(c) == 3 { return 42; }
+    return 0;
+}
+
+// Test multiple concatenations
+fn test_str_concat_multi() i64 {
+    let a: string = "a";
+    let b: string = "b";
+    let c: string = "c";
+    let d: string = a + b;
+    let e: string = d + c;
+    if len(e) == 3 { return 42; }
+    return 0;
+}
+
+// ============================================================================
 // TIER 16: For-In Loops
 // ============================================================================
 
@@ -1299,7 +1335,42 @@ fn test_fn_ptr_no_args() i64 {
 }
 
 // ============================================================================
-// TIER 19+: BLOCKED - Advanced Features
+// TIER 19: Pointer Arithmetic (Go: OpAddPtr pattern)
+// Need: ptr + int, ptr - int
+// ============================================================================
+
+extern fn malloc(size: i64) *i64;
+extern fn free(ptr: *i64);
+
+// Test pointer + integer arithmetic
+fn test_ptr_add() i64 {
+    let buf: *i64 = malloc(24);  // 3 x 8 bytes
+    buf.* = 10;
+    let p1: *i64 = buf + 8;      // offset by 8 bytes
+    p1.* = 20;
+    let p2: *i64 = buf + 16;     // offset by 16 bytes
+    p2.* = 12;
+    let sum: i64 = buf.* + (buf + 8).* + (buf + 16).*;  // 10 + 20 + 12 = 42
+    free(buf);
+    return sum;
+}
+
+// Test pointer subtraction
+fn test_ptr_sub() i64 {
+    let buf: *i64 = malloc(16);
+    buf.* = 50;
+    let end: *i64 = buf + 8;
+    end.* = 100;
+    // Go back: end - 8 should point to buf
+    let start: *i64 = end - 8;
+    let val: i64 = start.*;  // Should be 50
+    free(buf);
+    if val == 50 { return 42; }
+    return 0;
+}
+
+// ============================================================================
+// TIER 20+: BLOCKED - Advanced Features
 // Need: more features...
 // ============================================================================
 
@@ -1460,6 +1531,11 @@ fn main() i64 {
     if test_string_slice() == 3 { passed = passed + 1; }
     if test_string_slice_content() == 42 { passed = passed + 1; }
 
+    // TIER 15.8: String Concatenation
+    if test_str_concat_basic() == 42 { passed = passed + 1; }
+    if test_str_concat_empty() == 42 { passed = passed + 1; }
+    if test_str_concat_multi() == 42 { passed = passed + 1; }
+
     // TIER 16: For-In Loops
     if test_for_array() == 15 { passed = passed + 1; }
     if test_for_break() == 30 { passed = passed + 1; }
@@ -1476,6 +1552,10 @@ fn main() i64 {
     if test_fn_ptr_call() == 42 { passed = passed + 1; }
     if test_fn_ptr_reassign() == 42 { passed = passed + 1; }
     if test_fn_ptr_no_args() == 42 { passed = passed + 1; }
+
+    // TIER 19: Pointer Arithmetic
+    if test_ptr_add() == 42 { passed = passed + 1; }
+    if test_ptr_sub() == 42 { passed = passed + 1; }
 
     return passed;
 }

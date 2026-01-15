@@ -34,7 +34,9 @@
 const std = @import("std");
 const Func = @import("../ssa/func.zig").Func;
 const Block = @import("../ssa/block.zig").Block;
-const Value = @import("../ssa/value.zig").Value;
+const value_mod = @import("../ssa/value.zig");
+const Value = value_mod.Value;
+const AuxCall = value_mod.AuxCall;
 const Op = @import("../ssa/op.zig").Op;
 const Location = @import("../ssa/func.zig").Location;
 const asm_mod = @import("../arm64/asm.zig");
@@ -42,6 +44,7 @@ const regalloc = @import("../ssa/regalloc.zig");
 const macho = @import("../obj/macho.zig");
 const debug = @import("../pipeline_debug.zig");
 const TypeRegistry = @import("../frontend/types.zig").TypeRegistry;
+const abi = @import("../ssa/abi.zig");
 
 /// ARM64 register numbers.
 pub const Reg = enum(u8) {
@@ -631,7 +634,7 @@ pub const ARM64CodeGen = struct {
         // Generate terminator based on block kind
         switch (block.kind) {
             .ret => {
-                // Return block - ensure return value is in x0 (and x1 for slices)
+                // Return block - ensure return value is in x0 (and x1 for slices/strings)
                 if (block.numControls() > 0) {
                     const ret_val = block.controlValues()[0];
                     // Handle slice returns: need both ptr (x0) and len (x1)
@@ -655,6 +658,37 @@ pub const ARM64CodeGen = struct {
                             try self.emit(asm_mod.encodeADDImm(1, len_reg, 0, 0)); // MOV x1, len_reg
                         }
                         debug.log(.codegen, "      ret slice: ptr=x{d}->x0, len=x{d}->x1", .{ ptr_reg, len_reg });
+                    } else if (ret_val.op == .const_string) {
+                        // String literal return: ptr in x0, len in x1
+                        // The const_string codegen already put ptr in a register
+                        const ptr_reg = self.getRegForValue(ret_val) orelse blk: {
+                            try self.ensureInReg(ret_val, 0);
+                            break :blk @as(u5, 0);
+                        };
+                        if (ptr_reg != 0) {
+                            try self.emit(asm_mod.encodeADDImm(0, ptr_reg, 0, 0)); // MOV x0, ptr_reg
+                        }
+                        // Get string length from string_literals
+                        const string_index: usize = @intCast(ret_val.aux_int);
+                        const str_len: i64 = if (string_index < self.func.string_literals.len)
+                            @intCast(self.func.string_literals[string_index].len)
+                        else
+                            0;
+                        // Emit MOV x1, #len
+                        if (str_len >= 0 and str_len <= 65535) {
+                            try self.emit(asm_mod.encodeMOVZ(1, @intCast(str_len), 0));
+                        } else {
+                            // For longer strings, use MOVZ + MOVK
+                            try self.emit(asm_mod.encodeMOVZ(1, @intCast(str_len & 0xFFFF), 0));
+                            if (str_len > 0xFFFF) {
+                                try self.emit(asm_mod.encodeMOVK(1, @intCast((str_len >> 16) & 0xFFFF), 1));
+                            }
+                        }
+                        debug.log(.codegen, "      ret const_string: ptr=x{d}->x0, len={d}->x1", .{ ptr_reg, str_len });
+                    } else if (ret_val.op == .static_call) {
+                        // Call result that returns a string: already in x0/x1
+                        // Just ensure they stay there (no-op, but log it)
+                        debug.log(.codegen, "      ret static_call: result already in x0/x1", .{});
                     } else {
                         try self.moveToX0(ret_val);
                     }
@@ -884,6 +918,25 @@ pub const ARM64CodeGen = struct {
                 }
             },
 
+            .sub_ptr => {
+                // Pointer subtraction: ptr - offset
+                const args = value.args;
+                if (args.len >= 2) {
+                    const ptr_reg = self.getRegForValue(args[0]) orelse blk: {
+                        try self.ensureInReg(args[0], 0);
+                        break :blk @as(u5, 0);
+                    };
+                    const off_reg = self.getRegForValue(args[1]) orelse blk: {
+                        try self.ensureInReg(args[1], 1);
+                        break :blk @as(u5, 1);
+                    };
+                    const dest_reg = self.getDestRegForValue(value);
+                    try self.emit(asm_mod.encodeSUBReg(dest_reg, ptr_reg, off_reg));
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                    debug.log(.codegen, "      -> SUB x{d}, x{d}, x{d} (sub_ptr)", .{ dest_reg, ptr_reg, off_reg });
+                }
+            },
+
             // === Slice Operations ===
             // Slices are (ptr, len) pairs. For MVP, we track just the pointer.
             // slice_make creates a slice from ptr and len arguments.
@@ -958,7 +1011,7 @@ pub const ARM64CodeGen = struct {
                     const slice_val = args[0];
                     const dest_reg = self.getDestRegForValue(value);
 
-                    if (slice_val.op == .static_call) {
+                    if (slice_val.op == .static_call or slice_val.op == .string_concat) {
                         // Call result: len is in x1 after the call
                         // Move x1 to dest_reg
                         if (dest_reg != 1) {
@@ -975,6 +1028,16 @@ pub const ARM64CodeGen = struct {
                             try self.emit(asm_mod.encodeADDImm(dest_reg, len_reg, 0, 0));
                         }
                         debug.log(.codegen, "      slice_len (slice_make) x{d} -> x{d}", .{ len_reg, dest_reg });
+                    } else if (slice_val.op == .string_make and slice_val.args.len >= 2) {
+                        // string_make: len is args[1]
+                        const len_reg = self.getRegForValue(slice_val.args[1]) orelse blk: {
+                            try self.ensureInReg(slice_val.args[1], 1);
+                            break :blk @as(u5, 1);
+                        };
+                        if (len_reg != dest_reg) {
+                            try self.emit(asm_mod.encodeADDImm(dest_reg, len_reg, 0, 0));
+                        }
+                        debug.log(.codegen, "      slice_len (string_make) x{d} -> x{d}", .{ len_reg, dest_reg });
                     } else {
                         // Load from memory: len is at offset 8 from slice ptr
                         const slice_reg = self.getRegForValue(slice_val) orelse blk: {
@@ -988,6 +1051,185 @@ pub const ARM64CodeGen = struct {
                         debug.log(.codegen, "      slice_len (fallback) x{d} -> x{d}", .{ slice_reg, dest_reg });
                     }
                     try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
+            // === String Operations (after expand_calls decomposition) ===
+
+            .string_ptr => {
+                // string_ptr(ptr_val) -> copy ptr value to dest register
+                // After expand_calls refactor: arg is the actual ptr component value,
+                // NOT a slice_make. This ensures liveness is properly tracked.
+                const args = value.args;
+                if (args.len >= 1) {
+                    const ptr_val = args[0];
+                    const dest_reg = self.getDestRegForValue(value);
+
+                    const src_reg = self.getRegForValue(ptr_val) orelse blk: {
+                        try self.ensureInReg(ptr_val, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    if (src_reg != dest_reg) {
+                        try self.emit(asm_mod.encodeADDImm(dest_reg, src_reg, 0, 0));
+                    }
+                    debug.log(.codegen, "      string_ptr x{d} -> x{d}", .{ src_reg, dest_reg });
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
+            .string_len => {
+                // string_len(len_val) -> copy len value to dest register
+                // After expand_calls refactor: arg is the actual len component value,
+                // NOT a slice_make. This ensures liveness is properly tracked.
+                const args = value.args;
+                if (args.len >= 1) {
+                    const len_val = args[0];
+                    const dest_reg = self.getDestRegForValue(value);
+
+                    const src_reg = self.getRegForValue(len_val) orelse blk: {
+                        try self.ensureInReg(len_val, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    if (src_reg != dest_reg) {
+                        try self.emit(asm_mod.encodeADDImm(dest_reg, src_reg, 0, 0));
+                    }
+                    debug.log(.codegen, "      string_len x{d} -> x{d}", .{ src_reg, dest_reg });
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
+            .string_make => {
+                // string_make(ptr, len) -> creates a string value from components
+                // This is the "reassembly" op after decomposition
+                // For codegen purposes, we track the ptr in dest_reg
+                // The len is in a separate register tracked by args[1]
+                const args = value.args;
+                if (args.len >= 2) {
+                    const ptr_reg = self.getRegForValue(args[0]) orelse blk: {
+                        try self.ensureInReg(args[0], 0);
+                        break :blk @as(u5, 0);
+                    };
+                    const dest_reg = self.getDestRegForValue(value);
+                    // Copy ptr to dest (len stays in its own register)
+                    if (ptr_reg != dest_reg) {
+                        try self.emit(asm_mod.encodeADDImm(dest_reg, ptr_reg, 0, 0));
+                    }
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                    debug.log(.codegen, "      string_make ptr=x{d} -> x{d}", .{ ptr_reg, dest_reg });
+                }
+            },
+
+            .select_n => {
+                // select_n(call, idx) -> extract the idx-th result from a multi-value call
+                // After expand_calls: idx=0 selects ptr, idx=1 selects len
+                // aux_int contains the index
+                // IMPORTANT: Call results are saved to x8/x9 to avoid clobbering,
+                // so read from x{8+idx} instead of x{idx}
+                const args = value.args;
+                if (args.len >= 1) {
+                    const idx: u5 = @intCast(value.aux_int);
+                    const dest_reg = self.getDestRegForValue(value);
+
+                    // Multi-value call results are saved in x8 (idx=0) and x9 (idx=1)
+                    const src_reg: u5 = 8 + idx;
+                    if (src_reg != dest_reg) {
+                        try self.emit(asm_mod.encodeADDImm(dest_reg, src_reg, 0, 0)); // MOV dest, x{8+idx}
+                    }
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                    debug.log(.codegen, "      select_n idx={d} x{d} -> x{d}", .{ idx, src_reg, dest_reg });
+                }
+            },
+
+            .string_concat => {
+                // String concatenation: call __cot_str_concat(ptr1, len1, ptr2, len2)
+                // After expand_calls: args are 4 scalar values (ptr1, len1, ptr2, len2)
+                // Returns new string in x0 (ptr), x1 (len)
+                // Type is ssa_results, and select_n ops extract the components
+                const args = value.args;
+                if (args.len >= 4) {
+                    debug.log(.codegen, "      string_concat (decomposed): 4 scalar args", .{});
+
+                    // Get ABI info from AuxCall (attached by expand_calls pass)
+                    // Reference: Go's regalloc.go regspec() which queries AuxCall.Reg()
+                    var fn_name: []const u8 = "___cot_str_concat";
+                    if (value.aux_call) |aux_call| {
+                        fn_name = aux_call.fn_name;
+                        debug.log(.codegen, "      AuxCall: {s}", .{fn_name});
+                        if (aux_call.abi_info) |abi_info| {
+                            debug.log(.codegen, "      ABI: in_regs={d}, out_regs={d}", .{
+                                abi_info.in_registers_used,
+                                abi_info.out_registers_used,
+                            });
+                            // Log expected register assignments from ABI
+                            for (abi_info.in_params, 0..) |param, i| {
+                                if (param.registers.len > 0) {
+                                    const reg = abi.ARM64.regIndexToArm64(param.registers[0]);
+                                    debug.log(.codegen, "        arg[{d}] -> x{d}", .{ i, reg });
+                                }
+                            }
+                        }
+                    } else {
+                        debug.log(.codegen, "      WARNING: no AuxCall attached!", .{});
+                    }
+
+                    // Get current registers for each arg
+                    const ptr1_reg = self.getRegForValue(args[0]) orelse blk: {
+                        try self.ensureInReg(args[0], 8);
+                        break :blk @as(u5, 8);
+                    };
+                    const len1_reg = self.getRegForValue(args[1]) orelse blk: {
+                        try self.ensureInReg(args[1], 9);
+                        break :blk @as(u5, 9);
+                    };
+                    const ptr2_reg = self.getRegForValue(args[2]) orelse blk: {
+                        try self.ensureInReg(args[2], 10);
+                        break :blk @as(u5, 10);
+                    };
+                    const len2_reg = self.getRegForValue(args[3]) orelse blk: {
+                        try self.ensureInReg(args[3], 11);
+                        break :blk @as(u5, 11);
+                    };
+
+                    debug.log(.codegen, "      Current locations: ptr1=x{d}, len1=x{d}, ptr2=x{d}, len2=x{d}", .{
+                        ptr1_reg, len1_reg, ptr2_reg, len2_reg,
+                    });
+
+                    // Move args to calling convention registers: x0=ptr1, x1=len1, x2=ptr2, x3=len2
+                    // Use parallel assignment via scratch registers to avoid clobbering.
+                    // Reference: Go's regalloc.go lines 1588-1656 (allocValToReg with constraints)
+                    debug.log(.codegen, "      Parallel assignment to x0-x3 via scratch x10-x13", .{});
+                    try self.emit(asm_mod.encodeADDImm(10, ptr1_reg, 0, 0)); // x10 = ptr1
+                    try self.emit(asm_mod.encodeADDImm(11, len1_reg, 0, 0)); // x11 = len1
+                    try self.emit(asm_mod.encodeADDImm(12, ptr2_reg, 0, 0)); // x12 = ptr2
+                    try self.emit(asm_mod.encodeADDImm(13, len2_reg, 0, 0)); // x13 = len2
+                    try self.emit(asm_mod.encodeADDImm(0, 10, 0, 0)); // x0 = x10 (ptr1)
+                    try self.emit(asm_mod.encodeADDImm(1, 11, 0, 0)); // x1 = x11 (len1)
+                    try self.emit(asm_mod.encodeADDImm(2, 12, 0, 0)); // x2 = x12 (ptr2)
+                    try self.emit(asm_mod.encodeADDImm(3, 13, 0, 0)); // x3 = x13 (len2)
+
+                    // Emit the call
+                    // Always prepend underscore for macOS symbol naming
+                    const target_name = try std.fmt.allocPrint(self.allocator, "_{s}", .{fn_name});
+
+                    try self.relocations.append(self.allocator, .{
+                        .offset = @intCast(self.offset()),
+                        .target = target_name,
+                    });
+                    try self.emit(asm_mod.encodeBL(0));
+                    debug.log(.codegen, "      -> BL {s}", .{target_name});
+
+                    // Save results to x8/x9 to avoid clobbering by subsequent operations
+                    // Reference: ABI out_params tells us results are in x0, x1
+                    try self.emit(asm_mod.encodeADDImm(8, 0, 0, 0)); // x8 = x0 (ptr)
+                    try self.emit(asm_mod.encodeADDImm(9, 1, 0, 0)); // x9 = x1 (len)
+
+                    try self.value_regs.put(self.allocator, value, 8);
+                    debug.log(.codegen, "      Results saved: x0->x8 (ptr), x1->x9 (len)", .{});
+                } else if (args.len >= 2) {
+                    // Old path (before expand_calls): 2 string args
+                    // This shouldn't happen anymore, but keep for safety
+                    debug.log(.codegen, "      string_concat (old): 2 string args - unexpected!", .{});
+                    try self.value_regs.put(self.allocator, value, 0);
                 }
             },
 
@@ -1430,27 +1672,76 @@ pub const ARM64CodeGen = struct {
                         break :blk temp_reg;
                     };
 
-                    const val_reg = self.getRegForValue(val) orelse blk: {
-                        const temp_reg = self.allocateReg();
-                        try self.ensureInReg(val, temp_reg);
-                        break :blk temp_reg;
-                    };
-
                     // CRITICAL: Use type-sized store instruction
                     const type_size = TypeRegistry.basicTypeSize(val.type_idx);
-                    const st_size = asm_mod.LdStSize.fromBytes(type_size);
-                    const type_name = TypeRegistry.basicTypeName(val.type_idx);
 
-                    try self.emit(asm_mod.encodeLdrStrSized(val_reg, addr_reg, 0, st_size, false));
-                    debug.log(.codegen, "      -> STR{s} {s}{d}, [{s}{d}] (store {s}, {d}B)", .{
-                        st_size.name(),
-                        if (st_size == .dword) "x" else "w",
-                        val_reg,
-                        "x",
-                        addr_reg,
-                        type_name,
-                        type_size,
-                    });
+                    // Special handling for 16-byte types (string/slice)
+                    // These are stored as (ptr, len) pairs
+                    if (type_size == 16 and val.op == .string_concat) {
+                        // After string_concat: ptr in x0, len in x8 (saved immediately after call)
+                        // IMPORTANT: addr_reg might be x0 which would clobber the ptr
+                        // Use x9 as a temp for the address if needed
+                        var actual_addr_reg = addr_reg;
+                        if (addr_reg == 0 or addr_reg == 8) {
+                            actual_addr_reg = 9;
+                            try self.emit(asm_mod.encodeADDImm(9, addr_reg, 0, 0)); // x9 = addr_reg
+                        }
+                        // STP x0, x8, [actual_addr_reg] (ptr and len)
+                        try self.emit(asm_mod.encodeLdpStp(0, 8, actual_addr_reg, 0, .signed_offset, false));
+                        debug.log(.codegen, "      -> STP x0, x8, [x{d}] (store string_concat 16B)", .{actual_addr_reg});
+                    } else if (type_size == 16 and val.op == .static_call) {
+                        // After static_call: ptr in x0, len in x1
+                        // Save x1 to x8 first, then use x0 and x8
+                        try self.emit(asm_mod.encodeADDImm(8, 1, 0, 0)); // x8 = x1
+                        var actual_addr_reg = addr_reg;
+                        if (addr_reg == 0 or addr_reg == 8) {
+                            actual_addr_reg = 9;
+                            try self.emit(asm_mod.encodeADDImm(9, addr_reg, 0, 0)); // x9 = addr_reg
+                        }
+                        try self.emit(asm_mod.encodeLdpStp(0, 8, actual_addr_reg, 0, .signed_offset, false));
+                        debug.log(.codegen, "      -> STP x0, x8, [x{d}] (store call 16B)", .{actual_addr_reg});
+                    } else if (type_size == 16 and val.op == .string_make) {
+                        // After expand_calls: string_make holds (ptr, len) from decomposed call
+                        // val.args[0] = select_n idx=0 (ptr), val.args[1] = select_n idx=1 (len)
+                        //
+                        // CRITICAL: The select_n values copy from x8/x9 to their assigned registers,
+                        // but those registers may have been reused by later instructions (e.g., local_addr).
+                        // Instead of trusting getRegForValue() which returns the regalloc assignment
+                        // (which may be stale), we use x8/x9 directly - these are the preserved call
+                        // result registers that won't be clobbered.
+                        //
+                        // This is a workaround until we have proper ABI-aware register allocation
+                        // where regalloc knows to keep call results alive until they're consumed.
+
+                        // Save addr_reg to scratch register FIRST
+                        const saved_addr_reg: u5 = 15; // Use x15 as safe scratch for address
+                        try self.emit(asm_mod.encodeADDImm(saved_addr_reg, addr_reg, 0, 0));
+
+                        // Use x8/x9 directly (saved call results) instead of select_n registers
+                        // x8 = ptr (idx=0), x9 = len (idx=1)
+                        try self.emit(asm_mod.encodeLdpStp(8, 9, saved_addr_reg, 0, .signed_offset, false));
+                        debug.log(.codegen, "      -> STP x8, x9, [x{d}] (store string_make 16B via saved regs)", .{saved_addr_reg});
+                    } else {
+                        const val_reg = self.getRegForValue(val) orelse blk: {
+                            const temp_reg = self.allocateReg();
+                            try self.ensureInReg(val, temp_reg);
+                            break :blk temp_reg;
+                        };
+
+                        const st_size = asm_mod.LdStSize.fromBytes(type_size);
+                        const type_name = TypeRegistry.basicTypeName(val.type_idx);
+
+                        try self.emit(asm_mod.encodeLdrStrSized(val_reg, addr_reg, 0, st_size, false));
+                        debug.log(.codegen, "      -> STR{s} {s}{d}, [{s}{d}] (store {s}, {d}B)", .{
+                            st_size.name(),
+                            if (st_size == .dword) "x" else "w",
+                            val_reg,
+                            "x",
+                            addr_reg,
+                            type_name,
+                            type_size,
+                        });
+                    }
                 }
             },
 
