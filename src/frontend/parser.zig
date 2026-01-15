@@ -197,7 +197,8 @@ pub const Parser = struct {
     /// Parse a top-level declaration.
     fn parseDecl(self: *Parser) ParseError!?NodeIndex {
         return switch (self.tok.tok) {
-            .kw_fn => self.parseFnDecl(),
+            .kw_extern => self.parseExternFn(),
+            .kw_fn => self.parseFnDecl(false),
             .kw_var => self.parseVarDecl(false),
             .kw_const => self.parseVarDecl(true),
             .kw_struct => self.parseStructDecl(),
@@ -212,8 +213,19 @@ pub const Parser = struct {
         };
     }
 
+    /// Parse extern function declaration: extern fn name(params) return_type;
+    fn parseExternFn(self: *Parser) ParseError!?NodeIndex {
+        self.advance(); // consume 'extern'
+        if (!self.check(.kw_fn)) {
+            self.err.errorAt(self.pos(), "expected 'fn' after 'extern'");
+            return null;
+        }
+        return self.parseFnDecl(true);
+    }
+
     /// Parse function declaration: fn name(params) return_type { body }
-    fn parseFnDecl(self: *Parser) ParseError!?NodeIndex {
+    /// If is_extern is true, expects no body and requires semicolon.
+    fn parseFnDecl(self: *Parser, is_extern: bool) ParseError!?NodeIndex {
         const start = self.pos();
         self.advance(); // consume 'fn'
 
@@ -230,16 +242,26 @@ pub const Parser = struct {
         const params = try self.parseFieldList(.rparen);
         if (!self.expect(.rparen)) return null;
 
-        // Return type (optional)
+        // Return type (optional for regular, required-ish for extern)
         var return_type: NodeIndex = null_node;
-        if (!self.check(.lbrace) and !self.check(.eof)) {
+        if (!self.check(.lbrace) and !self.check(.semicolon) and !self.check(.eof)) {
             return_type = try self.parseType() orelse null_node;
         }
 
-        // Body (optional - forward declaration if missing)
+        // Body handling
         var body: NodeIndex = null_node;
-        if (self.check(.lbrace)) {
-            body = try self.parseBlock() orelse return null;
+        if (is_extern) {
+            // Extern functions must not have a body, require semicolon
+            if (self.check(.lbrace)) {
+                self.err.errorAt(self.pos(), "extern functions cannot have a body");
+                return null;
+            }
+            if (!self.expect(.semicolon)) return null;
+        } else {
+            // Regular function - body is optional (forward declaration)
+            if (self.check(.lbrace)) {
+                body = try self.parseBlock() orelse return null;
+            }
         }
 
         return try self.tree.addDecl(.{ .fn_decl = .{
@@ -247,6 +269,7 @@ pub const Parser = struct {
             .params = params,
             .return_type = return_type,
             .body = body,
+            .is_extern = is_extern,
             .span = Span.init(start, self.pos()),
         } });
     }

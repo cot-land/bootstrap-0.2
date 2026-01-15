@@ -62,11 +62,13 @@ pub const Decl = union(enum) {
 };
 
 /// fn name(params) return_type { body }
+/// extern fn name(params) return_type;
 pub const FnDecl = struct {
     name: []const u8,
     params: []const Field,
     return_type: NodeIndex, // null_node = void
-    body: NodeIndex, // null_node = forward declaration
+    body: NodeIndex, // null_node = forward declaration or extern
+    is_extern: bool, // true for extern fn declarations
     span: Span,
 };
 
@@ -672,6 +674,7 @@ test "Decl span accessor" {
         .params = &.{},
         .return_type = null_node,
         .body = null_node,
+        .is_extern = false,
         .span = span,
     } };
     try std.testing.expectEqual(@as(u32, 0), fn_decl.span().start.offset);

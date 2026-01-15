@@ -70,11 +70,22 @@ A self-hosting Cot compiler needs to:
 
 ---
 
-### Phase 2: File I/O via System Calls (P0)
+### Phase 2: File I/O via System Calls (P0) - IN PROGRESS
 
 **Goal:** Read source files, write object files.
 
-**Approach:** Direct system calls (no libc dependency for simplicity)
+**Approach:** Use libc via `extern fn` declarations (resolved by linker)
+
+**Completed (2026-01-15):**
+- ✅ `extern fn` syntax for declaring external functions
+- ✅ Slice field access: `s.ptr` and `s.len` for accessing slice internals
+- ✅ Can call libc functions: `write(1, msg.ptr, msg.len)` prints to stdout
+
+**Implementation Notes:**
+- `extern fn name(args) ret;` - declares function resolved by linker
+- Compiler adds `_` prefix for Darwin C ABI automatically
+- Extern functions skip lowering - no IR/SSA generated
+- Symbol marked as extern in checker, linker resolves from libSystem
 
 ```cot
 // macOS ARM64 system calls

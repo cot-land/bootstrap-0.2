@@ -65,6 +65,7 @@ pub const Symbol = struct {
     type_idx: TypeIndex,
     node: NodeIndex, // AST node where defined
     mutable: bool, // var vs const
+    is_extern: bool, // true for extern fn declarations
 
     pub fn init(name: []const u8, kind: SymbolKind, type_idx: TypeIndex, node: NodeIndex, mutable: bool) Symbol {
         return .{
@@ -73,6 +74,18 @@ pub const Symbol = struct {
             .type_idx = type_idx,
             .node = node,
             .mutable = mutable,
+            .is_extern = false, // default to non-extern
+        };
+    }
+
+    pub fn initExtern(name: []const u8, kind: SymbolKind, type_idx: TypeIndex, node: NodeIndex, mutable: bool, is_extern: bool) Symbol {
+        return .{
+            .name = name,
+            .kind = kind,
+            .type_idx = type_idx,
+            .node = node,
+            .mutable = mutable,
+            .is_extern = is_extern,
         };
     }
 };
@@ -240,12 +253,13 @@ pub const Checker = struct {
                 }
                 // Build function type
                 const func_type = try self.buildFuncType(f.params, f.return_type);
-                try self.scope.define(Symbol.init(
+                try self.scope.define(Symbol.initExtern(
                     f.name,
                     .function,
                     func_type,
                     idx,
                     false,
+                    f.is_extern,
                 ));
 
                 // Check if this is a method (first param named "self")
@@ -932,6 +946,17 @@ pub const Checker = struct {
                         .params = &.{},
                         .return_type = TypeRegistry.INT,
                     } });
+                }
+                self.errUndefined(f.span.start, f.field);
+                return invalid_type;
+            },
+            .slice => |sl| {
+                // Slice/string fields: .ptr returns pointer, .len returns i64
+                if (std.mem.eql(u8, f.field, "ptr")) {
+                    // Return pointer to element type
+                    return try self.types.add(.{ .pointer = .{ .elem = sl.elem } });
+                } else if (std.mem.eql(u8, f.field, "len")) {
+                    return TypeRegistry.I64;
                 }
                 self.errUndefined(f.span.start, f.field);
                 return invalid_type;

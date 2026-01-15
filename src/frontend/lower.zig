@@ -118,6 +118,12 @@ pub const Lowerer = struct {
     }
 
     fn lowerFnDecl(self: *Lowerer, fn_decl: ast.FnDecl) !void {
+        // Skip extern functions - they have no body, resolved by linker
+        if (fn_decl.is_extern) {
+            debug.log(.lower, "Skipping extern function: {s}", .{fn_decl.name});
+            return;
+        }
+
         // Resolve return type
         const return_type = if (fn_decl.return_type != null_node)
             self.resolveTypeNode(fn_decl.return_type)
@@ -1048,6 +1054,21 @@ pub const Lowerer = struct {
                 }
             }
             return ir.null_node; // Variant not found
+        }
+
+        // Check for slice/string type (s.ptr, s.len)
+        if (base_type == .slice) {
+            const slice_elem = base_type.slice.elem;
+            const base_val = try self.lowerExprNode(fa.base);
+
+            if (std.mem.eql(u8, fa.field, "ptr")) {
+                // Return pointer to element type
+                const ptr_type = try self.type_reg.add(.{ .pointer = .{ .elem = slice_elem } });
+                return try fb.emitSlicePtr(base_val, ptr_type, fa.span);
+            } else if (std.mem.eql(u8, fa.field, "len")) {
+                return try fb.emitSliceLen(base_val, fa.span);
+            }
+            return ir.null_node;
         }
 
         // Must be a struct type

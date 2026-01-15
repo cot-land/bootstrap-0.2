@@ -115,6 +115,7 @@ pub const Token = enum(u8) {
     kw_union,
     kw_type,
     kw_import,
+    kw_extern,
 
     // Control flow
     kw_if,
@@ -296,6 +297,7 @@ const token_strings = blk: {
     strings[@intFromEnum(Token.kw_union)] = "union";
     strings[@intFromEnum(Token.kw_type)] = "type";
     strings[@intFromEnum(Token.kw_import)] = "import";
+    strings[@intFromEnum(Token.kw_extern)] = "extern";
     strings[@intFromEnum(Token.kw_if)] = "if";
     strings[@intFromEnum(Token.kw_else)] = "else";
     strings[@intFromEnum(Token.kw_switch)] = "switch";
@@ -343,6 +345,7 @@ pub const keywords = std.StaticStringMap(Token).initComptime(.{
     .{ "union", .kw_union },
     .{ "type", .kw_type },
     .{ "import", .kw_import },
+    .{ "extern", .kw_extern },
     .{ "if", .kw_if },
     .{ "else", .kw_else },
     .{ "switch", .kw_switch },
