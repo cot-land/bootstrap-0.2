@@ -1054,6 +1054,12 @@ pub const FuncBuilder = struct {
         return self.emit(Node.init(.{ .store_index_value = .{ .base = base, .index = index, .value = value, .elem_size = elem_size } }, TypeRegistry.VOID, span));
     }
 
+    /// Emit address of array element: base + index * elem_size. (Go: &arr[i])
+    /// Returns a pointer to the element.
+    pub fn emitAddrIndex(self: *FuncBuilder, base: NodeIndex, index: NodeIndex, elem_size: u32, ptr_type: TypeIndex, span: Span) !NodeIndex {
+        return self.emit(Node.init(.{ .addr_index = .{ .base = base, .index = index, .elem_size = elem_size } }, ptr_type, span));
+    }
+
     /// Emit slice from local array.
     pub fn emitSliceLocal(self: *FuncBuilder, local_idx: LocalIdx, start: ?NodeIndex, end: ?NodeIndex, elem_size: u32, type_idx: TypeIndex, span: Span) !NodeIndex {
         return self.emit(Node.init(.{ .slice_local = .{ .local_idx = local_idx, .start = start, .end = end, .elem_size = elem_size } }, type_idx, span));

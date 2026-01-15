@@ -70,7 +70,7 @@ A self-hosting Cot compiler needs to:
 
 ---
 
-### Phase 2: File I/O via System Calls (P0) - IN PROGRESS
+### Phase 2: File I/O via System Calls (P0) - COMPLETE
 
 **Goal:** Read source files, write object files.
 
@@ -80,40 +80,37 @@ A self-hosting Cot compiler needs to:
 - ✅ `extern fn` syntax for declaring external functions
 - ✅ Slice field access: `s.ptr` and `s.len` for accessing slice internals
 - ✅ Can call libc functions: `write(1, msg.ptr, msg.len)` prints to stdout
+- ✅ `open()`, `read()`, `close()` wrappers working
+- ✅ Address-of array element: `&buf[0]` for passing buffer pointers
 
 **Implementation Notes:**
 - `extern fn name(args) ret;` - declares function resolved by linker
 - Compiler adds `_` prefix for Darwin C ABI automatically
 - Extern functions skip lowering - no IR/SSA generated
 - Symbol marked as extern in checker, linker resolves from libSystem
+- Added `addr_index` IR node for `&arr[i]` address computation
 
 ```cot
-// macOS ARM64 system calls
-const SYS_READ: i64 = 3;
-const SYS_WRITE: i64 = 4;
-const SYS_OPEN: i64 = 5;
-const SYS_CLOSE: i64 = 6;
+// Example: Read file contents
+extern fn open(path: *u8, flags: i32, mode: i32) i32;
+extern fn read(fd: i32, buf: *i64, count: i64) i64;
+extern fn close(fd: i32) i32;
 
-fn syscall3(num: i64, a1: i64, a2: i64, a3: i64) i64 {
-    // Assembly: SVC #0x80
-}
+fn main() i64 {
+    let path: string = "/tmp/test.txt";
+    let fd: i32 = open(path.ptr, 0, 0);
+    if fd < 0 { return 1; }
 
-fn readFile(path: string) string {
-    let fd = syscall3(SYS_OPEN, path.ptr, O_RDONLY, 0);
-    // ... read into buffer
+    var buf: [8]i64 = [0, 0, 0, 0, 0, 0, 0, 0];
+    let n: i64 = read(fd, &buf[0], 64);
+    close(fd);
+    return n;
 }
 ```
 
-**Implementation Steps:**
-1. Add `syscall` intrinsic or inline assembly support
-2. Implement `open()`, `read()`, `write()`, `close()` wrappers
-3. Implement `readFile(path) -> string`
-4. Implement `writeFile(path, data)`
-
-**Tests:**
-- `test_file_read` - Read a small test file
-- `test_file_write` - Write and verify contents
-- `test_file_not_found` - Handle missing files
+**Remaining for high-level file API:**
+- Helper functions: `readFile(path) -> string`, `writeFile(path, data)`
+- These require memory allocation (Phase 3)
 
 **Go Reference:** `~/learning/go/src/syscall/` for syscall patterns
 

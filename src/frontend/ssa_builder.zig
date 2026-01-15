@@ -937,6 +937,32 @@ pub const SSABuilder = struct {
                 break :blk store_val;
             },
 
+            .addr_index => |i| blk: {
+                // Compute address of array element: base + index * elem_size (Go: &arr[i])
+                // Unlike index_value, we return the address WITHOUT loading from it.
+                const base_val = try self.convertNode(i.base) orelse return error.MissingValue;
+                const index_val = try self.convertNode(i.index) orelse return error.MissingValue;
+
+                // Create constant for element size
+                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                elem_size_val.aux_int = @intCast(i.elem_size);
+                try cur.addValue(self.allocator, elem_size_val);
+
+                // Compute offset: index * elem_size
+                const offset_val = try self.func.newValue(.mul, TypeRegistry.I64, cur, .{});
+                offset_val.addArg2(index_val, elem_size_val);
+                try cur.addValue(self.allocator, offset_val);
+
+                // Compute element address: base + offset
+                // Use the node's type (pointer to element) for the result
+                const elem_addr = try self.func.newValue(.add_ptr, node.type_idx, cur, .{});
+                elem_addr.addArg2(base_val, offset_val);
+                try cur.addValue(self.allocator, elem_addr);
+
+                debug.log(.ssa, "    addr_index base=v{} index=v{} elem_size={d} -> v{}", .{ base_val.id, index_val.id, i.elem_size, elem_addr.id });
+                break :blk elem_addr;
+            },
+
             // === Slice Operations ===
             // Slices are (ptr, len) pairs. Creating a slice from an array:
             // 1. Compute start address (base + start * elem_size)

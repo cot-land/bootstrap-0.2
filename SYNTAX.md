@@ -119,6 +119,17 @@ fn recursive(n: i64) i64 {     // Definition later
 }
 ```
 
+### External Function Declarations
+```cot
+extern fn open(path: *u8, flags: i32, mode: i32) i32;
+extern fn read(fd: i32, buf: *u8, count: i64) i64;
+extern fn write(fd: i32, buf: *u8, count: i64) i64;
+extern fn close(fd: i32) i32;
+```
+
+External functions are resolved by the linker from libc (libSystem on macOS).
+The compiler automatically adds the `_` prefix required by Darwin C ABI.
+
 ---
 
 ## Primitive Types
@@ -170,6 +181,15 @@ let value: ?i64 = 42;
 
 let items: []i64 = [1, 2, 3];
 ```
+
+### Slice Field Access
+```cot
+let s: string = "hello";
+let ptr: *u8 = s.ptr;     // Get underlying pointer
+let n: i64 = s.len;       // Get length (same as len(s))
+```
+
+Slices are 16-byte structs: pointer at offset 0, length at offset 8.
 
 ### Array Types (Fixed Size)
 ```cot
@@ -303,6 +323,7 @@ not a           // Logical NOT (also: !a)
 !x              // Logical NOT
 ~x              // Bitwise NOT
 &x              // Address-of (get pointer)
+&arr[i]         // Address of array element
 ptr.*           // Dereference pointer
 ```
 
@@ -479,7 +500,7 @@ fn process() {
 
 | Category | Keywords |
 |----------|----------|
-| Declarations | `fn`, `var`, `let`, `const`, `struct`, `enum`, `union`, `type`, `import` |
+| Declarations | `fn`, `var`, `let`, `const`, `struct`, `enum`, `union`, `type`, `import`, `extern` |
 | Control Flow | `if`, `else`, `switch`, `while`, `for`, `in`, `return`, `break`, `continue`, `defer` |
 | Literals | `true`, `false`, `null` |
 | Logical | `and`, `or`, `not` |
@@ -600,6 +621,6 @@ fn main() i64 {
 
 See `test/e2e/all_tests.cot` for the full test suite.
 
-**Current:** 47/113 tests passing
+**Current:** 110 e2e tests passing
 
-Including: arithmetic, function calls, local variables, comparisons, if/else, while loops, break/continue, structs, character literals, and string literals.
+Core language complete: arithmetic, functions, control flow, structs, arrays, slices, pointers, enums, bitwise/logical operators, for-in loops, string operations, extern functions.

@@ -914,6 +914,42 @@ pub const Lowerer = struct {
                 // Get local index if operand is identifier
                 const operand_node = self.tree.getNode(addr.operand) orelse return ir.null_node;
                 const operand_expr = operand_node.asExpr() orelse return ir.null_node;
+
+                // Handle &arr[idx] - address of array element
+                if (operand_expr == .index) {
+                    const idx = operand_expr.index;
+                    // Get element type from base array type
+                    const base_type_idx = self.inferExprType(idx.base);
+                    const base_type = self.type_reg.get(base_type_idx);
+                    const elem_type: TypeIndex = switch (base_type) {
+                        .array => |a| a.elem,
+                        .slice => |s| s.elem,
+                        else => return ir.null_node,
+                    };
+                    const elem_size = self.type_reg.sizeOf(elem_type);
+                    const ptr_type = self.type_reg.makePointer(elem_type) catch TypeRegistry.VOID;
+
+                    // Lower the index expression
+                    const index_node = try self.lowerExprNode(idx.idx);
+
+                    // Check if base is a local variable
+                    const base_node = self.tree.getNode(idx.base) orelse return ir.null_node;
+                    const base_expr = base_node.asExpr() orelse return ir.null_node;
+                    if (base_expr == .ident) {
+                        if (fb.lookupLocal(base_expr.ident.name)) |local_idx| {
+                            // Get address of local array, then compute element address
+                            const local_type = fb.locals.items[local_idx].type_idx;
+                            const base_ptr_type = self.type_reg.makePointer(local_type) catch TypeRegistry.VOID;
+                            const base_addr = try fb.emitAddrLocal(local_idx, base_ptr_type, addr.span);
+                            return try fb.emitAddrIndex(base_addr, index_node, elem_size, ptr_type, addr.span);
+                        }
+                    }
+                    // For computed base (e.g., slice), lower it and compute element address
+                    const base_val = try self.lowerExprNode(idx.base);
+                    return try fb.emitAddrIndex(base_val, index_node, elem_size, ptr_type, addr.span);
+                }
+
+                // Handle &x - address of simple identifier
                 if (operand_expr == .ident) {
                     if (fb.lookupLocal(operand_expr.ident.name)) |local_idx| {
                         const local_type = fb.locals.items[local_idx].type_idx;
