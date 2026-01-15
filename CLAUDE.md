@@ -380,32 +380,28 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 
 ---
 
-## RUNTIME LIBRARY - IMPORTANT
+## RUNTIME LIBRARY
 
-**String concatenation requires linking with the runtime library.**
+**String concatenation uses the runtime library, which is auto-linked by the compiler.**
 
-The Cot compiler generates calls to `___cot_str_concat` for string `+` operations. This function is in `runtime/cot_runtime.zig` and MUST be linked, or you'll get:
-```
-error: undefined symbol: ___cot_str_concat
-```
+The Cot compiler generates calls to `___cot_str_concat` for string `+` operations. The compiler automatically finds and links `runtime/cot_runtime.o` when it exists.
 
-**To compile and link programs using string concatenation:**
+**To compile and run programs (auto-linking):**
 ```bash
-# 1. Build runtime once
-zig build-obj -OReleaseFast runtime/cot_runtime.zig -femit-bin=runtime/cot_runtime.o
-
-# 2. Compile Cot program
+# Just compile and run - runtime is auto-linked!
 ./zig-out/bin/cot program.cot -o program
-
-# 3. Link with runtime
-zig cc program.o runtime/cot_runtime.o -o program -lSystem
+./program
 ```
 
-**The e2e tests use string concatenation**, so to run all_tests.cot:
+**The e2e tests use string concatenation:**
 ```bash
 ./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/all_tests
-zig cc /tmp/all_tests.o runtime/cot_runtime.o -o /tmp/all_tests -lSystem
-/tmp/all_tests  # Expected exit: 122
+/tmp/all_tests  # Expected exit: 0
+```
+
+**If you see "undefined symbol: ___cot_str_concat"**, the runtime wasn't found. Build it:
+```bash
+zig build-obj -OReleaseFast runtime/cot_runtime.zig -femit-bin=runtime/cot_runtime.o
 ```
 
 See [STATUS.md](STATUS.md) for more details on the runtime library.

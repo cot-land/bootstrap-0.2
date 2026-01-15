@@ -140,12 +140,17 @@ pub const Error = struct {
 /// Callback type for custom error handling.
 pub const ErrorHandler = *const fn (err: Error) void;
 
+/// Maximum number of errors to report before stopping.
+/// Following Go's pattern from cmd/compile/internal/base/print.go
+pub const MAX_ERRORS: u32 = 10;
+
 /// Collects and reports errors during compilation.
 pub const ErrorReporter = struct {
     src: *Source,
     handler: ?ErrorHandler,
     first: ?Error,
     count: u32,
+    suppressed: bool,
 
     pub fn init(src: *Source, handler: ?ErrorHandler) ErrorReporter {
         return .{
@@ -153,6 +158,7 @@ pub const ErrorReporter = struct {
             .handler = handler,
             .first = null,
             .count = 0,
+            .suppressed = false,
         };
     }
 
@@ -177,6 +183,15 @@ pub const ErrorReporter = struct {
             self.first = err;
         }
         self.count += 1;
+
+        // Stop reporting after MAX_ERRORS (Go pattern)
+        if (self.count > MAX_ERRORS) {
+            if (!self.suppressed) {
+                self.suppressed = true;
+                std.debug.print("error: too many errors ({d}), stopping\n", .{MAX_ERRORS});
+            }
+            return;
+        }
 
         if (self.handler) |h| {
             h(err);

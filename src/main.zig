@@ -146,6 +146,41 @@ pub const frontend = struct {
     pub const SSABuilder = ssa_builder.SSABuilder;
 };
 
+/// Find the runtime library (cot_runtime.o) in known locations.
+/// Searches: 1) relative to executable, 2) relative to cwd
+fn findRuntimePath(allocator: std.mem.Allocator) ![]const u8 {
+    // Try locations in order of preference
+    const search_paths = [_][]const u8{
+        "runtime/cot_runtime.o", // Relative to cwd (development)
+        "../runtime/cot_runtime.o", // One level up from cwd
+    };
+
+    // First try relative to cwd
+    for (search_paths) |rel_path| {
+        if (std.fs.cwd().access(rel_path, .{})) |_| {
+            return try allocator.dupe(u8, rel_path);
+        } else |_| {}
+    }
+
+    // Try relative to executable location
+    var exe_dir_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const exe_dir = std.fs.selfExeDirPath(&exe_dir_buf) catch null;
+
+    if (exe_dir) |dir| {
+        // exe is at zig-out/bin/cot, runtime is at runtime/cot_runtime.o
+        // So from exe dir, go up two levels: ../../runtime/cot_runtime.o
+        const runtime_rel = "../../runtime/cot_runtime.o";
+        const full_path = try std.fs.path.join(allocator, &.{ dir, runtime_rel });
+        defer allocator.free(full_path);
+
+        if (std.fs.cwd().access(full_path, .{})) |_| {
+            return try allocator.dupe(u8, full_path);
+        } else |_| {}
+    }
+
+    return error.RuntimeNotFound;
+}
+
 pub fn main() !void {
     // Initialize debug infrastructure from COT_DEBUG env var
     pipeline_debug.initGlobal();
@@ -199,7 +234,27 @@ pub fn main() !void {
 
     // Link with zig cc
     std.debug.print("Linking...\n", .{});
-    var child = std.process.Child.init(&.{ "zig", "cc", "-o", output_name, obj_path }, allocator);
+
+    // Find runtime library (like Go's unconditional runtime loading)
+    // Try multiple locations: relative to exe, relative to cwd
+    const runtime_path = findRuntimePath(allocator) catch |e| blk: {
+        std.debug.print("Warning: Could not find cot_runtime.o: {any}\n", .{e});
+        std.debug.print("  String operations may fail. Build runtime with:\n", .{});
+        std.debug.print("  zig build-obj -OReleaseFast runtime/cot_runtime.zig -femit-bin=runtime/cot_runtime.o\n", .{});
+        break :blk null;
+    };
+    defer if (runtime_path) |p| allocator.free(p);
+
+    // Build link command
+    var link_args = std.ArrayListUnmanaged([]const u8){};
+    defer link_args.deinit(allocator);
+    try link_args.appendSlice(allocator, &.{ "zig", "cc", "-o", output_name, obj_path });
+    if (runtime_path) |rp| {
+        try link_args.append(allocator, rp);
+        std.debug.print("Auto-linking runtime: {s}\n", .{rp});
+    }
+
+    var child = std.process.Child.init(link_args.items, allocator);
     const result = child.spawnAndWait() catch |e| {
         std.debug.print("Linker failed: {any}\n", .{e});
         return;

@@ -6,7 +6,7 @@
 
 **142 e2e tests passing.** Core language features complete. Now focused on features required for self-hosting.
 
-**Runtime Library Required:** String concatenation requires linking with `runtime/cot_runtime.zig`. See [Runtime Library](#runtime-library) section below.
+**Runtime Library:** String concatenation uses the runtime library at `runtime/cot_runtime.o`. The compiler auto-links it when found. See [Runtime Library](#runtime-library) section below.
 
 ---
 
@@ -403,7 +403,23 @@ The Cot compiler requires a small runtime library for certain operations. This i
 |----------|-----------|---------|
 | `__cot_str_concat` | `(ptr1, len1, ptr2, len2) -> (ptr, len)` | String concatenation |
 
-### Building and Linking
+### Auto-Linking (Default)
+
+The compiler automatically links the runtime library when it can find it:
+
+```bash
+# Just compile and run - runtime is auto-linked!
+./zig-out/bin/cot program.cot -o program
+./program
+```
+
+The compiler searches for `runtime/cot_runtime.o` in:
+1. Current working directory (`./runtime/cot_runtime.o`)
+2. Relative to the compiler binary (`../../runtime/cot_runtime.o`)
+
+### Manual Linking (If Auto-Link Fails)
+
+If the runtime isn't found, you'll see a warning. Build and link manually:
 
 ```bash
 # 1. Compile the runtime (once)
@@ -412,11 +428,8 @@ zig build-obj -OReleaseFast runtime/cot_runtime.zig -femit-bin=runtime/cot_runti
 # 2. Compile your Cot program
 ./zig-out/bin/cot program.cot -o program
 
-# 3. Link together (REQUIRED for string concatenation)
+# 3. Link together manually
 zig cc program.o runtime/cot_runtime.o -o program -lSystem
-
-# Or all in one:
-./zig-out/bin/cot program.cot -o program && zig cc program.o runtime/cot_runtime.o -o program -lSystem
 ```
 
 ### Common Error
@@ -426,13 +439,9 @@ If you see:
 error: undefined symbol: ___cot_str_concat
 ```
 
-This means the runtime library wasn't linked. Use the linking command above.
-
-### Future Work
-
-- Bundle runtime into compiler binary
-- Auto-link runtime when needed
-- Add more runtime functions (string formatting, etc.)
+This means the runtime library wasn't linked. Either:
+1. Ensure `runtime/cot_runtime.o` exists and is findable
+2. Use manual linking as shown above
 
 ---
 
