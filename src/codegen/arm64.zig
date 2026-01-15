@@ -1403,6 +1403,39 @@ pub const ARM64CodeGen = struct {
                 }
             },
 
+            // === Conditional Select ===
+            // cond_select(cond, then_val, else_val) -> if cond != 0 then then_val else else_val
+            // ARM64: CMP cond, #0; CSEL dest, then, else, NE
+            .cond_select => {
+                if (value.args.len >= 3) {
+                    const cond = value.args[0];
+                    const then_val = value.args[1];
+                    const else_val = value.args[2];
+
+                    const cond_reg = self.getRegForValue(cond) orelse blk: {
+                        try self.ensureInReg(cond, 0);
+                        break :blk @as(u5, 0);
+                    };
+                    const then_reg = self.getRegForValue(then_val) orelse blk: {
+                        try self.ensureInReg(then_val, 1);
+                        break :blk @as(u5, 1);
+                    };
+                    const else_reg = self.getRegForValue(else_val) orelse blk: {
+                        try self.ensureInReg(else_val, 2);
+                        break :blk @as(u5, 2);
+                    };
+                    const dest_reg = self.getDestRegForValue(value);
+
+                    // CMP cond, #0 (test if condition is non-zero)
+                    try self.emit(asm_mod.encodeCMPImm(cond_reg, 0));
+                    // CSEL dest, then, else, NE (select then if cond != 0)
+                    try self.emit(asm_mod.encodeCSEL(dest_reg, then_reg, else_reg, .ne));
+
+                    debug.log(.codegen, "      -> CMP x{d}, #0; CSEL x{d}, x{d}, x{d}, NE", .{ cond_reg, dest_reg, then_reg, else_reg });
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
             else => {
                 // Unhandled op - skip
             },

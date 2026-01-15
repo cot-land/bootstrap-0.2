@@ -1143,6 +1143,23 @@ pub const SSABuilder = struct {
                 break :blk len_val;
             },
 
+            // === Conditional Select ===
+            // Following Go's CondSelect pattern: if cond then arg1 else arg2
+            .select => |s| blk: {
+                const cond = try self.convertNode(s.condition) orelse return error.MissingValue;
+                const then_val = try self.convertNode(s.then_value) orelse return error.MissingValue;
+                const else_val = try self.convertNode(s.else_value) orelse return error.MissingValue;
+
+                const val = try self.func.newValue(.cond_select, node.type_idx, cur, .{});
+                val.addArg(cond);
+                val.addArg(then_val);
+                val.addArg(else_val);
+                try cur.addValue(self.allocator, val);
+
+                debug.log(.ssa, "    select cond=v{} then=v{} else=v{} -> v{}", .{ cond.id, then_val.id, else_val.id, val.id });
+                break :blk val;
+            },
+
             // Unhandled cases - add as needed
             else => blk: {
                 // For now, return null for unhandled ops

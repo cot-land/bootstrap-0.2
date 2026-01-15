@@ -2,7 +2,7 @@
 // COT END-TO-END TEST SUITE
 // ============================================================================
 //
-// Progress: 106 / 106 tests passing (function types in checker!)
+// Progress: 114 / 114 tests passing (switch statement!)
 //
 // ============================================================================
 // STATUS TRACKER
@@ -1215,6 +1215,52 @@ fn test_for_slice() i64 {
 }
 
 // ============================================================================
+// TIER 17: Switch Statement
+// ============================================================================
+
+// Test switch - basic integer matching
+fn test_switch_int() i64 {
+    let x: i64 = 2;
+    return switch x {
+        1 => 10,
+        2 => 42,
+        3 => 30,
+        else => 99,
+    };
+}
+
+// Test switch - else (default) case
+fn test_switch_default() i64 {
+    let x: i64 = 5;
+    return switch x {
+        1 => 10,
+        2 => 20,
+        else => 42,
+    };
+}
+
+// Test switch - multiple patterns per case
+fn test_switch_multi() i64 {
+    let x: i64 = 3;
+    return switch x {
+        1, 2 => 12,
+        3, 4 => 42,
+        else => 99,
+    };
+}
+
+// Test switch - first case match
+fn test_switch_first() i64 {
+    let x: i64 = 1;
+    return switch x {
+        1 => 42,
+        2 => 20,
+        3 => 30,
+        else => 99,
+    };
+}
+
+// ============================================================================
 // TIER 17+: BLOCKED - Advanced Features
 // Need: more features...
 // ============================================================================
@@ -1381,6 +1427,12 @@ fn main() i64 {
     if test_for_break() == 30 { passed = passed + 1; }
     if test_for_continue() == 12 { passed = passed + 1; }
     if test_for_slice() == 90 { passed = passed + 1; }
+
+    // TIER 17: Switch Statement
+    if test_switch_int() == 42 { passed = passed + 1; }
+    if test_switch_default() == 42 { passed = passed + 1; }
+    if test_switch_multi() == 42 { passed = passed + 1; }
+    if test_switch_first() == 42 { passed = passed + 1; }
 
     return passed;
 }

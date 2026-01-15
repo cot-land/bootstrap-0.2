@@ -137,6 +137,11 @@ pub fn encodeCMPReg(rn: u5, rm: u5) u32 {
     return encodeAddSubReg(31, rn, rm, true, true);
 }
 
+/// CMP immediate is SUBS with Rd=XZR
+pub fn encodeCMPImm(rn: u5, imm12: u12) u32 {
+    return encodeAddSubImm(31, rn, imm12, 0, true, true);
+}
+
 // =========================================
 // PC-Relative Address (ADR/ADRP)
 // =========================================
@@ -461,6 +466,22 @@ pub fn encodeCSET(rd: u5, cond: Cond) u32 {
         (@as(u32, @intFromEnum(inv_cond)) << 12) |
         (0b01 << 10) | // op = CSINC
         (31 << 5) | // Rn = XZR
+        encodeRd(rd);
+}
+
+/// Encode CSEL (Conditional Select).
+/// CSEL Rd, Rn, Rm, cond
+/// If cond is true, Rd = Rn; else Rd = Rm.
+pub fn encodeCSEL(rd: u5, rn: u5, rm: u5, cond: Cond) u32 {
+    const sf: u32 = 1; // 64-bit
+    // CSEL: sf 0 0 11010100 Rm cond 0 0 Rn Rd
+    return (sf << 31) |
+        (0b00 << 29) |
+        (0b11010100 << 21) |
+        (@as(u32, rm) << 16) |
+        (@as(u32, @intFromEnum(cond)) << 12) |
+        (0b00 << 10) | // op = CSEL
+        (@as(u32, rn) << 5) |
         encodeRd(rd);
 }
 

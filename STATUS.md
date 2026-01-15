@@ -4,7 +4,7 @@
 
 ## Current State
 
-**110 e2e tests passing.** Core language features complete. Now focused on features required for self-hosting.
+**114 e2e tests passing.** Core language features complete. Now focused on features required for self-hosting.
 
 ---
 
@@ -30,7 +30,7 @@ A self-hosting Cot compiler needs to:
 | **Strings** | String comparison | ✅ Done | P0 | `s1 == s2` for keywords |
 | **Strings** | String indexing | ✅ Done | P0 | `s[i]` for char access |
 | **Strings** | String concatenation | ❌ TODO | P1 | Error messages |
-| **Control** | Switch statement | ❌ TODO | P1 | Token/AST dispatch |
+| **Control** | Switch statement | ✅ Done | P1 | Token/AST dispatch |
 | **Data** | Global constants | ✅ Done | P1 | Compile-time evaluation + inlining |
 | **Modules** | Import statement | ❌ TODO | P1 | Split code into files |
 | **Functions** | Indirect calls | 🔶 Partial | P1 | `f(x)` where f is variable |
@@ -185,30 +185,38 @@ fn main() i64 {
 
 ---
 
-### Phase 5: Switch Statement (P1)
+### Phase 5: Switch Statement (P1) - COMPLETE
 
 **Goal:** Efficient dispatch on values.
 
-```cot
-switch tok.kind {
-    .ident => return handleIdent(),
-    .number => return handleNumber(),
-    .lparen, .rparen => return handleParen(),
-    else => return handleOther(),
-}
-```
+**Completed (2026-01-15):**
+- ✅ Parser: `parseSwitchExpr()` handles all cases including multi-pattern
+- ✅ Checker: `checkSwitchExpr()` verifies case types match subject
+- ✅ Lowerer: `lowerSwitchExpr()` converts to chained select operations
+- ✅ SSA Builder: `cond_select` op for conditional value selection
+- ✅ Codegen: ARM64 CSEL instruction for efficient conditional select
 
-**Implementation Steps:**
-1. Parser: Parse switch expression and cases
-2. Checker: Verify case types match switch expression
-3. Lowerer: Convert to chained branches or jump table
-4. Consider: Start with if-else lowering, optimize later
+**Implementation Notes:**
+- Switch lowered to nested select (ternary) operations, following Go's pattern
+- Multiple patterns per case combined with OR: `1, 2 => x` becomes `(x == 1) or (x == 2)`
+- Uses ARM64 CSEL (Conditional Select) for zero-branch conditional moves
+- Added `cond_select` SSA op, `encodeCMPImm`, `encodeCSEL` to asm.zig
+
+```cot
+let x: i64 = 2;
+return switch x {
+    1 => 10,
+    2 => 20,
+    3, 4 => 34,  // Multiple patterns
+    else => 99,
+};
+```
 
 **Tests:**
 - `test_switch_int` - Switch on integer
-- `test_switch_enum` - Switch on enum value
-- `test_switch_default` - Default case
+- `test_switch_default` - Default (else) case
 - `test_switch_multi` - Multiple values per case
+- `test_switch_first` - First case match
 
 ---
 

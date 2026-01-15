@@ -450,6 +450,11 @@ pub const Op = enum(u16) {
     /// Create tuple from values
     make_tuple,
 
+    /// Conditional select: if cond then arg1 else arg2
+    /// Takes 3 args: condition (bool), then_value, else_value
+    /// Lowered to ARM64 CSEL or x86-64 CMOV
+    cond_select,
+
     // --- String/Slice Decomposition (Go: OpStringLen, OpStringPtr, OpSliceLen, etc.) ---
     /// Extract length from string. Takes string value, returns i64.
     string_len,
@@ -1067,6 +1072,7 @@ const op_info_table = blk: {
     table[@intFromEnum(Op.select0)] = .{ .name = "Select0", .arg_len = 1 };
     table[@intFromEnum(Op.select1)] = .{ .name = "Select1", .arg_len = 1 };
     table[@intFromEnum(Op.make_tuple)] = .{ .name = "MakeTuple", .arg_len = 2 };
+    table[@intFromEnum(Op.cond_select)] = .{ .name = "CondSelect", .arg_len = 3 };
 
     // String decomposition (Go: OpStringLen, OpStringPtr, OpStringMake)
     table[@intFromEnum(Op.string_len)] = .{ .name = "StringLen", .arg_len = 1 };

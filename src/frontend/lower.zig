@@ -998,6 +998,9 @@ pub const Lowerer = struct {
             .builtin_call => |bc| {
                 return try self.lowerBuiltinCall(bc);
             },
+            .switch_expr => |se| {
+                return try self.lowerSwitchExpr(se);
+            },
             else => return ir.null_node,
         }
     }
@@ -1452,6 +1455,70 @@ pub const Lowerer = struct {
 
         const result_type = self.inferExprType(if_expr.then_branch);
         return try fb.emitSelect(cond, then_val, else_val, result_type, if_expr.span);
+    }
+
+    /// Lower switch expression to chained select operations.
+    /// Following Go's pattern: convert switch to if-else chain (nested selects).
+    ///
+    /// switch x { 1 => "one", 2, 3 => "multi", else => "other" }
+    /// becomes: select(eq(x,1), "one", select(or(eq(x,2),eq(x,3)), "multi", "other"))
+    fn lowerSwitchExpr(self: *Lowerer, se: ast.SwitchExpr) Error!ir.NodeIndex {
+        const fb = self.current_func orelse return ir.null_node;
+
+        debug.log(.lower, "lowerSwitchExpr: {d} cases", .{se.cases.len});
+
+        // Lower the switch subject once
+        const subject = try self.lowerExprNode(se.subject);
+
+        // Determine result type from first case body
+        const result_type = if (se.cases.len > 0)
+            self.inferExprType(se.cases[0].body)
+        else if (se.else_body != null_node)
+            self.inferExprType(se.else_body)
+        else
+            TypeRegistry.VOID;
+
+        // Start with else value (or null if no else)
+        var current_result: ir.NodeIndex = if (se.else_body != null_node)
+            try self.lowerExprNode(se.else_body)
+        else
+            ir.null_node;
+
+        // Process cases in reverse order to build nested selects
+        // Last case wraps else, then each preceding case wraps that result
+        var i: usize = se.cases.len;
+        while (i > 0) {
+            i -= 1;
+            const case = se.cases[i];
+
+            // Build condition: OR together all patterns for this case
+            var case_cond: ir.NodeIndex = ir.null_node;
+
+            for (case.patterns) |pattern_idx| {
+                // Lower the pattern value
+                const pattern_val = try self.lowerExprNode(pattern_idx);
+
+                // Emit comparison: subject == pattern
+                const pattern_cond = try fb.emitBinary(.eq, subject, pattern_val, TypeRegistry.BOOL, se.span);
+
+                // OR with previous patterns (if any)
+                if (case_cond == ir.null_node) {
+                    case_cond = pattern_cond;
+                } else {
+                    case_cond = try fb.emitBinary(.@"or", case_cond, pattern_cond, TypeRegistry.BOOL, se.span);
+                }
+            }
+
+            // Lower the case body
+            const case_body = try self.lowerExprNode(case.body);
+
+            // Emit select: if case_cond then case_body else current_result
+            if (case_cond != ir.null_node) {
+                current_result = try fb.emitSelect(case_cond, case_body, current_result, result_type, se.span);
+            }
+        }
+
+        return current_result;
     }
 
     /// Lower builtin calls: @sizeOf(T), @alignOf(T), etc.

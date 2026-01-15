@@ -474,6 +474,26 @@ for i in [1, 2, 3] {
 }
 ```
 
+### Switch Expression
+```cot
+// Switch on value - returns result
+let result: i64 = switch x {
+    1 => 10,
+    2 => 20,
+    3 => 30,
+    else => 99,
+};
+
+// Multiple patterns per case
+let category: i64 = switch code {
+    1, 2 => 100,      // Matches 1 or 2
+    3, 4, 5 => 200,   // Matches 3, 4, or 5
+    else => 0,
+};
+```
+
+Switch is an expression that evaluates to the matched case's body. The `else` case handles unmatched values.
+
 ### Break Statement
 ```cot
 while true {
