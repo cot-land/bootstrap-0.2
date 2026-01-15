@@ -363,6 +363,9 @@ pub const Driver = struct {
         // Pass globals to codegen for data section emission
         codegen.setGlobals(globals);
 
+        // Pass type registry for composite type sizing (BUG-003 fix)
+        codegen.setTypeRegistry(type_reg);
+
         for (funcs, 0..) |*ir_func, func_idx| {
             debug.log(.ssa, "=== Processing function {} '{s}' ===", .{ func_idx, ir_func.name });
 

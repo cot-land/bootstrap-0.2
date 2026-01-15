@@ -1,0 +1,12 @@
+// BUG-001: String parameter passing corrupts length
+// Expected exit: 2
+// Actual exit: 96 (or other garbage)
+
+fn get_len(text: string) i64 {
+    return len(text);
+}
+
+fn main() i64 {
+    let s: string = "fn";
+    return get_len(s);
+}

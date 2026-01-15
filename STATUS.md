@@ -4,9 +4,11 @@
 
 ## Current State
 
-**142 e2e tests passing.** Core language features complete. Now focused on features required for self-hosting.
+**142 e2e tests passing.** Core language features complete. Now focused on self-hosting.
 
 **Runtime Library:** String concatenation uses the runtime library at `runtime/cot_runtime.o`. The compiler auto-links it when found. See [Runtime Library](#runtime-library) section below.
+
+**Self-Hosting:** Bootstrapping via staged compilers in `cot0/` through `cot9/`. See [cot0/README.md](cot0/README.md) for the plan.
 
 ---
 

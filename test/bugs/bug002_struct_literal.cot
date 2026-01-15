@@ -1,0 +1,13 @@
+// BUG-002: Struct literal syntax not implemented
+// Expected: compiles and returns 30
+// Actual: Parser error "expected expression"
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+fn main() i64 {
+    let p: Point = Point{ .x = 10, .y = 20 };
+    return p.x + p.y;
+}

@@ -1,34 +1,66 @@
 # Bootstrap 0.2 - Development Guidelines
 
-## DEBUGGING INFRASTRUCTURE FIRST - HIGHEST PRIORITY
+## BUG FIXING WORKFLOW - MANDATORY STEPS
 
-**When encountering a bug, ALWAYS extend the debug infrastructure BEFORE attempting to fix it.**
+**Every bug MUST follow this exact workflow. No exceptions.**
 
-This is the most important rule in this codebase. The pattern that wastes time:
-```
-1. See bug → 2. Grep through source → 3. Read code → 4. Guess location → 5. Fix → 6. Repeat for next bug
-```
+### Step 1: Run COT_DEBUG=all
 
-The pattern that scales:
-```
-1. See bug → 2. Ask "why didn't debug output reveal this?" → 3. Add debug logging that WOULD have revealed it → 4. Re-run with debug → 5. Bug location is now obvious → 6. Fix
+```bash
+COT_DEBUG=all ./zig-out/bin/cot /tmp/bugtest.cot -o /tmp/bugtest 2>&1 | less
 ```
 
-**Why this matters:**
-- Fixing one bug helps one bug. Better debugging helps ALL future bugs.
-- As features get more complex, debugging becomes the bottleneck.
-- If `COT_DEBUG=all` doesn't immediately pinpoint the problem, the debug framework is insufficient.
+Trace the value/type through the entire pipeline. The debug output should make the bug location **obvious**.
 
-**What good debug output looks like:**
-- Shows **types** on every SSA value: `v14: u8 = load ptr=v11`
-- Shows **codegen decisions**: `v14: load u8 → LDRB w1, [x0]` (not just "load")
-- Shows **mismatches**: `WARNING: emitting 64-bit LDR for 8-bit type`
-- Makes the bug **obvious from output alone** without reading source code
+### Step 2: If Debug Output Is Too Thin - ADD MORE DEBUG FIRST
 
-**Before fixing any bug, ask:**
-1. Why didn't `COT_DEBUG=all` show me exactly where this failed?
-2. What logging would have made this obvious?
-3. Add that logging FIRST, verify it reveals the bug, THEN fix.
+If `COT_DEBUG=all` doesn't pinpoint the exact issue:
+- **STOP** - Do not guess at the fix
+- **ADD debug logging** that WOULD have revealed the bug
+- **Re-run** with the new logging
+- **Verify** the bug location is now obvious
+- Only THEN proceed to step 3
+
+Good debug output shows:
+- **Types** on every value: `v14: i32 = const_int [0]` (not `v14 = const_int`)
+- **Decisions**: `store v3, v1 -> STR w0 (4-byte)` vs `STR x0 (8-byte)`
+- **Mismatches**: `WARNING: storing enum (4B) with 8-byte instruction`
+
+### Step 3: Investigate Go - MANDATORY
+
+**Before writing ANY fix, search `~/learning/go` for how Go handles this case.**
+
+```bash
+# Example searches:
+grep -r "enum\|const.*type" ~/learning/go/src/cmd/compile/internal/types/
+grep -r "struct.*offset\|field.*align" ~/learning/go/src/cmd/compile/internal/types/size.go
+grep -r "expand_calls\|decompose" ~/learning/go/src/cmd/compile/internal/ssa/
+```
+
+**Why this is mandatory:**
+- Go's compiler has been battle-tested for 15+ years
+- Every edge case we hit, they've already solved
+- This is why bootstrap 0.1 and 1.0 failed - we guessed at fixes instead of copying proven patterns
+
+### Step 4: Implement the Fix
+
+Only after steps 1-3 are complete:
+1. Adapt Go's pattern to our Zig codebase
+2. Implement the fix
+3. Verify with `COT_DEBUG=all` that the issue is resolved
+4. Run `./zig-out/bin/cot test/e2e/all_tests.cot` to check for regressions
+
+### The Pattern That Fails (DO NOT DO THIS)
+
+```
+See bug → Grep source → Guess fix → Fix causes new bug → Repeat forever
+```
+
+### The Pattern That Works
+
+```
+See bug → COT_DEBUG=all → Add debug if needed → Search ~/learning/go → Copy Go's pattern → Fix works first time
+```
 
 ---
 

@@ -89,8 +89,11 @@ fn expandBlock(f: *Func, block: *Block) !void {
                 // - Result is decomposed into select_n ops
                 try expandStringConcat(f, block, &i, v);
             },
-            .static_call => {
-                // Check if this call returns an aggregate type
+            .static_call, .closure_call => {
+                // First, expand any string arguments (decompose into ptr/len)
+                try expandCallArgs(f, block, &i, v);
+
+                // Then check if this call returns an aggregate type
                 if (isAggregateType(v.type_idx)) {
                     try expandCallResult(f, block, &i, v);
                 } else {
@@ -271,6 +274,97 @@ fn getStringLenComponent(str_val: *Value) *Value {
 fn isAggregateType(type_idx: TypeIndex) bool {
     return type_idx == TypeRegistry.STRING;
     // TODO: Add slice types when implemented
+}
+
+/// Expand string arguments in a call to ptr/len pairs.
+/// This ensures strings are passed in two registers (ptr, len) per ARM64 ABI.
+fn expandCallArgs(f: *Func, block: *Block, idx: *usize, call_val: *Value) !void {
+    // Build new args list, expanding strings into ptr/len pairs
+    var new_args = std.ArrayListUnmanaged(*Value){};
+    var needs_expansion = false;
+
+    // For closure_call, first arg is the function pointer - skip it
+    const start_idx: usize = if (call_val.op == .closure_call) 1 else 0;
+
+    // Check if any args need expansion
+    for (call_val.args[start_idx..]) |arg| {
+        if (arg.type_idx == TypeRegistry.STRING) {
+            needs_expansion = true;
+            break;
+        }
+    }
+
+    if (!needs_expansion) {
+        return; // No strings, nothing to do
+    }
+
+    debug.log(.ssa, "  expand_calls: expanding string args for v{d}", .{call_val.id});
+
+    // Copy closure's function pointer if present
+    if (call_val.op == .closure_call and call_val.args.len > 0) {
+        try new_args.append(f.allocator, call_val.args[0]);
+    }
+
+    // Process each argument
+    for (call_val.args[start_idx..]) |arg| {
+        if (arg.type_idx == TypeRegistry.STRING) {
+            // Check if this is a const_string (string literal passed directly)
+            if (arg.op == .const_string) {
+                // For const_string: ptr is the string address, len is a constant
+                // The const_string itself will generate the address via ADRP+ADD
+                const extract_ptr = try f.newValue(.string_ptr, TypeRegistry.I64, block, call_val.pos);
+                extract_ptr.addArg(arg);
+                try insertValueBefore(f, block, idx.*, extract_ptr);
+                idx.* += 1;
+
+                // Look up the actual string length from the literal table
+                const string_idx: usize = @intCast(arg.aux_int);
+                const str_len: i64 = if (string_idx < f.string_literals.len)
+                    @intCast(f.string_literals[string_idx].len)
+                else
+                    0;
+
+                // Create a const_int for the length
+                const len_const = try f.newValue(.const_int, TypeRegistry.I64, block, call_val.pos);
+                len_const.aux_int = str_len;
+                try insertValueBefore(f, block, idx.*, len_const);
+                idx.* += 1;
+
+                try new_args.append(f.allocator, extract_ptr);
+                try new_args.append(f.allocator, len_const);
+
+                debug.log(.ssa, "    expanded const_string arg v{d} -> ptr v{d}, len v{d} (len={d})", .{ arg.id, extract_ptr.id, len_const.id, str_len });
+            } else {
+                // For slice_make/string_make: decompose into components
+                const ptr_val = getStringPtrComponent(arg);
+                const len_val = getStringLenComponent(arg);
+
+                // Create string_ptr and string_len ops to make dependencies explicit
+                const extract_ptr = try f.newValue(.string_ptr, TypeRegistry.I64, block, call_val.pos);
+                extract_ptr.addArg(ptr_val);
+                try insertValueBefore(f, block, idx.*, extract_ptr);
+                idx.* += 1;
+
+                const extract_len = try f.newValue(.string_len, TypeRegistry.I64, block, call_val.pos);
+                extract_len.addArg(len_val);
+                try insertValueBefore(f, block, idx.*, extract_len);
+                idx.* += 1;
+
+                try new_args.append(f.allocator, extract_ptr);
+                try new_args.append(f.allocator, extract_len);
+
+                debug.log(.ssa, "    expanded string arg v{d} -> ptr v{d}, len v{d}", .{ arg.id, extract_ptr.id, extract_len.id });
+            }
+        } else {
+            // Non-string arg, keep as-is
+            try new_args.append(f.allocator, arg);
+        }
+    }
+
+    // Replace call's args with expanded version
+    // Note: We're modifying the args array in place
+    call_val.args = try f.allocator.dupe(*Value, new_args.items);
+    new_args.deinit(f.allocator);
 }
 
 /// Insert a value into a block at a specific position.

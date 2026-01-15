@@ -43,7 +43,9 @@ const asm_mod = @import("../arm64/asm.zig");
 const regalloc = @import("../ssa/regalloc.zig");
 const macho = @import("../obj/macho.zig");
 const debug = @import("../pipeline_debug.zig");
-const TypeRegistry = @import("../frontend/types.zig").TypeRegistry;
+const types_mod = @import("../frontend/types.zig");
+const TypeRegistry = types_mod.TypeRegistry;
+const TypeIndex = types_mod.TypeIndex;
 const ir_mod = @import("../frontend/ir.zig");
 const abi = @import("../ssa/abi.zig");
 
@@ -163,6 +165,9 @@ pub const ARM64CodeGen = struct {
     allocator: std.mem.Allocator,
     func: *const Func,
 
+    /// Type registry for looking up composite type sizes (enums, structs)
+    type_reg: ?*const TypeRegistry = null,
+
     /// Register state.
     reg_state: [32]?*const Value = [_]?*const Value{null} ** 32,
 
@@ -268,6 +273,27 @@ pub const ARM64CodeGen = struct {
     /// Must be called before finalize.
     pub fn setGlobals(self: *ARM64CodeGen, globs: []const ir_mod.Global) void {
         self.globals = globs;
+    }
+
+    /// Set type registry for looking up composite type sizes.
+    /// Must be called before generateBinary if using composite types.
+    pub fn setTypeRegistry(self: *ARM64CodeGen, reg: *const TypeRegistry) void {
+        self.type_reg = reg;
+    }
+
+    /// Get the size of a type in bytes, using type registry for composite types.
+    /// Falls back to basicTypeSize for basic types.
+    fn getTypeSize(self: *const ARM64CodeGen, type_idx: TypeIndex) u8 {
+        // For basic types, use fast path
+        if (type_idx < TypeRegistry.FIRST_USER_TYPE) {
+            return TypeRegistry.basicTypeSize(type_idx);
+        }
+        // For composite types (enums, structs), use type registry
+        if (self.type_reg) |reg| {
+            return @intCast(reg.sizeOf(type_idx));
+        }
+        // Fallback if no registry
+        return TypeRegistry.basicTypeSize(type_idx);
     }
 
     // ========================================================================
@@ -1605,7 +1631,17 @@ pub const ARM64CodeGen = struct {
 
                 // Emit BL with offset 0 (linker will fix)
                 try self.emit(asm_mod.encodeBL(0));
-                debug.log(.codegen, "      -> BL {s}, result in x0", .{raw_name});
+
+                // BUG-003: For 16-byte return types, save x1 to x8 immediately
+                // The regalloc doesn't know x1 is also part of the result, so it may
+                // reuse x1 for subsequent values. Save x1 to x8 which is caller-saved.
+                const type_size = self.getTypeSize(value.type_idx);
+                if (type_size == 16) {
+                    try self.emit(asm_mod.encodeADDImm(8, 1, 0, 0)); // x8 = x1 (save second half)
+                    debug.log(.codegen, "      -> BL {s}, result in x0+x1, saved x1 to x8", .{raw_name});
+                } else {
+                    debug.log(.codegen, "      -> BL {s}, result in x0", .{raw_name});
+                }
 
                 // Result is in x0 - regalloc will handle spill/reload if needed
                 // Go's approach: don't move to callee-saved, let regalloc spill
@@ -1832,21 +1868,38 @@ pub const ARM64CodeGen = struct {
 
                     // CRITICAL: Use type-sized load instruction
                     // This is where the bug was: always using 64-bit LDR for all types
-                    const type_size = TypeRegistry.basicTypeSize(value.type_idx);
-                    const ld_size = asm_mod.LdStSize.fromBytes(type_size);
+                    // BUG-003 fix: Use getTypeSize to handle enum types correctly
+                    const type_size = self.getTypeSize(value.type_idx);
                     const type_name = TypeRegistry.basicTypeName(value.type_idx);
 
-                    try self.emit(asm_mod.encodeLdrStrSized(dest_reg, addr_reg, 0, ld_size, true));
-                    debug.log(.codegen, "      -> LDR{s} {s}{d}, [{s}{d}] (load {s}, {d}B)", .{
-                        ld_size.name(),
-                        if (ld_size == .dword) "x" else "w",
-                        dest_reg,
-                        "x",
-                        addr_reg,
-                        type_name,
-                        type_size,
-                    });
-                    try self.value_regs.put(self.allocator, value, dest_reg);
+                    // BUG-003: Special handling for 16-byte struct loads (returned in x0+x1)
+                    if (type_size == 16) {
+                        // Use LDP to load both 8-byte halves
+                        // LDP dest_reg, dest_reg+1, [addr_reg]
+                        // For struct returns, load into x0 and x1
+                        try self.emit(asm_mod.encodeLdpStp(dest_reg, dest_reg + 1, addr_reg, 0, .signed_offset, true));
+                        debug.log(.codegen, "      -> LDP x{d}, x{d}, [x{d}] (load {s}, {d}B)", .{
+                            dest_reg,
+                            dest_reg + 1,
+                            addr_reg,
+                            type_name,
+                            type_size,
+                        });
+                        try self.value_regs.put(self.allocator, value, dest_reg);
+                    } else {
+                        const ld_size = asm_mod.LdStSize.fromBytes(type_size);
+                        try self.emit(asm_mod.encodeLdrStrSized(dest_reg, addr_reg, 0, ld_size, true));
+                        debug.log(.codegen, "      -> LDR{s} {s}{d}, [{s}{d}] (load {s}, {d}B)", .{
+                            ld_size.name(),
+                            if (ld_size == .dword) "x" else "w",
+                            dest_reg,
+                            "x",
+                            addr_reg,
+                            type_name,
+                            type_size,
+                        });
+                        try self.value_regs.put(self.allocator, value, dest_reg);
+                    }
                 }
             },
 
@@ -1864,7 +1917,8 @@ pub const ARM64CodeGen = struct {
                     };
 
                     // CRITICAL: Use type-sized store instruction
-                    const type_size = TypeRegistry.basicTypeSize(val.type_idx);
+                    // BUG-003 fix: Use getTypeSize to handle enum types correctly
+                    const type_size = self.getTypeSize(val.type_idx);
 
                     // Special handling for 16-byte types (string/slice)
                     // These are stored as (ptr, len) pairs
@@ -1881,14 +1935,15 @@ pub const ARM64CodeGen = struct {
                         try self.emit(asm_mod.encodeLdpStp(0, 8, actual_addr_reg, 0, .signed_offset, false));
                         debug.log(.codegen, "      -> STP x0, x8, [x{d}] (store string_concat 16B)", .{actual_addr_reg});
                     } else if (type_size == 16 and val.op == .static_call) {
-                        // After static_call: ptr in x0, len in x1
-                        // Save x1 to x8 first, then use x0 and x8
-                        try self.emit(asm_mod.encodeADDImm(8, 1, 0, 0)); // x8 = x1
+                        // After static_call returning struct: first half in x0, second half was saved to x8
+                        // BUG-003 fix: The second half was saved to x8 immediately after the call
+                        // (because x1 gets clobbered by local_addr before we get here)
                         var actual_addr_reg = addr_reg;
                         if (addr_reg == 0 or addr_reg == 8) {
                             actual_addr_reg = 9;
                             try self.emit(asm_mod.encodeADDImm(9, addr_reg, 0, 0)); // x9 = addr_reg
                         }
+                        // x0 = first half, x8 = second half (saved immediately after call)
                         try self.emit(asm_mod.encodeLdpStp(0, 8, actual_addr_reg, 0, .signed_offset, false));
                         debug.log(.codegen, "      -> STP x0, x8, [x{d}] (store call 16B)", .{actual_addr_reg});
                     } else if (type_size == 16 and val.op == .string_make) {
@@ -2164,6 +2219,25 @@ pub const ARM64CodeGen = struct {
 
     fn moveToX0(self: *ARM64CodeGen, value: *const Value) !void {
         debug.log(.codegen, "    moveToX0: v{d} (op={s})", .{ value.id, @tagName(value.op) });
+
+        // BUG-003: Handle 16-byte struct returns (returned in x0+x1)
+        const type_size = self.getTypeSize(value.type_idx);
+        if (type_size == 16) {
+            // For 16-byte values, they were loaded via LDP into reg and reg+1
+            // We need to move both halves to x0 and x1
+            if (self.getRegForValue(value)) |src_reg| {
+                debug.log(.codegen, "      16-byte return: moving x{d}+x{d} to x0+x1", .{ src_reg, src_reg + 1 });
+                // Order matters: move first half to x0 before moving second half to x1
+                if (src_reg != 0) {
+                    try self.emit(asm_mod.encodeADDImm(0, src_reg, 0, 0)); // x0 = first half
+                }
+                if (src_reg + 1 != 1) {
+                    try self.emit(asm_mod.encodeADDImm(1, src_reg + 1, 0, 0)); // x1 = second half
+                }
+                return;
+            }
+        }
+
         try self.moveToReg(0, value);
     }
 

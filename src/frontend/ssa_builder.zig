@@ -112,28 +112,88 @@ pub const SSABuilder = struct {
         // computations before we can store them.
         //
         // Phase 1: Create all arg values (captures values from ABI registers)
+        // String/slice params take TWO registers (ptr + len), so we track the
+        // physical register index separately from the logical param index.
         var param_values = std.ArrayListUnmanaged(*Value){};
         var param_indices = std.ArrayListUnmanaged(usize){};
+        var phys_reg_idx: i32 = 0; // Physical register index (x0, x1, ...)
+
         for (ir_func.locals, 0..) |local, i| {
             if (local.is_param) {
-                const param_val = try func.newValue(.arg, local.type_idx, entry, .{});
-                param_val.aux_int = @intCast(local.param_idx);
-                try entry.addValue(allocator, param_val);
-                try param_values.append(allocator, param_val);
-                try param_indices.append(allocator, i);
-                try vars.put(@intCast(i), param_val);
+                if (local.type_idx == TypeRegistry.STRING) {
+                    // String parameter: comes in TWO registers (ptr, len)
+                    // Create arg for ptr
+                    const ptr_val = try func.newValue(.arg, TypeRegistry.I64, entry, .{});
+                    ptr_val.aux_int = phys_reg_idx;
+                    try entry.addValue(allocator, ptr_val);
+                    phys_reg_idx += 1;
+
+                    // Create arg for len
+                    const len_val = try func.newValue(.arg, TypeRegistry.I64, entry, .{});
+                    len_val.aux_int = phys_reg_idx;
+                    try entry.addValue(allocator, len_val);
+                    phys_reg_idx += 1;
+
+                    // Combine into slice_make to form the string
+                    const string_val = try func.newValue(.slice_make, TypeRegistry.STRING, entry, .{});
+                    string_val.addArg2(ptr_val, len_val);
+                    try entry.addValue(allocator, string_val);
+
+                    try param_values.append(allocator, string_val);
+                    try param_indices.append(allocator, i);
+                    try vars.put(@intCast(i), string_val);
+                } else {
+                    // Regular parameter: single register
+                    const param_val = try func.newValue(.arg, local.type_idx, entry, .{});
+                    param_val.aux_int = phys_reg_idx;
+                    try entry.addValue(allocator, param_val);
+                    phys_reg_idx += 1;
+
+                    try param_values.append(allocator, param_val);
+                    try param_indices.append(allocator, i);
+                    try vars.put(@intCast(i), param_val);
+                }
             }
         }
 
         // Phase 2: Store all args to their stack slots
         for (param_values.items, param_indices.items) |param_val, local_idx| {
-            const addr_val = try func.newValue(.local_addr, TypeRegistry.VOID, entry, .{});
-            addr_val.aux_int = @intCast(local_idx);
-            try entry.addValue(allocator, addr_val);
+            const local = ir_func.locals[local_idx];
 
-            const store_val = try func.newValue(.store, TypeRegistry.VOID, entry, .{});
-            store_val.addArg2(addr_val, param_val);
-            try entry.addValue(allocator, store_val);
+            if (local.type_idx == TypeRegistry.STRING) {
+                // String: store ptr and len separately
+                // param_val is a slice_make with args[0]=ptr, args[1]=len
+                const ptr_val = param_val.args[0];
+                const len_val = param_val.args[1];
+
+                // Store ptr at offset 0
+                const addr_ptr = try func.newValue(.local_addr, TypeRegistry.VOID, entry, .{});
+                addr_ptr.aux_int = @intCast(local_idx);
+                try entry.addValue(allocator, addr_ptr);
+
+                const store_ptr = try func.newValue(.store, TypeRegistry.VOID, entry, .{});
+                store_ptr.addArg2(addr_ptr, ptr_val);
+                try entry.addValue(allocator, store_ptr);
+
+                // Store len at offset 8
+                const addr_len = try func.newValue(.off_ptr, TypeRegistry.VOID, entry, .{});
+                addr_len.aux_int = 8;
+                addr_len.addArg(addr_ptr);
+                try entry.addValue(allocator, addr_len);
+
+                const store_len = try func.newValue(.store, TypeRegistry.VOID, entry, .{});
+                store_len.addArg2(addr_len, len_val);
+                try entry.addValue(allocator, store_len);
+            } else {
+                // Regular param: single store
+                const addr_val = try func.newValue(.local_addr, TypeRegistry.VOID, entry, .{});
+                addr_val.aux_int = @intCast(local_idx);
+                try entry.addValue(allocator, addr_val);
+
+                const store_val = try func.newValue(.store, TypeRegistry.VOID, entry, .{});
+                store_val.addArg2(addr_val, param_val);
+                try entry.addValue(allocator, store_val);
+            }
         }
         param_values.deinit(allocator);
         param_indices.deinit(allocator);

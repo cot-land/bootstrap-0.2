@@ -405,6 +405,13 @@ pub const TypeRegistry = struct {
         // Register string type ([]u8)
         try reg.types.append(allocator, .{ .slice = .{ .elem = U8 } }); // 17
 
+        // Reserve SSA-specific type indices (18-21) so they don't conflict with user types.
+        // These are used internally by SSA and should never appear in user code.
+        try reg.types.append(allocator, .{ .basic = .void_type }); // 18 = SSA_MEM placeholder
+        try reg.types.append(allocator, .{ .basic = .void_type }); // 19 = SSA_FLAGS placeholder
+        try reg.types.append(allocator, .{ .basic = .void_type }); // 20 = SSA_TUPLE placeholder
+        try reg.types.append(allocator, .{ .basic = .void_type }); // 21 = SSA_RESULTS placeholder
+
         // Register basic type names
         try reg.name_map.put("bool", BOOL);
         try reg.name_map.put("i8", I8);

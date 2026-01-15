@@ -1744,14 +1744,22 @@ pub const Lowerer = struct {
 
         switch (expr) {
             .type_expr => |te| return self.resolveTypeKind(te.kind),
-            .ident => |ident| return self.type_reg.lookupByName(ident.name) orelse TypeRegistry.VOID,
+            .ident => |ident| {
+                const result = self.type_reg.lookupByName(ident.name) orelse TypeRegistry.VOID;
+                debug.log(.lower, "resolveTypeNode ident '{s}' -> type_idx={d}", .{ ident.name, result });
+                return result;
+            },
             else => return TypeRegistry.VOID,
         }
     }
 
     fn resolveTypeKind(self: *Lowerer, kind: ast.TypeKind) TypeIndex {
         switch (kind) {
-            .named => |name| return self.type_reg.lookupByName(name) orelse TypeRegistry.VOID,
+            .named => |name| {
+                const result = self.type_reg.lookupByName(name) orelse TypeRegistry.VOID;
+                debug.log(.lower, "resolveTypeKind named '{s}' -> type_idx={d}", .{ name, result });
+                return result;
+            },
             .pointer => |inner| {
                 const inner_type = self.resolveTypeNode(inner);
                 return self.type_reg.makePointer(inner_type) catch TypeRegistry.VOID;

@@ -1,0 +1,71 @@
+// Cot0 Token Definitions
+// Minimal token set for: i64, arithmetic, functions, return
+
+// Token type enumeration
+enum TokenType {
+    // Literals
+    Int,        // 42, 0xFF, 0b1010
+
+    // Identifiers and keywords
+    Ident,      // foo, bar
+    Fn,         // fn
+    Return,     // return
+    I64,        // i64
+
+    // Punctuation
+    LParen,     // (
+    RParen,     // )
+    LBrace,     // {
+    RBrace,     // }
+    Comma,      // ,
+    Colon,      // :
+    Semi,       // ;
+
+    // Operators
+    Plus,       // +
+    Minus,      // -
+    Star,       // *
+    Slash,      // /
+
+    // Special
+    Eof,        // end of file
+    Error,      // invalid token
+}
+
+// Token structure
+struct Token {
+    kind: TokenType,
+    start: i64,     // offset into source
+    end: i64,       // end offset (start + length)
+}
+
+// Create a token
+fn token_new(k: TokenType, s: i64, e: i64) Token {
+    var t: Token;
+    t.kind = k;
+    t.start = s;
+    t.end = e;
+    return t;
+}
+
+// Check if token is a keyword
+fn is_keyword(text: string) TokenType {
+    if len(text) == 2 {
+        if text[0] == 102 and text[1] == 110 {  // "fn"
+            return TokenType.Fn;
+        }
+    }
+    if len(text) == 3 {
+        if text[0] == 105 and text[1] == 54 and text[2] == 52 {  // "i64"
+            return TokenType.I64;
+        }
+    }
+    if len(text) == 6 {
+        // "return"
+        if text[0] == 114 and text[1] == 101 and text[2] == 116 and
+           text[3] == 117 and text[4] == 114 and text[5] == 110 {
+            return TokenType.Return;
+        }
+    }
+    return TokenType.Ident;
+}

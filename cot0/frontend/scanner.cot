@@ -1,0 +1,122 @@
+// Cot0 Scanner
+// Minimal lexer for: i64, arithmetic, functions, return
+
+import "token.cot"
+
+struct Scanner {
+    source: string,
+    pos: i64,
+}
+
+fn scanner_new(source: string) Scanner {
+    return Scanner{ .source = source, .pos = 0 };
+}
+
+fn scanner_at_end(s: *Scanner) bool {
+    return s.pos >= len(s.source);
+}
+
+fn scanner_peek(s: *Scanner) u8 {
+    if scanner_at_end(s) {
+        return 0;
+    }
+    return s.source[s.pos];
+}
+
+fn scanner_advance(s: *Scanner) u8 {
+    let c: u8 = scanner_peek(s);
+    s.pos = s.pos + 1;
+    return c;
+}
+
+fn is_digit(c: u8) bool {
+    return c >= 48 and c <= 57;  // '0' to '9'
+}
+
+fn is_alpha(c: u8) bool {
+    return (c >= 65 and c <= 90) or   // A-Z
+           (c >= 97 and c <= 122) or  // a-z
+           c == 95;                    // _
+}
+
+fn is_alnum(c: u8) bool {
+    return is_alpha(c) or is_digit(c);
+}
+
+fn skip_whitespace(s: *Scanner) {
+    while not scanner_at_end(s) {
+        let c: u8 = scanner_peek(s);
+        if c == 32 or c == 9 or c == 10 or c == 13 {  // space, tab, newline, cr
+            scanner_advance(s);
+        } else if c == 47 {  // '/'
+            // Check for comment
+            if s.pos + 1 < len(s.source) and s.source[s.pos + 1] == 47 {
+                // Line comment - skip to end of line
+                while not scanner_at_end(s) and scanner_peek(s) != 10 {
+                    scanner_advance(s);
+                }
+            } else {
+                return;
+            }
+        } else {
+            return;
+        }
+    }
+}
+
+fn scan_number(s: *Scanner) Token {
+    let start: i64 = s.pos;
+    while is_digit(scanner_peek(s)) {
+        scanner_advance(s);
+    }
+    return token_new(TokenType.Int, start, s.pos - start);
+}
+
+fn scan_ident(s: *Scanner) Token {
+    let start: i64 = s.pos;
+    while is_alnum(scanner_peek(s)) {
+        scanner_advance(s);
+    }
+    // Check if it's a keyword
+    let text: string = @string(s.source.ptr + start, s.pos - start);
+    let tt: TokenType = is_keyword(text);
+    return token_new(tt, start, s.pos - start);
+}
+
+fn scanner_next(s: *Scanner) Token {
+    skip_whitespace(s);
+
+    if scanner_at_end(s) {
+        return token_new(TokenType.Eof, s.pos, 0);
+    }
+
+    let start: i64 = s.pos;
+    let c: u8 = scanner_advance(s);
+
+    // Single character tokens
+    if c == 40 { return token_new(TokenType.LParen, start, 1); }  // (
+    if c == 41 { return token_new(TokenType.RParen, start, 1); }  // )
+    if c == 123 { return token_new(TokenType.LBrace, start, 1); } // {
+    if c == 125 { return token_new(TokenType.RBrace, start, 1); } // }
+    if c == 44 { return token_new(TokenType.Comma, start, 1); }   // ,
+    if c == 58 { return token_new(TokenType.Colon, start, 1); }   // :
+    if c == 59 { return token_new(TokenType.Semi, start, 1); }    // ;
+    if c == 43 { return token_new(TokenType.Plus, start, 1); }    // +
+    if c == 45 { return token_new(TokenType.Minus, start, 1); }   // -
+    if c == 42 { return token_new(TokenType.Star, start, 1); }    // *
+    if c == 47 { return token_new(TokenType.Slash, start, 1); }   // /
+
+    // Numbers
+    if is_digit(c) {
+        s.pos = start;  // Back up to re-read
+        return scan_number(s);
+    }
+
+    // Identifiers
+    if is_alpha(c) {
+        s.pos = start;  // Back up to re-read
+        return scan_ident(s);
+    }
+
+    return token_new(TokenType.Error, start, 1);
+}

@@ -1,0 +1,39 @@
+// Tests for token.cot
+import "token.cot"
+
+fn main() i64 {
+    var passed: i64 = 0;
+
+    // Test 1: token_new creates token correctly
+    let t1: Token = token_new(TokenType.Int, 10, 15);
+    if t1.start == 10 and t1.end == 15 {
+        passed = passed + 1;
+    }
+
+    // Test 2: is_keyword recognizes "fn"
+    let fn_kw: string = "fn";
+    if is_keyword(fn_kw) == TokenType.Fn {
+        passed = passed + 1;
+    }
+
+    // Test 3: is_keyword recognizes "i64"
+    let i64_kw: string = "i64";
+    if is_keyword(i64_kw) == TokenType.I64 {
+        passed = passed + 1;
+    }
+
+    // Test 4: is_keyword recognizes "return"
+    let ret_kw: string = "return";
+    if is_keyword(ret_kw) == TokenType.Return {
+        passed = passed + 1;
+    }
+
+    // Test 5: is_keyword returns Ident for non-keywords
+    let foo: string = "foo";
+    if is_keyword(foo) == TokenType.Ident {
+        passed = passed + 1;
+    }
+
+    // Return number of passed tests (expect 5)
+    return passed;
+}
