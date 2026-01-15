@@ -35,10 +35,74 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
+### BUG-006: `not` keyword not recognized
+
+**Status:** Open
+**Priority:** P0 (Blocking cot0 scanner.cot)
+**Discovered:** 2026-01-16
+
+**Description:**
+The `not` keyword (synonym for `!`) is documented in SYNTAX.md but not implemented. Code like `while not scanner_at_end(s)` fails with "expected expression".
+
+**Example:**
+```cot
+fn main() i64 {
+    let x: bool = true;
+    if not x {       // ERROR: expected expression
+        return 1;
+    }
+    return 0;
+}
+```
+
+**Fix:** Add `not` as a keyword in scanner, parse as unary `!` operator.
+
+---
+
+### BUG-005: Logical NOT operator uses bitwise NOT
+
+**Status:** Open
+**Priority:** P0 (Blocking cot0 scanner.cot)
+**Discovered:** 2026-01-16
+
+**Description:**
+The `!` operator uses MVN (bitwise NOT) instead of logical NOT for booleans.
+
+**Example:**
+```cot
+fn main() i64 {
+    if !true {
+        return 1;  // INCORRECTLY EXECUTES - !true returns 0xFFFFFFFE (non-zero)
+    }
+    return 0;
+}
+// Returns 1 instead of 0
+```
+
+**Root Cause:**
+`src/codegen/arm64.zig:1491` uses `encodeMVN()` for all `not` operations.
+- Bitwise NOT of 1 = 0xFFFFFFFFFFFFFFFE (non-zero = true)
+- Should be: logical NOT of 1 = 0 (false)
+
+**Fix:**
+For boolean types (size 1), use `EOR Rd, Rm, #1` instead of MVN:
+```zig
+const type_size = self.getTypeSize(value.type_idx);
+if (type_size == 1) {
+    // Boolean: XOR with 1 flips 0↔1
+    try self.emit(asm_mod.encodeEORImm(dest_reg, op_reg, 1));
+} else {
+    // Integer: bitwise NOT
+    try self.emit(asm_mod.encodeMVN(dest_reg, op_reg));
+}
+```
+
+---
+
 ### BUG-002: Struct literal syntax not implemented
 
 **Status:** Open
-**Priority:** P2 (Documentation mismatch)
+**Priority:** P0 (Blocking cot0 scanner.cot)
 **Discovered:** 2026-01-15
 
 **Description:**
