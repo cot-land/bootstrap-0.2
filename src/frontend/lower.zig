@@ -341,11 +341,16 @@ pub const Lowerer = struct {
         // Check if it's an array literal using switch (more reliable than == comparison)
         switch (value_expr) {
             .array_literal => |al| {
-                // Get element type and size
                 if (al.elements.len == 0) return;
-                const first_elem_type = self.inferExprType(al.elements[0]);
-                const elem_size = self.type_reg.sizeOf(first_elem_type);
-                debug.log(.lower, "  elem_type={d} elem_size={d} count={d}", .{ first_elem_type, elem_size, al.elements.len });
+
+                // CRITICAL: Get element type and size from the LOCAL variable's type,
+                // not from the array literal. This handles untyped -> typed conversion.
+                // E.g., var buf: [4]u8 = [0, 0, 0, 0] needs elem_size=1 (u8), not 8 (untyped_int).
+                const local = fb.locals.items[local_idx];
+                const local_type = self.type_reg.get(local.type_idx);
+                const elem_type = if (local_type == .array) local_type.array.elem else self.inferExprType(al.elements[0]);
+                const elem_size = self.type_reg.sizeOf(elem_type);
+                debug.log(.lower, "  elem_type={d} elem_size={d} count={d}", .{ elem_type, elem_size, al.elements.len });
 
                 // Initialize each element directly into the destination local
                 // This follows Go's fixedlit pattern: var[index] = value for each element

@@ -1004,6 +1004,8 @@ pub const Checker = struct {
     }
 
     /// Check array literal.
+    /// Following Go's pattern: array literals keep untyped element types until assigned to a target.
+    /// This allows `var buf: [4]u8 = [0, 0, 0, 0]` to work - the untyped ints convert to u8.
     fn checkArrayLiteral(self: *Checker, al: ast.ArrayLiteral) CheckError!TypeIndex {
         if (al.elements.len == 0) {
             self.err.errorWithCode(al.span.start, .e300, "cannot infer type of empty array literal");
@@ -1017,13 +1019,16 @@ pub const Checker = struct {
 
         for (al.elements[1..]) |elem_idx| {
             const elem_type = try self.checkExpr(elem_idx);
-            if (!self.types.equal(first_type, elem_type)) {
+            // Allow mixing untyped and typed if assignable (e.g., untyped_int with u8)
+            if (!self.types.equal(first_type, elem_type) and !self.types.isAssignable(elem_type, first_type)) {
                 self.err.errorWithCode(al.span.start, .e300, "array elements must have same type");
                 return invalid_type;
             }
         }
 
-        return self.types.makeArray(self.materializeType(first_type), al.elements.len) catch invalid_type;
+        // Keep untyped element type - isAssignable will handle conversion when assigned
+        // to a target array with typed elements (e.g., [4]u8 = [0,0,0,0])
+        return self.types.makeArray(first_type, al.elements.len) catch invalid_type;
     }
 
     /// Check if expression.
@@ -1571,6 +1576,8 @@ pub const Checker = struct {
     // ========================================================================
 
     /// Materialize an untyped type to a concrete type.
+    /// For untyped basic types: untyped_int -> i64, untyped_float -> f64, etc.
+    /// For arrays: recursively materialize the element type.
     fn materializeType(self: *Checker, idx: TypeIndex) TypeIndex {
         const t = self.types.get(idx);
         return switch (t) {
@@ -1579,6 +1586,16 @@ pub const Checker = struct {
                 .untyped_float => TypeRegistry.FLOAT,
                 .untyped_bool => TypeRegistry.BOOL,
                 else => idx,
+            },
+            .array => |arr| {
+                const materialized_elem = self.materializeType(arr.elem);
+                if (materialized_elem == arr.elem) return idx; // No change needed
+                return self.types.makeArray(materialized_elem, arr.length) catch idx;
+            },
+            .slice => |sl| {
+                const materialized_elem = self.materializeType(sl.elem);
+                if (materialized_elem == sl.elem) return idx;
+                return self.types.makeSlice(materialized_elem) catch idx;
             },
             else => idx,
         };
