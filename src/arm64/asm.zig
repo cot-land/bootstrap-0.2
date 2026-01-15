@@ -558,6 +558,11 @@ pub fn encodeTST(rn: u5, rm: u5) u32 {
     return encodeLogicalReg(31, rn, rm, .ands, false);
 }
 
+/// MVN (bitwise NOT) is ORN with Rn=XZR: Rd = XZR | ~Rm = ~Rm
+pub fn encodeMVN(rd: u5, rm: u5) u32 {
+    return encodeLogicalReg(rd, 31, rm, .orr, true); // invert=true makes it ORN
+}
+
 // =========================================
 // Variable Shift
 // =========================================
@@ -605,6 +610,77 @@ pub fn encodeASR(rd: u5, rn: u5, rm: u5) u32 {
 /// Encode NOP.
 pub fn encodeNOP() u32 {
     return 0xD503201F;
+}
+
+// =========================================
+// Sign/Zero Extension
+// =========================================
+
+/// Encode SBFM (Signed Bitfield Move) - used for sign extension
+/// SBFM Rd, Rn, #immr, #imms
+/// For sign-extend: immr=0, imms=width-1
+/// sf=1 for 64-bit, sf=0 for 32-bit, N=sf
+fn encodeSBFM(rd: u5, rn: u5, immr: u6, imms: u6, is_64bit: bool) u32 {
+    const sf: u32 = if (is_64bit) 1 else 0;
+    const n: u32 = sf; // N matches sf for SBFM
+    return (sf << 31) | (0b00 << 29) | (0b100110 << 23) | (n << 22) |
+        (@as(u32, immr) << 16) | (@as(u32, imms) << 10) |
+        encodeRn(rn) | encodeRd(rd);
+}
+
+/// Encode UBFM (Unsigned Bitfield Move) - used for zero extension
+/// UBFM Rd, Rn, #immr, #imms
+fn encodeUBFM(rd: u5, rn: u5, immr: u6, imms: u6, is_64bit: bool) u32 {
+    const sf: u32 = if (is_64bit) 1 else 0;
+    const n: u32 = sf;
+    return (sf << 31) | (0b10 << 29) | (0b100110 << 23) | (n << 22) |
+        (@as(u32, immr) << 16) | (@as(u32, imms) << 10) |
+        encodeRn(rn) | encodeRd(rd);
+}
+
+/// SXTB - Sign-extend byte to 32-bit: Wd = sign_extend(Wn[7:0])
+pub fn encodeSXTB32(rd: u5, rn: u5) u32 {
+    return encodeSBFM(rd, rn, 0, 7, false);
+}
+
+/// SXTB - Sign-extend byte to 64-bit: Xd = sign_extend(Xn[7:0])
+pub fn encodeSXTB64(rd: u5, rn: u5) u32 {
+    return encodeSBFM(rd, rn, 0, 7, true);
+}
+
+/// SXTH - Sign-extend halfword to 32-bit: Wd = sign_extend(Wn[15:0])
+pub fn encodeSXTH32(rd: u5, rn: u5) u32 {
+    return encodeSBFM(rd, rn, 0, 15, false);
+}
+
+/// SXTH - Sign-extend halfword to 64-bit: Xd = sign_extend(Xn[15:0])
+pub fn encodeSXTH64(rd: u5, rn: u5) u32 {
+    return encodeSBFM(rd, rn, 0, 15, true);
+}
+
+/// SXTW - Sign-extend word to 64-bit: Xd = sign_extend(Wn[31:0])
+pub fn encodeSXTW(rd: u5, rn: u5) u32 {
+    return encodeSBFM(rd, rn, 0, 31, true);
+}
+
+/// UXTB - Zero-extend byte to 32-bit (also clears upper 32 bits): Wd = zero_extend(Wn[7:0])
+pub fn encodeUXTB32(rd: u5, rn: u5) u32 {
+    return encodeUBFM(rd, rn, 0, 7, false);
+}
+
+/// UXTB - Zero-extend byte to 64-bit: Xd = zero_extend(Xn[7:0])
+pub fn encodeUXTB64(rd: u5, rn: u5) u32 {
+    return encodeUBFM(rd, rn, 0, 7, true);
+}
+
+/// UXTH - Zero-extend halfword to 32-bit: Wd = zero_extend(Wn[15:0])
+pub fn encodeUXTH32(rd: u5, rn: u5) u32 {
+    return encodeUBFM(rd, rn, 0, 15, false);
+}
+
+/// UXTH - Zero-extend halfword to 64-bit: Xd = zero_extend(Xn[15:0])
+pub fn encodeUXTH64(rd: u5, rn: u5) u32 {
+    return encodeUBFM(rd, rn, 0, 15, true);
 }
 
 // =========================================

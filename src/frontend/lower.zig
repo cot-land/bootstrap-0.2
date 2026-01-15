@@ -1598,6 +1598,13 @@ pub const Lowerer = struct {
                 TypeRegistry.STRING,
                 bc.span,
             ));
+        } else if (std.mem.eql(u8, bc.name, "intCast")) {
+            // @intCast(Type, value) - integer type conversion
+            const target_type = self.resolveTypeNode(bc.type_arg);
+            const operand = try self.lowerExprNode(bc.args[0]);
+            const from_type = self.inferExprType(bc.args[0]);
+            debug.log(.lower, "@intCast({d}, expr) from_type={d} to_type={d}", .{ target_type, from_type, target_type });
+            return try fb.emitConvert(operand, from_type, target_type, bc.span);
         }
 
         return ir.null_node;
@@ -1701,9 +1708,9 @@ pub const Lowerer = struct {
             .geq => .ge,
             .land, .kw_and => .@"and",
             .lor, .kw_or => .@"or",
-            .@"and" => .bit_and,
-            .@"or" => .bit_or,
-            .xor => .bit_xor,
+            .@"and", .and_assign => .bit_and,
+            .@"or", .or_assign => .bit_or,
+            .xor, .xor_assign => .bit_xor,
             .shl => .shl,
             .shr => .shr,
             else => .add,

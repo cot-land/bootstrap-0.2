@@ -839,7 +839,86 @@ pub const SSABuilder = struct {
             // === Type Conversion ===
             .convert => |c| blk: {
                 const operand = try self.convertNode(c.operand) orelse return error.MissingValue;
-                const val = try self.func.newValue(.convert, c.to_type, cur, .{});
+
+                // Determine source and target sizes
+                const from_type = self.type_registry.get(c.from_type);
+                const from_size = self.type_registry.sizeOf(c.from_type);
+                const to_size = self.type_registry.sizeOf(c.to_type);
+
+                // Determine if source is signed
+                const from_signed = if (from_type == .basic)
+                    from_type.basic.isSigned()
+                else
+                    false;
+
+                // Select the appropriate conversion op
+                const conv_op: ssa_op.Op = if (to_size > from_size) blk2: {
+                    // Widening: use sign/zero extend based on source signedness
+                    if (from_signed) {
+                        // Sign extend
+                        break :blk2 switch (from_size) {
+                            1 => switch (to_size) {
+                                2 => .sign_ext8to16,
+                                4 => .sign_ext8to32,
+                                8 => .sign_ext8to64,
+                                else => .copy,
+                            },
+                            2 => switch (to_size) {
+                                4 => .sign_ext16to32,
+                                8 => .sign_ext16to64,
+                                else => .copy,
+                            },
+                            4 => if (to_size == 8) .sign_ext32to64 else .copy,
+                            else => .copy,
+                        };
+                    } else {
+                        // Zero extend
+                        break :blk2 switch (from_size) {
+                            1 => switch (to_size) {
+                                2 => .zero_ext8to16,
+                                4 => .zero_ext8to32,
+                                8 => .zero_ext8to64,
+                                else => .copy,
+                            },
+                            2 => switch (to_size) {
+                                4 => .zero_ext16to32,
+                                8 => .zero_ext16to64,
+                                else => .copy,
+                            },
+                            4 => if (to_size == 8) .zero_ext32to64 else .copy,
+                            else => .copy,
+                        };
+                    }
+                } else if (to_size < from_size) blk2: {
+                    // Narrowing: truncate
+                    break :blk2 switch (from_size) {
+                        2 => if (to_size == 1) .trunc16to8 else .copy,
+                        4 => switch (to_size) {
+                            1 => .trunc32to8,
+                            2 => .trunc32to16,
+                            else => .copy,
+                        },
+                        8 => switch (to_size) {
+                            1 => .trunc64to8,
+                            2 => .trunc64to16,
+                            4 => .trunc64to32,
+                            else => .copy,
+                        },
+                        else => .copy,
+                    };
+                } else blk2: {
+                    // Same size: just copy
+                    break :blk2 .copy;
+                };
+
+                debug.log(.ssa, "    convert: from_size={d}, to_size={d}, signed={}, op={s}", .{
+                    from_size,
+                    to_size,
+                    from_signed,
+                    @tagName(conv_op),
+                });
+
+                const val = try self.func.newValue(conv_op, c.to_type, cur, .{});
                 val.addArg(operand);
                 try cur.addValue(self.allocator, val);
                 break :blk val;

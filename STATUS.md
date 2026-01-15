@@ -4,7 +4,7 @@
 
 ## Current State
 
-**122 e2e tests passing.** Core language features complete. Now focused on features required for self-hosting.
+**134 e2e tests passing.** Core language features complete. Now focused on features required for self-hosting.
 
 **Runtime Library Required:** String concatenation requires linking with `runtime/cot_runtime.zig`. See [Runtime Library](#runtime-library) section below.
 
@@ -36,9 +36,9 @@ A self-hosting Cot compiler needs to:
 | **Data** | Global constants | ✅ Done | P1 | Compile-time evaluation + inlining |
 | **Modules** | Import statement | ✅ Done | P1 | Split code into files |
 | **Functions** | Indirect calls | ✅ Done | P1 | `f(x)` where f is variable |
-| **Types** | Integer casts | ❌ TODO | P2 | `@intCast(u8, x)` |
-| **Operators** | Bitwise NOT | ❌ TODO | P2 | `~x` |
-| **Operators** | Compound assign | ❌ TODO | P3 | `x += 1` |
+| **Types** | Integer casts | ✅ Done | P2 | `@intCast(u8, x)` |
+| **Operators** | Bitwise NOT | ✅ Done | P2 | `~x` |
+| **Operators** | Compound assign | ✅ Done | P3 | `x += 1`, `x &= y`, etc. |
 | **Control** | Defer | ❌ TODO | P3 | Cleanup on scope exit |
 
 ---

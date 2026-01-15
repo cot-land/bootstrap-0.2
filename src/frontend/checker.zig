@@ -765,12 +765,20 @@ pub const Checker = struct {
                 }
                 return operand_type;
             },
-            .not, .kw_not => {
+            .lnot, .kw_not => {
                 if (!types.isBool(operand)) {
                     self.err.errorWithCode(un.span.start, .e303, "unary '!' requires bool operand");
                     return invalid_type;
                 }
                 return TypeRegistry.BOOL;
+            },
+            .not => {
+                // Bitwise NOT (~x) requires integer operand
+                if (!types.isInteger(operand)) {
+                    self.err.errorWithCode(un.span.start, .e303, "unary '~' requires integer operand");
+                    return invalid_type;
+                }
+                return operand_type;
             },
             else => return invalid_type,
         }
@@ -959,6 +967,28 @@ pub const Checker = struct {
             }
 
             return TypeRegistry.STRING;
+        } else if (std.mem.eql(u8, bc.name, "intCast")) {
+            // @intCast(Type, value) - converts integer between types
+            const target_type = try self.resolveTypeExpr(bc.type_arg);
+            if (target_type == invalid_type) {
+                self.err.errorWithCode(bc.span.start, .e300, "@intCast requires a valid type");
+                return invalid_type;
+            }
+
+            // Target must be integer type
+            if (!types.isInteger(self.types.get(target_type))) {
+                self.err.errorWithCode(bc.span.start, .e300, "@intCast target type must be integer");
+                return invalid_type;
+            }
+
+            // Source must be integer type
+            const source_type = try self.checkExpr(bc.args[0]);
+            if (!types.isInteger(self.types.get(source_type))) {
+                self.err.errorWithCode(bc.span.start, .e300, "@intCast source must be integer");
+                return invalid_type;
+            }
+
+            return target_type;
         } else {
             self.err.errorWithCode(bc.span.start, .e300, "unknown builtin");
             return invalid_type;

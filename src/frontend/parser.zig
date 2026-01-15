@@ -1007,6 +1007,28 @@ pub const Parser = struct {
                         .args = .{ ptr_arg, len_arg },
                         .span = Span.init(start, self.pos()),
                     } });
+                } else if (std.mem.eql(u8, builtin_name, "intCast")) {
+                    // @intCast(Type, value) - type argument and expression argument
+                    const type_arg = try self.parseType() orelse {
+                        self.err.errorWithCode(self.pos(), .e202, "expected type argument");
+                        return null;
+                    };
+
+                    if (!self.expect(.comma)) return null;
+
+                    const value_arg = try self.parseExpr() orelse {
+                        self.err.errorWithCode(self.pos(), .e202, "expected value argument");
+                        return null;
+                    };
+
+                    if (!self.expect(.rparen)) return null;
+
+                    return try self.tree.addExpr(.{ .builtin_call = .{
+                        .name = builtin_name,
+                        .type_arg = type_arg,
+                        .args = .{ value_arg, null_node },
+                        .span = Span.init(start, self.pos()),
+                    } });
                 } else {
                     // @sizeOf(Type), @alignOf(Type) - type argument
                     const type_arg = try self.parseType() orelse {

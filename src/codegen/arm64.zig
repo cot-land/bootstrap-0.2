@@ -1248,6 +1248,20 @@ pub const ARM64CodeGen = struct {
                 }
             },
 
+            .not => {
+                // MVN Rd, Rm (bitwise NOT) is ORN Rd, XZR, Rm
+                const args = value.args;
+                if (args.len >= 1) {
+                    const op_reg = self.getRegForValue(args[0]) orelse blk: {
+                        try self.ensureInReg(args[0], 0);
+                        break :blk @as(u5, 0);
+                    };
+                    const dest_reg = self.getDestRegForValue(value);
+                    try self.emit(asm_mod.encodeMVN(dest_reg, op_reg));
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
             .mod => {
                 // ARM64 doesn't have modulo, compute as: a % b = a - (a / b) * b
                 // Use x16 as scratch register
@@ -1402,6 +1416,121 @@ pub const ARM64CodeGen = struct {
                 if (args.len > 0) {
                     const src = args[0];
                     try self.ensureInReg(src, dest_reg);
+                }
+                try self.value_regs.put(self.allocator, value, dest_reg);
+            },
+
+            // Sign extension ops
+            .sign_ext8to16, .sign_ext8to32, .sign_ext8to64 => {
+                const dest_reg = self.getDestRegForValue(value);
+                const args = value.args;
+                if (args.len > 0) {
+                    const src = args[0];
+                    const src_reg = self.getRegForValue(src) orelse blk: {
+                        try self.ensureInReg(src, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    // SXTB: sign-extend byte
+                    if (value.op == .sign_ext8to64) {
+                        try self.emit(asm_mod.encodeSXTB64(dest_reg, src_reg));
+                    } else {
+                        try self.emit(asm_mod.encodeSXTB32(dest_reg, src_reg));
+                    }
+                }
+                try self.value_regs.put(self.allocator, value, dest_reg);
+            },
+            .sign_ext16to32, .sign_ext16to64 => {
+                const dest_reg = self.getDestRegForValue(value);
+                const args = value.args;
+                if (args.len > 0) {
+                    const src = args[0];
+                    const src_reg = self.getRegForValue(src) orelse blk: {
+                        try self.ensureInReg(src, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    // SXTH: sign-extend halfword
+                    if (value.op == .sign_ext16to64) {
+                        try self.emit(asm_mod.encodeSXTH64(dest_reg, src_reg));
+                    } else {
+                        try self.emit(asm_mod.encodeSXTH32(dest_reg, src_reg));
+                    }
+                }
+                try self.value_regs.put(self.allocator, value, dest_reg);
+            },
+            .sign_ext32to64 => {
+                const dest_reg = self.getDestRegForValue(value);
+                const args = value.args;
+                if (args.len > 0) {
+                    const src = args[0];
+                    const src_reg = self.getRegForValue(src) orelse blk: {
+                        try self.ensureInReg(src, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    // SXTW: sign-extend word to 64-bit
+                    try self.emit(asm_mod.encodeSXTW(dest_reg, src_reg));
+                }
+                try self.value_regs.put(self.allocator, value, dest_reg);
+            },
+
+            // Zero extension ops
+            .zero_ext8to16, .zero_ext8to32, .zero_ext8to64 => {
+                const dest_reg = self.getDestRegForValue(value);
+                const args = value.args;
+                if (args.len > 0) {
+                    const src = args[0];
+                    const src_reg = self.getRegForValue(src) orelse blk: {
+                        try self.ensureInReg(src, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    // UXTB: zero-extend byte
+                    if (value.op == .zero_ext8to64) {
+                        try self.emit(asm_mod.encodeUXTB64(dest_reg, src_reg));
+                    } else {
+                        try self.emit(asm_mod.encodeUXTB32(dest_reg, src_reg));
+                    }
+                }
+                try self.value_regs.put(self.allocator, value, dest_reg);
+            },
+            .zero_ext16to32, .zero_ext16to64 => {
+                const dest_reg = self.getDestRegForValue(value);
+                const args = value.args;
+                if (args.len > 0) {
+                    const src = args[0];
+                    const src_reg = self.getRegForValue(src) orelse blk: {
+                        try self.ensureInReg(src, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    // UXTH: zero-extend halfword
+                    if (value.op == .zero_ext16to64) {
+                        try self.emit(asm_mod.encodeUXTH64(dest_reg, src_reg));
+                    } else {
+                        try self.emit(asm_mod.encodeUXTH32(dest_reg, src_reg));
+                    }
+                }
+                try self.value_regs.put(self.allocator, value, dest_reg);
+            },
+            .zero_ext32to64 => {
+                // Zero-extend 32-bit to 64-bit: just use 32-bit MOV (upper bits auto-cleared)
+                const dest_reg = self.getDestRegForValue(value);
+                const args = value.args;
+                if (args.len > 0) {
+                    const src = args[0];
+                    try self.ensureInReg(src, dest_reg);
+                    // Writing to Wd automatically zeroes upper 32 bits of Xd
+                }
+                try self.value_regs.put(self.allocator, value, dest_reg);
+            },
+
+            // Truncation ops - just use narrower register form (mask if needed)
+            .trunc64to32, .trunc32to16, .trunc16to8, .trunc64to16, .trunc64to8, .trunc32to8 => {
+                const dest_reg = self.getDestRegForValue(value);
+                const args = value.args;
+                if (args.len > 0) {
+                    const src = args[0];
+                    try self.ensureInReg(src, dest_reg);
+                    // No extra instruction needed - the narrower value is just
+                    // the lower bits of the register. If we need to store it,
+                    // the store instruction will use the appropriate size.
                 }
                 try self.value_regs.put(self.allocator, value, dest_reg);
             },
