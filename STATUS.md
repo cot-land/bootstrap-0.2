@@ -27,7 +27,7 @@ A self-hosting Cot compiler needs to:
 | **Memory** | Heap allocation | ❌ TODO | P0 | Need dynamic data structures |
 | **Memory** | Free/deallocation | ❌ TODO | P0 | Prevent memory leaks |
 | **Strings** | String comparison | ✅ Done | P0 | `s1 == s2` for keywords |
-| **Strings** | String indexing | ❓ Verify | P0 | `s[i]` for char access |
+| **Strings** | String indexing | ✅ Done | P0 | `s[i]` for char access |
 | **Strings** | String concatenation | ❌ TODO | P1 | Error messages |
 | **Control** | Switch statement | ❌ TODO | P1 | Token/AST dispatch |
 | **Data** | Global constants | ❌ TODO | P1 | `const EOF = 0;` |
@@ -42,21 +42,29 @@ A self-hosting Cot compiler needs to:
 
 ## Execution Plan
 
-### Phase 1: Verify String Operations ✅ PARTIAL
+### Phase 1: Verify String Operations ✅ COMPLETE
 
 **Completed:**
 - ✅ String comparison (`s1 == s2`, `s1 != s2`) - Fixed deduplication bug in MachO writer
+- ✅ String indexing (`s[0]`, `s[i]`) - Fixed type-sized load bug in codegen
 - ✅ Added `COT_DEBUG=strings` for tracing strings through pipeline
+- ✅ Enhanced debug framework with type information
 
 **Implementation Notes:**
 - Strings are `[]u8` slices (ptr + len, 16 bytes)
 - Comparison: check lengths first, then compare pointers (Go's pattern)
 - String literals deduplicated at IR level AND MachO symbol level
 - SSA builder directly accesses slice_make args to avoid slice_ptr/slice_len codegen issues
+- Codegen uses `TypeRegistry.basicTypeSize()` to emit correct load/store sizes (LDRB for u8, etc.)
+
+**Key Bug Fix (2026-01-15):**
+- Load/store always used 64-bit LDR/STR regardless of type
+- Added `LdStSize` enum and `encodeLdrStrSized()` to asm.zig
+- Debug output now shows types: `v18: u8(1B) = load` and `LDRb w1, [x0] (load u8, 1B)`
+- This made the bug immediately visible in debug output
 
 **Remaining:**
-- ❓ Test string indexing: `s[0]`, `s[i]` where i is variable
-- ❓ Test string slicing: `s[0:5]`
+- ❓ Test string slicing: `s[0:5]}`
 - Add passing tests to `all_tests.cot`
 
 ---

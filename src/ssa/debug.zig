@@ -42,6 +42,7 @@ const Func = @import("func.zig").Func;
 const Block = @import("block.zig").Block;
 const Value = @import("value.zig").Value;
 const Op = @import("op.zig").Op;
+const TypeRegistry = @import("../frontend/types.zig").TypeRegistry;
 
 /// Output format for dumping.
 pub const Format = enum {
@@ -106,11 +107,18 @@ pub fn dumpText(f: *const Func, writer: anytype) !void {
 }
 
 /// Dump a single value.
+/// CRITICAL: Shows type information to make size mismatches visible.
 fn dumpValue(v: *const Value, writer: anytype) !void {
     const dead_marker: []const u8 = if (v.uses == 0 and !v.hasSideEffects()) " (dead)" else "";
+    const type_name = TypeRegistry.basicTypeName(v.type_idx);
+    const size = TypeRegistry.basicTypeSize(v.type_idx);
 
-    try writer.print("    v{d}{s} = {s}", .{
+    // Format: v{id}: {type}({size}B) = {op} ...
+    // The type and size are CRITICAL for debugging load/store issues
+    try writer.print("    v{d}: {s}({d}B){s} = {s}", .{
         v.id,
+        type_name,
+        size,
         dead_marker,
         @tagName(v.op),
     });

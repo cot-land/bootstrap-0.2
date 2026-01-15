@@ -319,6 +319,47 @@ pub const TypeRegistry = struct {
     // Default float type (f64)
     pub const FLOAT: TypeIndex = F64;
 
+    /// Get human-readable type name from well-known type index.
+    /// Works without a TypeRegistry instance for basic types.
+    /// CRITICAL for debugging: makes type mismatches immediately visible.
+    pub fn basicTypeName(type_idx: TypeIndex) []const u8 {
+        return switch (type_idx) {
+            INVALID => "invalid",
+            BOOL => "bool",
+            I8 => "i8",
+            I16 => "i16",
+            I32 => "i32",
+            I64 => "i64",
+            U8 => "u8",
+            U16 => "u16",
+            U32 => "u32",
+            U64 => "u64",
+            F32 => "f32",
+            F64 => "f64",
+            VOID => "void",
+            UNTYPED_INT => "untyped_int",
+            UNTYPED_FLOAT => "untyped_float",
+            UNTYPED_BOOL => "untyped_bool",
+            UNTYPED_NULL => "untyped_null",
+            STRING => "string",
+            else => "composite", // Pointers, slices, arrays, structs
+        };
+    }
+
+    /// Get size in bytes for well-known type index.
+    /// Works without a TypeRegistry instance for basic types.
+    /// CRITICAL for codegen: determines load/store instruction size.
+    pub fn basicTypeSize(type_idx: TypeIndex) u8 {
+        return switch (type_idx) {
+            BOOL, I8, U8 => 1,
+            I16, U16 => 2,
+            I32, U32, F32 => 4,
+            I64, U64, F64 => 8,
+            STRING => 16, // ptr + len
+            else => 8, // Default to 64-bit for pointers, etc.
+        };
+    }
+
     pub fn init(allocator: std.mem.Allocator) !TypeRegistry {
         var reg = TypeRegistry{
             .types = .{},

@@ -1,5 +1,37 @@
 # Bootstrap 0.2 - Development Guidelines
 
+## DEBUGGING INFRASTRUCTURE FIRST - HIGHEST PRIORITY
+
+**When encountering a bug, ALWAYS extend the debug infrastructure BEFORE attempting to fix it.**
+
+This is the most important rule in this codebase. The pattern that wastes time:
+```
+1. See bug → 2. Grep through source → 3. Read code → 4. Guess location → 5. Fix → 6. Repeat for next bug
+```
+
+The pattern that scales:
+```
+1. See bug → 2. Ask "why didn't debug output reveal this?" → 3. Add debug logging that WOULD have revealed it → 4. Re-run with debug → 5. Bug location is now obvious → 6. Fix
+```
+
+**Why this matters:**
+- Fixing one bug helps one bug. Better debugging helps ALL future bugs.
+- As features get more complex, debugging becomes the bottleneck.
+- If `COT_DEBUG=all` doesn't immediately pinpoint the problem, the debug framework is insufficient.
+
+**What good debug output looks like:**
+- Shows **types** on every SSA value: `v14: u8 = load ptr=v11`
+- Shows **codegen decisions**: `v14: load u8 → LDRB w1, [x0]` (not just "load")
+- Shows **mismatches**: `WARNING: emitting 64-bit LDR for 8-bit type`
+- Makes the bug **obvious from output alone** without reading source code
+
+**Before fixing any bug, ask:**
+1. Why didn't `COT_DEBUG=all` show me exactly where this failed?
+2. What logging would have made this obvious?
+3. Add that logging FIRST, verify it reveals the bug, THEN fix.
+
+---
+
 ## USE BUILT-IN TOOLS FOR TEST FILES
 
 **ALWAYS use Edit/Write tools for creating and updating test files** - never use bash `cat` or heredocs to write test code. This ensures:

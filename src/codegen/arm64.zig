@@ -41,6 +41,7 @@ const asm_mod = @import("../arm64/asm.zig");
 const regalloc = @import("../ssa/regalloc.zig");
 const macho = @import("../obj/macho.zig");
 const debug = @import("../pipeline_debug.zig");
+const TypeRegistry = @import("../frontend/types.zig").TypeRegistry;
 
 /// ARM64 register numbers.
 pub const Reg = enum(u8) {
@@ -1345,9 +1346,22 @@ pub const ARM64CodeGen = struct {
                         break :blk temp_reg;
                     };
 
-                    // LDR Rd, [Rn]  (zero offset)
-                    try self.emit(asm_mod.encodeLdrStr(dest_reg, addr_reg, 0, true));
-                    debug.log(.codegen, "      -> LDR x{d}, [x{d}] (load)", .{ dest_reg, addr_reg });
+                    // CRITICAL: Use type-sized load instruction
+                    // This is where the bug was: always using 64-bit LDR for all types
+                    const type_size = TypeRegistry.basicTypeSize(value.type_idx);
+                    const ld_size = asm_mod.LdStSize.fromBytes(type_size);
+                    const type_name = TypeRegistry.basicTypeName(value.type_idx);
+
+                    try self.emit(asm_mod.encodeLdrStrSized(dest_reg, addr_reg, 0, ld_size, true));
+                    debug.log(.codegen, "      -> LDR{s} {s}{d}, [{s}{d}] (load {s}, {d}B)", .{
+                        ld_size.name(),
+                        if (ld_size == .dword) "x" else "w",
+                        dest_reg,
+                        "x",
+                        addr_reg,
+                        type_name,
+                        type_size,
+                    });
                     try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
@@ -1371,9 +1385,21 @@ pub const ARM64CodeGen = struct {
                         break :blk temp_reg;
                     };
 
-                    // STR Rn, [Rm]  (zero offset)
-                    try self.emit(asm_mod.encodeLdrStr(val_reg, addr_reg, 0, false));
-                    debug.log(.codegen, "      -> STR x{d}, [x{d}] (store)", .{ val_reg, addr_reg });
+                    // CRITICAL: Use type-sized store instruction
+                    const type_size = TypeRegistry.basicTypeSize(val.type_idx);
+                    const st_size = asm_mod.LdStSize.fromBytes(type_size);
+                    const type_name = TypeRegistry.basicTypeName(val.type_idx);
+
+                    try self.emit(asm_mod.encodeLdrStrSized(val_reg, addr_reg, 0, st_size, false));
+                    debug.log(.codegen, "      -> STR{s} {s}{d}, [{s}{d}] (store {s}, {d}B)", .{
+                        st_size.name(),
+                        if (st_size == .dword) "x" else "w",
+                        val_reg,
+                        "x",
+                        addr_reg,
+                        type_name,
+                        type_size,
+                    });
                 }
             },
 

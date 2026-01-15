@@ -222,15 +222,50 @@ pub fn encodeUDIV(rd: u5, rn: u5, rm: u5) u32 {
 // Load/Store Register
 // =========================================
 
-/// Encode LDR/STR (unsigned offset).
-/// Single function - `is_load` parameter makes it explicit.
-/// Go equivalent: opldr() in asm7.go
-pub fn encodeLdrStr(rt: u5, rn: u5, offset: u12, is_load: bool) u32 {
-    const size: u32 = 0b11; // 64-bit
+/// Size codes for load/store instructions (Go's LDSTR pattern).
+/// These match the ARM64 "size" field encoding.
+pub const LdStSize = enum(u2) {
+    byte = 0b00, // 8-bit (LDRB/STRB)
+    half = 0b01, // 16-bit (LDRH/STRH)
+    word = 0b10, // 32-bit (LDR W/STR W)
+    dword = 0b11, // 64-bit (LDR X/STR X)
+
+    /// Get size from byte count.
+    pub fn fromBytes(bytes: u8) LdStSize {
+        return switch (bytes) {
+            1 => .byte,
+            2 => .half,
+            4 => .word,
+            else => .dword, // 8 or anything else defaults to 64-bit
+        };
+    }
+
+    /// Get name for debug output.
+    pub fn name(self: LdStSize) []const u8 {
+        return switch (self) {
+            .byte => "b",
+            .half => "h",
+            .word => "w",
+            .dword => "x",
+        };
+    }
+};
+
+/// Encode LDR/STR with explicit size parameter.
+/// Go equivalent: LDSTR(size, V, opc) and opldr()/opstr() in asm7.go
+///
+/// The `size` parameter sets bits [31:30] controlling the access width:
+/// - byte (0b00): LDRB/STRB - 8-bit
+/// - half (0b01): LDRH/STRH - 16-bit
+/// - word (0b10): LDR W/STR W - 32-bit
+/// - dword (0b11): LDR X/STR X - 64-bit
+///
+/// For loads, uses zero-extension (unsigned). For signed extension, use LDRSB/LDRSH.
+pub fn encodeLdrStrSized(rt: u5, rn: u5, offset: u12, size: LdStSize, is_load: bool) u32 {
     const v: u32 = 0; // Not SIMD
     const opc: u32 = if (is_load) 0b01 else 0b00;
     // Encoding: size 111 V 01 opc imm12 Rn Rt
-    return (size << 30) |
+    return (@as(u32, @intFromEnum(size)) << 30) |
         (0b111 << 27) |
         (v << 26) |
         (0b01 << 24) |
@@ -240,12 +275,39 @@ pub fn encodeLdrStr(rt: u5, rn: u5, offset: u12, is_load: bool) u32 {
         encodeRd(rt);
 }
 
+/// Encode LDR/STR (unsigned offset) - 64-bit for backward compatibility.
+/// Single function - `is_load` parameter makes it explicit.
+/// Go equivalent: opldr() in asm7.go
+pub fn encodeLdrStr(rt: u5, rn: u5, offset: u12, is_load: bool) u32 {
+    return encodeLdrStrSized(rt, rn, offset, .dword, is_load);
+}
+
 pub fn encodeLDR(rt: u5, rn: u5, offset: u12) u32 {
     return encodeLdrStr(rt, rn, offset, true);
 }
 
 pub fn encodeSTR(rt: u5, rn: u5, offset: u12) u32 {
     return encodeLdrStr(rt, rn, offset, false);
+}
+
+/// LDRB - Load byte (zero-extended to 64-bit register)
+pub fn encodeLDRB(rt: u5, rn: u5, offset: u12) u32 {
+    return encodeLdrStrSized(rt, rn, offset, .byte, true);
+}
+
+/// STRB - Store byte (lowest 8 bits of register)
+pub fn encodeSTRB(rt: u5, rn: u5, offset: u12) u32 {
+    return encodeLdrStrSized(rt, rn, offset, .byte, false);
+}
+
+/// LDRH - Load halfword (zero-extended to 64-bit register)
+pub fn encodeLDRH(rt: u5, rn: u5, offset: u12) u32 {
+    return encodeLdrStrSized(rt, rn, offset, .half, true);
+}
+
+/// STRH - Store halfword (lowest 16 bits of register)
+pub fn encodeSTRH(rt: u5, rn: u5, offset: u12) u32 {
+    return encodeLdrStrSized(rt, rn, offset, .half, false);
 }
 
 // =========================================
@@ -632,6 +694,35 @@ test "encode STR" {
     const inst = encodeSTR(0, 1, 0);
     // Expected: 0xF9000020
     try std.testing.expectEqual(@as(u32, 0xF9000020), inst);
+}
+
+test "encode LDRB" {
+    // LDRB W0, [X1, #0] - load byte (zero-extended)
+    const inst = encodeLDRB(0, 1, 0);
+    // size=00 111 V=0 01 opc=01 imm12=0 Rn=1 Rt=0
+    // 00 111 0 01 01 000000000000 00001 00000 = 0x39400020
+    try std.testing.expectEqual(@as(u32, 0x39400020), inst);
+}
+
+test "encode STRB" {
+    // STRB W0, [X1, #0] - store byte
+    const inst = encodeSTRB(0, 1, 0);
+    // size=00 111 V=0 01 opc=00 imm12=0 Rn=1 Rt=0
+    // 00 111 0 01 00 000000000000 00001 00000 = 0x39000020
+    try std.testing.expectEqual(@as(u32, 0x39000020), inst);
+}
+
+test "encode LDR vs LDRB - verify size bits" {
+    // LDR X0 (64-bit) has size=11, LDRB W0 (8-bit) has size=00
+    const ldr = encodeLDR(0, 1, 0);
+    const ldrb = encodeLDRB(0, 1, 0);
+
+    // Size bits are [31:30]
+    const ldr_size = (ldr >> 30) & 0b11;
+    const ldrb_size = (ldrb >> 30) & 0b11;
+
+    try std.testing.expectEqual(@as(u32, 0b11), ldr_size); // 64-bit
+    try std.testing.expectEqual(@as(u32, 0b00), ldrb_size); // 8-bit
 }
 
 test "encode STP pre-index" {
