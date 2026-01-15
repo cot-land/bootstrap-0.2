@@ -983,6 +983,9 @@ pub const Lowerer = struct {
             .slice_expr => |se| {
                 return try self.lowerSliceExpr(se);
             },
+            .builtin_call => |bc| {
+                return try self.lowerBuiltinCall(bc);
+            },
             else => return ir.null_node,
         }
     }
@@ -1437,6 +1440,28 @@ pub const Lowerer = struct {
 
         const result_type = self.inferExprType(if_expr.then_branch);
         return try fb.emitSelect(cond, then_val, else_val, result_type, if_expr.span);
+    }
+
+    /// Lower builtin calls: @sizeOf(T), @alignOf(T), etc.
+    /// These are compile-time operations that evaluate to constant integers.
+    fn lowerBuiltinCall(self: *Lowerer, bc: ast.BuiltinCall) Error!ir.NodeIndex {
+        const fb = self.current_func orelse return ir.null_node;
+
+        if (std.mem.eql(u8, bc.name, "sizeOf")) {
+            // @sizeOf(T) - return size of type T in bytes as a compile-time constant
+            const type_idx = self.resolveTypeNode(bc.type_arg);
+            const size = self.type_reg.sizeOf(type_idx);
+            debug.log(.lower, "@sizeOf({d}) = {d}", .{ type_idx, size });
+            return try fb.emitConstInt(@intCast(size), TypeRegistry.I64, bc.span);
+        } else if (std.mem.eql(u8, bc.name, "alignOf")) {
+            // @alignOf(T) - return alignment of type T in bytes as a compile-time constant
+            const type_idx = self.resolveTypeNode(bc.type_arg);
+            const alignment = self.type_reg.alignmentOf(type_idx);
+            debug.log(.lower, "@alignOf({d}) = {d}", .{ type_idx, alignment });
+            return try fb.emitConstInt(@intCast(alignment), TypeRegistry.I64, bc.span);
+        }
+
+        return ir.null_node;
     }
 
     // ========================================================================

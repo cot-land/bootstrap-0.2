@@ -163,6 +163,7 @@ pub const Expr = union(enum) {
     block_expr: BlockExpr,
     struct_init: StructInit,
     new_expr: NewExpr,
+    builtin_call: BuiltinCall,
     string_interp: StringInterp,
     type_expr: TypeExpr,
     addr_of: AddrOf,
@@ -303,6 +304,13 @@ pub const FieldInit = struct {
 /// new Type()
 pub const NewExpr = struct {
     type_node: NodeIndex,
+    span: Span,
+};
+
+/// Builtin call: @sizeOf(T), @alignOf(T), etc.
+pub const BuiltinCall = struct {
+    name: []const u8, // "sizeOf", "alignOf", etc.
+    type_arg: NodeIndex, // Type argument (for @sizeOf, @alignOf)
     span: Span,
 };
 

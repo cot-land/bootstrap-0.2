@@ -530,6 +530,7 @@ pub const Checker = struct {
             .block_expr => |b| try self.checkBlock(b),
             .struct_init => |si| try self.checkStructInit(si),
             .new_expr => |ne| try self.resolveTypeExpr(ne.type_node),
+            .builtin_call => |bc| try self.checkBuiltinCall(bc),
             .string_interp => |si| try self.checkStringInterp(si),
             .addr_of => |ao| try self.checkAddrOf(ao),
             .deref => |d| try self.checkDeref(d),
@@ -773,6 +774,30 @@ pub const Checker = struct {
 
         _ = try self.checkExpr(c.args[0]);
         return TypeRegistry.VOID;
+    }
+
+    /// Check @builtin calls: @sizeOf(T), @alignOf(T), etc.
+    fn checkBuiltinCall(self: *Checker, bc: ast.BuiltinCall) CheckError!TypeIndex {
+        if (std.mem.eql(u8, bc.name, "sizeOf")) {
+            // @sizeOf(T) returns the size of type T in bytes as i64
+            const type_idx = try self.resolveTypeExpr(bc.type_arg);
+            if (type_idx == invalid_type) {
+                self.err.errorWithCode(bc.span.start, .e300, "@sizeOf requires a valid type");
+                return invalid_type;
+            }
+            return TypeRegistry.I64;
+        } else if (std.mem.eql(u8, bc.name, "alignOf")) {
+            // @alignOf(T) returns the alignment of type T in bytes as i64
+            const type_idx = try self.resolveTypeExpr(bc.type_arg);
+            if (type_idx == invalid_type) {
+                self.err.errorWithCode(bc.span.start, .e300, "@alignOf requires a valid type");
+                return invalid_type;
+            }
+            return TypeRegistry.I64;
+        } else {
+            self.err.errorWithCode(bc.span.start, .e300, "unknown builtin");
+            return invalid_type;
+        }
     }
 
     /// Check index expression.

@@ -963,6 +963,32 @@ pub const Parser = struct {
                     .span = Span.init(start, self.pos()),
                 } });
             },
+            .at => {
+                // Builtin call: @sizeOf(Type), @alignOf(Type), etc.
+                self.advance();
+                if (!self.check(.ident)) {
+                    self.syntaxError("expected builtin name after '@'");
+                    return null;
+                }
+                const builtin_name = self.tok.text;
+                self.advance();
+
+                if (!self.expect(.lparen)) return null;
+
+                // Parse type argument for @sizeOf, @alignOf
+                const type_arg = try self.parseType() orelse {
+                    self.err.errorWithCode(self.pos(), .e202, "expected type argument");
+                    return null;
+                };
+
+                if (!self.expect(.rparen)) return null;
+
+                return try self.tree.addExpr(.{ .builtin_call = .{
+                    .name = builtin_name,
+                    .type_arg = type_arg,
+                    .span = Span.init(start, self.pos()),
+                } });
+            },
             else => {
                 // Check for type keywords used as expressions (for builtins)
                 if (self.tok.tok.isTypeKeyword()) {

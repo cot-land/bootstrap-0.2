@@ -359,6 +359,21 @@ len("hello")        // Returns 5
 len([1, 2, 3])      // Returns 3
 ```
 
+### Builtin Operations
+```cot
+@sizeOf(T)          // Size of type T in bytes (compile-time constant)
+@sizeOf(i64)        // Returns 8
+@sizeOf(i32)        // Returns 4
+@sizeOf(u8)         // Returns 1
+@sizeOf(*i64)       // Returns 8 (pointer size)
+@sizeOf([4]i64)     // Returns 32 (4 * 8)
+@sizeOf(Point)      // Returns struct size
+
+@alignOf(T)         // Alignment of type T in bytes (compile-time constant)
+@alignOf(i64)       // Returns 8
+@alignOf(u8)        // Returns 1
+```
+
 ### Array Literals
 ```cot
 [1, 2, 3, 4, 5]
@@ -594,6 +609,29 @@ fn distance_squared(p: Point) i64 {
 fn main() i64 {
     let p = Point{ .x = 3, .y = 4 };
     return distance_squared(p);  // Returns 25
+}
+```
+
+### Dynamic Memory Allocation
+```cot
+// Declare external C functions
+extern fn malloc(size: i64) *i64;
+extern fn free(ptr: *i64);
+
+fn main() i64 {
+    // Allocate memory using @sizeOf
+    let ptr: *i64 = malloc(@sizeOf(i64));
+
+    // Store value through pointer
+    ptr.* = 42;
+
+    // Read back
+    let result: i64 = ptr.*;
+
+    // Free memory
+    free(ptr);
+
+    return result;  // Returns 42
 }
 ```
 

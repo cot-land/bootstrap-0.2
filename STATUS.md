@@ -24,8 +24,9 @@ A self-hosting Cot compiler needs to:
 |----------|---------|--------|----------|-------|
 | **I/O** | Read file | ❌ TODO | P0 | Can't compile without reading source |
 | **I/O** | Write file | ❌ TODO | P0 | Can't emit object files |
-| **Memory** | Heap allocation | ❌ TODO | P0 | Need dynamic data structures |
-| **Memory** | Free/deallocation | ❌ TODO | P0 | Prevent memory leaks |
+| **Memory** | Heap allocation | ✅ Done | P0 | `malloc()` via extern fn |
+| **Memory** | Free/deallocation | ✅ Done | P0 | `free()` via extern fn |
+| **Memory** | @sizeOf builtin | ✅ Done | P0 | Compile-time type sizes |
 | **Strings** | String comparison | ✅ Done | P0 | `s1 == s2` for keywords |
 | **Strings** | String indexing | ✅ Done | P0 | `s[i]` for char access |
 | **Strings** | String concatenation | ❌ TODO | P1 | Error messages |
@@ -116,41 +117,43 @@ fn main() i64 {
 
 ---
 
-### Phase 3: Memory Allocation (P0)
+### Phase 3: Memory Allocation (P0) - COMPLETE
 
 **Goal:** Dynamic allocation for AST nodes, tokens, strings.
 
-**Approach:** Simple bump allocator initially, then proper malloc
+**Completed (2026-01-15):**
+- ✅ `@sizeOf(T)` builtin - compile-time type size computation
+- ✅ `@alignOf(T)` builtin - compile-time type alignment
+- ✅ `extern fn malloc/free` - links to libc for memory management
+- ✅ Pointer dereferencing - `ptr.*` for read/write through pointers
+
+**Implementation Notes:**
+- `@sizeOf(T)` evaluates at compile-time (no runtime cost), following Go's pattern
+- Uses `TypeRegistry.sizeOf()` to compute sizes
+- Emits `const_int` IR node with computed size
+- Memory allocation via libc: `extern fn malloc(size: i64) *T;`
 
 ```cot
-// Option A: Bump allocator (simpler, no free)
-struct Arena {
-    buffer: *u8,
-    offset: i64,
-    capacity: i64,
-}
+// Dynamic allocation pattern
+extern fn malloc(size: i64) *i64;
+extern fn free(ptr: *i64);
 
-fn arenaAlloc(arena: *Arena, size: i64) *u8 {
-    let ptr = arena.buffer + arena.offset;
-    arena.offset = arena.offset + size;
-    return ptr;
+fn main() i64 {
+    let ptr: *i64 = malloc(@sizeOf(i64));
+    ptr.* = 42;
+    let val: i64 = ptr.*;
+    free(ptr);
+    return val;  // 42
 }
-
-// Option B: System malloc (via syscall or libc)
-fn malloc(size: i64) *u8;
-fn free(ptr: *u8) void;
 ```
 
-**Implementation Steps:**
-1. Decide: bump allocator vs mmap-based vs libc malloc
-2. Implement allocation primitive
-3. Add typed allocation: `alloc(T) -> *T`
-4. Test with dynamic array growth
+**Supported by @sizeOf:**
+- Primitive types: `i64` (8), `i32` (4), `u8` (1), `bool` (1)
+- Pointer types: `*T` (8 bytes on 64-bit)
+- Array types: `[N]T` (N × sizeof(T))
+- Struct types: computed based on fields
 
-**Tests:**
-- `test_alloc_simple` - Allocate and use memory
-- `test_alloc_struct` - Allocate struct dynamically
-- `test_alloc_array` - Allocate array dynamically
+**Go Reference:** `~/learning/go/src/cmd/compile/internal/types2/builtins.go` for sizeof/alignof pattern
 
 ---
 
