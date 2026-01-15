@@ -1376,6 +1376,9 @@ pub const Lowerer = struct {
         if (std.mem.eql(u8, func_name, "__string_make")) {
             return try self.lowerBuiltinStringMake(call);
         }
+        if (std.mem.eql(u8, func_name, "print") or std.mem.eql(u8, func_name, "println")) {
+            return try self.lowerBuiltinPrint(call, std.mem.eql(u8, func_name, "println"));
+        }
 
         // Lower arguments
         var args = std.ArrayListUnmanaged(ir.NodeIndex){};
@@ -1492,6 +1495,48 @@ pub const Lowerer = struct {
             TypeRegistry.STRING,
             call.span,
         ));
+    }
+
+    /// Lower builtin print(s) and println(s) functions.
+    /// Transforms to write(1, s.ptr, s.len) syscall.
+    /// Following Go's pattern of lowering print to runtime calls.
+    fn lowerBuiltinPrint(self: *Lowerer, call: ast.Call, is_println: bool) Error!ir.NodeIndex {
+        const fb = self.current_func orelse return ir.null_node;
+
+        if (call.args.len != 1) return ir.null_node;
+
+        // Lower the string argument
+        const str_val = try self.lowerExprNode(call.args[0]);
+
+        // Extract ptr and len from the string
+        const ptr_type = try self.type_reg.makePointer(TypeRegistry.U8);
+        const ptr_val = try fb.emitSlicePtr(str_val, ptr_type, call.span);
+        const len_val = try fb.emitSliceLen(str_val, call.span);
+
+        // Create fd=1 (stdout) constant
+        const fd_val = try fb.emitConstInt(1, TypeRegistry.I32, call.span);
+
+        // Call write(fd, ptr, len) - returns i64
+        var write_args = [_]ir.NodeIndex{ fd_val, ptr_val, len_val };
+        _ = try fb.emitCall("write", &write_args, false, TypeRegistry.I64, call.span);
+
+        // For println, also write a newline
+        if (is_println) {
+            // Create newline string literal
+            const nl_idx = try fb.addStringLiteral("\n");
+            const nl_str = try fb.emit(ir.Node.init(
+                .{ .const_slice = .{ .string_index = nl_idx } },
+                TypeRegistry.STRING,
+                call.span,
+            ));
+            const nl_ptr = try fb.emitSlicePtr(nl_str, ptr_type, call.span);
+            const nl_len = try fb.emitConstInt(1, TypeRegistry.I64, call.span);
+            var nl_args = [_]ir.NodeIndex{ fd_val, nl_ptr, nl_len };
+            _ = try fb.emitCall("write", &nl_args, false, TypeRegistry.I64, call.span);
+        }
+
+        // print/println returns void
+        return ir.null_node;
     }
 
     fn lowerIfExpr(self: *Lowerer, if_expr: ast.IfExpr) Error!ir.NodeIndex {

@@ -132,6 +132,42 @@ pub fn encodeSUBReg(rd: u5, rn: u5, rm: u5) u32 {
     return encodeAddSubReg(rd, rn, rm, true, false);
 }
 
+/// Encode ADD/SUB extended register.
+/// Go equivalent: opxrrr() in asm7.go
+/// Required when rd or rn is SP (31), since shifted register form
+/// treats reg 31 as XZR not SP.
+/// Uses UXTX extension (64-bit unsigned extend with LSL #0).
+fn encodeAddSubExtReg(rd: u5, rn: u5, rm: u5, is_sub: bool) u32 {
+    const sf: u32 = 1; // 64-bit
+    const op: u32 = if (is_sub) 1 else 0;
+    const s: u32 = 0; // No flags
+    // Extended register: sf op S 01011 00 1 Rm option imm3 Rn Rd
+    // option=011 (UXTX = 64-bit unsigned extend)
+    // imm3=000 (shift 0)
+    const option: u32 = 0b011; // UXTX
+    return (sf << 31) |
+        (op << 30) |
+        (s << 29) |
+        (0b01011 << 24) |
+        (0b00 << 22) |
+        (1 << 21) | // Extended register mode
+        encodeRm(rm) |
+        (option << 13) |
+        (0 << 10) | // imm3 = 0
+        encodeRn(rn) |
+        encodeRd(rd);
+}
+
+/// ADD extended register (for SP arithmetic)
+pub fn encodeADDExtReg(rd: u5, rn: u5, rm: u5) u32 {
+    return encodeAddSubExtReg(rd, rn, rm, false);
+}
+
+/// SUB extended register (for SP arithmetic)
+pub fn encodeSUBExtReg(rd: u5, rn: u5, rm: u5) u32 {
+    return encodeAddSubExtReg(rd, rn, rm, true);
+}
+
 /// CMP is SUBS with Rd=XZR
 pub fn encodeCMPReg(rn: u5, rm: u5) u32 {
     return encodeAddSubReg(31, rn, rm, true, true);

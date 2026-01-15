@@ -464,8 +464,11 @@ pub const ARM64CodeGen = struct {
             } else {
                 // Very large frame: need to use a temp register
                 // MOV x16, #frame_size; SUB sp, sp, x16
+                // NOTE: Must use extended register form when rd/rn is SP,
+                // because shifted register form treats reg 31 as XZR.
+                // Go's opxrrr() handles this same case.
                 try self.emitLoadImmediate(16, @intCast(aligned_frame));
-                try self.emit(asm_mod.encodeSUBReg(31, 31, 16));
+                try self.emit(asm_mod.encodeSUBExtReg(31, 31, 16));
             }
             // STP x29, x30, [sp] (signed offset 0)
             try self.emit(asm_mod.encodeLdpStp(29, 30, 31, 0, .signed_offset, false));
@@ -497,8 +500,9 @@ pub const ARM64CodeGen = struct {
                 try self.emit(asm_mod.encodeADDImm(31, 31, @intCast(aligned_frame), 0));
             } else {
                 // Very large frame: use temp register
+                // NOTE: Must use extended register form when rd/rn is SP
                 try self.emitLoadImmediate(16, @intCast(aligned_frame));
-                try self.emit(asm_mod.encodeADDReg(31, 31, 16));
+                try self.emit(asm_mod.encodeADDExtReg(31, 31, 16));
             }
         }
 
@@ -1038,6 +1042,24 @@ pub const ARM64CodeGen = struct {
                             try self.emit(asm_mod.encodeADDImm(dest_reg, len_reg, 0, 0));
                         }
                         debug.log(.codegen, "      slice_len (string_make) x{d} -> x{d}", .{ len_reg, dest_reg });
+                    } else if (slice_val.op == .const_string) {
+                        // String literal: get length from the string literal data
+                        const string_index: usize = @intCast(slice_val.aux_int);
+                        const str_len: i64 = if (string_index < self.func.string_literals.len)
+                            @intCast(self.func.string_literals[string_index].len)
+                        else
+                            0;
+                        // Emit MOV dest_reg, #len
+                        if (str_len >= 0 and str_len <= 65535) {
+                            try self.emit(asm_mod.encodeMOVZ(dest_reg, @intCast(str_len), 0));
+                        } else {
+                            // For longer strings, use MOVZ + MOVK
+                            try self.emit(asm_mod.encodeMOVZ(dest_reg, @intCast(str_len & 0xFFFF), 0));
+                            if (str_len > 0xFFFF) {
+                                try self.emit(asm_mod.encodeMOVK(dest_reg, @intCast((str_len >> 16) & 0xFFFF), 1));
+                            }
+                        }
+                        debug.log(.codegen, "      slice_len (const_string) -> x{d} = {d}", .{ dest_reg, str_len });
                     } else {
                         // Load from memory: len is at offset 8 from slice ptr
                         const slice_reg = self.getRegForValue(slice_val) orelse blk: {

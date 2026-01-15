@@ -39,6 +39,7 @@ A self-hosting Cot compiler needs to:
 | **Types** | Integer casts | ✅ Done | P2 | `@intCast(u8, x)` |
 | **Operators** | Bitwise NOT | ✅ Done | P2 | `~x` |
 | **Operators** | Compound assign | ✅ Done | P3 | `x += 1`, `x &= y`, etc. |
+| **I/O** | print/println | ✅ Done | P2 | `print("msg")`, `println("msg")` |
 | **Control** | Defer | ❌ TODO | P3 | Cleanup on scope exit |
 
 ---

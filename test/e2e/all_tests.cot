@@ -1475,199 +1475,204 @@ fn test_intcast_roundtrip() i64 {
 // ============================================================================
 
 fn main() i64 {
-    var passed: i64 = 0;
+    var failed: i64 = 0;
 
     // TIER 1: Basic arithmetic
-    if test_return() == 42 { passed = passed + 1; }
-    if test_mul() == 42 { passed = passed + 1; }
-    if test_div() == 42 { passed = passed + 1; }
-    if test_sub() == 42 { passed = passed + 1; }
-    if test_neg() == 42 { passed = passed + 1; }
+    if test_return() != 42 { println("FAIL: test_return"); failed += 1; }
+    if test_mul() != 42 { println("FAIL: test_mul"); failed += 1; }
+    if test_div() != 42 { println("FAIL: test_div"); failed += 1; }
+    if test_sub() != 42 { println("FAIL: test_sub"); failed += 1; }
+    if test_neg() != 42 { println("FAIL: test_neg"); failed += 1; }
 
     // TIER 2: Function calls
-    if test_call() == 42 { passed = passed + 1; }
-    if test_nested_call() == 42 { passed = passed + 1; }
-    if test_call_spill() == 6 { passed = passed + 1; }
-    if test_fn_call() == 42 { passed = passed + 1; }
+    if test_call() != 42 { println("FAIL: test_call"); failed += 1; }
+    if test_nested_call() != 42 { println("FAIL: test_nested_call"); failed += 1; }
+    if test_call_spill() != 6 { println("FAIL: test_call_spill"); failed += 1; }
+    if test_fn_call() != 42 { println("FAIL: test_fn_call"); failed += 1; }
 
     // TIER 3: Local variables
-    if test_var_assign() == 42 { passed = passed + 1; }
-    if test_const() == 42 { passed = passed + 1; }
+    if test_var_assign() != 42 { println("FAIL: test_var_assign"); failed += 1; }
+    if test_const() != 42 { println("FAIL: test_const"); failed += 1; }
 
     // TIER 4: Comparisons
-    if test_ne() == 42 { passed = passed + 1; }
-    if test_lt() == 42 { passed = passed + 1; }
-    if test_gt() == 42 { passed = passed + 1; }
+    if test_ne() != 42 { println("FAIL: test_ne"); failed += 1; }
+    if test_lt() != 42 { println("FAIL: test_lt"); failed += 1; }
+    if test_gt() != 42 { println("FAIL: test_gt"); failed += 1; }
 
     // TIER 5: If/else
-    if test_if() == 42 { passed = passed + 1; }
-    if test_if_false() == 42 { passed = passed + 1; }
-    if test_nested_if() == 42 { passed = passed + 1; }
+    if test_if() != 42 { println("FAIL: test_if"); failed += 1; }
+    if test_if_false() != 42 { println("FAIL: test_if_false"); failed += 1; }
+    if test_nested_if() != 42 { println("FAIL: test_nested_if"); failed += 1; }
 
     // TIER 6: While loops
-    if test_while_simple() == 42 { passed = passed + 1; }
-    if test_while() == 42 { passed = passed + 1; }
-    if test_fibonacci() == 55 { passed = passed + 1; }
+    if test_while_simple() != 42 { println("FAIL: test_while_simple"); failed += 1; }
+    if test_while() != 42 { println("FAIL: test_while"); failed += 1; }
+    if test_fibonacci() != 55 { println("FAIL: test_fibonacci"); failed += 1; }
 
     // TIER 6.5: Edge cases
-    if test_neg_compare() == 42 { passed = passed + 1; }
-    if test_chain() == 42 { passed = passed + 1; }
-    if test_countdown() == 42 { passed = passed + 1; }
-    if test_multi_var() == 42 { passed = passed + 1; }
-    if test_early_return() == 42 { passed = passed + 1; }
-    if test_le() == 42 { passed = passed + 1; }
-    if test_ge() == 42 { passed = passed + 1; }
-    if test_mod() == 42 { passed = passed + 1; }
-    if test_recursion() == 42 { passed = passed + 1; }
-    if test_bool() == 42 { passed = passed + 1; }
-    if test_8args() == 42 { passed = passed + 1; }
-    if test_9args() == 42 { passed = passed + 1; }
-    if test_nested_while() == 42 { passed = passed + 1; }
-    if test_break() == 42 { passed = passed + 1; }
-    if test_continue() == 42 { passed = passed + 1; }
-    if test_precedence() == 42 { passed = passed + 1; }
-    if test_parens() == 42 { passed = passed + 1; }
-    if test_void() == 42 { passed = passed + 1; }
-    if test_large() == 42 { passed = passed + 1; }
+    if test_neg_compare() != 42 { println("FAIL: test_neg_compare"); failed += 1; }
+    if test_chain() != 42 { println("FAIL: test_chain"); failed += 1; }
+    if test_countdown() != 42 { println("FAIL: test_countdown"); failed += 1; }
+    if test_multi_var() != 42 { println("FAIL: test_multi_var"); failed += 1; }
+    if test_early_return() != 42 { println("FAIL: test_early_return"); failed += 1; }
+    if test_le() != 42 { println("FAIL: test_le"); failed += 1; }
+    if test_ge() != 42 { println("FAIL: test_ge"); failed += 1; }
+    if test_mod() != 42 { println("FAIL: test_mod"); failed += 1; }
+    if test_recursion() != 42 { println("FAIL: test_recursion"); failed += 1; }
+    if test_bool() != 42 { println("FAIL: test_bool"); failed += 1; }
+    if test_8args() != 42 { println("FAIL: test_8args"); failed += 1; }
+    if test_9args() != 42 { println("FAIL: test_9args"); failed += 1; }
+    if test_nested_while() != 42 { println("FAIL: test_nested_while"); failed += 1; }
+    if test_break() != 42 { println("FAIL: test_break"); failed += 1; }
+    if test_continue() != 42 { println("FAIL: test_continue"); failed += 1; }
+    if test_precedence() != 42 { println("FAIL: test_precedence"); failed += 1; }
+    if test_parens() != 42 { println("FAIL: test_parens"); failed += 1; }
+    if test_void() != 42 { println("FAIL: test_void"); failed += 1; }
+    if test_large() != 42 { println("FAIL: test_large"); failed += 1; }
 
     // TIER 7: Structs
-    if test_struct_simple() == 42 { passed = passed + 1; }
-    if test_struct_reassign() == 42 { passed = passed + 1; }
-    if test_nested_struct() == 42 { passed = passed + 1; }
-    if test_large_struct() == 42 { passed = passed + 1; }
+    if test_struct_simple() != 42 { println("FAIL: test_struct_simple"); failed += 1; }
+    if test_struct_reassign() != 42 { println("FAIL: test_struct_reassign"); failed += 1; }
+    if test_nested_struct() != 42 { println("FAIL: test_nested_struct"); failed += 1; }
+    if test_large_struct() != 42 { println("FAIL: test_large_struct"); failed += 1; }
 
     // TIER 8: Characters
-    if test_char_simple() == 42 { passed = passed + 1; }
-    if test_char_escape() == 42 { passed = passed + 1; }
-    if test_char_compare() == 42 { passed = passed + 1; }
+    if test_char_simple() != 42 { println("FAIL: test_char_simple"); failed += 1; }
+    if test_char_escape() != 42 { println("FAIL: test_char_escape"); failed += 1; }
+    if test_char_compare() != 42 { println("FAIL: test_char_compare"); failed += 1; }
 
     // TIER 8: Strings
-    if test_string_simple() == 42 { passed = passed + 1; }
-    if test_len_string() == 42 { passed = passed + 1; }
-    if test_len_escape() == 42 { passed = passed + 1; }
-    if test_len_string_var() == 42 { passed = passed + 1; }
+    if test_string_simple() != 42 { println("FAIL: test_string_simple"); failed += 1; }
+    if test_len_string() != 42 { println("FAIL: test_len_string"); failed += 1; }
+    if test_len_escape() != 42 { println("FAIL: test_len_escape"); failed += 1; }
+    if test_len_string_var() != 42 { println("FAIL: test_len_string_var"); failed += 1; }
 
     // TIER 9: Arrays
-    if test_array_index() == 42 { passed = passed + 1; }
-    if test_array_assign() == 42 { passed = passed + 1; }
-    if test_array_var_index() == 42 { passed = passed + 1; }
-    if test_array_param() == 42 { passed = passed + 1; }
+    if test_array_index() != 42 { println("FAIL: test_array_index"); failed += 1; }
+    if test_array_assign() != 42 { println("FAIL: test_array_assign"); failed += 1; }
+    if test_array_var_index() != 42 { println("FAIL: test_array_var_index"); failed += 1; }
+    if test_array_param() != 42 { println("FAIL: test_array_param"); failed += 1; }
 
     // TIER 10: Pointers
-    if test_ptr_read() == 42 { passed = passed + 1; }
-    if test_ptr_write() == 42 { passed = passed + 1; }
-    if test_ptr_modify() == 50 { passed = passed + 1; }
-    if test_ptr_param() == 42 { passed = passed + 1; }
-    if test_ptr_expr() == 42 { passed = passed + 1; }
-    if test_ptr_field_store() == 42 { passed = passed + 1; }
-    if test_fn_type() == 42 { passed = passed + 1; }
+    if test_ptr_read() != 42 { println("FAIL: test_ptr_read"); failed += 1; }
+    if test_ptr_write() != 42 { println("FAIL: test_ptr_write"); failed += 1; }
+    if test_ptr_modify() != 50 { println("FAIL: test_ptr_modify"); failed += 1; }
+    if test_ptr_param() != 42 { println("FAIL: test_ptr_param"); failed += 1; }
+    if test_ptr_expr() != 42 { println("FAIL: test_ptr_expr"); failed += 1; }
+    if test_ptr_field_store() != 42 { println("FAIL: test_ptr_field_store"); failed += 1; }
+    if test_fn_type() != 42 { println("FAIL: test_fn_type"); failed += 1; }
 
     // TIER 11: Bitwise operators
-    if test_bitwise_and() == 10 { passed = passed + 1; }
-    if test_bitwise_or() == 15 { passed = passed + 1; }
-    if test_bitwise_xor() == 5 { passed = passed + 1; }
-    if test_shl() == 32 { passed = passed + 1; }
-    if test_shr() == 4 { passed = passed + 1; }
-    if test_bitwise_combo() == 12 { passed = passed + 1; }
-    if test_shift_var() == 64 { passed = passed + 1; }
-    if test_mask_extract() == 15 { passed = passed + 1; }
+    if test_bitwise_and() != 10 { println("FAIL: test_bitwise_and"); failed += 1; }
+    if test_bitwise_or() != 15 { println("FAIL: test_bitwise_or"); failed += 1; }
+    if test_bitwise_xor() != 5 { println("FAIL: test_bitwise_xor"); failed += 1; }
+    if test_shl() != 32 { println("FAIL: test_shl"); failed += 1; }
+    if test_shr() != 4 { println("FAIL: test_shr"); failed += 1; }
+    if test_bitwise_combo() != 12 { println("FAIL: test_bitwise_combo"); failed += 1; }
+    if test_shift_var() != 64 { println("FAIL: test_shift_var"); failed += 1; }
+    if test_mask_extract() != 15 { println("FAIL: test_mask_extract"); failed += 1; }
 
     // TIER 12: Logical operators (short-circuit)
-    if test_logical_and_true() == 42 { passed = passed + 1; }
-    if test_logical_and_false_first() == 42 { passed = passed + 1; }
-    if test_logical_and_false_second() == 42 { passed = passed + 1; }
-    if test_logical_or_false() == 42 { passed = passed + 1; }
-    if test_logical_or_true_first() == 42 { passed = passed + 1; }
-    if test_logical_or_true_second() == 42 { passed = passed + 1; }
-    if test_logical_and_chain() == 42 { passed = passed + 1; }
-    if test_logical_or_chain() == 42 { passed = passed + 1; }
+    if test_logical_and_true() != 42 { println("FAIL: test_logical_and_true"); failed += 1; }
+    if test_logical_and_false_first() != 42 { println("FAIL: test_logical_and_false_first"); failed += 1; }
+    if test_logical_and_false_second() != 42 { println("FAIL: test_logical_and_false_second"); failed += 1; }
+    if test_logical_or_false() != 42 { println("FAIL: test_logical_or_false"); failed += 1; }
+    if test_logical_or_true_first() != 42 { println("FAIL: test_logical_or_true_first"); failed += 1; }
+    if test_logical_or_true_second() != 42 { println("FAIL: test_logical_or_true_second"); failed += 1; }
+    if test_logical_and_chain() != 42 { println("FAIL: test_logical_and_chain"); failed += 1; }
+    if test_logical_or_chain() != 42 { println("FAIL: test_logical_or_chain"); failed += 1; }
 
     // TIER 13: Enums
-    if test_enum_first() == 42 { passed = passed + 1; }
-    if test_enum_second() == 42 { passed = passed + 1; }
-    if test_enum_third() == 42 { passed = passed + 1; }
-    if test_enum_ne() == 42 { passed = passed + 1; }
-    if test_enum_param() == 42 { passed = passed + 1; }
+    if test_enum_first() != 42 { println("FAIL: test_enum_first"); failed += 1; }
+    if test_enum_second() != 42 { println("FAIL: test_enum_second"); failed += 1; }
+    if test_enum_third() != 42 { println("FAIL: test_enum_third"); failed += 1; }
+    if test_enum_ne() != 42 { println("FAIL: test_enum_ne"); failed += 1; }
+    if test_enum_param() != 42 { println("FAIL: test_enum_param"); failed += 1; }
 
     // TIER 14: Null and Pointers
-    if test_null_eq() == 42 { passed = passed + 1; }
-    if test_null_ne() == 42 { passed = passed + 1; }
-    if test_null_eq_right() == 42 { passed = passed + 1; }
-    if test_ptr_not_null() == 42 { passed = passed + 1; }
+    if test_null_eq() != 42 { println("FAIL: test_null_eq"); failed += 1; }
+    if test_null_ne() != 42 { println("FAIL: test_null_ne"); failed += 1; }
+    if test_null_eq_right() != 42 { println("FAIL: test_null_eq_right"); failed += 1; }
+    if test_ptr_not_null() != 42 { println("FAIL: test_ptr_not_null"); failed += 1; }
 
     // TIER 15: Slices
-    if test_slice_create() == 42 { passed = passed + 1; }
-    if test_slice_start() == 42 { passed = passed + 1; }
-    if test_slice_index_first() == 10 { passed = passed + 1; }
-    if test_slice_index_middle() == 30 { passed = passed + 1; }
-    if test_slice_index_offset() == 30 { passed = passed + 1; }
-    if test_slice_len() == 3 { passed = passed + 1; }
-    if test_slice_len_full() == 5 { passed = passed + 1; }
-    if test_slice_write() == 42 { passed = passed + 1; }
-    if test_slice_implicit_end() == 30 { passed = passed + 1; }
-    if test_slice_full() == 5 { passed = passed + 1; }
-    if test_slice_implicit_start() == 30 { passed = passed + 1; }
+    if test_slice_create() != 42 { println("FAIL: test_slice_create"); failed += 1; }
+    if test_slice_start() != 42 { println("FAIL: test_slice_start"); failed += 1; }
+    if test_slice_index_first() != 10 { println("FAIL: test_slice_index_first"); failed += 1; }
+    if test_slice_index_middle() != 30 { println("FAIL: test_slice_index_middle"); failed += 1; }
+    if test_slice_index_offset() != 30 { println("FAIL: test_slice_index_offset"); failed += 1; }
+    if test_slice_len() != 3 { println("FAIL: test_slice_len"); failed += 1; }
+    if test_slice_len_full() != 5 { println("FAIL: test_slice_len_full"); failed += 1; }
+    if test_slice_write() != 42 { println("FAIL: test_slice_write"); failed += 1; }
+    if test_slice_implicit_end() != 30 { println("FAIL: test_slice_implicit_end"); failed += 1; }
+    if test_slice_full() != 5 { println("FAIL: test_slice_full"); failed += 1; }
+    if test_slice_implicit_start() != 30 { println("FAIL: test_slice_implicit_start"); failed += 1; }
 
     // TIER 15.4: Computed Base Index Assignment
-    if test_computed_base_assign() == 42 { passed = passed + 1; }
+    if test_computed_base_assign() != 42 { println("FAIL: test_computed_base_assign"); failed += 1; }
 
     // TIER 15.5: Array Copy
-    if test_array_copy() == 10 { passed = passed + 1; }
-    if test_array_copy_values() == 60 { passed = passed + 1; }
+    if test_array_copy() != 10 { println("FAIL: test_array_copy"); failed += 1; }
+    if test_array_copy_values() != 60 { println("FAIL: test_array_copy_values"); failed += 1; }
 
     // TIER 15.6: String Variable Assignment
-    if test_string_var_copy() == 5 { passed = passed + 1; }
-    if test_string_var_copy2() == 8 { passed = passed + 1; }
+    if test_string_var_copy() != 5 { println("FAIL: test_string_var_copy"); failed += 1; }
+    if test_string_var_copy2() != 8 { println("FAIL: test_string_var_copy2"); failed += 1; }
 
     // TIER 15.7: String Indexing and Slicing
-    if test_string_index_first() == 42 { passed = passed + 1; }
-    if test_string_index_middle() == 42 { passed = passed + 1; }
-    if test_string_slice() == 3 { passed = passed + 1; }
-    if test_string_slice_content() == 42 { passed = passed + 1; }
+    if test_string_index_first() != 42 { println("FAIL: test_string_index_first"); failed += 1; }
+    if test_string_index_middle() != 42 { println("FAIL: test_string_index_middle"); failed += 1; }
+    if test_string_slice() != 3 { println("FAIL: test_string_slice"); failed += 1; }
+    if test_string_slice_content() != 42 { println("FAIL: test_string_slice_content"); failed += 1; }
 
     // TIER 15.8: String Concatenation
-    if test_str_concat_basic() == 42 { passed = passed + 1; }
-    if test_str_concat_empty() == 42 { passed = passed + 1; }
-    if test_str_concat_multi() == 42 { passed = passed + 1; }
+    if test_str_concat_basic() != 42 { println("FAIL: test_str_concat_basic"); failed += 1; }
+    if test_str_concat_empty() != 42 { println("FAIL: test_str_concat_empty"); failed += 1; }
+    if test_str_concat_multi() != 42 { println("FAIL: test_str_concat_multi"); failed += 1; }
 
     // TIER 16: For-In Loops
-    if test_for_array() == 15 { passed = passed + 1; }
-    if test_for_break() == 30 { passed = passed + 1; }
-    if test_for_continue() == 12 { passed = passed + 1; }
-    if test_for_slice() == 90 { passed = passed + 1; }
+    if test_for_array() != 15 { println("FAIL: test_for_array"); failed += 1; }
+    if test_for_break() != 30 { println("FAIL: test_for_break"); failed += 1; }
+    if test_for_continue() != 12 { println("FAIL: test_for_continue"); failed += 1; }
+    if test_for_slice() != 90 { println("FAIL: test_for_slice"); failed += 1; }
 
     // TIER 17: Switch Statement
-    if test_switch_int() == 42 { passed = passed + 1; }
-    if test_switch_default() == 42 { passed = passed + 1; }
-    if test_switch_multi() == 42 { passed = passed + 1; }
-    if test_switch_first() == 42 { passed = passed + 1; }
+    if test_switch_int() != 42 { println("FAIL: test_switch_int"); failed += 1; }
+    if test_switch_default() != 42 { println("FAIL: test_switch_default"); failed += 1; }
+    if test_switch_multi() != 42 { println("FAIL: test_switch_multi"); failed += 1; }
+    if test_switch_first() != 42 { println("FAIL: test_switch_first"); failed += 1; }
 
     // TIER 18: Indirect Function Calls
-    if test_fn_ptr_call() == 42 { passed = passed + 1; }
-    if test_fn_ptr_reassign() == 42 { passed = passed + 1; }
-    if test_fn_ptr_no_args() == 42 { passed = passed + 1; }
+    if test_fn_ptr_call() != 42 { println("FAIL: test_fn_ptr_call"); failed += 1; }
+    if test_fn_ptr_reassign() != 42 { println("FAIL: test_fn_ptr_reassign"); failed += 1; }
+    if test_fn_ptr_no_args() != 42 { println("FAIL: test_fn_ptr_no_args"); failed += 1; }
 
     // TIER 19: Pointer Arithmetic
-    if test_ptr_add() == 42 { passed = passed + 1; }
-    if test_ptr_sub() == 42 { passed = passed + 1; }
+    if test_ptr_add() != 42 { println("FAIL: test_ptr_add"); failed += 1; }
+    if test_ptr_sub() != 42 { println("FAIL: test_ptr_sub"); failed += 1; }
 
     // TIER 20: Bitwise NOT
-    if test_bitwise_not_zero() == 42 { passed = passed + 1; }
-    if test_bitwise_not_neg() == 42 { passed = passed + 1; }
-    if test_bitwise_not_double() == 42 { passed = passed + 1; }
+    if test_bitwise_not_zero() != 42 { println("FAIL: test_bitwise_not_zero"); failed += 1; }
+    if test_bitwise_not_neg() != 42 { println("FAIL: test_bitwise_not_neg"); failed += 1; }
+    if test_bitwise_not_double() != 42 { println("FAIL: test_bitwise_not_double"); failed += 1; }
 
     // TIER 21: Compound Assignments
-    if test_add_assign() == 42 { passed = passed + 1; }
-    if test_sub_assign() == 42 { passed = passed + 1; }
-    if test_mul_assign() == 42 { passed = passed + 1; }
-    if test_div_assign() == 42 { passed = passed + 1; }
-    if test_bitwise_and_assign() == 42 { passed = passed + 1; }
-    if test_bitwise_or_assign() == 42 { passed = passed + 1; }
+    if test_add_assign() != 42 { println("FAIL: test_add_assign"); failed += 1; }
+    if test_sub_assign() != 42 { println("FAIL: test_sub_assign"); failed += 1; }
+    if test_mul_assign() != 42 { println("FAIL: test_mul_assign"); failed += 1; }
+    if test_div_assign() != 42 { println("FAIL: test_div_assign"); failed += 1; }
+    if test_bitwise_and_assign() != 42 { println("FAIL: test_bitwise_and_assign"); failed += 1; }
+    if test_bitwise_or_assign() != 42 { println("FAIL: test_bitwise_or_assign"); failed += 1; }
 
     // TIER 22: @intCast
-    if test_intcast_widen() == 42 { passed = passed + 1; }
-    if test_intcast_truncate() == 42 { passed = passed + 1; }
-    if test_intcast_roundtrip() == 42 { passed = passed + 1; }
+    if test_intcast_widen() != 42 { println("FAIL: test_intcast_widen"); failed += 1; }
+    if test_intcast_truncate() != 42 { println("FAIL: test_intcast_truncate"); failed += 1; }
+    if test_intcast_roundtrip() != 42 { println("FAIL: test_intcast_roundtrip"); failed += 1; }
 
-    return passed;
+    // Summary
+    if failed == 0 {
+        println("All 134 tests passed!");
+    }
+
+    return failed;
 }

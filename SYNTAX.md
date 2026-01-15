@@ -392,6 +392,11 @@ greet()
 len(s)              // Length of string, array, or slice
 len("hello")        // Returns 5
 len([1, 2, 3])      // Returns 3
+
+print(s)            // Print string to stdout (no newline)
+println(s)          // Print string to stdout with newline
+print("hello ")     // Output: hello
+println("world")    // Output: world\n
 ```
 
 ### Builtin Operations
