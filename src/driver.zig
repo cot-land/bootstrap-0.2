@@ -130,11 +130,11 @@ pub const Driver = struct {
             return error.LowerError;
         }
 
-        debug.log(.lower, "Lower complete: {} functions", .{ir.funcs.len});
+        debug.log(.lower, "Lower complete: {} functions, {} globals", .{ ir.funcs.len, ir.globals.len });
         self.debug.afterLower(&ir);
 
         // Phase 4: Generate code for each function
-        return try self.generateCode(ir.funcs, &type_reg);
+        return try self.generateCode(ir.funcs, ir.globals, &type_reg);
     }
 
     /// Compile a source file (supports imports).
@@ -235,6 +235,9 @@ pub const Driver = struct {
         var all_funcs = std.ArrayListUnmanaged(ir_mod.Func){};
         defer all_funcs.deinit(self.allocator);
 
+        var all_globals = std.ArrayListUnmanaged(ir_mod.Global){};
+        defer all_globals.deinit(self.allocator);
+
         for (parsed_files.items, 0..) |*pf, i| {
             debug.log(.lower, "Lowering: {s}", .{pf.path});
 
@@ -259,17 +262,22 @@ pub const Driver = struct {
                 try all_funcs.append(self.allocator, func);
             }
 
+            // Collect all globals
+            for (ir.globals) |global| {
+                try all_globals.append(self.allocator, global);
+            }
+
             try lowerers.append(self.allocator, lowerer);
             try all_irs.append(self.allocator, ir);
             self.debug.afterLower(&ir);
         }
 
-        debug.log(.lower, "Total: {} functions across all files", .{all_funcs.items.len});
+        debug.log(.lower, "Total: {} functions, {} globals across all files", .{ all_funcs.items.len, all_globals.items.len });
 
         // =====================================================================
         // Phase 4: Generate code
         // =====================================================================
-        return try self.generateCode(all_funcs.items, &type_reg);
+        return try self.generateCode(all_funcs.items, all_globals.items, &type_reg);
     }
 
     /// Recursively parse a file and all its imports.
@@ -348,9 +356,12 @@ pub const Driver = struct {
     }
 
     /// Generate machine code for all IR functions.
-    fn generateCode(self: *Driver, funcs: []const ir_mod.Func, type_reg: *types_mod.TypeRegistry) ![]u8 {
+    fn generateCode(self: *Driver, funcs: []const ir_mod.Func, globals: []const ir_mod.Global, type_reg: *types_mod.TypeRegistry) ![]u8 {
         var codegen = arm64_codegen.ARM64CodeGen.init(self.allocator);
         defer codegen.deinit();
+
+        // Pass globals to codegen for data section emission
+        codegen.setGlobals(globals);
 
         for (funcs, 0..) |*ir_func, func_idx| {
             debug.log(.ssa, "=== Processing function {} '{s}' ===", .{ func_idx, ir_func.name });

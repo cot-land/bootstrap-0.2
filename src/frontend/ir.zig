@@ -159,6 +159,13 @@ pub const GlobalRef = struct {
     name: []const u8, // For debug/linking
 };
 
+/// Store to a global variable. (Go: OASSIGN to global)
+pub const GlobalStore = struct {
+    global_idx: GlobalIdx,
+    name: []const u8, // For debug/linking
+    value: NodeIndex,
+};
+
 /// Reference to a function (for function pointers). (Go: ONAME for funcs)
 pub const FuncAddr = struct {
     name: []const u8, // Function name for linking
@@ -495,8 +502,10 @@ pub const Node = struct {
         // ========== Variable Access (Go: ONAME) ==========
         /// Reference to local variable value.
         local_ref: LocalRef,
-        /// Reference to global variable.
+        /// Reference to global variable (load).
         global_ref: GlobalRef,
+        /// Store to global variable.
+        global_store: GlobalStore,
         /// Reference to function address (for function pointers).
         func_addr: FuncAddr,
         /// Get address of local variable.
@@ -1010,6 +1019,16 @@ pub const FuncBuilder = struct {
         return self.emit(Node.init(.{ .func_addr = .{ .name = name } }, type_idx, span));
     }
 
+    /// Emit reference to a global variable (load).
+    pub fn emitGlobalRef(self: *FuncBuilder, global_idx: GlobalIdx, name: []const u8, type_idx: TypeIndex, span: Span) !NodeIndex {
+        return self.emit(Node.init(.{ .global_ref = .{ .global_idx = global_idx, .name = name } }, type_idx, span));
+    }
+
+    /// Emit store to a global variable.
+    pub fn emitGlobalStore(self: *FuncBuilder, global_idx: GlobalIdx, name: []const u8, value: NodeIndex, span: Span) !NodeIndex {
+        return self.emit(Node.init(.{ .global_store = .{ .global_idx = global_idx, .name = name, .value = value } }, TypeRegistry.VOID, span));
+    }
+
     /// Emit load from local variable.
     pub fn emitLoadLocal(self: *FuncBuilder, local_idx: LocalIdx, type_idx: TypeIndex, span: Span) !NodeIndex {
         return self.emit(Node.init(.{ .load_local = .{ .local_idx = local_idx } }, type_idx, span));
@@ -1398,6 +1417,16 @@ pub const Builder = struct {
     /// Add a global variable.
     pub fn addGlobal(self: *Builder, g: Global) !void {
         try self.globals.append(self.allocator, g);
+    }
+
+    /// Look up a global variable by name. Returns (index, global) if found.
+    pub fn lookupGlobal(self: *const Builder, name: []const u8) ?struct { idx: GlobalIdx, global: Global } {
+        for (self.globals.items, 0..) |g, idx| {
+            if (std.mem.eql(u8, g.name, name)) {
+                return .{ .idx = @intCast(idx), .global = g };
+            }
+        }
+        return null;
     }
 
     /// Add a struct definition.

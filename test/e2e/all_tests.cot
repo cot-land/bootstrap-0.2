@@ -116,6 +116,12 @@
 // ============================================================================
 
 // ============================================================================
+// GLOBAL VARIABLES (for TIER 24 tests)
+// ============================================================================
+
+var g_counter: i64 = 0;
+
+// ============================================================================
 // TIER 1: Basic Return + Arithmetic
 // ============================================================================
 
@@ -1516,6 +1522,59 @@ fn test_defer_block() i64 {
 }
 
 // ============================================================================
+// TIER 24: Global Variables
+// ============================================================================
+
+// Helper function to increment global counter
+fn g_increment() {
+    g_counter = g_counter + 1;
+}
+
+// Helper function to get current counter value
+fn g_get() i64 {
+    return g_counter;
+}
+
+// Helper function to reset counter
+fn g_reset() {
+    g_counter = 0;
+}
+
+// Basic global variable access
+fn test_global_basic() i64 {
+    g_counter = 42;
+    return g_counter;
+}
+
+// Global variable modified from helper function
+fn test_global_increment() i64 {
+    g_reset();          // Start at 0
+    g_increment();      // 1
+    g_increment();      // 2
+    g_increment();      // 3
+    return g_get() + 39;  // 3 + 39 = 42
+}
+
+// Global variable arithmetic
+fn test_global_arithmetic() i64 {
+    g_counter = 10;
+    g_counter = g_counter * 4;  // 40
+    g_counter = g_counter + 2;  // 42
+    return g_counter;
+}
+
+// Global variable accessed from multiple functions
+fn test_global_multi_access() i64 {
+    g_counter = 0;
+    g_increment();  // 1
+    g_increment();  // 2
+    let x: i64 = g_get();  // x = 2
+    g_increment();  // 3
+    g_increment();  // 4
+    return g_get() * 10 + x;  // 4 * 10 + 2 = 42
+}
+
+// ============================================================================
 // MAIN - Test Runner
 // ============================================================================
 
@@ -1720,9 +1779,15 @@ fn main() i64 {
     if test_defer_multiple() != 42 { println("FAIL: test_defer_multiple"); failed += 1; }
     if test_defer_block() != 42 { println("FAIL: test_defer_block"); failed += 1; }
 
+    // TIER 24: Global Variables
+    if test_global_basic() != 42 { println("FAIL: test_global_basic"); failed += 1; }
+    if test_global_increment() != 42 { println("FAIL: test_global_increment"); failed += 1; }
+    if test_global_arithmetic() != 42 { println("FAIL: test_global_arithmetic"); failed += 1; }
+    if test_global_multi_access() != 42 { println("FAIL: test_global_multi_access"); failed += 1; }
+
     // Summary
     if failed == 0 {
-        println("All 138 tests passed!");
+        println("All 142 tests passed!");
     }
 
     return failed;

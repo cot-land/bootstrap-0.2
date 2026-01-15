@@ -332,6 +332,37 @@ pub const MachOWriter = struct {
         });
     }
 
+    /// Add a global variable to the data section.
+    /// Allocates space (zero-initialized) and creates a symbol for it.
+    /// name: Global variable name (without underscore prefix)
+    /// size: Size in bytes
+    pub fn addGlobalVariable(self: *MachOWriter, name: []const u8, size: u32) !void {
+        // Align to 8 bytes before adding global
+        while (self.data.items.len % 8 != 0) {
+            try self.data.append(self.allocator, 0);
+        }
+
+        // Record offset in data section
+        const offset: u32 = @intCast(self.data.items.len);
+
+        // Add zero-initialized space for the global variable
+        for (0..size) |_| {
+            try self.data.append(self.allocator, 0);
+        }
+
+        // Create mangled symbol name with underscore prefix (Darwin ABI)
+        const sym_name = try std.fmt.allocPrint(self.allocator, "_{s}", .{name});
+
+        // Add symbol for this global (section 2 = __data)
+        // Mark as external for PAGE21/PAGEOFF12 relocations to work
+        try self.symbols.append(self.allocator, .{
+            .name = sym_name,
+            .value = offset,
+            .section = 2, // __data section
+            .external = true, // Required for PAGE21/PAGEOFF12 relocations
+        });
+    }
+
     /// Add string to string table, return its offset.
     fn addString(self: *MachOWriter, s: []const u8) !u32 {
         const offset: u32 = @intCast(self.strings.items.len);

@@ -402,6 +402,8 @@ pub const Op = enum(u16) {
     addr,
     /// Address of local variable. aux_int: stack offset
     local_addr,
+    /// Address of global variable. aux: global symbol name
+    global_addr,
     /// Pointer offset: ptr + aux_int
     off_ptr,
     /// Pointer + integer: arg0 + arg1
@@ -1046,6 +1048,7 @@ const op_info_table = blk: {
     // Address operations
     table[@intFromEnum(Op.addr)] = .{ .name = "Addr", .aux_type = .symbol, .rematerializable = true };
     table[@intFromEnum(Op.local_addr)] = .{ .name = "LocalAddr", .aux_type = .int64, .rematerializable = true };
+    table[@intFromEnum(Op.global_addr)] = .{ .name = "GlobalAddr", .aux_type = .symbol, .rematerializable = true };
     table[@intFromEnum(Op.off_ptr)] = .{ .name = "OffPtr", .arg_len = 1, .aux_type = .int64 };
     table[@intFromEnum(Op.add_ptr)] = .{ .name = "AddPtr", .arg_len = 2 };
     table[@intFromEnum(Op.sub_ptr)] = .{ .name = "SubPtr", .arg_len = 2 };

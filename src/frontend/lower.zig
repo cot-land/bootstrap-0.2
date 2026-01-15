@@ -534,6 +534,7 @@ pub const Lowerer = struct {
 
         switch (target_expr) {
             .ident => |ident| {
+                // Try local variable first
                 if (fb.lookupLocal(ident.name)) |local_idx| {
                     const local_type = fb.locals.items[local_idx].type_idx;
 
@@ -551,6 +552,28 @@ pub const Lowerer = struct {
                     };
 
                     _ = try fb.emitStoreLocal(local_idx, value_node, assign.span);
+                    return;
+                }
+
+                // Try global variable
+                if (self.builder.lookupGlobal(ident.name)) |g| {
+                    debug.log(.lower, "lowerAssign: found global '{s}' at idx {d}", .{ ident.name, g.idx });
+
+                    // Handle compound assignment
+                    const value_node = if (assign.op != .assign) blk: {
+                        // Load current value from global
+                        const current = try fb.emitGlobalRef(g.idx, ident.name, g.global.type_idx, assign.span);
+                        // Lower RHS
+                        const rhs = try self.lowerExprNode(assign.value);
+                        // Emit binary operation
+                        const bin_op = tokenToBinaryOp(assign.op);
+                        break :blk try fb.emitBinary(bin_op, current, rhs, g.global.type_idx, assign.span);
+                    } else blk: {
+                        break :blk try self.lowerExprNode(assign.value);
+                    };
+
+                    _ = try fb.emitGlobalStore(g.idx, ident.name, value_node, assign.span);
+                    return;
                 }
             },
             .field_access => |fa| {
@@ -1118,6 +1141,12 @@ pub const Lowerer = struct {
             if (sym.kind == .function) {
                 return try fb.emitFuncAddr(ident.name, sym.type_idx, ident.span);
             }
+        }
+
+        // Check for global variable
+        if (self.builder.lookupGlobal(ident.name)) |g| {
+            debug.log(.lower, "lowerIdent: found global '{s}' at idx {d}", .{ ident.name, g.idx });
+            return try fb.emitGlobalRef(g.idx, ident.name, g.global.type_idx, ident.span);
         }
 
         return ir.null_node;

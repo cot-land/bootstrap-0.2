@@ -529,6 +529,115 @@ pub const SSABuilder = struct {
                 break :blk value; // Store returns the value for chaining
             },
 
+            // === Global Variable Access ===
+            .global_ref => |g| blk: {
+                // Get address of global using symbol name
+                const addr_val = try self.func.newValue(.global_addr, TypeRegistry.VOID, cur, .{});
+                addr_val.aux = .{ .string = g.name };
+                try cur.addValue(self.allocator, addr_val);
+
+                // Check if loading a slice type - need to decompose into (ptr, len)
+                const load_type = self.type_registry.get(node.type_idx);
+                if (load_type == .slice) {
+                    // Load ptr from offset 0
+                    const ptr_load = try self.func.newValue(.load, TypeRegistry.I64, cur, .{});
+                    ptr_load.addArg(addr_val);
+                    try cur.addValue(self.allocator, ptr_load);
+
+                    // Compute address for len (offset 8)
+                    const len_addr = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, .{});
+                    len_addr.aux_int = 8;
+                    len_addr.addArg(addr_val);
+                    try cur.addValue(self.allocator, len_addr);
+
+                    // Load len from offset 8
+                    const len_load = try self.func.newValue(.load, TypeRegistry.I64, cur, .{});
+                    len_load.addArg(len_addr);
+                    try cur.addValue(self.allocator, len_load);
+
+                    // Combine into slice_make
+                    const slice_val = try self.func.newValue(.slice_make, node.type_idx, cur, .{});
+                    slice_val.addArg2(ptr_load, len_load);
+                    try cur.addValue(self.allocator, slice_val);
+
+                    debug.log(.ssa, "    global_ref (slice) '{s}' -> v{} (ptr=v{}, len=v{})", .{ g.name, slice_val.id, ptr_load.id, len_load.id });
+                    break :blk slice_val;
+                }
+
+                // Regular load for non-slice types
+                const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
+                load_val.addArg(addr_val);
+                try cur.addValue(self.allocator, load_val);
+
+                debug.log(.ssa, "    global_ref '{s}' -> v{}", .{ g.name, load_val.id });
+                break :blk load_val;
+            },
+
+            .global_store => |g| blk: {
+                const value = try self.convertNode(g.value) orelse return error.MissingValue;
+
+                // Check if storing a slice type - need to decompose into (ptr, len)
+                const value_type = self.type_registry.get(value.type_idx);
+                const is_slice_value = (value.op == .slice_make and value.args.len >= 2);
+                const is_slice_call = (value.op == .static_call and value_type == .slice);
+
+                if (is_slice_value or is_slice_call) {
+                    var ptr_val: *Value = undefined;
+                    var len_val: *Value = undefined;
+
+                    if (is_slice_value) {
+                        ptr_val = value.args[0];
+                        len_val = value.args[1];
+                    } else {
+                        // For call results, extract x1 first then x0
+                        len_val = try self.func.newValue(.slice_len, TypeRegistry.I64, cur, .{});
+                        len_val.addArg(value);
+                        try cur.addValue(self.allocator, len_val);
+
+                        ptr_val = try self.func.newValue(.slice_ptr, TypeRegistry.I64, cur, .{});
+                        ptr_val.addArg(value);
+                        try cur.addValue(self.allocator, ptr_val);
+                    }
+
+                    // Get address of global
+                    const addr_val = try self.func.newValue(.global_addr, TypeRegistry.VOID, cur, .{});
+                    addr_val.aux = .{ .string = g.name };
+                    try cur.addValue(self.allocator, addr_val);
+
+                    // Store ptr at offset 0
+                    const ptr_store = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                    ptr_store.addArg2(addr_val, ptr_val);
+                    try cur.addValue(self.allocator, ptr_store);
+
+                    // Compute address for len (offset 8)
+                    const len_addr = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, .{});
+                    len_addr.aux_int = 8;
+                    len_addr.addArg(addr_val);
+                    try cur.addValue(self.allocator, len_addr);
+
+                    // Store len at offset 8
+                    const len_store = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                    len_store.addArg2(len_addr, len_val);
+                    try cur.addValue(self.allocator, len_store);
+
+                    debug.log(.ssa, "    global_store (slice) '{s}' ptr=v{} len=v{}", .{ g.name, ptr_val.id, len_val.id });
+                    break :blk value;
+                }
+
+                // Get address of global
+                const addr_val = try self.func.newValue(.global_addr, TypeRegistry.VOID, cur, .{});
+                addr_val.aux = .{ .string = g.name };
+                try cur.addValue(self.allocator, addr_val);
+
+                // Regular store for non-slice types
+                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                store_val.addArg2(addr_val, value);
+                try cur.addValue(self.allocator, store_val);
+
+                debug.log(.ssa, "    global_store '{s}' = v{}", .{ g.name, value.id });
+                break :blk value;
+            },
+
             // === Binary Operations ===
             .binary => |b| blk: {
                 // Check for short-circuit logical operators

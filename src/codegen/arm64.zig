@@ -44,6 +44,7 @@ const regalloc = @import("../ssa/regalloc.zig");
 const macho = @import("../obj/macho.zig");
 const debug = @import("../pipeline_debug.zig");
 const TypeRegistry = @import("../frontend/types.zig").TypeRegistry;
+const ir_mod = @import("../frontend/ir.zig");
 const abi = @import("../ssa/abi.zig");
 
 /// ARM64 register numbers.
@@ -208,6 +209,9 @@ pub const ARM64CodeGen = struct {
     /// Data relocations for ADRP/ADD pairs (added during finalize)
     data_relocations: std.ArrayListUnmanaged(macho.ExtRelocation),
 
+    /// Global variables to emit in data section
+    globals: []const ir_mod.Global = &.{},
+
     pub fn init(allocator: std.mem.Allocator) ARM64CodeGen {
         return .{
             .allocator = allocator,
@@ -258,6 +262,12 @@ pub const ARM64CodeGen = struct {
     /// Must be called before generateBinary.
     pub fn setFrameSize(self: *ARM64CodeGen, size: u32) void {
         self.frame_size = size;
+    }
+
+    /// Set global variables to emit in data section.
+    /// Must be called before finalize.
+    pub fn setGlobals(self: *ARM64CodeGen, globs: []const ir_mod.Global) void {
+        self.globals = globs;
     }
 
     // ========================================================================
@@ -1725,6 +1735,36 @@ pub const ARM64CodeGen = struct {
                 try self.value_regs.put(self.allocator, value, dest_reg);
             },
 
+            .global_addr => {
+                // Address of a global variable
+                // aux.string contains the global variable name
+                const dest_reg = self.getDestRegForValue(value);
+                const global_name = switch (value.aux) {
+                    .string => |s| s,
+                    else => "unknown_global",
+                };
+
+                // Emit ADRP + ADD to load the global address
+                // Linker will fix up the actual address via relocations
+                const adrp_offset = self.offset();
+                try self.emit(asm_mod.encodeADRP(dest_reg, 0));
+
+                const add_offset = self.offset();
+                try self.emit(asm_mod.encodeADDImm(dest_reg, dest_reg, 0, 0));
+
+                // Record global reference for relocation during finalize()
+                // Prepend underscore for macOS symbol naming convention
+                const mangled_name = try std.fmt.allocPrint(self.allocator, "_{s}", .{global_name});
+                try self.func_refs.append(self.allocator, .{
+                    .adrp_offset = adrp_offset,
+                    .add_offset = add_offset,
+                    .func_name = mangled_name, // Reusing func_refs for globals too
+                });
+
+                debug.log(.codegen, "      -> ADRP+ADD x{d}, _{s} (global)", .{ dest_reg, global_name });
+                try self.value_regs.put(self.allocator, value, dest_reg);
+            },
+
             .addr => {
                 // Address of a symbol (function for function pointers)
                 // aux.string contains the symbol name
@@ -2210,6 +2250,12 @@ pub const ARM64CodeGen = struct {
         // Add relocations for function calls
         for (self.relocations.items) |reloc| {
             try writer.addRelocation(reloc.offset, reloc.target);
+        }
+
+        // Add global variables to data section
+        for (self.globals) |global| {
+            try writer.addGlobalVariable(global.name, global.size);
+            debug.log(.codegen, "[FINALIZE] Added global '{s}' size={d}", .{ global.name, global.size });
         }
 
         // Process string references: add strings to data section and create relocations
