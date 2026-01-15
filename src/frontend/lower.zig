@@ -1372,19 +1372,36 @@ pub const Lowerer = struct {
             try args.append(self.allocator, arg_node);
         }
 
-        // Look up function return type in symbol table
-        // Following Go's pattern: functions are stored as symbols with function types
-        var return_type: TypeIndex = TypeRegistry.VOID;
+        // Determine direct vs indirect call (Go: ClosureCall vs OCALL):
+        // - Direct call: callee is a function name
+        // - Indirect call: callee is a local variable holding a function pointer
+        //
+        // Check FuncBuilder's locals first (scope lookup fails after checker completes)
+        if (fb.lookupLocal(func_name)) |local_idx| {
+            // Found as a local variable - this is an indirect call
+            const local = fb.locals.items[local_idx];
+            const local_type = self.type_reg.get(local.type_idx);
 
-        if (self.chk.scope.lookup(func_name)) |sym| {
-            if (sym.kind == .function) {
-                const func_type = self.type_reg.get(sym.type_idx);
-                if (func_type == .func) {
-                    return_type = func_type.func.return_type;
-                }
+            if (local_type == .func) {
+                // It's a function pointer variable - emit indirect call
+                debug.log(.lower, "lowerCall: indirect call through variable '{s}' (local {d})", .{ func_name, local_idx });
+                const return_type = local_type.func.return_type;
+                const ptr_val = try fb.emitLoadLocal(local_idx, local.type_idx, call.span);
+                return try fb.emitCallIndirect(ptr_val, args.items, return_type, call.span);
             }
         }
 
+        // Not a local variable - must be a direct function call
+        // Look up function return type from symbol table
+        var return_type: TypeIndex = TypeRegistry.VOID;
+        if (self.chk.scope.lookup(func_name)) |sym| {
+            const func_type = self.type_reg.get(sym.type_idx);
+            if (func_type == .func) {
+                return_type = func_type.func.return_type;
+            }
+        }
+
+        // Direct call to named function
         return try fb.emitCall(func_name, args.items, false, return_type, call.span);
     }
 
@@ -1584,6 +1601,17 @@ pub const Lowerer = struct {
                     return self.type_reg.makeArray(elem_type, length) catch TypeRegistry.VOID;
                 }
                 return TypeRegistry.VOID;
+            },
+            .function => |fn_type| {
+                // Function type: fn(params) -> ret
+                var param_types = std.ArrayListUnmanaged(types.FuncParam){};
+                defer param_types.deinit(self.allocator);
+                for (fn_type.params) |param_idx| {
+                    const param_type = self.resolveTypeNode(param_idx);
+                    param_types.append(self.allocator, .{ .name = "", .type_idx = param_type }) catch return TypeRegistry.VOID;
+                }
+                const ret_type = self.resolveTypeNode(fn_type.ret);
+                return self.type_reg.makeFunc(param_types.items, ret_type) catch TypeRegistry.VOID;
             },
             else => return TypeRegistry.VOID,
         }

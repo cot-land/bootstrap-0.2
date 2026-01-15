@@ -1209,6 +1209,57 @@ pub const ARM64CodeGen = struct {
                 try self.value_regs.put(self.allocator, value, 0);
             },
 
+            .closure_call => {
+                // Indirect function call through function pointer (Go: ClosureCall)
+                // ARM64 ABI: args in x0-x7, result in x0
+                // First arg is function pointer, rest are actual call arguments
+                const args = value.args;
+                if (args.len == 0) {
+                    debug.log(.codegen, "      closure_call: no function pointer!", .{});
+                    return;
+                }
+
+                // Get function pointer
+                const fn_ptr = args[0];
+                const fn_ptr_reg = self.getRegForValue(fn_ptr) orelse blk: {
+                    // Load function pointer to x16 (scratch register)
+                    try self.ensureInReg(fn_ptr, 16);
+                    break :blk @as(u5, 16);
+                };
+
+                // Setup actual arguments (skip args[0] which is the function pointer)
+                // Use x16 as temp, but function pointer might be there, so save it first
+                const actual_args = args[1..];
+                if (actual_args.len > 0) {
+                    // If fn_ptr is in x16, move it somewhere safe first
+                    var target_reg: u5 = fn_ptr_reg;
+                    if (fn_ptr_reg < 8 or fn_ptr_reg == 16) {
+                        // Function pointer is in an arg register or x16, save to x17
+                        try self.emit(asm_mod.encodeADDImm(17, fn_ptr_reg, 0, 0)); // MOV x17, fn_ptr
+                        target_reg = 17;
+                    }
+
+                    // Collect moves for actual arguments to x0-x7
+                    const max_args = @min(actual_args.len, 8);
+                    var temp_args: [8]*Value = undefined;
+                    for (actual_args[0..max_args], 0..) |arg, i| {
+                        temp_args[i] = arg;
+                    }
+                    try self.setupCallArgs(temp_args[0..max_args]);
+
+                    // Emit BLR to call through function pointer
+                    try self.emit(asm_mod.encodeBLR(target_reg));
+                    debug.log(.codegen, "      -> BLR x{d} (indirect call with {} args), result in x0", .{ target_reg, actual_args.len });
+                } else {
+                    // No arguments, just call through function pointer
+                    try self.emit(asm_mod.encodeBLR(fn_ptr_reg));
+                    debug.log(.codegen, "      -> BLR x{d} (indirect call, no args), result in x0", .{fn_ptr_reg});
+                }
+
+                // Result is in x0
+                try self.value_regs.put(self.allocator, value, 0);
+            },
+
             .store_reg => {
                 // Spill a value to a stack slot (Go's approach)
                 // Stack offset assigned by stackalloc via f.setHome()

@@ -334,6 +334,15 @@ pub const Call = struct {
     is_builtin: bool,
 };
 
+/// Indirect function call through a function pointer.
+/// (Go: ClosureCall / InterCall)
+pub const CallIndirect = struct {
+    /// The function pointer value (computed expression)
+    callee: NodeIndex,
+    /// Arguments to the function
+    args: []const NodeIndex,
+};
+
 /// Return from function. (Go: ReturnStmt)
 pub const Return = struct {
     /// Value to return, or null for void return
@@ -543,6 +552,8 @@ pub const Node = struct {
 
         // ========== Control Flow (Go: statements) ==========
         call: Call,
+        /// Indirect function call through function pointer.
+        call_indirect: CallIndirect,
         ret: Return,
         jump: Jump,
         branch: Branch,
@@ -613,6 +624,7 @@ pub const Node = struct {
             .ptr_field_store,
             .store_local_field,
             .call,
+            .call_indirect,
             .ret,
             .jump,
             .branch,
@@ -1107,6 +1119,12 @@ pub const FuncBuilder = struct {
         return self.emit(Node.init(.{ .call = .{ .func_name = func_name, .args = duped_args, .is_builtin = is_builtin } }, type_idx, span));
     }
 
+    /// Emit indirect function call through function pointer. (Go: ClosureCall)
+    pub fn emitCallIndirect(self: *FuncBuilder, callee: NodeIndex, args: []const NodeIndex, type_idx: TypeIndex, span: Span) !NodeIndex {
+        const duped_args = try self.allocator.dupe(NodeIndex, args);
+        return self.emit(Node.init(.{ .call_indirect = .{ .callee = callee, .args = duped_args } }, type_idx, span));
+    }
+
     /// Emit return.
     pub fn emitRet(self: *FuncBuilder, value: ?NodeIndex, span: Span) !NodeIndex {
         return self.emit(Node.init(.{ .ret = .{ .value = value } }, TypeRegistry.VOID, span));
@@ -1427,6 +1445,14 @@ pub fn debugPrintNode(node: *const Node, writer: anytype) !void {
 
         .call => |c| {
             try writer.print("call {s} args=[", .{c.func_name});
+            for (c.args, 0..) |arg, i| {
+                if (i > 0) try writer.print(",", .{});
+                try writer.print("{d}", .{arg});
+            }
+            try writer.print("]", .{});
+        },
+        .call_indirect => |c| {
+            try writer.print("call_indirect callee={d} args=[", .{c.callee});
             for (c.args, 0..) |arg, i| {
                 if (i > 0) try writer.print(",", .{});
                 try writer.print("{d}", .{arg});

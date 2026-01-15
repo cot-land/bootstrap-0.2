@@ -4,7 +4,7 @@
 
 ## Current State
 
-**114 e2e tests passing.** Core language features complete. Now focused on features required for self-hosting.
+**117 e2e tests passing.** Core language features complete. Now focused on features required for self-hosting.
 
 ---
 
@@ -33,7 +33,7 @@ A self-hosting Cot compiler needs to:
 | **Control** | Switch statement | ✅ Done | P1 | Token/AST dispatch |
 | **Data** | Global constants | ✅ Done | P1 | Compile-time evaluation + inlining |
 | **Modules** | Import statement | ❌ TODO | P1 | Split code into files |
-| **Functions** | Indirect calls | 🔶 Partial | P1 | `f(x)` where f is variable |
+| **Functions** | Indirect calls | ✅ Done | P1 | `f(x)` where f is variable |
 | **Types** | Integer casts | ❌ TODO | P2 | `@intCast(u8, x)` |
 | **Operators** | Bitwise NOT | ❌ TODO | P2 | `~x` |
 | **Operators** | Compound assign | ❌ TODO | P3 | `x += 1` |
@@ -220,31 +220,35 @@ return switch x {
 
 ---
 
-### Phase 6: Indirect Function Calls (P1)
+### Phase 6: Indirect Function Calls (P1) - COMPLETE
 
 **Goal:** Call functions through variables.
+
+**Completed (2026-01-15):**
+- ✅ `call_indirect` IR node for indirect calls
+- ✅ `closure_call` SSA op (Go's ClosureCall pattern)
+- ✅ ARM64 BLR instruction for indirect branch
+- ✅ Function type resolution in lowerer
+
+**Implementation Notes:**
+- Lowerer detects if callee name is a local variable with function type
+- Emits `load_local` to get function pointer, then `call_indirect`
+- SSA builder converts to `closure_call` with function pointer as first arg
+- Codegen uses BLR (Branch Link Register) instead of BL
 
 ```cot
 fn add(a: i64, b: i64) i64 { return a + b; }
 
 fn main() i64 {
     var f: fn(i64, i64) -> i64 = add;
-    return f(20, 22);  // Indirect call - NOT YET WORKING
+    return f(20, 22);  // 42 - indirect call works!
 }
 ```
 
-**Current State:** Function types work, assignment works, but calling through variable fails.
-
-**Implementation Steps:**
-1. Modify `lowerCall` to detect if callee is a variable
-2. For variables: emit `load` of function pointer, then indirect call
-3. Add `call_indirect` IR node (or modify existing call)
-4. Codegen: Use `BLR` (branch-link-register) instead of `BL`
-
 **Tests:**
 - `test_fn_ptr_call` - Call through function pointer
-- `test_fn_ptr_param` - Pass function as parameter
-- `test_fn_ptr_return` - Return function from function
+- `test_fn_ptr_reassign` - Reassign and call
+- `test_fn_ptr_no_args` - Function pointer with no args
 
 ---
 

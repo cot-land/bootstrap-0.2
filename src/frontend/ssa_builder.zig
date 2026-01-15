@@ -614,6 +614,25 @@ pub const SSABuilder = struct {
                 break :blk call_val;
             },
 
+            // Indirect call through function pointer (Go: ClosureCall)
+            .call_indirect => |c| blk: {
+                const call_val = try self.func.newValue(.closure_call, node.type_idx, cur, .{});
+
+                // First arg is the function pointer (callee)
+                const callee_val = try self.convertNode(c.callee) orelse return error.MissingValue;
+                call_val.addArg(callee_val);
+
+                // Rest are the actual arguments
+                for (c.args) |arg_idx| {
+                    const arg_val = try self.convertNode(arg_idx) orelse return error.MissingValue;
+                    call_val.addArg(arg_val);
+                }
+
+                try cur.addValue(self.allocator, call_val);
+                debug.log(.ssa, "    n{} -> v{} closure_call (indirect) with {} args", .{ node_idx, call_val.id, c.args.len });
+                break :blk call_val;
+            },
+
             // === Address Operations ===
             .addr_local => |l| blk: {
                 const val = try self.func.newValue(.local_addr, node.type_idx, cur, .{});

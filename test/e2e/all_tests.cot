@@ -1261,7 +1261,45 @@ fn test_switch_first() i64 {
 }
 
 // ============================================================================
-// TIER 17+: BLOCKED - Advanced Features
+// TIER 18: Indirect Function Calls (Function Pointers)
+// ============================================================================
+
+// Helper function for indirect call tests
+fn add_fn(a: i64, b: i64) i64 {
+    return a + b;
+}
+
+fn mul_fn(a: i64, b: i64) i64 {
+    return a * b;
+}
+
+// Test indirect call through function pointer variable
+fn test_fn_ptr_call() i64 {
+    var f: fn(i64, i64) -> i64 = add_fn;
+    return f(20, 22);  // Should return 42
+}
+
+// Test reassigning function pointer
+fn test_fn_ptr_reassign() i64 {
+    var f: fn(i64, i64) -> i64 = add_fn;
+    let r1: i64 = f(10, 5);   // 15
+    f = mul_fn;
+    let r2: i64 = f(6, 7);    // 42
+    return r2;
+}
+
+// Test function pointer with zero args
+fn get_forty_two() i64 {
+    return 42;
+}
+
+fn test_fn_ptr_no_args() i64 {
+    var f: fn() -> i64 = get_forty_two;
+    return f();
+}
+
+// ============================================================================
+// TIER 19+: BLOCKED - Advanced Features
 // Need: more features...
 // ============================================================================
 
@@ -1433,6 +1471,11 @@ fn main() i64 {
     if test_switch_default() == 42 { passed = passed + 1; }
     if test_switch_multi() == 42 { passed = passed + 1; }
     if test_switch_first() == 42 { passed = passed + 1; }
+
+    // TIER 18: Indirect Function Calls
+    if test_fn_ptr_call() == 42 { passed = passed + 1; }
+    if test_fn_ptr_reassign() == 42 { passed = passed + 1; }
+    if test_fn_ptr_no_args() == 42 { passed = passed + 1; }
 
     return passed;
 }
