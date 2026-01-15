@@ -627,6 +627,25 @@ pub const Ast = struct {
         }
         return &.{};
     }
+
+    /// Get all import paths from this AST.
+    /// Returns a slice of import paths (must be freed by caller).
+    pub fn getImports(self: *const Ast, allocator: std.mem.Allocator) ![]const []const u8 {
+        var imports = std.ArrayListUnmanaged([]const u8){};
+        errdefer imports.deinit(allocator);
+
+        for (self.getRootDecls()) |decl_idx| {
+            if (self.getNode(decl_idx)) |node| {
+                if (node.asDecl()) |decl| {
+                    if (decl == .import_decl) {
+                        try imports.append(allocator, decl.import_decl.path);
+                    }
+                }
+            }
+        }
+
+        return imports.toOwnedSlice(allocator);
+    }
 };
 
 // =========================================

@@ -503,8 +503,14 @@ pub const Parser = struct {
             self.syntaxError("expected import path string");
             return null;
         }
-        const path = self.tok.text;
+        const raw_path = self.tok.text;
         self.advance();
+
+        // Strip quotes from path: "math.cot" -> math.cot
+        const path = if (raw_path.len >= 2 and raw_path[0] == '"' and raw_path[raw_path.len - 1] == '"')
+            raw_path[1 .. raw_path.len - 1]
+        else
+            raw_path;
 
         return try self.tree.addDecl(.{ .import_decl = .{
             .path = path,

@@ -17,6 +17,33 @@ This document defines the Cot language syntax as implemented in bootstrap-0.2.
 
 ---
 
+## Imports
+
+Import other Cot source files to use their functions, types, and constants.
+
+```cot
+import "math.cot"           // Import functions from math.cot
+import "utils/helpers.cot"  // Relative path import
+```
+
+**Notes:**
+- Import paths are relative to the importing file
+- All public symbols from imported file are available
+- Imports must appear at the top of the file (before other declarations)
+- Circular imports are prevented (error if A imports B imports A)
+
+**Example:**
+```cot
+// math.cot
+fn add(a: i64, b: i64) i64 { return a + b; }
+
+// main.cot
+import "math.cot"
+fn main() i64 { return add(10, 20); }  // 30
+```
+
+---
+
 ## Literals
 
 ### Integer Literals
