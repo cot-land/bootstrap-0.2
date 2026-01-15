@@ -66,6 +66,7 @@ pub const Symbol = struct {
     node: NodeIndex, // AST node where defined
     mutable: bool, // var vs const
     is_extern: bool, // true for extern fn declarations
+    const_value: ?i64, // Compile-time value for constants (Go: constant.Value)
 
     pub fn init(name: []const u8, kind: SymbolKind, type_idx: TypeIndex, node: NodeIndex, mutable: bool) Symbol {
         return .{
@@ -74,7 +75,8 @@ pub const Symbol = struct {
             .type_idx = type_idx,
             .node = node,
             .mutable = mutable,
-            .is_extern = false, // default to non-extern
+            .is_extern = false,
+            .const_value = null,
         };
     }
 
@@ -86,6 +88,19 @@ pub const Symbol = struct {
             .node = node,
             .mutable = mutable,
             .is_extern = is_extern,
+            .const_value = null,
+        };
+    }
+
+    pub fn initConst(name: []const u8, type_idx: TypeIndex, node: NodeIndex, value: i64) Symbol {
+        return .{
+            .name = name,
+            .kind = .constant,
+            .type_idx = type_idx,
+            .node = node,
+            .mutable = false,
+            .is_extern = false,
+            .const_value = value,
         };
     }
 };
@@ -482,6 +497,15 @@ pub const Checker = struct {
 
         // Update symbol with resolved type
         if (self.scope.lookupLocal(v.name)) |_| {
+            // For constants, try to evaluate at compile-time (Go's constant.Value pattern)
+            if (v.is_const and v.value != null_node) {
+                if (self.evalConstExpr(v.value)) |const_val| {
+                    debug.log(.check, "Constant '{s}' = {d}", .{ v.name, const_val });
+                    try self.scope.define(Symbol.initConst(v.name, var_type, idx, const_val));
+                    return;
+                }
+            }
+
             try self.scope.define(Symbol.init(
                 v.name,
                 if (v.is_const) .constant else .variable,
@@ -490,6 +514,78 @@ pub const Checker = struct {
                 !v.is_const,
             ));
         }
+    }
+
+    /// Evaluate a constant expression at compile-time.
+    /// Returns the value if it can be evaluated, null otherwise.
+    /// Follows Go's constant.Value pattern from cmd/compile/internal/types2.
+    fn evalConstExpr(self: *Checker, idx: NodeIndex) ?i64 {
+        const node = self.tree.getNode(idx) orelse return null;
+        const expr = node.asExpr() orelse return null;
+
+        return switch (expr) {
+            .literal => |lit| self.evalLiteral(lit),
+            .unary => |un| self.evalUnary(un),
+            .binary => |bin| self.evalBinary(bin),
+            .paren => |p| self.evalConstExpr(p.inner),
+            .ident => |id| self.evalConstIdent(id),
+            else => null, // Not a constant expression
+        };
+    }
+
+    fn evalLiteral(self: *Checker, lit: ast.Literal) ?i64 {
+        _ = self;
+        return switch (lit.kind) {
+            .int => std.fmt.parseInt(i64, lit.value, 0) catch null,
+            .true_lit => 1,
+            .false_lit => 0,
+            else => null, // Strings, floats not yet supported
+        };
+    }
+
+    fn evalUnary(self: *Checker, un: ast.Unary) ?i64 {
+        const operand = self.evalConstExpr(un.operand) orelse return null;
+        return switch (un.op) {
+            .sub => -operand,
+            .not => ~operand,
+            .lnot => if (operand == 0) @as(i64, 1) else @as(i64, 0),
+            else => null,
+        };
+    }
+
+    fn evalBinary(self: *Checker, bin: ast.Binary) ?i64 {
+        const left = self.evalConstExpr(bin.left) orelse return null;
+        const right = self.evalConstExpr(bin.right) orelse return null;
+
+        return switch (bin.op) {
+            .add => left + right,
+            .sub => left - right,
+            .mul => left * right,
+            .quo => if (right != 0) @divTrunc(left, right) else null,
+            .rem => if (right != 0) @rem(left, right) else null,
+            .@"and" => left & right,
+            .@"or" => left | right,
+            .xor => left ^ right,
+            .shl => left << @intCast(right),
+            .shr => left >> @intCast(right),
+            .eql => if (left == right) @as(i64, 1) else @as(i64, 0),
+            .neq => if (left != right) @as(i64, 1) else @as(i64, 0),
+            .lss => if (left < right) @as(i64, 1) else @as(i64, 0),
+            .leq => if (left <= right) @as(i64, 1) else @as(i64, 0),
+            .gtr => if (left > right) @as(i64, 1) else @as(i64, 0),
+            .geq => if (left >= right) @as(i64, 1) else @as(i64, 0),
+            else => null,
+        };
+    }
+
+    fn evalConstIdent(self: *Checker, id: ast.Ident) ?i64 {
+        // Look up identifier - if it's a constant with a value, return it
+        if (self.scope.lookup(id.name)) |sym| {
+            if (sym.kind == .constant) {
+                return sym.const_value;
+            }
+        }
+        return null;
     }
 
     // ========================================================================

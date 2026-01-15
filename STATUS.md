@@ -31,7 +31,7 @@ A self-hosting Cot compiler needs to:
 | **Strings** | String indexing | ✅ Done | P0 | `s[i]` for char access |
 | **Strings** | String concatenation | ❌ TODO | P1 | Error messages |
 | **Control** | Switch statement | ❌ TODO | P1 | Token/AST dispatch |
-| **Data** | Global constants | ❌ TODO | P1 | `const EOF = 0;` |
+| **Data** | Global constants | ✅ Done | P1 | Compile-time evaluation + inlining |
 | **Modules** | Import statement | ❌ TODO | P1 | Split code into files |
 | **Functions** | Indirect calls | 🔶 Partial | P1 | `f(x)` where f is variable |
 | **Types** | Integer casts | ❌ TODO | P2 | `@intCast(u8, x)` |
@@ -157,28 +157,31 @@ fn main() i64 {
 
 ---
 
-### Phase 4: Global Constants (P1)
+### Phase 4: Global Constants (P1) - COMPLETE
 
 **Goal:** Define constants at file scope.
 
+**Completed (2026-01-15):**
+- ✅ Compile-time constant evaluation following Go's `constant.Value` pattern
+- ✅ Constant expressions (arithmetic, comparisons, references to other constants)
+- ✅ Inlining: constants are not stored at runtime, values baked into code
+
+**Implementation Notes:**
+- Checker: `evalConstExpr()` recursively evaluates constant expressions
+- Symbol stores `const_value: ?i64` for evaluated constants
+- Lowerer: `const_values` map stores constants, inlined via `const_int` IR node
+- No runtime storage needed - values directly embedded in generated code
+
 ```cot
-const MAX_TOKENS: i64 = 10000;
-const EOF: i64 = 0;
+const MAX_TOKENS = 10000;
+const BUFFER_SIZE = MAX_TOKENS * 2;  // Constant expressions work
 
 fn main() i64 {
-    return MAX_TOKENS;  // Use constant
+    return BUFFER_SIZE;  // Inlined as: mov x0, #20000
 }
 ```
 
-**Implementation Steps:**
-1. Parser: Handle `const` declarations at top level
-2. Checker: Register constants in global scope
-3. Lowerer: Inline constant values (no runtime storage)
-
-**Tests:**
-- `test_const_int` - Integer constant
-- `test_const_use` - Use constant in expression
-- `test_const_in_array_size` - `var arr: [MAX_SIZE]i64`
+**Go Reference:** `~/learning/go/src/cmd/compile/internal/types2/decl.go` for constant evaluation
 
 ---
 

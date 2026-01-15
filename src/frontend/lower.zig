@@ -171,7 +171,19 @@ pub const Lowerer = struct {
             type_idx = self.inferExprType(var_decl.value);
         }
 
-        // Add as global
+        // For constants with compile-time values, store in const_values map
+        // Following Go's pattern: constants are inlined, no runtime storage
+        if (var_decl.is_const) {
+            if (self.chk.scope.lookup(var_decl.name)) |sym| {
+                if (sym.const_value) |value| {
+                    debug.log(.lower, "Inlining constant '{s}' = {d}", .{ var_decl.name, value });
+                    try self.const_values.put(var_decl.name, value);
+                    return; // Don't create a global - value will be inlined
+                }
+            }
+        }
+
+        // Add as global (for non-constant or non-evaluatable constants)
         const global = ir.Global.init(var_decl.name, type_idx, var_decl.is_const, var_decl.span);
         try self.builder.addGlobal(global);
     }

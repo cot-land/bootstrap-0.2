@@ -80,9 +80,13 @@ var x: i64;                    // Mutable uninitialized
 
 ### Constants (Global)
 ```cot
-const MAX_SIZE = 1024;         // Top-level, immutable
+const MAX_SIZE = 1024;         // Top-level, immutable, evaluated at compile-time
 const PI: f64 = 3.14159;       // With explicit type
+const COMPUTED = MAX_SIZE * 2; // Constant expressions allowed
 ```
+
+Constants are evaluated at compile-time and inlined at usage sites (no runtime storage).
+Constant expressions can reference other constants and use arithmetic operators.
 
 ---
 
