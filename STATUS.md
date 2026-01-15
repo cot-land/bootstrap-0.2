@@ -1,6 +1,6 @@
 # Bootstrap 0.2 - Self-Hosting Roadmap
 
-**Last Updated: 2026-01-15**
+**Last Updated: 2026-01-16**
 
 ## Current State
 
@@ -296,6 +296,13 @@ zig cc myprogram.o runtime/cot_runtime.o -o myprogram -lSystem
 - `test_str_concat_multi` - Multiple concatenations
 
 **Go Reference:** `~/learning/go/src/cmd/compile/internal/ssa/expand_calls.go`
+
+**Key Bug Fix (2026-01-16) - BUG-004: Large Struct Returns:**
+- Structs > 16 bytes now correctly returned via hidden pointer (ARM64 AAPCS64)
+- Go's pattern: pre-allocate hidden return space in frame, not dynamic SP adjustment
+- Caller: pass frame-relative address in x8
+- Callee: save x8 to x19, copy result to [x19] on return
+- Test: `cot0/frontend/token_test.cot` - 5/5 tests pass
 
 ---
 

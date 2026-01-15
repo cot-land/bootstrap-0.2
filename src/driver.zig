@@ -383,8 +383,9 @@ pub const Driver = struct {
             self.debug.afterSSA(ssa_func, "build");
 
             // Phase 4a.5: Expand calls - decompose aggregate types before register allocation
+            // Pass type_reg to detect large struct returns (>16B) for hidden pointer handling
             debug.log(.ssa, "Running expand_calls...", .{});
-            expand_calls.expandCalls(ssa_func) catch |e| {
+            expand_calls.expandCalls(ssa_func, type_reg) catch |e| {
                 debug.log(.ssa, "expand_calls failed: {}", .{e});
                 return e;
             };

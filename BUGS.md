@@ -35,53 +35,6 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
-### BUG-004: Struct returns > 16 bytes fail
-
-**Status:** Open
-**Priority:** P1 (Blocking cot0 token.cot)
-**Discovered:** 2026-01-16
-
-**Description:**
-Returning structs larger than 16 bytes from functions fails. The ARM64 ABI requires structs > 16 bytes to be returned via a hidden pointer parameter, but this is not implemented.
-
-**Example:**
-```cot
-struct Token {
-    kind: TokenType,  // 4 bytes + 4 padding
-    start: i64,       // 8 bytes
-    end: i64,         // 8 bytes
-}  // Total: 24 bytes
-
-fn token_new(k: TokenType, s: i64, e: i64) Token {
-    var t: Token;
-    t.kind = k;
-    t.start = s;
-    t.end = e;
-    return t;  // FAILS - struct is 24 bytes
-}
-```
-
-**Workaround:**
-Keep structs to 16 bytes or less, OR use out-parameter pattern:
-```cot
-fn token_new(out: *Token, k: TokenType, s: i64, e: i64) {
-    out.*.kind = k;
-    out.*.start = s;
-    out.*.end = e;
-}
-```
-
-**Investigation Required:**
-1. Go's `~/learning/go/src/cmd/compile/internal/ssa/expand_calls.go` - how Go handles large struct returns
-2. ARM64 ABI docs for hidden pointer parameter convention (x8 register)
-
-**ARM64 ABI Summary:**
-- Structs <= 8 bytes: returned in x0
-- Structs 9-16 bytes: returned in x0+x1
-- Structs > 16 bytes: caller passes pointer in x8, callee writes to [x8]
-
----
-
 ### BUG-002: Struct literal syntax not implemented
 
 **Status:** Open
@@ -111,6 +64,54 @@ fn main() i64 {
 ---
 
 ## Fixed Bugs
+
+### BUG-004: Struct returns > 16 bytes fail (FIXED)
+
+**Status:** Fixed
+**Priority:** P1 (was blocking cot0 token.cot)
+**Discovered:** 2026-01-16
+**Fixed:** 2026-01-16
+
+**Description:**
+Returning structs larger than 16 bytes from functions failed. The ARM64 ABI requires structs > 16 bytes to be returned via a hidden pointer parameter (x8 register).
+
+**Example:**
+```cot
+struct BigStruct { a: i64, b: i64, c: i64, }  // 24 bytes
+
+fn make_struct(x: i64, y: i64, z: i64) BigStruct {
+    var s: BigStruct;
+    s.a = x; s.b = y; s.c = z;
+    return s;  // Was FAILING - struct is 24 bytes
+}
+
+fn main() i64 {
+    let s: BigStruct = make_struct(10, 20, 30);
+    return s.a + s.b + s.c;  // Now correctly returns 60
+}
+```
+
+**Root Cause:**
+Initial implementation dynamically adjusted SP at call time (`SUB sp, sp, #32`) to allocate hidden return space. This broke all subsequent SP-relative `local_addr` calculations.
+
+**Go Reference:**
+- `~/learning/go/src/cmd/compile/internal/ssa/expand_calls.go` - Pre-allocates result space using `OffsetOfResult`
+- `~/learning/go/src/cmd/compile/internal/abi/abiutils.go` - `assignParam()` computes stack offsets at ABI analysis time
+- Key insight: Go pre-allocates hidden return space in the frame, not dynamically at call time
+
+**Fix:**
+1. `src/ssa/passes/expand_calls.zig` - Mark calls with `hidden_ret_size > 0` for types > 16B
+2. `src/codegen/arm64.zig` - Pre-scan function in `generateBinary()` to find all >16B return calls
+3. `src/codegen/arm64.zig` - Add hidden return space to `frame_size` (pre-allocated, not dynamic)
+4. `src/codegen/arm64.zig` - Store per-call offset in `hidden_ret_offsets` map
+5. `src/codegen/arm64.zig` - At call time, use `ADD x8, sp, #frame_offset` (frame-relative, not SP adjustment)
+6. `src/codegen/arm64.zig` - Callee: save x8 to x19 in prologue, copy data to [x19] on return
+
+**Test Files:**
+- `/tmp/test_big_struct2.cot` - Returns 60 (10 + 20 + 30)
+- `cot0/frontend/token_test.cot` - All 5 tests pass
+
+---
 
 ### BUG-003: Struct layout with enum field is wrong (FIXED)
 

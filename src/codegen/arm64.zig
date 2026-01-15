@@ -217,6 +217,19 @@ pub const ARM64CodeGen = struct {
     /// Global variables to emit in data section
     globals: []const ir_mod.Global = &.{},
 
+    /// BUG-004: True if this function returns >16B and needs hidden return pointer.
+    /// When set, x8 is saved to x19 in prologue and the result is stored to [x19] on return.
+    has_hidden_return: bool = false,
+
+    /// BUG-004: Pre-allocated space for hidden return values from calls returning >16B.
+    /// This is added to frame_size and accessed via frame-relative offsets.
+    /// Key insight from Go: pre-allocate this space rather than dynamic SP adjustment.
+    hidden_ret_frame_offset: u32 = 0,
+    hidden_ret_space_needed: u32 = 0,
+
+    /// Map from static_call Value to its hidden return offset within the frame.
+    hidden_ret_offsets: std.AutoHashMapUnmanaged(*const Value, u32),
+
     pub fn init(allocator: std.mem.Allocator) ARM64CodeGen {
         return .{
             .allocator = allocator,
@@ -232,6 +245,7 @@ pub const ARM64CodeGen = struct {
             .string_refs = .{},
             .func_refs = .{},
             .data_relocations = .{},
+            .hidden_ret_offsets = .{},
         };
     }
 
@@ -254,6 +268,7 @@ pub const ARM64CodeGen = struct {
         }
         self.func_refs.deinit(self.allocator);
         self.data_relocations.deinit(self.allocator);
+        self.hidden_ret_offsets.deinit(self.allocator);
         // regalloc_state is borrowed, not owned - don't deinit
     }
 
@@ -394,9 +409,68 @@ pub const ARM64CodeGen = struct {
         self.value_regs.clearRetainingCapacity();
         self.block_offsets.clearRetainingCapacity();
         self.branch_fixups.clearRetainingCapacity();
+        self.hidden_ret_offsets.clearRetainingCapacity();
         self.next_reg = 0; // Reset register allocation
+        self.has_hidden_return = false; // Reset hidden return state
+        self.hidden_ret_space_needed = 0;
 
-        // Log frame size (set by setFrameSize from stackalloc)
+        // BUG-004: Check if this function returns >16B (needs hidden return pointer)
+        // The caller passes the return location in x8; we save it to x19.
+        // Try method 1: Check function type signature
+        if (self.type_reg) |type_reg| {
+            const func_type = type_reg.get(f.type_idx);
+            if (func_type == .func) {
+                const ret_type_idx = func_type.func.return_type;
+                const ret_size = self.getTypeSize(ret_type_idx);
+                if (ret_size > 16) {
+                    self.has_hidden_return = true;
+                    debug.log(.codegen, "  Function returns >16B ({d}B), using hidden return via x8/x19", .{ret_size});
+                }
+            }
+        }
+        // Method 2: If type_idx not set, scan return blocks for return value type
+        if (!self.has_hidden_return) {
+            for (f.blocks.items) |block| {
+                if (block.kind == .ret and block.numControls() > 0) {
+                    const ret_val = block.controlValues()[0];
+                    const ret_size = self.getTypeSize(ret_val.type_idx);
+                    if (ret_size > 16) {
+                        self.has_hidden_return = true;
+                        debug.log(.codegen, "  Function returns >16B ({d}B) [from ret block], using hidden return via x8/x19", .{ret_size});
+                        break;
+                    }
+                }
+            }
+        }
+
+        // BUG-004: Pre-scan for calls returning >16B to allocate frame space
+        // Go's approach: pre-allocate hidden return space rather than dynamic SP adjustment.
+        // This ensures local_addr offsets remain valid.
+        var cur_hidden_offset: u32 = 0;
+        for (f.blocks.items) |block| {
+            for (block.values.items) |value| {
+                if (value.op == .static_call) {
+                    if (value.aux_call) |aux_call| {
+                        if (aux_call.hidden_ret_size > 0) {
+                            const ret_size = aux_call.hidden_ret_size;
+                            const aligned_size = (ret_size + 15) & ~@as(u32, 15); // 16-byte align
+                            try self.hidden_ret_offsets.put(self.allocator, value, cur_hidden_offset);
+                            debug.log(.codegen, "  Pre-allocated hidden return for call: offset={d}, size={d}", .{ cur_hidden_offset, aligned_size });
+                            cur_hidden_offset += aligned_size;
+                        }
+                    }
+                }
+            }
+        }
+        self.hidden_ret_space_needed = cur_hidden_offset;
+        // The hidden return area starts after locals in the frame
+        self.hidden_ret_frame_offset = self.frame_size;
+        if (cur_hidden_offset > 0) {
+            self.frame_size += cur_hidden_offset;
+            debug.log(.codegen, "  Added {d}B hidden return space, new frame_size={d}", .{ cur_hidden_offset, self.frame_size });
+        }
+
+        // Log frame size (set by setFrameSize from stackalloc, possibly adjusted above)
         debug.log(.codegen, "  Stack frame: {d} bytes", .{self.frame_size});
 
         // Add symbol (prepend underscore for macOS symbol naming convention)
@@ -513,6 +587,14 @@ pub const ARM64CodeGen = struct {
         // Set up frame pointer: ADD x29, sp, #0
         // (In a full implementation, x29 would point to saved FP location)
         try self.emit(asm_mod.encodeADDImm(29, 31, 0, 0));
+
+        // BUG-004: Save hidden return pointer (x8) to callee-saved x19
+        // The caller passed the return location in x8; save it before we clobber it.
+        if (self.has_hidden_return) {
+            // ADD x19, x8, #0  (MOV x19, x8)
+            try self.emit(asm_mod.encodeADDImm(19, 8, 0, 0));
+            debug.log(.codegen, "  Saved x8 (hidden return ptr) to x19", .{});
+        }
     }
 
     /// Emit function epilogue and return.
@@ -673,10 +755,110 @@ pub const ARM64CodeGen = struct {
 
         // Generate terminator based on block kind
         switch (block.kind) {
-            .ret => {
+            .ret => ret_blk: {
                 // Return block - ensure return value is in x0 (and x1 for slices/strings)
                 if (block.numControls() > 0) {
                     const ret_val = block.controlValues()[0];
+
+                    // BUG-004: Handle >16B return via hidden pointer
+                    // We need to copy the struct data to [x19] (hidden return location).
+                    // Reference: Go's expand_calls uses OffsetOfResult to get stack addresses.
+                    if (self.has_hidden_return) {
+                        debug.log(.codegen, "      ret_val.op = {s}, ret_val.id = v{d}", .{ @tagName(ret_val.op), ret_val.id });
+
+                        // For >16B returns, we need the ADDRESS of the struct data.
+                        // Depending on how the return value was produced:
+                        // - local_addr: direct address of local variable
+                        // - load: we need the source address (args[0])
+                        // - static_call: for >16B, the register holds the address (our convention)
+                        // - copy: follow through to the source
+                        var src_addr_reg: u5 = undefined;
+                        if (ret_val.op == .local_addr) {
+                            // Direct local address
+                            src_addr_reg = self.getRegForValue(ret_val) orelse blk: {
+                                try self.ensureInReg(ret_val, 16);
+                                break :blk @as(u5, 16);
+                            };
+                        } else if (ret_val.op == .load and ret_val.args.len > 0) {
+                            // Load operation - args[0] is the source address
+                            // This is common for local struct returns: load(local_addr)
+                            const addr_val = ret_val.args[0];
+                            debug.log(.codegen, "      load source: {s} v{d}", .{ @tagName(addr_val.op), addr_val.id });
+                            src_addr_reg = self.getRegForValue(addr_val) orelse blk: {
+                                try self.ensureInReg(addr_val, 16);
+                                break :blk @as(u5, 16);
+                            };
+                        } else if (ret_val.op == .copy and ret_val.args.len > 0) {
+                            // Copy - recurse to source
+                            const src_val = ret_val.args[0];
+                            if (src_val.op == .local_addr or src_val.op == .load) {
+                                const actual_src = if (src_val.op == .load and src_val.args.len > 0) src_val.args[0] else src_val;
+                                src_addr_reg = self.getRegForValue(actual_src) orelse blk: {
+                                    try self.ensureInReg(actual_src, 16);
+                                    break :blk @as(u5, 16);
+                                };
+                            } else {
+                                src_addr_reg = self.getRegForValue(src_val) orelse blk: {
+                                    try self.ensureInReg(src_val, 16);
+                                    break :blk @as(u5, 16);
+                                };
+                            }
+                        } else if (ret_val.op == .static_call) {
+                            // For >16B call results, our convention is that the register holds the address
+                            src_addr_reg = self.getRegForValue(ret_val) orelse blk: {
+                                try self.ensureInReg(ret_val, 16);
+                                break :blk @as(u5, 16);
+                            };
+                        } else {
+                            // Fallback
+                            src_addr_reg = self.getRegForValue(ret_val) orelse blk: {
+                                try self.ensureInReg(ret_val, 16);
+                                break :blk @as(u5, 16);
+                            };
+                        }
+
+                        // Get the return type size
+                        const ret_size = self.getTypeSize(ret_val.type_idx);
+                        debug.log(.codegen, "      ret hidden: copying {d}B from [x{d}] to [x19]", .{ ret_size, src_addr_reg });
+
+                        // Copy data in 16-byte chunks using LDP/STP
+                        var copy_off: u32 = 0;
+                        while (copy_off + 16 <= ret_size) {
+                            // LDP x16, x17, [src_addr, #copy_off]
+                            const ldp_off: i7 = @intCast(@divExact(@as(i32, @intCast(copy_off)), 8));
+                            try self.emit(asm_mod.encodeLdpStp(16, 17, src_addr_reg, ldp_off, .signed_offset, true));
+                            // STP x16, x17, [x19, #copy_off]
+                            try self.emit(asm_mod.encodeLdpStp(16, 17, 19, ldp_off, .signed_offset, false));
+                            copy_off += 16;
+                        }
+                        // Handle remaining 8 bytes if any
+                        if (copy_off + 8 <= ret_size) {
+                            const ldr_off: u12 = @intCast(@divExact(copy_off, 8));
+                            try self.emit(asm_mod.encodeLdrStr(16, src_addr_reg, ldr_off, true));
+                            try self.emit(asm_mod.encodeLdrStr(16, 19, ldr_off, false));
+                            copy_off += 8;
+                        }
+                        // Handle remaining 4 bytes if any
+                        if (copy_off + 4 <= ret_size) {
+                            // Use word-sized load/store
+                            const ld_size = asm_mod.LdStSize.word;
+                            try self.emit(asm_mod.encodeLdrStrSized(16, src_addr_reg, @intCast(copy_off), ld_size, true));
+                            try self.emit(asm_mod.encodeLdrStrSized(16, 19, @intCast(copy_off), ld_size, false));
+                            copy_off += 4;
+                        }
+                        // Handle remaining bytes
+                        while (copy_off < ret_size) {
+                            const ld_size = asm_mod.LdStSize.byte;
+                            try self.emit(asm_mod.encodeLdrStrSized(16, src_addr_reg, @intCast(copy_off), ld_size, true));
+                            try self.emit(asm_mod.encodeLdrStrSized(16, 19, @intCast(copy_off), ld_size, false));
+                            copy_off += 1;
+                        }
+
+                        debug.log(.codegen, "      ret hidden: done copying {d}B", .{ret_size});
+                        try self.emitEpilogue();
+                        break :ret_blk;
+                    }
+
                     // Handle slice returns: need both ptr (x0) and len (x1)
                     if (ret_val.op == .slice_make and ret_val.args.len >= 2) {
                         // Put ptr in x0
@@ -1605,14 +1787,9 @@ pub const ARM64CodeGen = struct {
                 try self.value_regs.put(self.allocator, value, dest_reg);
             },
 
-            .static_call => {
+            .static_call => static_call_blk: {
                 // Function call - ARM64 ABI: args in x0-x7, result in x0
                 const args = value.args;
-
-                // Use parallel copy to move arguments to x0-x7
-                // This prevents clobbering when args are in each other's target registers
-                // E.g., if arg0 is in x1 and arg1 is in x0, naive sequential moves fail
-                try self.setupCallArgs(args);
 
                 // Get target function name from aux.string
                 const raw_name = switch (value.aux) {
@@ -1622,6 +1799,51 @@ pub const ARM64CodeGen = struct {
 
                 // Prepend underscore for macOS symbol naming convention
                 const target_name = try std.fmt.allocPrint(self.allocator, "_{s}", .{raw_name});
+
+                // BUG-004: Handle >16B return via hidden pointer (ARM64 AAPCS64)
+                // Go's pattern: pre-allocate space in frame rather than dynamic SP adjustment.
+                // This keeps local_addr SP-relative offsets stable.
+                if (self.hidden_ret_offsets.get(value)) |rel_offset| {
+                    const aux_call = value.aux_call.?;
+                    const ret_size = aux_call.hidden_ret_size;
+
+                    // Compute frame-relative address for this call's hidden return area
+                    // hidden_ret_frame_offset is the base (after locals), rel_offset is per-call
+                    const frame_offset: u12 = @intCast(self.hidden_ret_frame_offset + rel_offset);
+
+                    debug.log(.codegen, "      static_call {s}: >16B return ({d}B), frame offset={d}", .{ raw_name, ret_size, frame_offset });
+
+                    // 1. Set x8 to point to return location within frame
+                    // ADD x8, sp, #frame_offset
+                    try self.emit(asm_mod.encodeADDImm(8, 31, frame_offset, 0));
+
+                    // 2. Setup arguments in x0-x7
+                    try self.setupCallArgs(args);
+
+                    // 3. Record relocation and make the call
+                    try self.relocations.append(self.allocator, .{
+                        .offset = @intCast(self.offset()),
+                        .target = target_name,
+                    });
+                    try self.emit(asm_mod.encodeBL(0));
+
+                    // 4. After call: result is at [sp + frame_offset]. Save address to dest register.
+                    const dest_reg = self.allocateReg();
+                    // ADD dest_reg, sp, #frame_offset
+                    try self.emit(asm_mod.encodeADDImm(dest_reg, 31, frame_offset, 0));
+
+                    // The result "value" is now the ADDRESS where the struct data lives.
+                    // Subsequent store operations will copy from this address.
+                    try self.value_regs.put(self.allocator, value, dest_reg);
+                    debug.log(.codegen, "      -> BL {s}, >16B result at [x{d}] (SP+{d})", .{ raw_name, dest_reg, frame_offset });
+                    break :static_call_blk;
+                }
+
+                // Normal call path (return <= 16B fits in registers)
+                // Use parallel copy to move arguments to x0-x7
+                // This prevents clobbering when args are in each other's target registers
+                // E.g., if arg0 is in x1 and arg1 is in x0, naive sequential moves fail
+                try self.setupCallArgs(args);
 
                 // Record relocation for linker to resolve
                 try self.relocations.append(self.allocator, .{
@@ -1934,6 +2156,39 @@ pub const ARM64CodeGen = struct {
                         // STP x0, x8, [actual_addr_reg] (ptr and len)
                         try self.emit(asm_mod.encodeLdpStp(0, 8, actual_addr_reg, 0, .signed_offset, false));
                         debug.log(.codegen, "      -> STP x0, x8, [x{d}] (store string_concat 16B)", .{actual_addr_reg});
+                    } else if (type_size > 16 and val.op == .static_call) {
+                        // BUG-004: After static_call returning >16B struct via hidden pointer
+                        // val's register holds the SOURCE address of the data
+                        // We need to COPY the data from source to destination
+                        const src_reg = self.getRegForValue(val) orelse blk: {
+                            const temp_reg = self.allocateReg();
+                            try self.ensureInReg(val, temp_reg);
+                            break :blk temp_reg;
+                        };
+
+                        debug.log(.codegen, "      store >16B: copying {d}B from [x{d}] to [x{d}]", .{ type_size, src_reg, addr_reg });
+
+                        // Copy data in 16-byte chunks using LDP/STP
+                        var copy_off: u32 = 0;
+                        while (copy_off + 16 <= type_size) {
+                            const ldp_off: i7 = @intCast(@divExact(@as(i32, @intCast(copy_off)), 8));
+                            try self.emit(asm_mod.encodeLdpStp(16, 17, src_reg, ldp_off, .signed_offset, true));
+                            try self.emit(asm_mod.encodeLdpStp(16, 17, addr_reg, ldp_off, .signed_offset, false));
+                            copy_off += 16;
+                        }
+                        if (copy_off + 8 <= type_size) {
+                            const ldr_off: u12 = @intCast(@divExact(copy_off, 8));
+                            try self.emit(asm_mod.encodeLdrStr(16, src_reg, ldr_off, true));
+                            try self.emit(asm_mod.encodeLdrStr(16, addr_reg, ldr_off, false));
+                            copy_off += 8;
+                        }
+                        while (copy_off < type_size) {
+                            const ld_size = asm_mod.LdStSize.byte;
+                            try self.emit(asm_mod.encodeLdrStrSized(16, src_reg, @intCast(copy_off), ld_size, true));
+                            try self.emit(asm_mod.encodeLdrStrSized(16, addr_reg, @intCast(copy_off), ld_size, false));
+                            copy_off += 1;
+                        }
+                        debug.log(.codegen, "      -> copied {d}B struct from [x{d}] to [x{d}]", .{ type_size, src_reg, addr_reg });
                     } else if (type_size == 16 and val.op == .static_call) {
                         // After static_call returning struct: first half in x0, second half was saved to x8
                         // BUG-003 fix: The second half was saved to x8 immediately after the call

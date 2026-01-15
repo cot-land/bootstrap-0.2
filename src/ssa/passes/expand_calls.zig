@@ -63,19 +63,25 @@ const debug = @import("../../pipeline_debug.zig");
 
 /// Run the expand_calls pass on a function.
 /// This decomposes aggregate returns and arguments before register allocation.
-pub fn expandCalls(f: *Func) !void {
+///
+/// Go reference: cmd/compile/internal/ssa/expand_calls.go
+///
+/// The type_reg parameter is required to determine type sizes for ABI decisions:
+/// - Structs <= 16 bytes: returned in x0 (or x0+x1)
+/// - Structs > 16 bytes: returned via hidden pointer in x8
+pub fn expandCalls(f: *Func, type_reg: ?*const TypeRegistry) !void {
     debug.log(.ssa, "expand_calls: processing function {s}", .{f.name});
 
     // Process each block
     for (f.blocks.items) |block| {
-        try expandBlock(f, block);
+        try expandBlock(f, block, type_reg);
     }
 
     debug.log(.ssa, "expand_calls: done", .{});
 }
 
 /// Process a single block, decomposing aggregate operations.
-fn expandBlock(f: *Func, block: *Block) !void {
+fn expandBlock(f: *Func, block: *Block, type_reg: ?*const TypeRegistry) !void {
     // We need to iterate carefully because we're inserting values
     var i: usize = 0;
     while (i < block.values.items.len) {
@@ -91,10 +97,15 @@ fn expandBlock(f: *Func, block: *Block) !void {
             },
             .static_call, .closure_call => {
                 // First, expand any string arguments (decompose into ptr/len)
-                try expandCallArgs(f, block, &i, v);
+                try expandCallArgs(f, block, &i, v, type_reg);
 
                 // Then check if this call returns an aggregate type
-                if (isAggregateType(v.type_idx)) {
+                const type_size = getTypeSize(v.type_idx, type_reg);
+                if (type_size > 16) {
+                    // BUG-004: Large struct return (>16B) - use hidden pointer
+                    try expandLargeReturnCall(f, block, &i, v, type_size);
+                } else if (isAggregateType(v.type_idx)) {
+                    // String/slice (16B) - decompose into ptr/len
                     try expandCallResult(f, block, &i, v);
                 } else {
                     i += 1;
@@ -270,15 +281,69 @@ fn getStringLenComponent(str_val: *Value) *Value {
     return str_val;
 }
 
-/// Check if a type is an aggregate that needs decomposition.
+/// Check if a type is an aggregate that needs decomposition (string/slice).
 fn isAggregateType(type_idx: TypeIndex) bool {
     return type_idx == TypeRegistry.STRING;
     // TODO: Add slice types when implemented
 }
 
+/// Get the size of a type in bytes.
+/// Uses TypeRegistry for composite types (structs, enums), falls back to basic sizes.
+fn getTypeSize(type_idx: TypeIndex, type_reg: ?*const TypeRegistry) u32 {
+    // For basic types, use fast path
+    if (type_idx < TypeRegistry.FIRST_USER_TYPE) {
+        return TypeRegistry.basicTypeSize(type_idx);
+    }
+    // For composite types, use type registry
+    if (type_reg) |reg| {
+        return reg.sizeOf(type_idx);
+    }
+    // Fallback - assume 8 bytes
+    return 8;
+}
+
+/// Expand a call that returns a large struct (>16 bytes).
+/// ARM64 ABI: Large returns use hidden pointer in x8.
+///
+/// Go reference: cmd/compile/internal/ssa/expand_calls.go
+///
+/// This marks the call as having a hidden return pointer and sets up the
+/// result to be loaded from where the callee wrote it.
+///
+/// The actual stack allocation and x8 setup happens in codegen:
+/// 1. Codegen detects hidden_ret_size > 0
+/// 2. Allocates stack space: SUB sp, sp, #size
+/// 3. Passes address in x8: MOV x8, sp
+/// 4. Makes the call
+/// 5. Result is now at [sp], tracked via hidden_ret_ptr
+fn expandLargeReturnCall(f: *Func, block: *Block, idx: *usize, v: *Value, type_size: u32) !void {
+    _ = block; // Block is not needed since we're just marking the call, not inserting new values
+    debug.log(.ssa, "  expand_calls: expanding large return call v{d} ({d}B)", .{ v.id, type_size });
+
+    // Mark this call as having a hidden return pointer
+    var aux_call = v.aux_call;
+    if (aux_call == null) {
+        aux_call = try f.allocator.create(AuxCall);
+        aux_call.?.* = AuxCall.init(f.allocator);
+        v.aux_call = aux_call;
+    }
+    aux_call.?.hidden_ret_size = type_size;
+
+    // Note: We don't change the call's type_idx - it still "returns" the struct type.
+    // Codegen will handle this specially when hidden_ret_size > 0:
+    // - Allocate stack space
+    // - Pass address in x8
+    // - After call, treat the value as being at that address
+
+    debug.log(.ssa, "    marked call v{d} with hidden_ret_size={d}B", .{ v.id, type_size });
+
+    idx.* += 1;
+}
+
 /// Expand string arguments in a call to ptr/len pairs.
 /// This ensures strings are passed in two registers (ptr, len) per ARM64 ABI.
-fn expandCallArgs(f: *Func, block: *Block, idx: *usize, call_val: *Value) !void {
+fn expandCallArgs(f: *Func, block: *Block, idx: *usize, call_val: *Value, type_reg: ?*const TypeRegistry) !void {
+    _ = type_reg; // Reserved for future use with large struct args
     // Build new args list, expanding strings into ptr/len pairs
     var new_args = std.ArrayListUnmanaged(*Value){};
     var needs_expansion = false;

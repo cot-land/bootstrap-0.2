@@ -98,6 +98,23 @@ pub const AuxCall = struct {
     /// Allocator for dynamic reg_info allocation
     allocator: ?std.mem.Allocator = null,
 
+    /// BUG-004: Hidden return pointer for large struct returns (>16B on ARM64).
+    /// When set, this call returns a large struct via memory instead of registers.
+    /// The caller allocates space and passes this address in x8.
+    /// Reference: ARM64 AAPCS64, Go's expand_calls.go
+    /// Note: Uses *anyopaque to avoid circular type reference; cast to *Value when needed.
+    hidden_ret_ptr: ?*anyopaque = null,
+
+    /// Size of the hidden return type in bytes (only valid if hidden_ret_ptr is set)
+    hidden_ret_size: u32 = 0,
+
+    /// Initialize an empty AuxCall
+    pub fn init(alloc: std.mem.Allocator) AuxCall {
+        return .{
+            .allocator = alloc,
+        };
+    }
+
     /// Get the RegInfo for this call, computing it lazily if needed.
     /// This is the key method called by register allocation.
     ///
