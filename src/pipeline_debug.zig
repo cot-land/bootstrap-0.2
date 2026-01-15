@@ -37,6 +37,7 @@ pub const DebugPhases = struct {
     ssa: bool = false,
     regalloc: bool = false,
     codegen: bool = false,
+    strings: bool = false,
     all: bool = false,
 
     /// Parse from environment variable COT_DEBUG
@@ -57,6 +58,7 @@ pub const DebugPhases = struct {
             if (std.mem.eql(u8, trimmed, "ssa")) result.ssa = true;
             if (std.mem.eql(u8, trimmed, "regalloc")) result.regalloc = true;
             if (std.mem.eql(u8, trimmed, "codegen")) result.codegen = true;
+            if (std.mem.eql(u8, trimmed, "strings")) result.strings = true;
         }
         return result;
     }
@@ -70,6 +72,7 @@ pub const DebugPhases = struct {
             .ssa => self.ssa,
             .regalloc => self.regalloc,
             .codegen => self.codegen,
+            .strings => self.strings,
         };
     }
 };
@@ -81,6 +84,7 @@ pub const Phase = enum {
     ssa,
     regalloc,
     codegen,
+    strings, // String literal handling through the pipeline
 };
 
 // ============================================================================

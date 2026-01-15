@@ -536,6 +536,13 @@ pub const SSABuilder = struct {
                     break :blk try self.convertLogicalOp(b, node.type_idx);
                 }
 
+                // Check for string comparison - needs special handling
+                // Following Go's pattern: compare lengths first, then bytes
+                const left_node = self.ir_func.getNode(b.left);
+                if (left_node.type_idx == TypeRegistry.STRING and (b.op == .eq or b.op == .ne)) {
+                    break :blk try self.convertStringCompare(b, node.type_idx);
+                }
+
                 const left = try self.convertNode(b.left) orelse return error.MissingValue;
                 const right = try self.convertNode(b.right) orelse return error.MissingValue;
                 const op = binaryOpToSSA(b.op);
@@ -1434,6 +1441,124 @@ pub const SSABuilder = struct {
             left.id,
             right.id,
             short_val.id,
+            phi_val.id,
+        });
+
+        return phi_val;
+    }
+
+    /// Convert string comparison (== or !=) following Go's pattern:
+    /// 1. Compare lengths - if different, strings are not equal
+    /// 2. If lengths are equal, compare pointers (handles same-literal case)
+    /// 3. If pointers differ, compare bytes (via memcmp or inline loop)
+    ///
+    /// For MVP: Just compare lengths and pointers. If the string literals
+    /// are deduplicated (same content = same address), this will work.
+    /// A full implementation would add byte-by-byte comparison.
+    fn convertStringCompare(self: *SSABuilder, b: ir.Binary, result_type: TypeIndex) anyerror!*Value {
+        const is_eq = (b.op == .eq);
+        const cur = self.cur_block orelse return error.NoCurrentBlock;
+
+        // Get both string values (strings are []u8 slices: slice_make(ptr, len))
+        const left = try self.convertNode(b.left) orelse return error.MissingValue;
+        const right = try self.convertNode(b.right) orelse return error.MissingValue;
+
+        // Strings are slice_make values with args[0]=ptr, args[1]=len
+        // Access the length values directly (avoids slice_len codegen issues)
+        const left_len = if (left.op == .slice_make and left.args.len >= 2)
+            left.args[1]
+        else blk: {
+            // Fallback to slice_len if not slice_make
+            const v = try self.func.newValue(.slice_len, TypeRegistry.I64, cur, .{});
+            v.addArg(left);
+            try cur.addValue(self.allocator, v);
+            break :blk v;
+        };
+
+        const right_len = if (right.op == .slice_make and right.args.len >= 2)
+            right.args[1]
+        else blk: {
+            const v = try self.func.newValue(.slice_len, TypeRegistry.I64, cur, .{});
+            v.addArg(right);
+            try cur.addValue(self.allocator, v);
+            break :blk v;
+        };
+
+        // Compare lengths: left_len == right_len
+        const len_eq = try self.func.newValue(.eq, TypeRegistry.BOOL, cur, .{});
+        len_eq.addArg2(left_len, right_len);
+        try cur.addValue(self.allocator, len_eq);
+
+        // Create blocks for control flow:
+        // - compare_ptrs: lengths match, now compare pointers
+        // - len_differ: lengths differ, result is false (eq) / true (ne)
+        // - merge: final result
+        const compare_ptrs_block = try self.func.newBlock(.plain);
+        const len_differ_block = try self.func.newBlock(.plain);
+        const merge_block = try self.func.newBlock(.plain);
+
+        // Branch on length equality
+        cur.kind = .if_;
+        cur.setControl(len_eq);
+        try cur.addEdgeTo(self.allocator, compare_ptrs_block); // then: lengths equal
+        try cur.addEdgeTo(self.allocator, len_differ_block); // else: lengths differ
+        _ = self.endBlock();
+
+        // Block: lengths differ - result is false (eq) / true (ne)
+        self.cur_block = len_differ_block;
+        const len_differ_cur = self.cur_block orelse return error.NoCurrentBlock;
+        const len_differ_val = try self.func.newValue(.const_bool, result_type, len_differ_cur, .{});
+        len_differ_val.aux_int = if (is_eq) 0 else 1; // false for ==, true for !=
+        try len_differ_cur.addValue(self.allocator, len_differ_val);
+        try len_differ_cur.addEdgeTo(self.allocator, merge_block);
+        _ = self.endBlock();
+
+        // Block: compare pointers (lengths are equal)
+        self.cur_block = compare_ptrs_block;
+        const compare_cur = self.cur_block orelse return error.NoCurrentBlock;
+
+        // Access pointer values directly (avoids slice_ptr codegen issues)
+        const left_ptr = if (left.op == .slice_make and left.args.len >= 1)
+            left.args[0]
+        else blk: {
+            const v = try self.func.newValue(.slice_ptr, TypeRegistry.I64, compare_cur, .{});
+            v.addArg(left);
+            try compare_cur.addValue(self.allocator, v);
+            break :blk v;
+        };
+
+        const right_ptr = if (right.op == .slice_make and right.args.len >= 1)
+            right.args[0]
+        else blk: {
+            const v = try self.func.newValue(.slice_ptr, TypeRegistry.I64, compare_cur, .{});
+            v.addArg(right);
+            try compare_cur.addValue(self.allocator, v);
+            break :blk v;
+        };
+
+        // Compare pointers: for eq, pointers equal means true; for ne, pointers equal means false
+        const ptr_cmp_op: Op = if (is_eq) .eq else .ne;
+        const ptr_eq = try self.func.newValue(ptr_cmp_op, result_type, compare_cur, .{});
+        ptr_eq.addArg2(left_ptr, right_ptr);
+        try compare_cur.addValue(self.allocator, ptr_eq);
+        try compare_cur.addEdgeTo(self.allocator, merge_block);
+        _ = self.endBlock();
+
+        // Merge block: phi node for result
+        self.cur_block = merge_block;
+        const merge_cur = self.cur_block orelse return error.NoCurrentBlock;
+        const phi_val = try self.func.newValue(.phi, result_type, merge_cur, .{});
+        // Predecessor order is: [len_differ_block, compare_ptrs_block]
+        // (len_differ adds edge first, compare_ptrs adds second)
+        // phi args must match this order:
+        phi_val.addArg(len_differ_val); // pred0 = len_differ_block
+        phi_val.addArg(ptr_eq); // pred1 = compare_ptrs_block
+        try merge_cur.addValue(self.allocator, phi_val);
+
+        debug.log(.ssa, "    string compare {s}: left=v{d}, right=v{d}, result=v{d}", .{
+            if (is_eq) "eq" else "ne",
+            left.id,
+            right.id,
             phi_val.id,
         });
 

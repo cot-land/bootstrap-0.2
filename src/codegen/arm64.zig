@@ -771,12 +771,22 @@ pub const ARM64CodeGen = struct {
                 // Emit ADD with imm=0 (linker will fix up)
                 try self.emit(asm_mod.encodeADDImm(dest_reg, dest_reg, 0, 0));
 
-                // Record string reference with a copy of the data for relocation during finalize()
+                // Record string reference for relocation during finalize()
+                // Note: Each const_string use needs its own relocation entry (different ADRP/ADD offsets),
+                // but finalize->addStringLiteral deduplicates by content so same strings share one symbol.
                 const str_copy = try self.allocator.dupe(u8, str_data);
+                const ref_idx = self.string_refs.items.len;
                 try self.string_refs.append(self.allocator, .{
                     .adrp_offset = adrp_offset,
                     .add_offset = add_offset,
                     .string_data = str_copy,
+                });
+
+                debug.log(.strings, "[CODEGEN] const_string v{d}: string_index={d} \"{s}\" -> string_refs[{d}]", .{
+                    value.id,
+                    string_index,
+                    str_data,
+                    ref_idx,
                 });
 
                 try self.value_regs.put(self.allocator, value, dest_reg);
@@ -1651,9 +1661,16 @@ pub const ARM64CodeGen = struct {
         }
 
         // Process string references: add strings to data section and create relocations
-        for (self.string_refs.items) |str_ref| {
+        debug.log(.strings, "[FINALIZE] Processing {d} string_refs entries:", .{self.string_refs.items.len});
+        for (self.string_refs.items, 0..) |str_ref, i| {
             // Add string to data section and get its symbol name
             const sym_name = try writer.addStringLiteral(str_ref.string_data);
+
+            debug.log(.strings, "[FINALIZE]   string_refs[{d}]: \"{s}\" -> symbol '{s}'", .{
+                i,
+                str_ref.string_data,
+                sym_name,
+            });
 
             // Add ADRP relocation (PAGE21)
             try writer.addDataRelocation(str_ref.adrp_offset, sym_name, macho.ARM64_RELOC_PAGE21);

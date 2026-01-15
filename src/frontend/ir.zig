@@ -16,6 +16,7 @@
 const std = @import("std");
 const types = @import("types.zig");
 const source = @import("source.zig");
+const debug = @import("../pipeline_debug.zig");
 
 const TypeIndex = types.TypeIndex;
 const TypeRegistry = types.TypeRegistry;
@@ -906,9 +907,19 @@ pub const FuncBuilder = struct {
     // ========================================================================
 
     /// Add a string literal, return its index.
+    /// Deduplicates: if the same content already exists, returns existing index.
     pub fn addStringLiteral(self: *FuncBuilder, str: []const u8) !StringIdx {
+        // Check if string with same content already exists (Go's approach for deduplication)
+        for (self.string_literals.items, 0..) |existing, i| {
+            if (std.mem.eql(u8, existing, str)) {
+                debug.log(.strings, "[IR] addStringLiteral: REUSING idx={d} for \"{s}\" (deduplicated)", .{ i, str });
+                return @intCast(i); // Reuse existing
+            }
+        }
+        // New string - add it
         const idx: StringIdx = @intCast(self.string_literals.items.len);
         try self.string_literals.append(self.allocator, str);
+        debug.log(.strings, "[IR] addStringLiteral: NEW idx={d} for \"{s}\"", .{ idx, str });
         return idx;
     }
 

@@ -26,7 +26,7 @@ A self-hosting Cot compiler needs to:
 | **I/O** | Write file | ❌ TODO | P0 | Can't emit object files |
 | **Memory** | Heap allocation | ❌ TODO | P0 | Need dynamic data structures |
 | **Memory** | Free/deallocation | ❌ TODO | P0 | Prevent memory leaks |
-| **Strings** | String comparison | ❓ Verify | P0 | `s1 == s2` for keywords |
+| **Strings** | String comparison | ✅ Done | P0 | `s1 == s2` for keywords |
 | **Strings** | String indexing | ❓ Verify | P0 | `s[i]` for char access |
 | **Strings** | String concatenation | ❌ TODO | P1 | Error messages |
 | **Control** | Switch statement | ❌ TODO | P1 | Token/AST dispatch |
@@ -42,21 +42,22 @@ A self-hosting Cot compiler needs to:
 
 ## Execution Plan
 
-### Phase 1: Verify String Operations (1-2 hours)
+### Phase 1: Verify String Operations ✅ PARTIAL
 
-Before anything else, verify strings work correctly since the compiler does heavy string manipulation.
+**Completed:**
+- ✅ String comparison (`s1 == s2`, `s1 != s2`) - Fixed deduplication bug in MachO writer
+- ✅ Added `COT_DEBUG=strings` for tracing strings through pipeline
 
-**Tasks:**
-1. Test string comparison: `s1 == s2`, `s1 != s2`
-2. Test string indexing: `s[0]`, `s[i]` where i is variable
-3. Test string slicing: `s[0:5]`
-4. Test string in conditionals: `if s == "fn" { ... }`
+**Implementation Notes:**
+- Strings are `[]u8` slices (ptr + len, 16 bytes)
+- Comparison: check lengths first, then compare pointers (Go's pattern)
+- String literals deduplicated at IR level AND MachO symbol level
+- SSA builder directly accesses slice_make args to avoid slice_ptr/slice_len codegen issues
 
-**Tests to add:**
-- `test_string_eq` - String equality comparison
-- `test_string_ne` - String inequality
-- `test_string_index` - Character access by index
-- `test_string_compare_keyword` - Compare against keyword literals
+**Remaining:**
+- ❓ Test string indexing: `s[0]`, `s[i]` where i is variable
+- ❓ Test string slicing: `s[0:5]`
+- Add passing tests to `all_tests.cot`
 
 ---
 

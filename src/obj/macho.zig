@@ -279,8 +279,16 @@ pub const MachOWriter = struct {
 
     /// Add a string literal to the data section.
     /// Returns the symbol name for this string.
+    /// Deduplicates: if same content exists, returns existing symbol.
     pub fn addStringLiteral(self: *MachOWriter, str: []const u8) ![]const u8 {
-        // Generate unique symbol name
+        // Check for existing string with same content (deduplication)
+        for (self.string_literals.items) |existing| {
+            if (std.mem.eql(u8, existing.data, str)) {
+                return existing.symbol; // Reuse existing symbol
+            }
+        }
+
+        // Generate unique symbol name for new string
         const sym_name = try std.fmt.allocPrint(self.allocator, "L_.str.{d}", .{self.string_counter});
         self.string_counter += 1;
 
@@ -295,7 +303,7 @@ pub const MachOWriter = struct {
             try self.data.append(self.allocator, 0);
         }
 
-        // Add to string literals list (for tracking)
+        // Add to string literals list (for tracking and deduplication)
         try self.string_literals.append(self.allocator, .{
             .data = str,
             .symbol = sym_name,
