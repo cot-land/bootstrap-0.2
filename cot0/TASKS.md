@@ -2,19 +2,35 @@
 
 **Goal:** Minimal compiler for i64, arithmetic, functions, return.
 
+**Last Updated:** 2026-01-16
+
+---
+
+## Current Status
+
+**Blocking Issue:** Struct returns > 16 bytes don't work (BUG-004).
+
+Token struct is 24 bytes (enum + 2x i64). ARM64 ABI requires:
+- Structs <= 16B: returned in x0+x1 ✅ (BUG-003 fixed this)
+- Structs > 16B: returned via hidden pointer ❌ (NOT IMPLEMENTED)
+
+**Test Results:**
+- `token_test.cot`: 4/5 pass (Test 1 fails - struct return)
+- All 142 e2e tests pass (none use >16B struct returns)
+
 ---
 
 ## Phase 1: Frontend
 
 ### token.cot
-- [ ] TokenType enum (Int, Ident, Fn, Return, I64, punctuation, operators)
-- [ ] Token struct (type, start, length)
-- [ ] token_new() constructor
-- [ ] is_keyword() for fn/return/i64
+- [x] TokenType enum (Int, Ident, Fn, Return, I64, punctuation, operators)
+- [x] Token struct (type, start, length)
+- [x] token_new() constructor - CODE WORKS, but blocked by BUG-004
+- [x] is_keyword() for fn/return/i64
 
 ### token_test.cot
-- [ ] Test token creation
-- [ ] Test keyword recognition
+- [ ] Test token creation - BLOCKED by BUG-004 (24B struct return)
+- [x] Test keyword recognition - 4/4 keyword tests pass
 
 ### scanner.cot
 - [ ] Scanner struct (source, pos)

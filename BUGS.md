@@ -35,6 +35,53 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
+### BUG-004: Struct returns > 16 bytes fail
+
+**Status:** Open
+**Priority:** P1 (Blocking cot0 token.cot)
+**Discovered:** 2026-01-16
+
+**Description:**
+Returning structs larger than 16 bytes from functions fails. The ARM64 ABI requires structs > 16 bytes to be returned via a hidden pointer parameter, but this is not implemented.
+
+**Example:**
+```cot
+struct Token {
+    kind: TokenType,  // 4 bytes + 4 padding
+    start: i64,       // 8 bytes
+    end: i64,         // 8 bytes
+}  // Total: 24 bytes
+
+fn token_new(k: TokenType, s: i64, e: i64) Token {
+    var t: Token;
+    t.kind = k;
+    t.start = s;
+    t.end = e;
+    return t;  // FAILS - struct is 24 bytes
+}
+```
+
+**Workaround:**
+Keep structs to 16 bytes or less, OR use out-parameter pattern:
+```cot
+fn token_new(out: *Token, k: TokenType, s: i64, e: i64) {
+    out.*.kind = k;
+    out.*.start = s;
+    out.*.end = e;
+}
+```
+
+**Investigation Required:**
+1. Go's `~/learning/go/src/cmd/compile/internal/ssa/expand_calls.go` - how Go handles large struct returns
+2. ARM64 ABI docs for hidden pointer parameter convention (x8 register)
+
+**ARM64 ABI Summary:**
+- Structs <= 8 bytes: returned in x0
+- Structs 9-16 bytes: returned in x0+x1
+- Structs > 16 bytes: caller passes pointer in x8, callee writes to [x8]
+
+---
+
 ### BUG-002: Struct literal syntax not implemented
 
 **Status:** Open
