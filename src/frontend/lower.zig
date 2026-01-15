@@ -365,6 +365,11 @@ pub const Lowerer = struct {
             const is_array = self.type_reg.isArray(type_idx);
             debug.log(.lower, "lowerLocalVarDecl var='{s}' type={d} isArray={}", .{ var_stmt.name, type_idx, is_array });
 
+            // Check if value is a struct literal
+            const value_node_ast = self.tree.getNode(var_stmt.value);
+            const value_expr = if (value_node_ast) |n| n.asExpr() else null;
+            const is_struct_literal = if (value_expr) |e| e == .struct_init else false;
+
             // Special handling for string type: store (ptr, len) pair
             if (type_idx == TypeRegistry.STRING) {
                 debug.log(.lower, "  -> string path", .{});
@@ -373,6 +378,10 @@ pub const Lowerer = struct {
                 debug.log(.lower, "  -> array path", .{});
                 // Special handling for array literals: initialize directly into variable storage
                 try self.lowerArrayInit(local_idx, var_stmt.value, var_stmt.span);
+            } else if (is_struct_literal) {
+                debug.log(.lower, "  -> struct literal path", .{});
+                // Special handling for struct literals: initialize field-by-field
+                try self.lowerStructInit(local_idx, var_stmt.value, var_stmt.span);
             } else {
                 debug.log(.lower, "  -> default path", .{});
                 const value_node = try self.lowerExprNode(var_stmt.value);
@@ -461,6 +470,69 @@ pub const Lowerer = struct {
                     _ = try fb.emitStoreLocal(local_idx, value_node_ir, span);
                 }
             },
+        }
+    }
+
+    /// Lower struct literal initialization: store fields directly into local variable storage.
+    /// Following Go's pattern from cmd/compile/internal/walk/complit.go:
+    /// Struct literals generate: var.field = value for each field initializer.
+    fn lowerStructInit(self: *Lowerer, local_idx: ir.LocalIdx, value_idx: NodeIndex, span: source.Span) !void {
+        debug.log(.lower, "lowerStructInit local_idx={d}", .{local_idx});
+
+        const fb = self.current_func orelse return;
+
+        const value_node = self.tree.getNode(value_idx) orelse return;
+        const value_expr = value_node.asExpr() orelse return;
+
+        // Get struct literal
+        if (value_expr != .struct_init) return;
+        const struct_init = value_expr.struct_init;
+
+        // Look up the struct type
+        const struct_type_idx = self.type_reg.lookupByName(struct_init.type_name) orelse {
+            debug.log(.lower, "  struct type '{s}' not found", .{struct_init.type_name});
+            return;
+        };
+
+        const type_info = self.type_reg.get(struct_type_idx);
+        const struct_type = switch (type_info) {
+            .struct_type => |s| s,
+            else => {
+                debug.log(.lower, "  type '{s}' is not a struct", .{struct_init.type_name});
+                return;
+            },
+        };
+
+        debug.log(.lower, "  struct '{s}' has {d} fields, initializer has {d} fields", .{
+            struct_init.type_name,
+            struct_type.fields.len,
+            struct_init.fields.len,
+        });
+
+        // Store each field value
+        for (struct_init.fields) |field_init| {
+            // Find the field in the struct type
+            var found = false;
+            for (struct_type.fields, 0..) |struct_field, i| {
+                if (std.mem.eql(u8, struct_field.name, field_init.name)) {
+                    const field_idx: u32 = @intCast(i);
+                    const field_offset: i64 = @intCast(struct_field.offset);
+
+                    // Lower the field value
+                    const value_node_ir = try self.lowerExprNode(field_init.value);
+
+                    // Store to the field
+                    _ = try fb.emitStoreLocalField(local_idx, field_idx, field_offset, value_node_ir, span);
+
+                    debug.log(.lower, "  stored field '{s}' at offset {d}", .{ field_init.name, field_offset });
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) {
+                debug.log(.lower, "  WARNING: field '{s}' not found in struct", .{field_init.name});
+            }
         }
     }
 
@@ -1205,7 +1277,7 @@ pub const Lowerer = struct {
             return ir.null_node; // Variant not found
         }
 
-        // Check for slice/string type (s.ptr, s.len)
+        // Check for slice type (s.ptr, s.len)
         if (base_type == .slice) {
             const slice_elem = base_type.slice.elem;
             const base_val = try self.lowerExprNode(fa.base);
@@ -1213,6 +1285,20 @@ pub const Lowerer = struct {
             if (std.mem.eql(u8, fa.field, "ptr")) {
                 // Return pointer to element type
                 const ptr_type = try self.type_reg.add(.{ .pointer = .{ .elem = slice_elem } });
+                return try fb.emitSlicePtr(base_val, ptr_type, fa.span);
+            } else if (std.mem.eql(u8, fa.field, "len")) {
+                return try fb.emitSliceLen(base_val, fa.span);
+            }
+            return ir.null_node;
+        }
+
+        // Check for string type (s.ptr, s.len) - string is (ptr, len) like slice
+        if (base_type_idx == TypeRegistry.STRING) {
+            const base_val = try self.lowerExprNode(fa.base);
+
+            if (std.mem.eql(u8, fa.field, "ptr")) {
+                // Return pointer to u8
+                const ptr_type = try self.type_reg.add(.{ .pointer = .{ .elem = TypeRegistry.U8 } });
                 return try fb.emitSlicePtr(base_val, ptr_type, fa.span);
             } else if (std.mem.eql(u8, fa.field, "len")) {
                 return try fb.emitSliceLen(base_val, fa.span);
@@ -1274,12 +1360,39 @@ pub const Lowerer = struct {
         const base_type = self.type_reg.get(base_type_idx);
 
         // Get element type and size
-        const elem_type: TypeIndex = switch (base_type) {
+        // Handle string type specially - it's like []u8
+        const elem_type: TypeIndex = if (base_type_idx == TypeRegistry.STRING)
+            TypeRegistry.U8
+        else switch (base_type) {
             .array => |a| a.elem,
             .slice => |s| s.elem,
             else => return ir.null_node,
         };
         const elem_size = self.type_reg.sizeOf(elem_type);
+
+        // For strings, load ptr from the string local and index into it
+        if (base_type_idx == TypeRegistry.STRING) {
+            const index_node = try self.lowerExprNode(idx.idx);
+            const base_node = self.tree.getNode(idx.base) orelse return ir.null_node;
+            const base_expr = base_node.asExpr() orelse return ir.null_node;
+
+            if (base_expr == .ident) {
+                if (fb.lookupLocal(base_expr.ident.name)) |local_idx| {
+                    // Load the string value
+                    const str_val = try fb.emitLoadLocal(local_idx, TypeRegistry.STRING, idx.span);
+                    // Extract pointer from string (ptr to u8)
+                    const ptr_type = self.type_reg.makePointer(TypeRegistry.U8) catch TypeRegistry.I64;
+                    const ptr_val = try fb.emitSlicePtr(str_val, ptr_type, idx.span);
+                    // Index through the pointer
+                    return try fb.emitIndexValue(ptr_val, index_node, elem_size, elem_type, idx.span);
+                }
+            }
+            // Computed base - lower it and extract ptr
+            const base_val = try self.lowerExprNode(idx.base);
+            const ptr_type = self.type_reg.makePointer(TypeRegistry.U8) catch TypeRegistry.I64;
+            const ptr_val = try fb.emitSlicePtr(base_val, ptr_type, idx.span);
+            return try fb.emitIndexValue(ptr_val, index_node, elem_size, elem_type, idx.span);
+        }
 
         // Lower the index expression
         const index_node = try self.lowerExprNode(idx.idx);
@@ -1550,6 +1663,24 @@ pub const Lowerer = struct {
                     return try fb.emitConstInt(arr_len, TypeRegistry.INT, call.span);
                 }
             }
+        }
+
+        // Handle field access (e.g., s.source where s is a struct with string field)
+        if (arg_expr == .field_access) {
+            const arg_type = self.inferExprType(arg_idx);
+            if (arg_type == TypeRegistry.STRING) {
+                // Lower the field access to get the string value
+                const str_val = try self.lowerFieldAccess(arg_expr.field_access);
+                // Extract length from the string
+                return try fb.emitSliceLen(str_val, call.span);
+            }
+        }
+
+        // General case: evaluate the expression and extract length
+        const arg_type = self.inferExprType(arg_idx);
+        if (arg_type == TypeRegistry.STRING) {
+            const str_val = try self.lowerExprNode(arg_idx);
+            return try fb.emitSliceLen(str_val, call.span);
         }
 
         // Other types not yet implemented

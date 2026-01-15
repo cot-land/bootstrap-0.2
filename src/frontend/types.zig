@@ -367,10 +367,10 @@ pub const TypeRegistry = struct {
     pub fn basicTypeSize(type_idx: TypeIndex) u8 {
         return switch (type_idx) {
             VOID, SSA_MEM, SSA_FLAGS, SSA_TUPLE, SSA_RESULTS => 0,
-            BOOL, I8, U8 => 1,
+            BOOL, UNTYPED_BOOL, I8, U8 => 1, // untyped_bool is also 1 byte
             I16, U16 => 2,
             I32, U32, F32 => 4,
-            I64, U64, F64 => 8,
+            I64, U64, F64, UNTYPED_INT => 8, // untyped_int is 64-bit
             STRING => 16, // ptr + len
             else => 8, // Default to 64-bit for pointers, etc.
         };

@@ -1489,7 +1489,9 @@ pub const ARM64CodeGen = struct {
             },
 
             .not => {
-                // MVN Rd, Rm (bitwise NOT) is ORN Rd, XZR, Rm
+                // Go's pattern: For booleans, NOT is XOR with 1 (flips 0↔1)
+                // For integers, NOT is MVN (bitwise complement)
+                // Reference: rewriteARM64.go rewriteValueARM64_OpNot
                 const args = value.args;
                 if (args.len >= 1) {
                     const op_reg = self.getRegForValue(args[0]) orelse blk: {
@@ -1497,7 +1499,21 @@ pub const ARM64CodeGen = struct {
                         break :blk @as(u5, 0);
                     };
                     const dest_reg = self.getDestRegForValue(value);
-                    try self.emit(asm_mod.encodeMVN(dest_reg, op_reg));
+
+                    // Check if this is a boolean (1-byte type)
+                    const type_size = self.getTypeSize(value.type_idx);
+                    if (type_size == 1) {
+                        // Boolean: XOR with 1 to flip the bit
+                        // Go: (Not x) -> (XOR (MOVDconst [1]) x)
+                        // Use x16 as scratch for the constant 1
+                        try self.emit(asm_mod.encodeMOVZ(16, 1, 0)); // MOVZ x16, #1
+                        try self.emit(asm_mod.encodeEOR(dest_reg, 16, op_reg)); // EOR dest, x16, op
+                        debug.log(.codegen, "      -> NOT (bool): MOVZ x16, #1; EOR x{d}, x16, x{d}", .{ dest_reg, op_reg });
+                    } else {
+                        // Integer: bitwise NOT via MVN
+                        try self.emit(asm_mod.encodeMVN(dest_reg, op_reg));
+                        debug.log(.codegen, "      -> NOT (int): MVN x{d}, x{d}", .{ dest_reg, op_reg });
+                    }
                     try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },

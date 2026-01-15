@@ -1007,6 +1007,11 @@ pub const Checker = struct {
             return invalid_type;
         }
 
+        // String indexing returns u8 (character)
+        if (base_type == TypeRegistry.STRING) {
+            return TypeRegistry.U8;
+        }
+
         return switch (base) {
             .array => |a| a.elem,
             .slice => |s| s.elem,

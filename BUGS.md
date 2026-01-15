@@ -35,99 +35,95 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
-### BUG-006: `not` keyword not recognized
-
-**Status:** Open
-**Priority:** P0 (Blocking cot0 scanner.cot)
-**Discovered:** 2026-01-16
-
-**Description:**
-The `not` keyword (synonym for `!`) is documented in SYNTAX.md but not implemented. Code like `while not scanner_at_end(s)` fails with "expected expression".
-
-**Example:**
-```cot
-fn main() i64 {
-    let x: bool = true;
-    if not x {       // ERROR: expected expression
-        return 1;
-    }
-    return 0;
-}
-```
-
-**Fix:** Add `not` as a keyword in scanner, parse as unary `!` operator.
-
----
-
-### BUG-005: Logical NOT operator uses bitwise NOT
-
-**Status:** Open
-**Priority:** P0 (Blocking cot0 scanner.cot)
-**Discovered:** 2026-01-16
-
-**Description:**
-The `!` operator uses MVN (bitwise NOT) instead of logical NOT for booleans.
-
-**Example:**
-```cot
-fn main() i64 {
-    if !true {
-        return 1;  // INCORRECTLY EXECUTES - !true returns 0xFFFFFFFE (non-zero)
-    }
-    return 0;
-}
-// Returns 1 instead of 0
-```
-
-**Root Cause:**
-`src/codegen/arm64.zig:1491` uses `encodeMVN()` for all `not` operations.
-- Bitwise NOT of 1 = 0xFFFFFFFFFFFFFFFE (non-zero = true)
-- Should be: logical NOT of 1 = 0 (false)
-
-**Fix:**
-For boolean types (size 1), use `EOR Rd, Rm, #1` instead of MVN:
-```zig
-const type_size = self.getTypeSize(value.type_idx);
-if (type_size == 1) {
-    // Boolean: XOR with 1 flips 0↔1
-    try self.emit(asm_mod.encodeEORImm(dest_reg, op_reg, 1));
-} else {
-    // Integer: bitwise NOT
-    try self.emit(asm_mod.encodeMVN(dest_reg, op_reg));
-}
-```
-
----
-
-### BUG-002: Struct literal syntax not implemented
-
-**Status:** Open
-**Priority:** P0 (Blocking cot0 scanner.cot)
-**Discovered:** 2026-01-15
-
-**Description:**
-SYNTAX.md documents struct literals as `Point{ .x = 10, .y = 20 }` but this syntax is not implemented. Parser fails with "expected expression" at the comma.
-
-**Workaround:**
-Use field-by-field assignment:
-```cot
-var p: Point;
-p.x = 10;
-p.y = 20;
-```
-
-**Test File:** `/tmp/bug002_struct_literal.cot`
-```cot
-struct Point { x: i64, y: i64, }
-fn main() i64 {
-    let p: Point = Point{ .x = 10, .y = 20 };
-    return p.x + p.y;
-}
-```
+(No open bugs blocking cot0 scanner.cot)
 
 ---
 
 ## Fixed Bugs
+
+### BUG-002: Struct literal syntax not implemented (FIXED)
+
+**Status:** Fixed
+**Priority:** P0 (was blocking cot0 scanner.cot)
+**Discovered:** 2026-01-15
+**Fixed:** 2026-01-16
+
+**Description:**
+SYNTAX.md documents struct literals as `Point{ .x = 10, .y = 20 }` but this syntax was not implemented.
+
+**Root Cause:**
+1. Parser: The `parsePrimaryExpr` postfix loop had placeholder code for struct literals but never actually parsed them
+2. Lowerer: No case for `.struct_init` expressions
+
+**Fix:**
+1. `src/frontend/parser.zig:808-864` - Added struct literal parsing after identifier + `{`:
+   - Uses uppercase heuristic to distinguish type names from variables (matches Go/Cot convention)
+   - Parses `.field = value, ...` syntax within braces
+2. `src/frontend/lower.zig:368-384` - Added struct literal handling in `lowerLocalVarDecl`:
+   - Detects `struct_init` expressions
+   - Calls new `lowerStructInit` function
+3. `src/frontend/lower.zig:476-537` - Added `lowerStructInit` function:
+   - Looks up struct type by name
+   - Iterates field initializers and emits `store_local_field` for each
+
+**Go Reference:**
+- `~/learning/go/src/cmd/compile/internal/walk/complit.go` - `fixedlit()` generates field-by-field assignments
+
+**Test File:** `/tmp/test_struct_literal.cot` - Returns 30 (10 + 20)
+
+### BUG-006: `not` keyword not recognized (FIXED)
+
+**Status:** Fixed
+**Priority:** P0 (was blocking cot0 scanner.cot)
+**Discovered:** 2026-01-16
+**Fixed:** 2026-01-16
+
+**Description:**
+The `not` keyword (synonym for `!`) was documented in SYNTAX.md but not working in the parser. Code like `while not scanner_at_end(s)` failed with "expected expression".
+
+**Root Cause:**
+The `kw_not` token existed in token.zig and the lowerer already mapped it to `.not` IR op, but the parser's `parseUnaryExpr()` didn't include `.kw_not` in its switch case.
+
+**Fix:**
+`src/frontend/parser.zig:694` - Added `.kw_not` to the unary expression switch case:
+```zig
+.sub, .lnot, .not, .kw_not => {  // Added .kw_not
+```
+
+**Test File:** `/tmp/test_not_keyword.cot` - Returns 42
+
+---
+
+### BUG-005: Logical NOT operator uses bitwise NOT (FIXED)
+
+**Status:** Fixed
+**Priority:** P0 (was blocking cot0 scanner.cot)
+**Discovered:** 2026-01-16
+**Fixed:** 2026-01-16
+
+**Description:**
+The `!` operator used MVN (bitwise NOT) for all types, including booleans. `!true` returned `0xFFFFFFFFFFFFFFFE` (non-zero = true) instead of `0` (false).
+
+**Root Cause:**
+1. `src/codegen/arm64.zig` used `encodeMVN()` for all `.not` operations
+2. `src/frontend/types.zig` - `basicTypeSize()` returned 8 for `UNTYPED_BOOL` (fell through to `else` case)
+
+**Go Reference:**
+`~/learning/go/src/cmd/compile/internal/ssa/rewriteARM64.go`:
+```go
+func rewriteValueARM64_OpNot(v *Value) bool {
+    // (Not x) -> (XOR (MOVDconst [1]) x)
+}
+```
+Go rewrites `OpNot` to `XOR` with 1 for booleans, not bitwise complement.
+
+**Fix:**
+1. `src/frontend/types.zig` - Added `UNTYPED_BOOL` to the 1-byte case in `basicTypeSize()`
+2. `src/codegen/arm64.zig` - Check type size: boolean (1B) uses `MOVZ x16, #1; EOR dest, x16, op`, integers use MVN
+
+**Test File:** `/tmp/test_logical_not.cot` - Returns 42
+
+---
 
 ### BUG-004: Struct returns > 16 bytes fail (FIXED)
 

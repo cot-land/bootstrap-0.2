@@ -510,14 +510,16 @@ pub const SSABuilder = struct {
                 // have their address taken. This is conservative but correct.
                 // TODO: Add escape analysis to avoid stores for purely SSA variables.
 
-                // Check if storing a slice type - need to decompose into (ptr, len)
+                // Check if storing a slice/string type - need to decompose into (ptr, len)
                 // Following Go's dec.rules pattern for slice stores:
                 // (Store dst (SliceMake ptr len)) =>
                 //   (Store (OffPtr [8] dst) len
                 //     (Store dst ptr))
+                // Same pattern applies to string_make and STRING types
                 const value_type = self.type_registry.get(value.type_idx);
-                const is_slice_value = (value.op == .slice_make and value.args.len >= 2);
-                const is_slice_call = (value.op == .static_call and value_type == .slice);
+                const is_slice_value = ((value.op == .slice_make or value.op == .string_make) and value.args.len >= 2);
+                const is_string_type = (value.type_idx == TypeRegistry.STRING);
+                const is_slice_call = (value.op == .static_call and (value_type == .slice or is_string_type));
 
                 if (is_slice_value or is_slice_call) {
                     // Extract ptr and len from the slice value FIRST

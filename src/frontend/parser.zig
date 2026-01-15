@@ -691,7 +691,7 @@ pub const Parser = struct {
                     .span = Span.init(start, self.pos()),
                 } });
             },
-            .sub, .lnot, .not => {
+            .sub, .lnot, .not, .kw_not => {
                 const op = self.tok.tok;
                 self.advance();
                 const operand = try self.parseUnaryExpr() orelse return null;
@@ -806,16 +806,58 @@ pub const Parser = struct {
                     .span = Span.init(expr_span.start, self.pos()),
                 } });
             } else if (self.check(.lbrace)) {
-                // Struct literal: Type{ .field = value }
-                // Only if base is identifier (type name) and starts with '.'
+                // Struct literal: Type{ .field = value, ... }
+                // Only if base is an identifier that looks like a type name (uppercase first letter)
                 const node = self.tree.getNode(expr);
                 if (node) |n| {
                     if (n.asExpr()) |e| {
                         if (e == .ident) {
-                            // Check if struct literal (peek for '.')
-                            // For now, conservatively require explicit check
-                            // This avoids conflict with blocks after expressions
-                            break; // Don't parse as struct literal here
+                            const type_name = e.ident.name;
+
+                            // Heuristic: Types start with uppercase (Cot/Go convention)
+                            // Variables like 'b' start with lowercase
+                            // This distinguishes Point{ ... } from b { ... }
+                            if (type_name.len > 0 and std.ascii.isUpper(type_name[0])) {
+                                const expr_span = self.tree.getNode(expr).?.span();
+                                self.advance(); // consume '{'
+
+                                // Parse struct literal fields
+                                var fields = std.ArrayListUnmanaged(ast.FieldInit){};
+                                defer fields.deinit(self.allocator);
+
+                                while (!self.check(.rbrace) and !self.check(.eof)) {
+                                    // Expect .field = value
+                                    if (!self.expect(.period)) return null;
+                                    if (!self.check(.ident)) {
+                                        self.syntaxError("expected field name after '.'");
+                                        return null;
+                                    }
+                                    const field_name = self.tok.text;
+                                    const field_start = self.pos();
+                                    self.advance();
+
+                                    if (!self.expect(.assign)) return null;
+
+                                    const value = try self.parseExpr() orelse return null;
+
+                                    try fields.append(self.allocator, .{
+                                        .name = field_name,
+                                        .value = value,
+                                        .span = Span.init(field_start, self.pos()),
+                                    });
+
+                                    if (!self.match(.comma)) break;
+                                }
+
+                                if (!self.expect(.rbrace)) return null;
+
+                                expr = try self.tree.addExpr(.{ .struct_init = .{
+                                    .type_name = type_name,
+                                    .fields = try self.allocator.dupe(ast.FieldInit, fields.items),
+                                    .span = Span.init(expr_span.start, self.pos()),
+                                } });
+                                continue;
+                            }
                         }
                     }
                 }
