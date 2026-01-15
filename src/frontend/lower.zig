@@ -53,6 +53,11 @@ pub const Lowerer = struct {
     // Loop context stack for break/continue
     loop_stack: std.ArrayListUnmanaged(LoopContext),
 
+    // Defer stack for pending defer expressions (Zig-style scope tracking)
+    // When entering a block, record the current depth. On block exit, emit
+    // defers from current depth down to recorded depth in LIFO order.
+    defer_stack: std.ArrayListUnmanaged(NodeIndex),
+
     // Compile-time constant values
     const_values: std.StringHashMap(i64),
 
@@ -62,6 +67,7 @@ pub const Lowerer = struct {
     const LoopContext = struct {
         cond_block: ir.BlockIndex, // Jump target for continue
         exit_block: ir.BlockIndex, // Jump target for break
+        defer_depth: usize, // Defer stack depth at loop entry (for break/continue)
     };
 
     pub fn init(
@@ -79,12 +85,14 @@ pub const Lowerer = struct {
             .builder = ir.Builder.init(allocator, type_reg),
             .chk = chk,
             .loop_stack = .{},
+            .defer_stack = .{},
             .const_values = std.StringHashMap(i64).init(allocator),
         };
     }
 
     pub fn deinit(self: *Lowerer) void {
         self.loop_stack.deinit(self.allocator);
+        self.defer_stack.deinit(self.allocator);
         self.const_values.deinit();
         self.builder.deinit();
     }
@@ -136,6 +144,9 @@ pub const Lowerer = struct {
         if (self.builder.func()) |fb| {
             self.current_func = fb;
 
+            // Clear defer stack for new function scope
+            self.defer_stack.clearRetainingCapacity();
+
             // Add parameters
             for (fn_decl.params) |param| {
                 const param_type = self.resolveTypeNode(param.type_expr);
@@ -151,6 +162,8 @@ pub const Lowerer = struct {
                 if (return_type == TypeRegistry.VOID) {
                     const needs_ret = fb.needsTerminator();
                     if (needs_ret) {
+                        // Emit any pending defers before implicit return
+                        try self.emitDeferredExprs(0);
                         _ = try fb.emitRet(null, fn_decl.span);
                     }
                 }
@@ -267,12 +280,21 @@ pub const Lowerer = struct {
                 return false;
             },
             .block_stmt => |block| {
+                // Track defer depth for block scope
+                const defer_depth = self.defer_stack.items.len;
+
                 for (block.stmts) |stmt_idx| {
                     const stmt_node = self.tree.getNode(stmt_idx) orelse continue;
                     if (stmt_node.asStmt()) |s| {
-                        if (try self.lowerStmt(s)) return true;
+                        if (try self.lowerStmt(s)) {
+                            // Terminated by return/break/continue - they handle defers
+                            return true;
+                        }
                     }
                 }
+
+                // Normal block exit: emit block-scoped defers
+                try self.emitDeferredExprs(defer_depth);
                 return false;
             },
             .break_stmt => {
@@ -287,18 +309,40 @@ pub const Lowerer = struct {
                 _ = try self.lowerExprNode(expr_s.expr);
                 return false;
             },
-            .defer_stmt, .bad_stmt => return false,
+            .defer_stmt => |ds| {
+                // Push deferred expression onto stack - will be emitted at scope exit
+                try self.defer_stack.append(self.allocator, ds.expr);
+                debug.log(.lower, "lowerDefer: pushed expr to defer stack (depth: {d})", .{self.defer_stack.items.len});
+                return false;
+            },
+            .bad_stmt => return false,
         }
     }
 
     fn lowerReturn(self: *Lowerer, ret: ast.ReturnStmt) !void {
         const fb = self.current_func orelse return;
 
+        // Evaluate return value BEFORE defers (value computed, then defers run)
+        var value_node: ?ir.NodeIndex = null;
         if (ret.value != null_node) {
-            const value_node = try self.lowerExprNode(ret.value);
-            _ = try fb.emitRet(value_node, ret.span);
-        } else {
-            _ = try fb.emitRet(null, ret.span);
+            value_node = try self.lowerExprNode(ret.value);
+        }
+
+        // Emit all deferred expressions in LIFO order (Zig semantics)
+        try self.emitDeferredExprs(0);
+
+        // Now emit the return with the pre-computed value
+        _ = try fb.emitRet(value_node, ret.span);
+    }
+
+    /// Emit deferred expressions from current stack depth down to target depth.
+    /// Emits in LIFO order (last defer first) and pops the stack.
+    fn emitDeferredExprs(self: *Lowerer, target_depth: usize) Error!void {
+        while (self.defer_stack.items.len > target_depth) {
+            // pop() returns ?T in Zig 0.15, but we've checked length so it's safe
+            const defer_expr = self.defer_stack.pop() orelse break;
+            debug.log(.lower, "emitDeferredExprs: emitting defer (remaining: {d})", .{self.defer_stack.items.len});
+            _ = try self.lowerExprNode(defer_expr);
         }
     }
 
@@ -715,10 +759,11 @@ pub const Lowerer = struct {
         const cond_node = try self.lowerExprNode(while_stmt.condition);
         _ = try fb.emitBranch(cond_node, body_block, exit_block, while_stmt.span);
 
-        // Push loop context for break/continue
+        // Push loop context for break/continue (record defer depth for cleanup)
         try self.loop_stack.append(self.allocator, .{
             .cond_block = cond_block,
             .exit_block = exit_block,
+            .defer_depth = self.defer_stack.items.len,
         });
 
         // Body block
@@ -826,6 +871,7 @@ pub const Lowerer = struct {
         try self.loop_stack.append(self.allocator, .{
             .cond_block = incr_block, // continue -> increment
             .exit_block = exit_block, // break -> exit
+            .defer_depth = self.defer_stack.items.len,
         });
 
         // Body block
@@ -894,6 +940,8 @@ pub const Lowerer = struct {
         const fb = self.current_func orelse return;
         if (self.loop_stack.items.len > 0) {
             const ctx = self.loop_stack.items[self.loop_stack.items.len - 1];
+            // Emit defers from current depth down to loop entry
+            try self.emitDeferredExprs(ctx.defer_depth);
             _ = try fb.emitJump(ctx.exit_block, Span.fromPos(Pos.zero));
         }
     }
@@ -902,6 +950,8 @@ pub const Lowerer = struct {
         const fb = self.current_func orelse return;
         if (self.loop_stack.items.len > 0) {
             const ctx = self.loop_stack.items[self.loop_stack.items.len - 1];
+            // Emit defers from current depth down to loop entry
+            try self.emitDeferredExprs(ctx.defer_depth);
             _ = try fb.emitJump(ctx.cond_block, Span.fromPos(Pos.zero));
         }
     }

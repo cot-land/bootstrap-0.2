@@ -718,15 +718,16 @@ fn main() i64 {
 | Comparisons | Yes | Yes | TODO | In Progress |
 | If/else | Yes | Yes | TODO | In Progress |
 | While loops | Yes | Yes | TODO | In Progress |
-| Structs | Yes | Yes | TODO | Phase 3 |
-| Enums | Yes | Yes | TODO | Phase 3 |
-| Pointers | Yes | Yes | TODO | Phase 3 |
-| Arrays/Slices | Yes | Yes | TODO | Phase 3 |
+| Structs | Yes | Yes | Yes | ✅ Working |
+| Enums | Yes | Yes | Yes | ✅ Working |
+| Pointers | Yes | Yes | Yes | ✅ Working |
+| Arrays/Slices | Yes | Yes | Yes | ✅ Working |
+| Defer | Yes | Yes | Yes | ✅ Working |
 
 ### Test Progress
 
 See `test/e2e/all_tests.cot` for the full test suite.
 
-**Current:** 110 e2e tests passing
+**Current:** 138 e2e tests passing
 
-Core language complete: arithmetic, functions, control flow, structs, arrays, slices, pointers, enums, bitwise/logical operators, for-in loops, string operations, extern functions.
+Core language complete: arithmetic, functions, control flow, structs, arrays, slices, pointers, enums, bitwise/logical operators, for-in loops, string operations, extern functions, defer statements.

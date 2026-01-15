@@ -2,7 +2,7 @@
 // COT END-TO-END TEST SUITE
 // ============================================================================
 //
-// Progress: 134 / 134 tests passing
+// Progress: 138 / 138 tests passing
 //
 // ============================================================================
 // STATUS TRACKER
@@ -89,6 +89,10 @@
 //   [x] test_enum_third - enum third variant
 //   [x] test_enum_ne - enum not equal comparison
 //   [x] test_enum_param - enum as function parameter
+//   [x] test_defer_simple - defer with function call
+//   [x] test_defer_early_return - defer in early return path
+//   [x] test_defer_multiple - multiple defers (LIFO)
+//   [x] test_defer_block - defer in block scope
 //
 // BLOCKED - Need more struct features (16):
 //   [ ] test_struct_init, test_struct_param, test_struct_return, ...
@@ -1471,6 +1475,47 @@ fn test_intcast_roundtrip() i64 {
 // (many more tests to add as we implement features)
 
 // ============================================================================
+// TIER 23: Defer Statement
+// ============================================================================
+
+// Helper for defer tests
+fn defer_identity(x: i64) i64 {
+    return x;
+}
+
+// Simple defer with function call
+fn test_defer_simple() i64 {
+    defer defer_identity(42);  // Runs at scope exit, result discarded
+    return 42;
+}
+
+// Defer in early return path
+fn test_defer_early_return() i64 {
+    let x: i64 = -5;
+    defer defer_identity(99);
+    if x < 0 {
+        return 42;  // Defer runs before early return
+    }
+    return 0;
+}
+
+// Multiple defers execute
+fn test_defer_multiple() i64 {
+    defer defer_identity(1);
+    defer defer_identity(2);
+    defer defer_identity(3);
+    return 42;  // All three defers run in LIFO order
+}
+
+// Defer in block scope
+fn test_defer_block() i64 {
+    {
+        defer defer_identity(10);  // Runs when block exits
+    }
+    return 42;  // After block, execution continues
+}
+
+// ============================================================================
 // MAIN - Test Runner
 // ============================================================================
 
@@ -1669,9 +1714,15 @@ fn main() i64 {
     if test_intcast_truncate() != 42 { println("FAIL: test_intcast_truncate"); failed += 1; }
     if test_intcast_roundtrip() != 42 { println("FAIL: test_intcast_roundtrip"); failed += 1; }
 
+    // TIER 23: Defer Statement
+    if test_defer_simple() != 42 { println("FAIL: test_defer_simple"); failed += 1; }
+    if test_defer_early_return() != 42 { println("FAIL: test_defer_early_return"); failed += 1; }
+    if test_defer_multiple() != 42 { println("FAIL: test_defer_multiple"); failed += 1; }
+    if test_defer_block() != 42 { println("FAIL: test_defer_block"); failed += 1; }
+
     // Summary
     if failed == 0 {
-        println("All 134 tests passed!");
+        println("All 138 tests passed!");
     }
 
     return failed;
