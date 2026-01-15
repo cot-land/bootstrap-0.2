@@ -1,6 +1,6 @@
 # Cot Language Syntax Reference
 
-**Generated from bootstrap analysis on 2026-01-14**
+**Generated from bootstrap analysis on 2026-01-15**
 
 This document defines the Cot language syntax as implemented in bootstrap-0.2.
 
@@ -365,6 +365,10 @@ x += 5;         // x = x + 5
 x -= 3;         // x = x - 3
 x *= 2;         // x = x * 2
 x /= 4;         // x = x / 4
+x %= 3;         // x = x % 3
+x &= mask;      // x = x & mask (bitwise AND)
+x |= flags;     // x = x | flags (bitwise OR)
+x ^= bits;      // x = x ^ bits (bitwise XOR)
 ```
 
 ### Operator Precedence (Highest to Lowest)
@@ -375,7 +379,7 @@ x /= 4;         // x = x / 4
 5. Comparative: `==`, `!=`, `<`, `<=`, `>`, `>=`
 6. Logical AND: `and`, `&&`
 7. Logical OR: `or`, `||`
-8. Assignment: `=`, `+=`, `-=`, `*=`, `/=`
+8. Assignment: `=`, `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`
 
 ### Function Calls
 ```cot
@@ -403,6 +407,14 @@ len([1, 2, 3])      // Returns 3
 @alignOf(T)         // Alignment of type T in bytes (compile-time constant)
 @alignOf(i64)       // Returns 8
 @alignOf(u8)        // Returns 1
+
+@intCast(T, value)  // Convert integer to type T (widen or truncate)
+@intCast(i64, x)    // Widen u8/i8/i16/i32 to i64
+@intCast(u8, x)     // Truncate i64 to u8 (keeps lower 8 bits)
+@intCast(i32, x)    // Convert between signed/unsigned of same size
+
+@string(ptr, len)   // Construct string from pointer and length
+@string(buf.ptr, n) // Create string view of buffer
 ```
 
 ### Array Literals
