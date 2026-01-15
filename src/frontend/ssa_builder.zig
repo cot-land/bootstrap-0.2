@@ -944,11 +944,35 @@ pub const SSABuilder = struct {
             // 3. Create slice_make(ptr, len)
 
             .slice_local => |s| blk: {
-                // Create slice from local array: arr[start..end]
-                // Get address of array
-                const arr_addr = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
-                arr_addr.aux_int = @intCast(s.local_idx);
-                try cur.addValue(self.allocator, arr_addr);
+                // Create slice from local: arr[start..end] or string[start..end]
+                // CRITICAL: Handle arrays (inline data) vs slices (ptr+len struct) differently
+                const local = self.ir_func.locals[s.local_idx];
+                const local_type = self.type_registry.get(local.type_idx);
+
+                // Get base pointer: for arrays use local_addr, for slices extract ptr
+                const base_ptr: *Value = if (local_type == .slice) slice_ptr_blk: {
+                    // For slices/strings: load the ptr from the slice struct at offset 0
+                    // This follows Go's pattern where slicing a slice re-slices the underlying data
+                    debug.log(.ssa, "    slice_local: slicing a slice (e.g., string)", .{});
+
+                    // Get address of the local (slice struct)
+                    const local_addr = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                    local_addr.aux_int = @intCast(s.local_idx);
+                    try cur.addValue(self.allocator, local_addr);
+
+                    // Load ptr from offset 0 of the slice struct
+                    const ptr_load = try self.func.newValue(.load, TypeRegistry.I64, cur, .{});
+                    ptr_load.addArg(local_addr);
+                    try cur.addValue(self.allocator, ptr_load);
+
+                    break :slice_ptr_blk ptr_load;
+                } else arr_addr_blk: {
+                    // For arrays: get address of inline array data
+                    const arr_addr = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                    arr_addr.aux_int = @intCast(s.local_idx);
+                    try cur.addValue(self.allocator, arr_addr);
+                    break :arr_addr_blk arr_addr;
+                };
 
                 // Compute start offset and slice pointer
                 const start_val: *Value = if (s.start) |start_idx| start_blk: {
@@ -970,9 +994,9 @@ pub const SSABuilder = struct {
                 offset.addArg2(start_val, elem_size_val);
                 try cur.addValue(self.allocator, offset);
 
-                // Compute slice pointer = arr_addr + offset
+                // Compute slice pointer = base_ptr + offset
                 const slice_ptr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, .{});
-                slice_ptr.addArg2(arr_addr, offset);
+                slice_ptr.addArg2(base_ptr, offset);
                 try cur.addValue(self.allocator, slice_ptr);
 
                 // Compute length = end - start

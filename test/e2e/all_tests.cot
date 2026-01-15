@@ -1119,6 +1119,51 @@ fn test_string_var_copy2() i64 {
 }
 
 // ============================================================================
+// TIER 15.7: String Indexing and Slicing
+// ============================================================================
+
+// Test string indexing - first character
+fn test_string_index_first() i64 {
+    let s: string = "hello";
+    let c: u8 = s[0];
+    if c == 104 { return 42; }  // 'h' = 104
+    return 0;
+}
+
+// Test string indexing - middle character
+fn test_string_index_middle() i64 {
+    let s: string = "hello";
+    let c: u8 = s[2];
+    if c == 108 { return 42; }  // 'l' = 108
+    return 0;
+}
+
+// Test string slicing - get substring
+fn test_string_slice() i64 {
+    let s: string = "hello";
+    let sub: string = s[0:3];  // "hel"
+    return len(sub);  // Should return 3
+}
+
+// Test string slicing - verify content
+fn test_string_slice_content() i64 {
+    let s: string = "hello";
+    let sub: string = s[1:4];  // "ell"
+    let c0: u8 = sub[0];
+    let c1: u8 = sub[1];
+    let c2: u8 = sub[2];
+    // 'e' = 101, 'l' = 108
+    if c0 == 101 {
+        if c1 == 108 {
+            if c2 == 108 {
+                return 42;  // success
+            }
+        }
+    }
+    return 0;
+}
+
+// ============================================================================
 // TIER 16: For-In Loops
 // ============================================================================
 
@@ -1324,6 +1369,12 @@ fn main() i64 {
     // TIER 15.6: String Variable Assignment
     if test_string_var_copy() == 5 { passed = passed + 1; }
     if test_string_var_copy2() == 8 { passed = passed + 1; }
+
+    // TIER 15.7: String Indexing and Slicing
+    if test_string_index_first() == 42 { passed = passed + 1; }
+    if test_string_index_middle() == 42 { passed = passed + 1; }
+    if test_string_slice() == 3 { passed = passed + 1; }
+    if test_string_slice_content() == 42 { passed = passed + 1; }
 
     // TIER 16: For-In Loops
     if test_for_array() == 15 { passed = passed + 1; }

@@ -4,7 +4,7 @@
 
 ## Current State
 
-**106 e2e tests passing.** Core language features complete. Now focused on features required for self-hosting.
+**110 e2e tests passing.** Core language features complete. Now focused on features required for self-hosting.
 
 ---
 
@@ -57,15 +57,16 @@ A self-hosting Cot compiler needs to:
 - SSA builder directly accesses slice_make args to avoid slice_ptr/slice_len codegen issues
 - Codegen uses `TypeRegistry.basicTypeSize()` to emit correct load/store sizes (LDRB for u8, etc.)
 
-**Key Bug Fix (2026-01-15):**
+**Key Bug Fixes (2026-01-15):**
 - Load/store always used 64-bit LDR/STR regardless of type
 - Added `LdStSize` enum and `encodeLdrStrSized()` to asm.zig
 - Debug output now shows types: `v18: u8(1B) = load` and `LDRb w1, [x0] (load u8, 1B)`
-- This made the bug immediately visible in debug output
+- String slicing: `slice_local` must handle slices (load ptr first) vs arrays (inline data)
 
-**Remaining:**
-- ❓ Test string slicing: `s[0:5]}`
-- Add passing tests to `all_tests.cot`
+**All tests added to all_tests.cot:**
+- `test_string_index_first/middle` - verify `s[i]` returns correct byte
+- `test_string_slice` - verify `s[0:3]` has correct length
+- `test_string_slice_content` - verify slice content is correct
 
 ---
 
