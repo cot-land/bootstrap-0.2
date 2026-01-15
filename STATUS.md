@@ -24,8 +24,8 @@ A self-hosting Cot compiler needs to:
 
 | Category | Feature | Status | Priority | Notes |
 |----------|---------|--------|----------|-------|
-| **I/O** | Read file | ❌ TODO | P0 | Can't compile without reading source |
-| **I/O** | Write file | ❌ TODO | P0 | Can't emit object files |
+| **I/O** | Read file | ✅ Done | P0 | `stdlib/io.cot:readFile()` |
+| **I/O** | Write file | ✅ Done | P0 | `stdlib/io.cot:writeFile()` |
 | **Memory** | Heap allocation | ✅ Done | P0 | `malloc()` via extern fn |
 | **Memory** | Free/deallocation | ✅ Done | P0 | `free()` via extern fn |
 | **Memory** | @sizeOf builtin | ✅ Done | P0 | Compile-time type sizes |
@@ -111,9 +111,10 @@ fn main() i64 {
 }
 ```
 
-**Remaining for high-level file API:**
-- Helper functions: `readFile(path) -> string`, `writeFile(path, data)`
-- These require memory allocation (Phase 3)
+**High-level API (stdlib/io.cot):**
+- ✅ `readFile(path: string, buf: *u8, buf_size: i64) i64` - read file into buffer
+- ✅ `writeFile(path: string, data: *u8, len: i64) i64` - write buffer to file
+- Test: `test/e2e/test_file_io.cot` - Exit 5 (reads "hello")
 
 **Go Reference:** `~/learning/go/src/syscall/` for syscall patterns
 

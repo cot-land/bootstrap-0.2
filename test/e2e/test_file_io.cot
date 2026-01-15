@@ -1,0 +1,15 @@
+import "../../stdlib/io.cot"
+
+fn main() i64 {
+    // Test writeFile
+    let msg: string = "hello";
+    let written: i64 = writeFile("/tmp/cot_test.txt", msg.ptr, msg.len);
+    if written < 0 { return 1; }
+
+    // Test readFile
+    var buf: [64]u8 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let n: i64 = readFile("/tmp/cot_test.txt", &buf[0], 64);
+
+    // Should have read 5 bytes ("hello")
+    return n;
+}

@@ -1,0 +1,54 @@
+// stdlib/io.cot - File I/O helpers
+//
+// High-level file operations built on libc syscalls.
+// Following Go's os.ReadFile / os.WriteFile pattern.
+
+// Syscall wrappers (resolved by linker)
+extern fn open(path: *u8, flags: i32, mode: i32) i32;
+extern fn read(fd: i32, buf: *u8, count: i64) i64;
+extern fn write(fd: i32, buf: *u8, count: i64) i64;
+extern fn close(fd: i32) i32;
+
+// File open flags (macOS/Darwin)
+const O_RDONLY: i32 = 0
+const O_WRONLY: i32 = 1
+const O_CREAT: i32 = 512
+const O_TRUNC: i32 = 1024
+
+// Default file permission (0644)
+const FILE_MODE: i32 = 420
+
+// readFile: Read entire file into caller-provided buffer.
+// Returns bytes read, or -1 on error.
+fn readFile(path: string, buf: *u8, buf_size: i64) i64 {
+    let fd: i32 = open(path.ptr, O_RDONLY, 0);
+    if fd < 0 {
+        return -1;
+    }
+
+    let n: i64 = read(fd, buf, buf_size);
+    close(fd);
+
+    if n < 0 {
+        return -1;
+    }
+    return n;
+}
+
+// writeFile: Write buffer to file (creates/truncates).
+// Returns bytes written, or -1 on error.
+fn writeFile(path: string, data: *u8, len: i64) i64 {
+    let flags: i32 = O_WRONLY + O_CREAT + O_TRUNC;
+    let fd: i32 = open(path.ptr, flags, FILE_MODE);
+    if fd < 0 {
+        return -1;
+    }
+
+    let n: i64 = write(fd, data, len);
+    close(fd);
+
+    if n < 0 {
+        return -1;
+    }
+    return n;
+}
