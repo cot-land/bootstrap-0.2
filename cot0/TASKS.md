@@ -13,11 +13,13 @@
 ✅ **BUG-006 FIXED:** `not` keyword added as synonym for `!`.
 ✅ **BUG-002 FIXED:** Struct literals implemented.
 ✅ **Unified ABI Analysis:** Following Go's pattern, ABI decisions centralized in `abi.zig`.
+✅ **3-way cycle fix:** Register cycle resolution for function call arguments.
 
 - `token_test.cot`: 5/5 tests pass
-- All 142 e2e tests pass
+- `scanner_test.cot`: 11/11 tests pass
+- All 145 e2e tests pass
 
-**Sprint 1 COMPLETE!** Scanner.cot compiles successfully.
+**Sprint 1 COMPLETE!** Scanner.cot compiles and tests pass.
 
 ---
 
@@ -110,20 +112,22 @@ Parser, checker, and lowerer all handle `@string(ptr, len)`:
 - [x] Test token creation
 - [x] Test keyword recognition - 5/5 tests pass
 
-### scanner.cot - BLOCKED by Sprint 1 issues
-- [x] Scanner struct (source, pos) - code written
-- [x] scanner_new(), scanner_next() - code written
-- [x] skip_whitespace(), skip_comments - code written
-- [x] scan_number() for integer literals - code written
-- [x] scan_ident() for identifiers/keywords - code written
-- [ ] **BLOCKED:** Needs struct literals (BUG-002)
-- [ ] **BLOCKED:** Needs `not` keyword (BUG-006)
-- [ ] **BLOCKED:** Needs @string builtin
+### scanner.cot ✅ COMPLETE
+- [x] Scanner struct (source, pos)
+- [x] scanner_new(), scanner_next()
+- [x] skip_whitespace(), skip_comments
+- [x] scan_number() for integer literals
+- [x] scan_ident() for identifiers/keywords
+- [x] Compiles successfully to object file
+- [x] All scanner_test.cot tests pass (11/11)
 
-### scanner_test.cot
-- [ ] Test single tokens
-- [ ] Test whitespace handling
-- [ ] Test full tokenization
+### scanner_test.cot ✅ COMPLETE (11/11 pass)
+- [x] Test single tokens (int, ident, keywords)
+- [x] Test whitespace handling
+- [x] Test punctuation and operators
+- [x] Test EOF token
+- [x] Test multi-token sequences
+- [x] Test full function tokenization
 
 ### ast.cot
 - [ ] Node types: IntLit, Ident, BinaryOp, Call, Return, FnDecl, Block
@@ -207,9 +211,9 @@ Parser, checker, and lowerer all handle `@string(ptr, len)`:
 
 ## Verification Checklist
 
-- [ ] `token_test.cot` passes
-- [ ] `scanner_test.cot` passes
+- [x] `token_test.cot` passes (5/5)
+- [x] `scanner_test.cot` passes (11/11)
 - [ ] `parser_test.cot` passes
-- [ ] Can compile: `fn main() i64 { return 42; }`
-- [ ] Can compile: `fn main() i64 { return 20 + 22; }`
-- [ ] Can compile: `fn add(a: i64, b: i64) i64 { return a + b; } fn main() i64 { return add(20, 22); }`
+- [x] Can compile: `fn main() i64 { return 42; }`
+- [x] Can compile: `fn main() i64 { return 20 + 22; }`
+- [x] Can compile: `fn add(a: i64, b: i64) i64 { return a + b; } fn main() i64 { return add(20, 22); }`

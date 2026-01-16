@@ -12,6 +12,7 @@
 - `len()` on field access (`len(s.source)`) ✅
 - `string_make` decomposition for SSA storage ✅
 - `@string(ptr, len)` builtin for string construction ✅
+- 3-way register cycle resolution in function call argument passing ✅
 
 **Runtime Library:** String concatenation uses the runtime library at `runtime/cot_runtime.o`. The compiler auto-links it when found. See [Runtime Library](#runtime-library) section below.
 
