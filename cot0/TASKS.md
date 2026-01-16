@@ -8,18 +8,23 @@
 
 ## Current Status
 
-✅ **BUG-004 FIXED:** Struct returns > 16 bytes now work correctly.
-✅ **BUG-005 FIXED:** Logical NOT operator now works for booleans.
-✅ **BUG-006 FIXED:** `not` keyword added as synonym for `!`.
-✅ **BUG-002 FIXED:** Struct literals implemented.
-✅ **Unified ABI Analysis:** Following Go's pattern, ABI decisions centralized in `abi.zig`.
-✅ **3-way cycle fix:** Register cycle resolution for function call arguments.
+**All 158 e2e tests pass.**
 
 - `token_test.cot`: 5/5 tests pass
 - `scanner_test.cot`: 11/11 tests pass
-- All 145 e2e tests pass
+- `ast_test.cot`: 7/7 tests pass
+- `parser_test.cot`: Compiles, tests failing (10 failures)
+
+**Recent Bug Fixes (2026-01-16):**
+- BUG-014: Switch statements now supported (both expression and statement modes)
+- BUG-013: String concatenation in loops fixed (use count tracking)
+- BUG-012: `ptr.*.field` codegen fixed
+- BUG-004: Struct returns > 16 bytes fixed
+- BUG-005/006: Logical NOT and `not` keyword fixed
+- BUG-002: Struct literals implemented
 
 **Sprint 1 COMPLETE!** Scanner.cot compiles and tests pass.
+**Sprint 2 IN PROGRESS:** Parser tests failing - need investigation.
 
 ---
 
