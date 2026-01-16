@@ -18,11 +18,12 @@
 ### Recent Bug Fixes (2026-01-16)
 
 **Compiler Bugs Fixed:**
+- BUG-012: `ptr.*.field` codegen - Was loading entire struct via LDP then treating first 8 bytes as pointer. Fix: detect `.deref` in `lowerFieldAccess` and pass pointer directly to `emitFieldValue` (following Go's ODOTPTR pattern). ✅
 - BUG-011: `off_ptr` register clobbering - When regalloc assigned the same register to both `local_addr` and a subsequent `load`, the `off_ptr` would use the clobbered value. Fix: `off_ptr` codegen now regenerates `local_addr` directly from `self.func.local_offsets` when the base is a `local_addr` op. ✅
 - BUG-010: `slice_make` clobbering arg registers - When a string param was followed by other params, `slice_make` was emitted BEFORE the subsequent `arg` ops. This allowed regalloc to assign `slice_make` to x2, overwriting the pool argument before it was captured. Fix: 3-phase param init - create ALL `arg` ops first, THEN `slice_make`, THEN stores. ✅
 - BUG-007: Struct literal type lookup - `checkStructInit` was using `scope.lookup()` instead of `types.lookupBasic()`. Types come from the type registry, not the symbol table. ✅
 - BUG-008: `&ptr.field` pattern - Added handling for address-of when base is pointer-to-struct (e.g., `&p.scanner` where `p: *Parser`) ✅
-- BUG-009: `addr_offset` IR node - Added `emitAddrOffset()` and SSA conversion for `off_ptr` ✅
+- BUG-009: Pointer arithmetic scaling - Was already working; follows Zig's design (auto-scales by element size). ✅
 
 **Previous Bug Fixes:**
 - BUG-005: Logical NOT (EOR vs MVN for booleans) ✅

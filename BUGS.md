@@ -35,106 +35,85 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
-### BUG-009: Pointer arithmetic not scaling by element size (DESIGN ISSUE)
+(No open bugs at this time)
 
-**Status:** Open - NEEDS DESIGN REVIEW
-**Priority:** P0 (blocking cot0 ast_test.cot)
+---
+
+## Fixed Bugs
+
+### BUG-012: `ptr.*.field` loads entire struct instead of field (FIXED)
+
+**Status:** Fixed
+**Priority:** P0
 **Discovered:** 2026-01-16
+**Fixed:** 2026-01-16
 
 **Description:**
-Expression `pool.nodes + idx` (where `pool.nodes` is `*Node` and `idx` is `i64`) produces incorrect address. The `add_ptr` SSA operation receives raw index instead of `idx * sizeof(Node)`.
+When accessing a struct field through a pointer (`p.*.field`), the compiler was:
+1. Loading the entire struct via LDP (16 bytes for 2-field struct)
+2. Trying to treat the first 8 bytes as a pointer for field offset calculation
 
-**Test Case:** `cot0/frontend/ast_test.cot`
-```cot
-let n: *Node = pool.nodes + idx;  // Crashes - wrong address calculation
-```
+This caused segfaults because the loaded struct value (not a pointer) was being used for address calculation.
 
-**SSA Output Shows:**
-```
-v32: composite(8B) = load v31 : uses=1       // loads pool.nodes (pointer)
-v34: i64(8B) = load v33 : uses=1             // loads idx (raw integer)
-v35: composite(8B) = add_ptr v32, v34        // ptr + idx (NOT scaled!)
-```
+**Root Cause:**
+In `lowerFieldAccess`, when `fa.base` is a `.deref` expression, calling `lowerExprNode(fa.base)` triggers the deref case which emits `ptr_load_value` - loading the entire struct. But for field access, we only need the pointer address.
 
-**CRITICAL DESIGN QUESTION:**
-
-Go does NOT support C-style pointer arithmetic:
+**Go Reference:**
+Go's ODOTPTR pattern (`src/cmd/compile/internal/ssagen/ssa.go`):
 ```go
-// NOT ALLOWED in Go:
-ptr := &arr[0]
-ptr = ptr + 1  // COMPILE ERROR - can't add to pointer
-
-// REQUIRED in Go:
-elem := arr[i]      // Index into array
-elem := slice[i]    // Index into slice
-ptr := &arr[i]      // Address of element
+case ir.ODOTPTR:
+    p := s.exprPtr(n.X, n.Bounded(), n.Pos())
+    p = s.newValue1I(ssa.OpOffPtr, types.NewPtr(n.Type()), n.Offset(), p)
+    return s.load(n.Type(), p)
 ```
+Go computes `ptr + offset` and loads just the field, NOT load-entire-struct-then-extract.
 
-**Options:**
-
-**Option A: Follow Go strictly (RECOMMENDED)**
-- Make `ptr + int` a compile error
-- Require `&arr[idx]` for address of element
-- Require `ptr[idx]` or `ptr.*` for dereferencing
-- Pros: Safer, simpler, matches Go, avoids this entire class of bugs
-- Cons: Less flexible for unsafe low-level code
-
-**Option B: Support C-style pointer arithmetic**
-- `ptr + int` scales by element size
-- Requires tracking pointee type in binary operations
-- Need to modify: checker.zig, lower.zig, ssa_builder.zig
-- Pros: More flexible
-- Cons: Complex, error-prone, NOT Go-like, high bug surface
-
-**Recommendation:** Follow Go. The code in ast_test.cot should be rewritten:
-```cot
-// BEFORE (C-style):
-let n: *Node = pool.nodes + idx;
-
-// AFTER (Go-style):
-// But wait - pool.nodes is *Node, not []Node!
-// In Go, you can't index a raw pointer.
-// Design needs to use slices or array pointers properly.
-```
-
-**Go Source Evidence:**
-
-From `~/learning/go/src/cmd/compile/internal/typecheck/universe.go:100-130`:
-```go
-// okforarith is ONLY set for:
-// - Integer types (IsInt)
-// - Float types (IsFloat)
-// - Complex types (IsComplex)
-// POINTERS ARE NOT INCLUDED
-```
-
-From `~/learning/go/src/cmd/compile/internal/typecheck/universe.go:183`:
-```go
-okfor[ir.OSUB] = okforarith[:]  // SUB only works on arithmetic types
-okfor[ir.OADD] = okforadd[:]    // ADD only works on addable types (no pointers!)
-```
-
-**Conclusion:** Go explicitly does NOT allow `ptr + int` - it's a type error.
-
-**Decision (Follow Go):**
-1. Add compile error in `checker.zig` for `ptr + int` operations
-2. Update SYNTAX.md to document that pointer arithmetic is not supported
-3. Rewrite ast_test.cot to use proper Go-style patterns
-
-**ast_test.cot Fix:**
-```cot
-// BEFORE (C-style - should be compile error):
-let n: *Node = pool.nodes + idx;
-
-// AFTER (Go-style option 1 - use array/slice with address-of):
-// Change pool.nodes from *Node to []Node slice
-// let n: *Node = &pool.nodes[idx];
-
-// AFTER (Go-style option 2 - use proper function):
-fn node_get(pool: *NodePool, idx: i64) *Node {
-    // Internal implementation can use addr_index which scales properly
+**Fix:**
+`src/frontend/lower.zig` - In `lowerFieldAccess`, detect when `base_expr == .deref` and get the pointer value directly without loading the struct:
+```zig
+if (base_expr == .deref) {
+    // Get the pointer value WITHOUT loading the struct
+    const ptr_val = try self.lowerExprNode(base_expr.deref.operand);
+    return try fb.emitFieldValue(ptr_val, field_idx, field_offset, field_type, fa.span);
 }
 ```
+
+**Test:** `p.*.value` now correctly returns 50 for `Node{ .kind = 5, .value = 50 }`
+
+---
+
+### BUG-009: Pointer arithmetic scaling (FIXED - WAS ALREADY WORKING)
+
+**Status:** Fixed (was already implemented)
+**Priority:** P0
+**Discovered:** 2026-01-16
+**Fixed:** Already working - scaling was implemented in ssa_builder.zig
+
+**Description:**
+Original report claimed `pool.nodes + idx` wasn't scaling by element size. Investigation showed the scaling WAS implemented:
+
+**SSA actually shows (correct):**
+```
+v17: i64(8B) = const_int [16]      // sizeof(Node) = 16
+v18: i64(8B) = mul v16, v17        // idx * 16
+v19: composite(8B) = add_ptr v15, v18  // base + scaled_offset
+```
+
+**Implementation (ssa_builder.zig lines 737-762):**
+Following Zig's pattern, pointer arithmetic automatically scales by element size:
+```zig
+if (result_type == .pointer and (b.op == .add or b.op == .sub)) {
+    const elem_size = self.type_registry.sizeOf(elem_type);
+    // Scale offset: offset_scaled = right * elem_size
+    const scaled_offset = mul(right, const_int(elem_size));
+    // Pointer arithmetic with scaled offset
+    return add_ptr(left, scaled_offset);
+}
+```
+
+**Decision:** Cot follows Zig's design (not Go's) for pointer arithmetic. Unlike Go which disallows `ptr + int`, Cot allows it and automatically scales by element size.
+
+**Test:** `base + 1` where base is `*i64` correctly returns `values[1]` (20)
 
 ---
 

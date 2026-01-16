@@ -1511,6 +1511,15 @@ pub const Lowerer = struct {
             }
         }
 
+        // BUG-012 fix: For p.*.field (deref then field access), don't load entire struct.
+        // Following Go's ODOTPTR pattern: pass the pointer directly to FieldValue,
+        // which will compute ptr + offset and load just the field.
+        if (base_expr == .deref) {
+            // Get the pointer value WITHOUT loading the struct
+            const ptr_val = try self.lowerExprNode(base_expr.deref.operand);
+            return try fb.emitFieldValue(ptr_val, field_idx, field_offset, field_type, fa.span);
+        }
+
         // Base is a computed expression - lower it and emit FieldValue
         const base_val = try self.lowerExprNode(fa.base);
         return try fb.emitFieldValue(base_val, field_idx, field_offset, field_type, fa.span);
