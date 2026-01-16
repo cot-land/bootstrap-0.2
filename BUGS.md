@@ -195,6 +195,106 @@ This ensures operands of logical ops are only evaluated by `convertLogicalOp` in
 
 ---
 
+### BUG-017: Using imported constant in binary expression causes panic (FIXED)
+
+**Status:** Fixed (2026-01-16)
+**Priority:** P1
+**Discovered:** 2026-01-16
+
+**Description:**
+When using an imported constant directly in a binary expression, the compiler panics with an invalid node index. This affects any binary operation involving an imported const.
+
+**Reproducer:**
+```cot
+// import_const.cot
+const MY_CONST: i64 = 5;
+
+// main.cot
+import "import_const.cot"
+fn main() i64 {
+    if MY_CONST != 5 { return 1; }  // PANIC!
+    return 0;
+}
+```
+
+**Error:**
+```
+panic: index out of bounds: index 4294967295, len 7
+/src/frontend/ir.zig:793 in getNode
+```
+
+**Root Cause:**
+The `lowerIdent` function in `lower.zig` checked `self.const_values` for constants, but this map is per-Lowerer (per-file). Imported constants are defined in a different file's Lowerer, so they weren't found.
+
+**Fix:**
+In `lowerIdent`, after checking local `const_values`, also check the checker's scope (`self.chk.scope.lookup()`) for symbols with `kind == .constant`. The checker's scope already has imported constants with their `const_value` set.
+
+```zig
+// Check for imported constant with compile-time value
+if (sym.kind == .constant) {
+    if (sym.const_value) |value| {
+        return try fb.emitConstInt(value, TypeRegistry.I64, ident.span);
+    }
+}
+```
+
+---
+
+### BUG-016: Const identifier on right side of comparison fails to parse (FIXED)
+
+**Status:** Fixed (2026-01-16)
+**Priority:** P1
+**Discovered:** 2026-01-16
+
+**Description:**
+When a const identifier appears on the RIGHT side of a comparison operator, the parser fails with "expected expression after operator". This affects all comparison operators (==, !=, <, >, etc.).
+
+**Working:**
+```cot
+const A: i64 = 5;
+if A == 5 { ... }     // const on left, literal on right - WORKS
+if A == a { ... }     // const on left, local on right - WORKS
+```
+
+**Failing:**
+```cot
+const B: i64 = 5;
+if a == B { ... }     // local on left, const on right - FAILS
+if A == B { ... }     // const on left, const on right - FAILS
+```
+
+**Error:**
+```
+error: unexpected token
+    return 0;
+    ^
+error[E201]: expected expression after operator
+```
+
+**Root Cause:**
+In `parsePrimaryExpr`, when seeing an identifier followed by `{`, the parser checks if the identifier starts with uppercase and assumes it's a struct literal (`Type{ .field = ... }`). But const identifiers like `B` also start with uppercase.
+
+For `if a == B { ... }`, after parsing `B`, the next token is `{` (start of if body). The parser sees uppercase `B` + `{` and tries to parse a struct literal, calling `expect(.period)` for field initializers. This fails because the actual content is `return 1;`, not `.field = ...`.
+
+**Fix:**
+Added proper 1-token lookahead with `peekToken()` in the Parser. Before attempting struct literal parsing, check if the token AFTER `{` is `.period`. If not, it's not a struct literal.
+
+```zig
+// Added peek_tok field to Parser for 1-token lookahead
+fn peekNextIsPeriod(self: *Parser) bool {
+    if (!self.check(.lbrace)) return false;
+    const next = self.peekToken();
+    return next.tok == .period;
+}
+
+// In parsePrimaryExpr, check for period before assuming struct literal
+if (type_name.len > 0 and std.ascii.isUpper(type_name[0]) and self.peekNextIsPeriod()) {
+    // Parse struct literal
+}
+```
+
+---
+
 ## Fixed Bugs
 
 ### BUG-012: `ptr.*.field` loads entire struct instead of field (FIXED)

@@ -1350,7 +1350,7 @@ pub const Lowerer = struct {
     fn lowerIdent(self: *Lowerer, ident: ast.Ident) Error!ir.NodeIndex {
         const fb = self.current_func orelse return ir.null_node;
 
-        // Check for compile-time constant
+        // Check for compile-time constant (local to this file)
         if (self.const_values.get(ident.name)) |value| {
             return try fb.emitConstInt(value, TypeRegistry.I64, ident.span);
         }
@@ -1366,10 +1366,17 @@ pub const Lowerer = struct {
             return try fb.emitLoadLocal(local_idx, local_type, ident.span);
         }
 
-        // Check if it's a function name (for function pointers)
+        // Check if it's a function name (for function pointers) or imported constant
         if (self.chk.scope.lookup(ident.name)) |sym| {
             if (sym.kind == .function) {
                 return try fb.emitFuncAddr(ident.name, sym.type_idx, ident.span);
+            }
+            // Check for imported constant with compile-time value
+            if (sym.kind == .constant) {
+                if (sym.const_value) |value| {
+                    debug.log(.lower, "lowerIdent: found imported constant '{s}' = {d}", .{ ident.name, value });
+                    return try fb.emitConstInt(value, TypeRegistry.I64, ident.span);
+                }
             }
         }
 

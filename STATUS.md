@@ -16,9 +16,17 @@ See [cot0/TASKS.md](cot0/TASKS.md) for detailed self-hosting progress.
 | scanner.cot | Complete | 11/11 pass |
 | ast.cot | Complete | 7/7 pass |
 | parser.cot | Complete | 10/10 pass |
+| types.cot | In Progress | 2/2 pass |
+| checker.cot | In Progress | 2/2 pass |
+
+### Open Bugs (2026-01-16)
+
+None currently.
 
 ### Recent Bug Fixes (2026-01-16)
 
+- BUG-017: Imported consts in binary expressions - Check checker's scope for imported constants in lowerIdent
+- BUG-016: Const identifier on right side of comparison - Added proper 1-token lookahead to distinguish struct literals
 - BUG-015: Chained OR (3+ conditions) - Pre-scan IR to skip logical operands in main loop
 - BUG-014: Switch statements - Now supports both expression and statement modes
 - BUG-013: String concatenation in loops - Fixed use count tracking in expand_calls

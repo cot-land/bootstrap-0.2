@@ -14,8 +14,12 @@
 - `scanner_test.cot`: 11/11 tests pass
 - `ast_test.cot`: 7/7 tests pass
 - `parser_test.cot`: 10/10 tests pass
+- `types_test.cot`: 2/2 tests pass
+- `checker_test.cot`: 2/2 tests pass
 
 **Recent Bug Fixes (2026-01-16):**
+- BUG-017: Imported consts in binary expressions (OPEN) - workaround in place
+- BUG-016: Const on right side of comparison (OPEN) - workaround in place
 - BUG-015: Chained OR (3+ conditions) fixed - pre-scan IR to skip logical operands
 - BUG-014: Switch statements now supported (both expression and statement modes)
 - BUG-013: String concatenation in loops fixed (use count tracking)
@@ -26,7 +30,8 @@
 
 **Sprint 1 COMPLETE!** Scanner.cot compiles and tests pass.
 **Sprint 2 COMPLETE!** Parser.cot compiles and all 10 tests pass.
-**Sprint 3 NEXT:** Type Checking (types.cot, checker.cot)
+**Sprint 3 IN PROGRESS:** types.cot and checker.cot created with basic tests.
+**Sprint 4 NEXT:** IR & SSA (ir.cot, lower.cot)
 
 ---
 

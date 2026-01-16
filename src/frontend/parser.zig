@@ -43,6 +43,9 @@ pub const Parser = struct {
     /// Current token.
     tok: TokenInfo,
 
+    /// Peek token for 1-token lookahead (null if not yet peeked).
+    peek_tok: ?TokenInfo,
+
     /// Nesting depth for recursion limit.
     nest_lev: u32,
 
@@ -63,6 +66,7 @@ pub const Parser = struct {
             .tree = tree,
             .err = err,
             .tok = undefined,
+            .peek_tok = null,
             .nest_lev = 0,
         };
         // Prime the parser with first token
@@ -81,7 +85,22 @@ pub const Parser = struct {
 
     /// Advance to next token.
     fn advance(self: *Parser) void {
-        self.tok = self.scan.next();
+        // Use peek token if available, otherwise scan next
+        if (self.peek_tok) |peek| {
+            self.tok = peek;
+            self.peek_tok = null;
+        } else {
+            self.tok = self.scan.next();
+        }
+    }
+
+    /// Peek at the next token without consuming it.
+    fn peekToken(self: *Parser) TokenInfo {
+        if (self.peek_tok) |peek| {
+            return peek;
+        }
+        self.peek_tok = self.scan.next();
+        return self.peek_tok.?;
     }
 
     /// Check if current token matches.
@@ -89,18 +108,14 @@ pub const Parser = struct {
         return self.tok.tok == t;
     }
 
-    /// Peek ahead to see if token after '{' is '.'.
-    /// Used to distinguish struct literals from blocks.
-    fn peekAfterBrace(self: *Parser) bool {
+    /// Check if the next token after '{' is '.' (period).
+    /// Used to distinguish struct literals (Type{ .field = ... }) from blocks.
+    /// This uses proper 1-token lookahead without consuming.
+    fn peekNextIsPeriod(self: *Parser) bool {
         if (!self.check(.lbrace)) return false;
-        // Save current state
-        const saved_tok = self.tok;
-        self.advance(); // consume '{'
-        const is_dot = self.check(.dot);
-        // Restore - but we can't really restore scanner state
-        // So this is a lookahead check
-        _ = saved_tok;
-        return is_dot;
+        // Peek at the token AFTER the current '{' without consuming
+        const next = self.peekToken();
+        return next.tok == .period;
     }
 
     /// Match and consume if current token matches.
@@ -808,6 +823,7 @@ pub const Parser = struct {
             } else if (self.check(.lbrace)) {
                 // Struct literal: Type{ .field = value, ... }
                 // Only if base is an identifier that looks like a type name (uppercase first letter)
+                // AND the content inside braces starts with '.' (field initializer)
                 const node = self.tree.getNode(expr);
                 if (node) |n| {
                     if (n.asExpr()) |e| {
@@ -817,7 +833,10 @@ pub const Parser = struct {
                             // Heuristic: Types start with uppercase (Cot/Go convention)
                             // Variables like 'b' start with lowercase
                             // This distinguishes Point{ ... } from b { ... }
-                            if (type_name.len > 0 and std.ascii.isUpper(type_name[0])) {
+                            // ALSO: Struct literals must have .field initializers, so peek
+                            // to see if content starts with '.' - if not, it's not a struct literal
+                            // (e.g., `if a == B { return 1; }` - B is const, not type)
+                            if (type_name.len > 0 and std.ascii.isUpper(type_name[0]) and self.peekNextIsPeriod()) {
                                 const expr_span = self.tree.getNode(expr).?.span();
                                 self.advance(); // consume '{'
 
