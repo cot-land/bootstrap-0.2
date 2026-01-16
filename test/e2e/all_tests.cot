@@ -2,7 +2,7 @@
 // COT END-TO-END TEST SUITE
 // ============================================================================
 //
-// Progress: 138 / 138 tests passing
+// Progress: 145 / 145 tests passing
 //
 // ============================================================================
 // STATUS TRACKER
@@ -1210,6 +1210,35 @@ fn test_str_concat_multi() i64 {
 }
 
 // ============================================================================
+// TIER 15.9: @string Builtin
+// ============================================================================
+
+// Test @string creates substring with correct length
+fn test_string_builtin_len() i64 {
+    let s: string = "hello world";
+    let sub: string = @string(s.ptr + 6, 5);
+    if len(sub) == 5 { return 42; }
+    return 0;
+}
+
+// Test @string creates substring with correct content
+fn test_string_builtin_content() i64 {
+    let s: string = "hello world";
+    let sub: string = @string(s.ptr + 6, 5);
+    // First char should be 'w' (119)
+    if sub[0] == 119 { return 42; }
+    return 0;
+}
+
+// Test @string with zero length
+fn test_string_builtin_empty() i64 {
+    let s: string = "hello";
+    let empty: string = @string(s.ptr, 0);
+    if len(empty) == 0 { return 42; }
+    return 0;
+}
+
+// ============================================================================
 // TIER 16: For-In Loops
 // ============================================================================
 
@@ -1734,6 +1763,11 @@ fn main() i64 {
     if test_str_concat_empty() != 42 { println("FAIL: test_str_concat_empty"); failed += 1; }
     if test_str_concat_multi() != 42 { println("FAIL: test_str_concat_multi"); failed += 1; }
 
+    // TIER 15.9: @string Builtin
+    if test_string_builtin_len() != 42 { println("FAIL: test_string_builtin_len"); failed += 1; }
+    if test_string_builtin_content() != 42 { println("FAIL: test_string_builtin_content"); failed += 1; }
+    if test_string_builtin_empty() != 42 { println("FAIL: test_string_builtin_empty"); failed += 1; }
+
     // TIER 16: For-In Loops
     if test_for_array() != 15 { println("FAIL: test_for_array"); failed += 1; }
     if test_for_break() != 30 { println("FAIL: test_for_break"); failed += 1; }
@@ -1787,7 +1821,7 @@ fn main() i64 {
 
     // Summary
     if failed == 0 {
-        println("All 142 tests passed!");
+        println("All 145 tests passed!");
     }
 
     return failed;

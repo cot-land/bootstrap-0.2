@@ -4,13 +4,14 @@
 
 ## Current State
 
-**142 e2e tests passing.** Core language features complete. Sprint 1 bugs fixed:
+**145 e2e tests passing.** Core language features complete. Sprint 1 bugs fixed:
 - BUG-005: Logical NOT (EOR vs MVN for booleans) ✅
 - BUG-006: `not` keyword as synonym for `!` ✅
 - BUG-002: Struct literals (`Point{ .x = 10, .y = 20 }`) ✅
 - String indexing (`s[i]` returns u8) ✅
 - `len()` on field access (`len(s.source)`) ✅
 - `string_make` decomposition for SSA storage ✅
+- `@string(ptr, len)` builtin for string construction ✅
 
 **Runtime Library:** String concatenation uses the runtime library at `runtime/cot_runtime.o`. The compiler auto-links it when found. See [Runtime Library](#runtime-library) section below.
 

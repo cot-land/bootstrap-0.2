@@ -17,7 +17,7 @@
 - `token_test.cot`: 5/5 tests pass
 - All 142 e2e tests pass
 
-**Next Blocker:** Scanner.cot requires `@string(ptr, len)` builtin.
+**Sprint 1 COMPLETE!** Scanner.cot compiles successfully.
 
 ---
 
@@ -38,29 +38,30 @@
 **Status:** Fixed
 **Fix:** Implemented struct literal parsing following Go's composite literal pattern.
 
-### Missing: @string(ptr, len) builtin (P0) - BLOCKING
+### @string(ptr, len) builtin (P0) ✅ FIXED
 
-**Status:** Not implemented - BLOCKING
-**File:** Would need `src/frontend/parser.zig`, `checker.zig`, `lower.zig`
+**Status:** Fixed (was already implemented)
+**Implementation:** Following Go's `unsafe.String(ptr, len)` → `StringHeaderExpr` → `OpStringMake` pattern.
 
-**Problem:** `@string(s.source.ptr + start, s.pos - start)` creates string from ptr+len.
-
-**Alternative:** Use `slice_make` pattern if available, or add this builtin.
+Parser, checker, and lowerer all handle `@string(ptr, len)`:
+- Parser: `@string(expr, expr)` syntax
+- Checker: validates ptr is `*u8`, len is integer, returns `string`
+- Lowerer: emits `string_header` IR → `string_make` SSA op
 
 ---
 
 ## Execution Order (Priority)
 
-### Sprint 1: Unblock scanner.cot (4 issues) - 3/4 DONE
+### Sprint 1: Unblock scanner.cot (4 issues) ✅ COMPLETE
 
 | Order | Issue | Effort | Status |
 |-------|-------|--------|--------|
 | 1 | BUG-005: Fix `!` for booleans | Small | ✅ Done |
 | 2 | BUG-006: Add `not` keyword | Small | ✅ Done |
 | 3 | BUG-002: Struct literals | Medium | ✅ Done |
-| 4 | @string builtin | Medium | **Remaining** |
+| 4 | @string builtin | Medium | ✅ Done |
 
-**After Sprint 1:** scanner.cot should compile and run tests.
+**Result:** scanner.cot compiles successfully to object file.
 
 ### Sprint 2: AST & Parser
 
