@@ -190,7 +190,7 @@ fn checker_init(chk: *Checker, type_pool: *TypePool, scope_pool: *ScopePool,
     chk.ast_pool = ast_pool;
     chk.source = source;
     chk.current_scope = scope_new(scope_pool, -1);  // Global scope
-    chk.return_type = 12;  // 12 = 12 (workaround for BUG-017)
+    chk.return_type = TYPE_VOID;
     chk.in_loop = false;
     chk.error_count = 0;
 }
@@ -201,13 +201,13 @@ fn checker_init(chk: *Checker, type_pool: *TypePool, scope_pool: *ScopePool,
 
 // Check an expression and return its type
 fn check_expr(chk: *Checker, node_idx: i64) i64 {
-    if node_idx < 0 { return 0; }  // 0 = 0
+    if node_idx < 0 { return TYPE_INVALID; }
 
     let node: *Node = node_get(chk.ast_pool, node_idx);
 
     // IntLit -> i64
     if node.kind == NodeKind.IntLit {
-        return 5;  // 5 = 5
+        return TYPE_I64;
     }
 
     // Ident -> lookup in scope
@@ -221,7 +221,7 @@ fn check_expr(chk: *Checker, node_idx: i64) i64 {
         // Check if symbol was found (-1 means not found)
         if type_idx < 0 {
             chk.error_count = chk.error_count + 1;
-            return 0;  // TYPE_INVALID
+            return TYPE_INVALID;
         }
 
         return type_idx;
@@ -240,17 +240,17 @@ fn check_expr(chk: *Checker, node_idx: i64) i64 {
         if op == 0 or op == 1 or op == 2 or op == 3 {  // Add, Sub, Mul, Div
             if not is_numeric(chk.type_pool, left_type) {
                 chk.error_count = chk.error_count + 1;
-                return 0;
+                return TYPE_INVALID;
             }
             if not is_numeric(chk.type_pool, right_type) {
                 chk.error_count = chk.error_count + 1;
-                return 0;
+                return TYPE_INVALID;
             }
             // Result is the same type (simplified - assume i64)
             return left_type;
         }
 
-        return 0;
+        return TYPE_INVALID;
     }
 
     // CallExpr -> check callee is function, check args
@@ -262,14 +262,14 @@ fn check_expr(chk: *Checker, node_idx: i64) i64 {
         let callee_type: i64 = check_expr(chk, callee);
         if not is_func(chk.type_pool, callee_type) {
             chk.error_count = chk.error_count + 1;
-            return 0;
+            return TYPE_INVALID;
         }
 
         // Get return type of function
         return type_ret(chk.type_pool, callee_type);
     }
 
-    return 0;
+    return TYPE_INVALID;
 }
 
 // ============================================================================
