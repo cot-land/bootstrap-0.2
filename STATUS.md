@@ -4,7 +4,7 @@
 
 ## Current State
 
-**145 e2e tests passing.** Core language features complete.
+**158 e2e tests passing.** Core language features complete.
 
 ### Cot0 Self-Hosting Progress
 
@@ -18,6 +18,8 @@
 ### Recent Bug Fixes (2026-01-16)
 
 **Compiler Bugs Fixed:**
+- BUG-014: Switch statements - Switch could only be used as expression returning a value. Now supports statement mode with side effects in branches. Fix: detect void result type and generate if-else control flow instead of nested selects (following Go's walk/switch.go pattern). ✅
+- BUG-013: String concatenation in loops - Segfault when doing `s = s + "x"` in loops. Root cause: `expand_calls.zig` directly assigned to `call_val.args` without updating use counts. Fix: use `resetArgs()` and `addArg()` to properly maintain use counts (following Go's AddArg pattern). ✅
 - BUG-012: `ptr.*.field` codegen - Was loading entire struct via LDP then treating first 8 bytes as pointer. Fix: detect `.deref` in `lowerFieldAccess` and pass pointer directly to `emitFieldValue` (following Go's ODOTPTR pattern). ✅
 - BUG-011: `off_ptr` register clobbering - When regalloc assigned the same register to both `local_addr` and a subsequent `load`, the `off_ptr` would use the clobbered value. Fix: `off_ptr` codegen now regenerates `local_addr` directly from `self.func.local_offsets` when the base is a `local_addr` op. ✅
 - BUG-010: `slice_make` clobbering arg registers - When a string param was followed by other params, `slice_make` was emitted BEFORE the subsequent `arg` ops. This allowed regalloc to assign `slice_make` to x2, overwriting the pool argument before it was captured. Fix: 3-phase param init - create ALL `arg` ops first, THEN `slice_make`, THEN stores. ✅
@@ -226,27 +228,33 @@ fn main() i64 {
 
 **Goal:** Efficient dispatch on values.
 
-**Completed (2026-01-15):**
+**Completed (2026-01-15, updated 2026-01-16):**
 - ✅ Parser: `parseSwitchExpr()` handles all cases including multi-pattern
 - ✅ Checker: `checkSwitchExpr()` verifies case types match subject
-- ✅ Lowerer: `lowerSwitchExpr()` converts to chained select operations
+- ✅ Lowerer: `lowerSwitchExpr()` supports both expression and statement modes
 - ✅ SSA Builder: `cond_select` op for conditional value selection
 - ✅ Codegen: ARM64 CSEL instruction for efficient conditional select
 
 **Implementation Notes:**
-- Switch lowered to nested select (ternary) operations, following Go's pattern
+- **Expression mode** (non-void result): Nested select operations using ARM64 CSEL
+- **Statement mode** (void result): If-else control flow blocks (following Go's walk/switch.go)
 - Multiple patterns per case combined with OR: `1, 2 => x` becomes `(x == 1) or (x == 2)`
-- Uses ARM64 CSEL (Conditional Select) for zero-branch conditional moves
-- Added `cond_select` SSA op, `encodeCMPImm`, `encodeCSEL` to asm.zig
 
 ```cot
-let x: i64 = 2;
-return switch x {
+// Expression mode - returns a value
+let result: i64 = switch x {
     1 => 10,
     2 => 20,
-    3, 4 => 34,  // Multiple patterns
     else => 99,
 };
+
+// Statement mode - side effects in branches
+var result: i64 = 0;
+switch x {
+    1 => { result = 10; }
+    2 => { result = 20; }
+    else => { result = 99; }
+}
 ```
 
 **Tests:**

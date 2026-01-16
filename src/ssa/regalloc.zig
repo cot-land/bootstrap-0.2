@@ -105,6 +105,8 @@ pub const ValState = struct {
     spill: ?*Value = null, // StoreReg instruction
     spill_used: bool = false,
     uses: i32 = 0, // Remaining uses - decremented as args are processed
+    rematerializeable: bool = false, // Can be recomputed cheaply (Go's pattern)
+    needs_reg: bool = true, // Value needs a register (not void/memory)
 
     pub fn inReg(self: *const ValState) bool {
         return self.regs != 0;
@@ -255,13 +257,19 @@ pub const RegAllocState = struct {
     /// Spill a value from a register to a stack slot.
     /// Does NOT add to block.values - caller must do that at the right position.
     /// Returns the store_reg value if one was created, null otherwise.
+    /// Go reference: regalloc.go spillReg() line 1420
     fn spillReg(self: *Self, reg: RegNum, block: *Block) !?*Value {
         const v = self.regs[reg].v orelse return null;
         const vi = &self.values[v.id];
 
         var result: ?*Value = null;
-        // Create StoreReg if not already spilled
-        if (vi.spill == null) {
+
+        // Rematerializeable values don't need spills - they can be recomputed
+        // Go reference: regalloc.go line 1650
+        if (vi.rematerializeable) {
+            debug.log(.regalloc, "    evict v{d} from x{d} (rematerializeable, no spill)", .{ v.id, reg });
+        } else if (vi.spill == null) {
+            // Create StoreReg if not already spilled
             const spill = try self.f.newValue(.store_reg, v.type_idx, block, v.pos);
             spill.addArg(v);
             // NOTE: NOT adding to block.values here - caller must insert at correct position
@@ -296,11 +304,24 @@ pub const RegAllocState = struct {
         self.regs[reg].clear();
     }
 
-    /// Load a spilled value back into a register.
+    /// Load a spilled value back into a register, or rematerialize it.
     /// Does NOT add to block.values - caller must do that at the right position.
+    /// Go reference: regalloc.go loadReg() line 1700
     fn loadValue(self: *Self, v: *Value, block: *Block) !*Value {
         const vi = &self.values[v.id];
         const reg = try self.allocReg(ARM64Regs.allocatable, block);
+
+        // Rematerializeable values: copy the original instead of loading from spill
+        // Go reference: regalloc.go line 1750 (copyInto for rematerializeable)
+        if (vi.rematerializeable) {
+            // Create a copy of the original value
+            const copy = try self.f.newValue(v.op, v.type_idx, block, v.pos);
+            copy.aux_int = v.aux_int; // Copy constant value
+            try self.ensureValState(copy);
+            try self.assignReg(copy, reg);
+            debug.log(.regalloc, "    rematerialize v{d} -> x{d} (v{d})", .{ v.id, reg, copy.id });
+            return copy;
+        }
 
         if (vi.spill) |spill| {
             // Create LoadReg - but don't add to block yet
@@ -308,15 +329,7 @@ pub const RegAllocState = struct {
             load.addArg(spill);
             // NOTE: NOT adding to block.values here - caller must insert at correct position
 
-            // Extend values array if needed
-            if (load.id >= self.values.len) {
-                const old_len = self.values.len;
-                self.values = try self.allocator.realloc(self.values, load.id + 1);
-                for (old_len..self.values.len) |i| {
-                    self.values[i] = .{};
-                }
-            }
-
+            try self.ensureValState(load);
             try self.assignReg(load, reg);
             debug.log(.regalloc, "    load v{d} from spill -> x{d} (v{d})", .{ v.id, reg, load.id });
             return load;
@@ -648,24 +661,27 @@ pub const RegAllocState = struct {
         }
     }
 
+    /// Shuffle edge fixup with cycle detection (Go's pattern)
+    /// Go reference: regalloc.go lines 2320-2700 (edgeState.process)
     fn shuffleEdge(self: *Self, pred: *Block, succ: *Block, pred_idx: usize) !void {
         // Get predecessor's end state
         const src_regs = self.end_regs.get(pred.id) orelse return;
 
-        // Build source map: what's in each register at pred's end
-        var src_map: [NUM_REGS]?*Value = [_]?*Value{null} ** NUM_REGS;
+        // Build content map: what value is in each register at pred's end
+        var contents: [NUM_REGS]?*Value = [_]?*Value{null} ** NUM_REGS;
         for (src_regs) |er| {
-            src_map[er.reg] = er.v;
+            contents[er.reg] = er.v;
         }
 
-        // Build destination map: what each phi needs
-        const Move = struct {
-            src_reg: ?RegNum,
+        // Collect destination requirements (what each phi needs)
+        const Dest = struct {
             dst_reg: RegNum,
+            src_reg: ?RegNum,
             value: *Value,
+            satisfied: bool,
         };
-        var moves = std.ArrayListUnmanaged(Move){};
-        defer moves.deinit(self.allocator);
+        var dests = std.ArrayListUnmanaged(Dest){};
+        defer dests.deinit(self.allocator);
 
         for (succ.values.items) |v| {
             if (v.op != .phi) break;
@@ -676,42 +692,142 @@ pub const RegAllocState = struct {
             const arg = v.args[pred_idx];
             const arg_reg = self.values[arg.id].firstReg();
 
+            // Only need move if src != dst
             if (arg_reg != phi_reg) {
-                try moves.append(self.allocator, .{
-                    .src_reg = arg_reg,
+                try dests.append(self.allocator, .{
                     .dst_reg = phi_reg,
+                    .src_reg = arg_reg,
                     .value = arg,
+                    .satisfied = false,
                 });
                 debug.log(.regalloc, "  need move: v{d} x{?d} -> x{d}", .{ arg.id, arg_reg, phi_reg });
             }
         }
 
-        // Generate moves (simple approach - no cycle detection yet)
-        // TODO: Implement proper parallel copy with cycle breaking
-        for (moves.items) |m| {
-            if (m.src_reg) |src| {
-                if (src != m.dst_reg) {
-                    // Generate copy instruction
-                    const copy = try self.f.newValue(.copy, m.value.type_idx, pred, m.value.pos);
-                    copy.addArg(m.value);
-                    try pred.values.append(self.allocator, copy);
+        if (dests.items.len == 0) return;
 
-                    // Extend values array if needed
-                    if (copy.id >= self.values.len) {
-                        const old_len = self.values.len;
-                        self.values = try self.allocator.realloc(self.values, copy.id + 1);
-                        for (old_len..self.values.len) |i| {
-                            self.values[i] = .{};
+        // Track which registers are used by destinations
+        var used_regs: RegMask = 0;
+        for (dests.items) |d| {
+            used_regs |= @as(RegMask, 1) << d.dst_reg;
+        }
+
+        // Process destinations with cycle detection (Go's pattern)
+        // Go reference: regalloc.go edgeState.process()
+        var progress = true;
+        while (progress) {
+            progress = false;
+
+            // Try to satisfy each destination
+            for (dests.items) |*d| {
+                if (d.satisfied) continue;
+
+                // Check if destination register is occupied by another pending source
+                var blocked = false;
+                for (dests.items) |other| {
+                    if (other.satisfied) continue;
+                    if (other.src_reg) |src| {
+                        if (src == d.dst_reg and other.dst_reg != d.dst_reg) {
+                            // d.dst_reg is needed as a source for another move
+                            blocked = true;
+                            break;
                         }
                     }
+                }
 
-                    // Assign destination register to copy
-                    self.values[copy.id].regs = types.regMaskSet(0, m.dst_reg);
-                    try self.f.setHome(copy, .{ .register = @intCast(m.dst_reg) });
-                    debug.log(.regalloc, "  emit copy v{d} -> v{d} (x{d})", .{ m.value.id, copy.id, m.dst_reg });
+                if (!blocked) {
+                    // Safe to emit this move
+                    if (d.src_reg) |src| {
+                        try self.emitCopy(pred, d.value, src, d.dst_reg);
+                    }
+                    d.satisfied = true;
+                    progress = true;
+                }
+            }
+
+            // If no progress, we have a cycle - break it with temp register
+            if (!progress) {
+                // Find first unsatisfied destination
+                for (dests.items) |*d| {
+                    if (!d.satisfied) {
+                        // Break cycle: copy src to temp, then temp to dst
+                        // Find temp register not used by any destination
+                        const temp_reg = self.findTempReg(used_regs) orelse {
+                            debug.log(.regalloc, "  ERROR: no temp register for cycle break", .{});
+                            return error.NoTempRegister;
+                        };
+
+                        if (d.src_reg) |src| {
+                            debug.log(.regalloc, "  breaking cycle: x{d} -> x{d} -> x{d}", .{ src, temp_reg, d.dst_reg });
+
+                            // Copy src to temp
+                            const temp_copy = try self.f.newValue(.copy, d.value.type_idx, pred, d.value.pos);
+                            temp_copy.addArg(d.value);
+                            try self.ensureValState(temp_copy);
+                            self.values[temp_copy.id].regs = types.regMaskSet(0, temp_reg);
+                            try self.f.setHome(temp_copy, .{ .register = @intCast(temp_reg) });
+                            try pred.values.append(self.allocator, temp_copy);
+
+                            // Update contents: temp now holds the value
+                            contents[temp_reg] = d.value;
+                            // Update this dest to read from temp
+                            d.src_reg = temp_reg;
+                        }
+
+                        progress = true;
+                        break;
+                    }
                 }
             }
         }
+
+        // Emit any remaining satisfied copies that weren't emitted yet
+        for (dests.items) |d| {
+            if (!d.satisfied) {
+                // Should have been handled by cycle breaking
+                debug.log(.regalloc, "  WARNING: unsatisfied dest x{d}", .{d.dst_reg});
+            }
+        }
+    }
+
+    fn emitCopy(self: *Self, block: *Block, value: *Value, src_reg: RegNum, dst_reg: RegNum) !void {
+        if (src_reg == dst_reg) return;
+
+        const copy = try self.f.newValue(.copy, value.type_idx, block, value.pos);
+        copy.addArg(value);
+        try self.ensureValState(copy);
+        self.values[copy.id].regs = types.regMaskSet(0, dst_reg);
+        try self.f.setHome(copy, .{ .register = @intCast(dst_reg) });
+        try block.values.append(self.allocator, copy);
+        debug.log(.regalloc, "  emit copy v{d} -> v{d} (x{d} -> x{d})", .{ value.id, copy.id, src_reg, dst_reg });
+    }
+
+    fn ensureValState(self: *Self, v: *Value) !void {
+        if (v.id >= self.values.len) {
+            const old_len = self.values.len;
+            self.values = try self.allocator.realloc(self.values, v.id + 1);
+            for (old_len..self.values.len) |i| {
+                self.values[i] = .{};
+            }
+        }
+    }
+
+    fn findTempReg(self: *const Self, exclude: RegMask) ?RegNum {
+        // Find a register that's not in the exclude set and not in use
+        const available = ARM64Regs.allocatable & ~exclude;
+        var m = available;
+        while (m != 0) {
+            const reg: RegNum = @intCast(@ctz(m));
+            m &= m - 1;
+            if (reg < NUM_REGS and self.regs[reg].isFree()) {
+                return reg;
+            }
+        }
+        // If no free register, use x16 (IP0) as temp - it's caller-saved scratch
+        if (exclude & (@as(RegMask, 1) << 16) == 0) {
+            return 16;
+        }
+        return null;
     }
 
     // =========================================
@@ -721,11 +837,14 @@ pub const RegAllocState = struct {
     pub fn run(self: *Self) !void {
         debug.log(.regalloc, "=== Register Allocation ===", .{});
 
-        // Initialize use counts from values
+        // Phase 1: Initialize per-value state
+        // Go reference: regalloc.go init() lines 400-500
         for (self.f.blocks.items) |block| {
             for (block.values.items) |v| {
                 if (v.id < self.values.len) {
                     self.values[v.id].uses = v.uses;
+                    self.values[v.id].rematerializeable = isRematerializeable(v);
+                    self.values[v.id].needs_reg = valueNeedsReg(v);
                 }
             }
             // Also count control values
@@ -764,6 +883,30 @@ fn needsOutputReg(v: *Value) bool {
         .phi => true,
         .arg => true,
         .store, .store_reg => false,
+        else => true,
+    };
+}
+
+/// Check if a value can be rematerialized instead of spilled
+/// Go reference: regalloc.go line 1650 (rematerializeable)
+/// Rematerializeable values are cheap to recompute: constants, zero-arg ops
+fn isRematerializeable(v: *Value) bool {
+    return switch (v.op) {
+        // Constants can always be rematerialized
+        .const_int, .const_64, .const_bool => true,
+        // SP/SB (if we had them) would be rematerializeable
+        // Args are NOT rematerializeable (they're passed in registers)
+        else => false,
+    };
+}
+
+/// Check if a value needs a register (not void/memory type)
+/// Go reference: regalloc.go line 237
+fn valueNeedsReg(v: *Value) bool {
+    return switch (v.op) {
+        // Memory/void operations don't need registers
+        .store, .store_reg => false,
+        // Most values need registers
         else => true,
     };
 }

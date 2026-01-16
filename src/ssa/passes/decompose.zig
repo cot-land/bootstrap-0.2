@@ -133,6 +133,46 @@ fn decomposeBlock(f: *Func, block: *Block, _: ?*const TypeRegistry) !bool {
             continue;
         }
 
+        // Rule 4: Phi of string type → decompose into ptr and len phis
+        // Go reference: decompose.go decomposeStringPhi()
+        if (v.op == .phi and v.type_idx == TypeRegistry.STRING) {
+            try decomposeStringPhi(f, block, &i, v);
+            changed = true;
+            continue;
+        }
+
+        // Rule 5: string_ptr(string_make(ptr, len)) → ptr
+        // Go reference: rewritedec.go rewriteValuedec_OpStringPtr
+        if (v.op == .string_ptr and v.args.len >= 1) {
+            const arg = v.args[0];
+            if (arg.op == .string_make and arg.args.len >= 2) {
+                // Replace string_ptr with a copy of the ptr component
+                const ptr = arg.args[0];
+                v.op = .copy;
+                v.resetArgs();
+                v.addArg(ptr);
+                debug.log(.ssa, "  rewrite: string_ptr(string_make) v{d} → copy(v{d})", .{ v.id, ptr.id });
+                changed = true;
+                continue;
+            }
+        }
+
+        // Rule 6: string_len(string_make(ptr, len)) → len
+        // Go reference: rewritedec.go rewriteValuedec_OpStringLen
+        if (v.op == .string_len and v.args.len >= 1) {
+            const arg = v.args[0];
+            if (arg.op == .string_make and arg.args.len >= 2) {
+                // Replace string_len with a copy of the len component
+                const len = arg.args[1];
+                v.op = .copy;
+                v.resetArgs();
+                v.addArg(len);
+                debug.log(.ssa, "  rewrite: string_len(string_make) v{d} → copy(v{d})", .{ v.id, len.id });
+                changed = true;
+                continue;
+            }
+        }
+
         i += 1;
     }
 
@@ -224,6 +264,52 @@ fn decomposeLoad(f: *Func, block: *Block, idx: *usize, v: *Value) !void {
         ptr_load.id,
         len_addr.id,
         len_load.id,
+        v.id,
+    });
+}
+
+/// Decompose: (Phi <string> a b c) => (StringMake (Phi <i64> ptr_a ptr_b ptr_c) (Phi <i64> len_a len_b len_c))
+/// Go reference: decompose.go decomposeStringPhi()
+fn decomposeStringPhi(f: *Func, block: *Block, idx: *usize, v: *Value) !void {
+    debug.log(.ssa, "  decompose: phi v{d} (string) → ptr_phi + len_phi + string_make", .{v.id});
+
+    // Create phi for ptr components
+    const ptr_phi = try f.newValue(.phi, TypeRegistry.I64, block, v.pos);
+    for (v.args) |arg| {
+        // Extract ptr from each phi argument
+        const arg_block = arg.block orelse block;
+        const ptr_extract = try f.newValue(.string_ptr, TypeRegistry.I64, arg_block, v.pos);
+        ptr_extract.addArg(arg);
+        try arg_block.values.append(f.allocator, ptr_extract);
+        ptr_phi.addArg(ptr_extract);
+    }
+    try block.values.insert(f.allocator, idx.*, ptr_phi);
+    idx.* += 1;
+
+    // Create phi for len components
+    const len_phi = try f.newValue(.phi, TypeRegistry.I64, block, v.pos);
+    for (v.args) |arg| {
+        // Extract len from each phi argument
+        const arg_block = arg.block orelse block;
+        const len_extract = try f.newValue(.string_len, TypeRegistry.I64, arg_block, v.pos);
+        len_extract.addArg(arg);
+        try arg_block.values.append(f.allocator, len_extract);
+        len_phi.addArg(len_extract);
+    }
+    try block.values.insert(f.allocator, idx.*, len_phi);
+    idx.* += 1;
+
+    // Transform original phi into string_make
+    v.op = .string_make;
+    v.resetArgs();
+    v.addArg2(ptr_phi, len_phi);
+    // Keep STRING type
+
+    idx.* += 1;
+
+    debug.log(.ssa, "    → v{d}=phi(ptrs), v{d}=phi(lens), v{d}=string_make", .{
+        ptr_phi.id,
+        len_phi.id,
         v.id,
     });
 }

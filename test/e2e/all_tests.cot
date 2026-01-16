@@ -1604,6 +1604,231 @@ fn test_global_multi_access() i64 {
 }
 
 // ============================================================================
+// TIER 25: STRESS TESTS - Register Pressure, Phi Nodes, Deep Nesting
+// ============================================================================
+// These tests expose bugs that simple tests miss
+
+// --- Register Pressure Tests ---
+// Force many values to be live simultaneously, stressing the register allocator
+
+// 15 live values - exceeds caller-saved registers (x0-x15)
+fn test_regpressure_15() i64 {
+    let a: i64 = 1;
+    let b: i64 = 2;
+    let c: i64 = 3;
+    let d: i64 = 4;
+    let e: i64 = 5;
+    let f: i64 = 6;
+    let g: i64 = 7;
+    let h: i64 = 8;
+    let i: i64 = 9;
+    let j: i64 = 10;
+    let k: i64 = 11;
+    let l: i64 = 12;
+    let m: i64 = 13;
+    let n: i64 = 14;
+    let o: i64 = 15;
+    // All 15 values must be live here - forces spilling
+    return a + b + c + d + e + f + g + h + i + j + k + l + m + n + o; // = 120
+}
+
+// 20 live values - well beyond register capacity
+fn test_regpressure_20() i64 {
+    let a: i64 = 1; let b: i64 = 2; let c: i64 = 3; let d: i64 = 4;
+    let e: i64 = 5; let f: i64 = 6; let g: i64 = 7; let h: i64 = 8;
+    let i: i64 = 9; let j: i64 = 10; let k: i64 = 11; let l: i64 = 12;
+    let m: i64 = 13; let n: i64 = 14; let o: i64 = 15; let p: i64 = 16;
+    let q: i64 = 17; let r: i64 = 18; let s: i64 = 19; let t: i64 = 20;
+    return a+b+c+d+e+f+g+h+i+j+k+l+m+n+o+p+q+r+s+t; // = 210
+}
+
+// Register pressure with function calls interspersed
+fn pressure_helper(x: i64) i64 { return x * 2; }
+
+fn test_regpressure_with_calls() i64 {
+    let a: i64 = 1; let b: i64 = 2; let c: i64 = 3; let d: i64 = 4;
+    let e: i64 = 5; let f: i64 = 6; let g: i64 = 7; let h: i64 = 8;
+    // Call that might clobber registers
+    let x: i64 = pressure_helper(a);  // x = 2
+    // More live values after call
+    let i: i64 = 9; let j: i64 = 10; let k: i64 = 11; let l: i64 = 12;
+    // Another call
+    let y: i64 = pressure_helper(b);  // y = 4
+    // All values must survive
+    return a+b+c+d+e+f+g+h+i+j+k+l+x+y; // 1+2+3+4+5+6+7+8+9+10+11+12+2+4 = 84
+}
+
+// --- Multi-Way Control Flow Tests ---
+// Test if-else chains and nested control flow that stress phi handling
+
+fn test_phi_3way(x: i64) i64 {
+    // 3-way if-else chain - each path sets result differently
+    var result: i64 = 0;
+    if x == 1 {
+        result = 10;
+    } else if x == 2 {
+        result = 20;
+    } else {
+        result = 30;
+    }
+    // After merge, result has been assigned on all paths
+    return result;
+}
+
+fn test_phi_4way(x: i64) i64 {
+    // 4-way if-else chain
+    var result: i64 = 0;
+    if x == 1 {
+        result = 100;
+    } else if x == 2 {
+        result = 200;
+    } else if x == 3 {
+        result = 300;
+    } else {
+        result = 400;
+    }
+    return result;
+}
+
+fn test_phi_3way_driver() i64 {
+    // Test all 3 paths
+    let r1: i64 = test_phi_3way(1);  // 10
+    let r2: i64 = test_phi_3way(2);  // 20
+    let r3: i64 = test_phi_3way(99); // 30
+    if r1 + r2 + r3 == 60 { return 42; }
+    return 0;
+}
+
+fn test_phi_4way_driver() i64 {
+    let r1: i64 = test_phi_4way(1);  // 100
+    let r2: i64 = test_phi_4way(2);  // 200
+    let r3: i64 = test_phi_4way(3);  // 300
+    let r4: i64 = test_phi_4way(99); // 400
+    if r1 + r2 + r3 + r4 == 1000 { return 42; }
+    return 0;
+}
+
+// --- Many Arguments Tests ---
+// Test stack-based parameter passing at scale
+
+fn args16(a1: i64, a2: i64, a3: i64, a4: i64, a5: i64, a6: i64, a7: i64, a8: i64,
+          a9: i64, a10: i64, a11: i64, a12: i64, a13: i64, a14: i64, a15: i64, a16: i64) i64 {
+    return a1+a2+a3+a4+a5+a6+a7+a8+a9+a10+a11+a12+a13+a14+a15+a16;
+}
+
+fn test_16args() i64 {
+    let result: i64 = args16(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16);
+    if result == 136 { return 42; }  // sum 1..16 = 136
+    return 0;
+}
+
+// --- String Across Branches Tests ---
+// Strings flowing through control flow merges stress phi handling for 16-byte values
+
+fn test_string_branch() i64 {
+    let x: i64 = 10;
+    var s: string = "short";
+    if x > 5 {
+        s = "longer_string";
+    }
+    // phi for string - 16 bytes flowing through merge
+    return len(s);  // 13 if condition was true
+}
+
+fn test_string_loop() i64 {
+    var s: string = "";
+    var i: i64 = 0;
+    while i < 3 {
+        s = s + "x";  // phi for string in loop
+        i = i + 1;
+    }
+    return len(s);  // 3
+}
+
+// --- Deep Nesting Tests ---
+// 3+ levels of control flow to catch nesting bugs
+
+fn test_nest3() i64 {
+    var result: i64 = 0;
+    var i: i64 = 0;
+    while i < 3 {                  // Level 1
+        var j: i64 = 0;
+        while j < 3 {              // Level 2
+            if (i + j) % 2 == 0 {  // Level 3
+                result = result + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    // (0,0)=0 even, (0,2)=2 even, (1,1)=2 even, (2,0)=2 even, (2,2)=4 even = 5
+    return result;  // 5
+}
+
+fn test_nest4() i64 {
+    var total: i64 = 0;
+    var a: i64 = 0;
+    while a < 2 {                     // Level 1
+        var b: i64 = 0;
+        while b < 2 {                 // Level 2
+            var c: i64 = 0;
+            while c < 2 {             // Level 3
+                if a + b + c == 2 {   // Level 4
+                    total = total + 1;
+                }
+                c = c + 1;
+            }
+            b = b + 1;
+        }
+        a = a + 1;
+    }
+    // (0,1,1), (1,0,1), (1,1,0) = 3 combinations
+    return total;  // 3
+}
+
+// --- Complex Expression Tests ---
+// Long expression chains that stress temporary allocation
+
+fn test_long_expr() i64 {
+    let a: i64 = 1; let b: i64 = 2; let c: i64 = 3;
+    // Complex expression with many intermediates
+    return ((a + b) * (c + a) + (b * c)) * ((a + c) - b) + (a * b * c);
+    // = (3 * 4 + 6) * (4 - 2) + 6 = 18 * 2 + 6 = 42
+}
+
+fn test_nested_arith() i64 {
+    let x: i64 = 2;
+    let y: i64 = 3;
+    let z: i64 = 4;
+    // Deeply nested arithmetic
+    return (((x + y) * z) + ((y * z) - x)) * (x + y - 1);
+    // = ((5 * 4) + (12 - 2)) * 4 = (20 + 10) * 4 = 30 * 4 = 120
+}
+
+// Combined: control flow + register pressure
+fn test_pressure_in_loop() i64 {
+    var sum: i64 = 0;
+    var i: i64 = 0;
+    while i < 5 {
+        // Many live values inside loop
+        let a: i64 = i * 2;
+        let b: i64 = i * 3;
+        let c: i64 = i * 4;
+        let d: i64 = i * 5;
+        let e: i64 = a + b;
+        let f: i64 = c + d;
+        sum = sum + e + f;
+        i = i + 1;
+    }
+    // i=0: e=0, f=0, sum=0
+    // i=1: e=5, f=9, sum=14
+    // i=2: e=10, f=18, sum=42
+    // i=3: e=15, f=27, sum=84
+    // i=4: e=20, f=36, sum=140
+    return sum;  // 140
+}
+
+// ============================================================================
 // MAIN - Test Runner
 // ============================================================================
 
@@ -1819,9 +2044,37 @@ fn main() i64 {
     if test_global_arithmetic() != 42 { println("FAIL: test_global_arithmetic"); failed += 1; }
     if test_global_multi_access() != 42 { println("FAIL: test_global_multi_access"); failed += 1; }
 
+    // TIER 25: Stress Tests
+    // Register pressure - forces spilling
+    if test_regpressure_15() != 120 { println("FAIL: test_regpressure_15"); failed += 1; }
+    if test_regpressure_20() != 210 { println("FAIL: test_regpressure_20"); failed += 1; }
+    if test_regpressure_with_calls() != 84 { println("FAIL: test_regpressure_with_calls"); failed += 1; }
+
+    // Phi nodes with 3+ predecessors
+    if test_phi_3way_driver() != 42 { println("FAIL: test_phi_3way_driver"); failed += 1; }
+    if test_phi_4way_driver() != 42 { println("FAIL: test_phi_4way_driver"); failed += 1; }
+
+    // Many arguments (stack passing stress)
+    if test_16args() != 42 { println("FAIL: test_16args"); failed += 1; }
+
+    // String across branches (16-byte phi nodes)
+    if test_string_branch() != 13 { println("FAIL: test_string_branch"); failed += 1; }
+    if test_string_loop() != 3 { println("FAIL: test_string_loop"); failed += 1; }
+
+    // Deep nesting (3+ levels)
+    if test_nest3() != 5 { println("FAIL: test_nest3"); failed += 1; }
+    if test_nest4() != 3 { println("FAIL: test_nest4"); failed += 1; }
+
+    // Complex expressions
+    if test_long_expr() != 42 { println("FAIL: test_long_expr"); failed += 1; }
+    if test_nested_arith() != 120 { println("FAIL: test_nested_arith"); failed += 1; }
+
+    // Combined stress: register pressure in loops
+    if test_pressure_in_loop() != 140 { println("FAIL: test_pressure_in_loop"); failed += 1; }
+
     // Summary
     if failed == 0 {
-        println("All 145 tests passed!");
+        println("All 158 tests passed!");
     }
 
     return failed;

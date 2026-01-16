@@ -355,7 +355,11 @@ fn expandCallArgs(f: *Func, call_val: *Value, type_reg: *const TypeRegistry) !vo
     }
 
     // Replace call's args with expanded version
-    call_val.args = try f.allocator.dupe(*Value, new_args.items);
+    // CRITICAL: Use resetArgs to decrement old arg use counts, then addArg to increment new ones
+    call_val.resetArgs();
+    for (new_args.items) |arg| {
+        call_val.addArg(arg);
+    }
 }
 
 /// Expand call RESULTS for multi-register returns (STRING type).

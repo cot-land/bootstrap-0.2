@@ -1947,18 +1947,18 @@ pub const Lowerer = struct {
         return try fb.emitSelect(cond, then_val, else_val, result_type, if_expr.span);
     }
 
-    /// Lower switch expression to chained select operations.
-    /// Following Go's pattern: convert switch to if-else chain (nested selects).
+    /// Lower switch expression/statement.
+    /// Following Go's pattern: convert switch to if-else chain.
     ///
-    /// switch x { 1 => "one", 2, 3 => "multi", else => "other" }
-    /// becomes: select(eq(x,1), "one", select(or(eq(x,2),eq(x,3)), "multi", "other"))
+    /// Expression mode (non-void result):
+    ///   switch x { 1 => "one", 2 => "two", else => "other" }
+    ///   becomes: select(eq(x,1), "one", select(eq(x,2), "two", "other"))
+    ///
+    /// Statement mode (void result):
+    ///   switch x { 1 => { a = 1; }, 2 => { a = 2; }, else => { a = 0; } }
+    ///   becomes: if-else chain with control flow blocks
     fn lowerSwitchExpr(self: *Lowerer, se: ast.SwitchExpr) Error!ir.NodeIndex {
-        const fb = self.current_func orelse return ir.null_node;
-
         debug.log(.lower, "lowerSwitchExpr: {d} cases", .{se.cases.len});
-
-        // Lower the switch subject once
-        const subject = try self.lowerExprNode(se.subject);
 
         // Determine result type from first case body
         const result_type = if (se.cases.len > 0)
@@ -1968,6 +1968,96 @@ pub const Lowerer = struct {
         else
             TypeRegistry.VOID;
 
+        // Statement mode: void result type means we need control flow, not selects
+        if (result_type == TypeRegistry.VOID) {
+            return try self.lowerSwitchStatement(se);
+        }
+
+        // Expression mode: use nested selects
+        return try self.lowerSwitchAsSelect(se, result_type);
+    }
+
+    /// Lower switch as a statement using control flow (if-else chain).
+    /// Go reference: cmd/compile/internal/walk/switch.go - converts to if-else
+    fn lowerSwitchStatement(self: *Lowerer, se: ast.SwitchExpr) Error!ir.NodeIndex {
+        const fb = self.current_func orelse return ir.null_node;
+
+        debug.log(.lower, "lowerSwitchStatement: {d} cases (control flow mode)", .{se.cases.len});
+
+        // Lower the switch subject once and store in a temp if needed
+        const subject = try self.lowerExprNode(se.subject);
+
+        // Create merge block where all cases converge
+        const merge_block = try fb.newBlock("switch.end");
+
+        // Process cases in forward order, creating if-else chain
+        var i: usize = 0;
+        while (i < se.cases.len) : (i += 1) {
+            const case = se.cases[i];
+
+            // Build condition: OR together all patterns for this case
+            var case_cond: ir.NodeIndex = ir.null_node;
+
+            for (case.patterns) |pattern_idx| {
+                const pattern_val = try self.lowerExprNode(pattern_idx);
+                const pattern_cond = try fb.emitBinary(.eq, subject, pattern_val, TypeRegistry.BOOL, se.span);
+
+                if (case_cond == ir.null_node) {
+                    case_cond = pattern_cond;
+                } else {
+                    case_cond = try fb.emitBinary(.@"or", case_cond, pattern_cond, TypeRegistry.BOOL, se.span);
+                }
+            }
+
+            // Create blocks for this case
+            const case_block = try fb.newBlock("switch.case");
+            const next_block = if (i + 1 < se.cases.len)
+                try fb.newBlock("switch.next")
+            else if (se.else_body != null_node)
+                try fb.newBlock("switch.else")
+            else
+                merge_block;
+
+            // Branch on condition
+            if (case_cond != ir.null_node) {
+                _ = try fb.emitBranch(case_cond, case_block, next_block, se.span);
+            }
+
+            // Lower case body
+            fb.setBlock(case_block);
+            const body_terminated = try self.lowerBlockNode(case.body);
+            // Jump to merge (unless body terminates, e.g., return)
+            if (!body_terminated) {
+                _ = try fb.emitJump(merge_block, se.span);
+            }
+
+            // Continue with next case/else
+            fb.setBlock(next_block);
+        }
+
+        // Handle else branch
+        if (se.else_body != null_node) {
+            const else_terminated = try self.lowerBlockNode(se.else_body);
+            if (!else_terminated) {
+                _ = try fb.emitJump(merge_block, se.span);
+            }
+        }
+
+        // Continue in merge block
+        fb.setBlock(merge_block);
+
+        return ir.null_node;
+    }
+
+    /// Lower switch as an expression using nested selects.
+    fn lowerSwitchAsSelect(self: *Lowerer, se: ast.SwitchExpr, result_type: TypeIndex) Error!ir.NodeIndex {
+        const fb = self.current_func orelse return ir.null_node;
+
+        debug.log(.lower, "lowerSwitchAsSelect: {d} cases (select mode)", .{se.cases.len});
+
+        // Lower the switch subject once
+        const subject = try self.lowerExprNode(se.subject);
+
         // Start with else value (or null if no else)
         var current_result: ir.NodeIndex = if (se.else_body != null_node)
             try self.lowerExprNode(se.else_body)
@@ -1975,7 +2065,6 @@ pub const Lowerer = struct {
             ir.null_node;
 
         // Process cases in reverse order to build nested selects
-        // Last case wraps else, then each preceding case wraps that result
         var i: usize = se.cases.len;
         while (i > 0) {
             i -= 1;
@@ -1985,13 +2074,9 @@ pub const Lowerer = struct {
             var case_cond: ir.NodeIndex = ir.null_node;
 
             for (case.patterns) |pattern_idx| {
-                // Lower the pattern value
                 const pattern_val = try self.lowerExprNode(pattern_idx);
-
-                // Emit comparison: subject == pattern
                 const pattern_cond = try fb.emitBinary(.eq, subject, pattern_val, TypeRegistry.BOOL, se.span);
 
-                // OR with previous patterns (if any)
                 if (case_cond == ir.null_node) {
                     case_cond = pattern_cond;
                 } else {

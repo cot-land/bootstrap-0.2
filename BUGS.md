@@ -35,7 +35,97 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
-(No open bugs at this time)
+### BUG-013: String concatenation in loops causes segfault (FIXED)
+
+**Status:** Fixed
+**Priority:** P0
+**Discovered:** 2026-01-16
+**Fixed:** 2026-01-16
+
+**Description:**
+String concatenation inside a while loop causes a segfault at runtime. The compiled binary crashes.
+
+**Test File:** `/tmp/test_string_loop.cot`
+```cot
+fn test_string_loop() i64 {
+    var s: string = "";
+    var i: i64 = 0;
+    while i < 3 {
+        s = s + "x";  // phi for string in loop
+        i = i + 1;
+    }
+    return len(s);  // Should return 3
+}
+
+fn main() i64 {
+    return test_string_loop();
+}
+```
+
+**Root Cause:**
+In `expand_calls.zig`, when expanding call arguments (e.g., `string_concat v20, v21` -> `string_concat v17, v19, v34, v35`), we directly assigned `call_val.args = ...` without updating use counts. This meant v17's use count stayed at 1 (from v20) instead of incrementing to 2 (used by both v20 and v22).
+
+The register allocator then freed v17's register after v20, even though v22 still needed it.
+
+**Go Reference:**
+Go's Value operations always maintain use counts via `AddArg()` which increments uses. Never directly assign to `.Args`.
+
+**Fix:**
+`src/ssa/passes/expand_calls.zig` line 358 - Use `resetArgs()` and `addArg()` instead of direct assignment:
+```zig
+// BEFORE (bug):
+call_val.args = try f.allocator.dupe(*Value, new_args.items);
+
+// AFTER (fixed):
+call_val.resetArgs();
+for (new_args.items) |arg| {
+    call_val.addArg(arg);
+}
+```
+
+---
+
+### BUG-014: Switch statements not supported (only switch expressions) (FIXED)
+
+**Status:** Fixed
+**Priority:** P1
+**Discovered:** 2026-01-16
+**Fixed:** 2026-01-16
+
+**Description:**
+Switch can only be used as an expression that returns a value. Switch statements with side effects in branches are not supported. Using switch with block bodies that contain assignments causes a compiler panic.
+
+**Test File:** `/tmp/test_switch_stmt.cot`
+```cot
+fn test() i64 {
+    var result: i64 = 0;
+    let x: i64 = 1;
+    // This causes panic - switch branches are blocks with side effects
+    switch x {
+        1 => { result = 10; }
+        2 => { result = 20; }
+        else => { result = 30; }
+    }
+    return result;
+}
+```
+
+**Root Cause:**
+`lowerSwitchExpr` used `emitSelect` nodes for all cases, but `emitSelect` requires both then/else values to be valid expressions. When branch bodies return void (side effects only), this caused a panic.
+
+**Go Reference:**
+Go converts switch statements to if-else chains at the front-end level (`cmd/compile/internal/walk/switch.go`). The SSA gen just walks the compiled body.
+
+**Fix:**
+`src/frontend/lower.zig` - Split `lowerSwitchExpr` into two modes:
+1. **Expression mode** (non-void result): Use nested selects (original behavior)
+2. **Statement mode** (void result): Generate if-else control flow with blocks
+
+Added `lowerSwitchStatement()` that creates proper control flow:
+- Branch on case condition to case block or next block
+- Lower case body in its own block
+- Jump to merge block after each case
+- Continue with next case or else branch
 
 ---
 

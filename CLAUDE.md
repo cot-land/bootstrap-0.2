@@ -1,5 +1,11 @@
 # Bootstrap 0.2 - Development Guidelines
 
+## BUGS - ADD TO BUGS.md IMMEDIATELY
+
+**When you find a bug, IMMEDIATELY add it to [BUGS.md](BUGS.md).** Do NOT skip this step. Do NOT comment out failing tests. Fix bugs when found.
+
+---
+
 ## BUG FIXING WORKFLOW - MANDATORY STEPS
 
 **Every bug MUST follow this exact workflow. No exceptions.**
