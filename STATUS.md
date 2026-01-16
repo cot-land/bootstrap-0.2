@@ -4,7 +4,7 @@
 
 ## Current State
 
-**158 e2e tests passing.** Core language features complete.
+**160 e2e tests passing.** Core language features complete.
 
 ### Self-Hosting Progress
 
@@ -15,10 +15,11 @@ See [cot0/TASKS.md](cot0/TASKS.md) for detailed self-hosting progress.
 | token.cot | Complete | 5/5 pass |
 | scanner.cot | Complete | 11/11 pass |
 | ast.cot | Complete | 7/7 pass |
-| parser.cot | In Progress | Compiles, 10 tests failing |
+| parser.cot | Complete | 10/10 pass |
 
 ### Recent Bug Fixes (2026-01-16)
 
+- BUG-015: Chained OR (3+ conditions) - Pre-scan IR to skip logical operands in main loop
 - BUG-014: Switch statements - Now supports both expression and statement modes
 - BUG-013: String concatenation in loops - Fixed use count tracking in expand_calls
 - BUG-012: `ptr.*.field` codegen - Following Go's ODOTPTR pattern

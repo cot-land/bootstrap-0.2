@@ -8,14 +8,15 @@
 
 ## Current Status
 
-**All 158 e2e tests pass.**
+**All 160 e2e tests pass.**
 
 - `token_test.cot`: 5/5 tests pass
 - `scanner_test.cot`: 11/11 tests pass
 - `ast_test.cot`: 7/7 tests pass
-- `parser_test.cot`: Compiles, tests failing (10 failures)
+- `parser_test.cot`: 10/10 tests pass
 
 **Recent Bug Fixes (2026-01-16):**
+- BUG-015: Chained OR (3+ conditions) fixed - pre-scan IR to skip logical operands
 - BUG-014: Switch statements now supported (both expression and statement modes)
 - BUG-013: String concatenation in loops fixed (use count tracking)
 - BUG-012: `ptr.*.field` codegen fixed
@@ -24,7 +25,8 @@
 - BUG-002: Struct literals implemented
 
 **Sprint 1 COMPLETE!** Scanner.cot compiles and tests pass.
-**Sprint 2 IN PROGRESS:** Parser tests failing - need investigation.
+**Sprint 2 COMPLETE!** Parser.cot compiles and all 10 tests pass.
+**Sprint 3 NEXT:** Type Checking (types.cot, checker.cot)
 
 ---
 
