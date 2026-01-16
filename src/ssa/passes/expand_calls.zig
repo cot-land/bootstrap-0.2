@@ -56,6 +56,7 @@ const AuxCall = value_mod.AuxCall;
 const Block = @import("../block.zig").Block;
 const Func = @import("../func.zig").Func;
 const Op = @import("../op.zig").Op;
+const abi = @import("../abi.zig");
 const types = @import("../../frontend/types.zig");
 const TypeRegistry = types.TypeRegistry;
 const TypeIndex = types.TypeIndex;
@@ -76,6 +77,12 @@ pub fn expandCalls(f: *Func, type_reg: ?*const TypeRegistry) !void {
     for (f.blocks.items) |block| {
         try expandBlock(f, block, type_reg);
     }
+
+    // Apply dec.rules optimizations (Go's rewritedec pass)
+    // This eliminates slice_ptr/slice_len when operating on string_make/slice_make
+    // by directly using the component values.
+    // Reference: Go's cmd/compile/internal/ssa/_gen/dec.rules
+    try applyDecRules(f);
 
     debug.log(.ssa, "expand_calls: done", .{});
 }
@@ -307,35 +314,48 @@ fn getTypeSize(type_idx: TypeIndex, type_reg: ?*const TypeRegistry) u32 {
 ///
 /// Go reference: cmd/compile/internal/ssa/expand_calls.go
 ///
-/// This marks the call as having a hidden return pointer and sets up the
-/// result to be loaded from where the callee wrote it.
+/// Creates ABIParamResultInfo with uses_hidden_return=true.
+/// Both expand_calls and codegen use this same ABIInfo.
 ///
 /// The actual stack allocation and x8 setup happens in codegen:
-/// 1. Codegen detects hidden_ret_size > 0
+/// 1. Codegen detects abi_info.uses_hidden_return
 /// 2. Allocates stack space: SUB sp, sp, #size
 /// 3. Passes address in x8: MOV x8, sp
 /// 4. Makes the call
-/// 5. Result is now at [sp], tracked via hidden_ret_ptr
+/// 5. Result is at [sp], address stored in result register
 fn expandLargeReturnCall(f: *Func, block: *Block, idx: *usize, v: *Value, type_size: u32) !void {
     _ = block; // Block is not needed since we're just marking the call, not inserting new values
     debug.log(.ssa, "  expand_calls: expanding large return call v{d} ({d}B)", .{ v.id, type_size });
 
-    // Mark this call as having a hidden return pointer
+    // Get or create AuxCall
     var aux_call = v.aux_call;
     if (aux_call == null) {
         aux_call = try f.allocator.create(AuxCall);
         aux_call.?.* = AuxCall.init(f.allocator);
         v.aux_call = aux_call;
     }
-    aux_call.?.hidden_ret_size = type_size;
 
-    // Note: We don't change the call's type_idx - it still "returns" the struct type.
-    // Codegen will handle this specially when hidden_ret_size > 0:
-    // - Allocate stack space
-    // - Pass address in x8
-    // - After call, treat the value as being at that address
+    // Create ABIParamResultInfo for this call
+    // This is the source of truth - both expand_calls and codegen use it
+    const abi_info = try f.allocator.create(abi.ABIParamResultInfo);
+    abi_info.* = .{
+        .in_params = &[_]abi.ABIParamAssignment{}, // TODO: add param info when available
+        .out_params = &[_]abi.ABIParamAssignment{
+            .{
+                .type_idx = v.type_idx,
+                .registers = &[_]abi.RegIndex{}, // No registers - via memory
+                .offset = 0, // Caller provides address
+                .size = type_size,
+            },
+        },
+        .in_registers_used = 0,
+        .out_registers_used = 0,
+        .uses_hidden_return = true,
+        .hidden_return_size = type_size,
+    };
+    aux_call.?.abi_info = abi_info;
 
-    debug.log(.ssa, "    marked call v{d} with hidden_ret_size={d}B", .{ v.id, type_size });
+    debug.log(.ssa, "    marked call v{d} with ABIInfo: uses_hidden_return=true, size={d}B", .{ v.id, type_size });
 
     idx.* += 1;
 }
@@ -469,6 +489,66 @@ fn replaceAllUses(f: *Func, old_val: *Value, new_val: *Value) !void {
                 block.controls[i] = new_val;
                 old_val.uses -= 1;
                 new_val.uses += 1;
+            }
+        }
+    }
+}
+
+/// Apply dec.rules optimizations - Go's rewritedec pass.
+/// These rules eliminate slice_ptr/slice_len ops when operating on string_make/slice_make
+/// by directly using the component values.
+///
+/// Go reference: cmd/compile/internal/ssa/_gen/dec.rules
+///   (StringPtr (StringMake ptr _)) => ptr
+///   (StringLen (StringMake _ len)) => len
+///   (SlicePtr (SliceMake ptr _ _)) => ptr
+///   (SliceLen (SliceMake _ len _)) => len
+///
+/// This must run AFTER expandCallResult creates string_make from decomposed calls.
+fn applyDecRules(f: *Func) !void {
+    for (f.blocks.items) |block| {
+        for (block.values.items) |v| {
+            switch (v.op) {
+                .slice_ptr, .string_ptr => {
+                    // (SlicePtr/StringPtr (SliceMake/StringMake ptr _)) => ptr
+                    if (v.args.len >= 1) {
+                        const arg = v.args[0];
+                        if ((arg.op == .slice_make or arg.op == .string_make) and arg.args.len >= 1) {
+                            const ptr_val = arg.args[0];
+                            // Replace this value with a copy of the ptr component
+                            // Go's copyOf: v.op = OpCopy, v.Args = [target]
+                            debug.log(.ssa, "  dec.rules: v{d} = {s}({s}) => copy v{d} (ptr)", .{
+                                v.id,
+                                @tagName(v.op),
+                                @tagName(arg.op),
+                                ptr_val.id,
+                            });
+                            v.op = .copy;
+                            v.resetArgs();
+                            v.addArg(ptr_val);
+                        }
+                    }
+                },
+                .slice_len, .string_len => {
+                    // (SliceLen/StringLen (SliceMake/StringMake _ len)) => len
+                    if (v.args.len >= 1) {
+                        const arg = v.args[0];
+                        if ((arg.op == .slice_make or arg.op == .string_make) and arg.args.len >= 2) {
+                            const len_val = arg.args[1];
+                            // Replace this value with a copy of the len component
+                            debug.log(.ssa, "  dec.rules: v{d} = {s}({s}) => copy v{d} (len)", .{
+                                v.id,
+                                @tagName(v.op),
+                                @tagName(arg.op),
+                                len_val.id,
+                            });
+                            v.op = .copy;
+                            v.resetArgs();
+                            v.addArg(len_val);
+                        }
+                    }
+                },
+                else => {},
             }
         }
     }

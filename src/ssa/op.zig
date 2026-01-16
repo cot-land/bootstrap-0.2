@@ -84,6 +84,8 @@ pub const Op = enum(u16) {
     const_nil,
     /// String constant. aux: string slice
     const_string,
+    /// Constant pointer (8-byte address). aux_int: symbol index for relocation
+    const_ptr,
 
     // --- Sized Integer Constants (for type safety) ---
     /// 8-bit integer constant
@@ -847,6 +849,12 @@ const op_info_table = blk: {
         .aux_type = .string,
         .rematerializable = true,
     };
+    table[@intFromEnum(Op.const_ptr)] = .{
+        .name = "ConstPtr",
+        .aux_type = .symbol, // Symbol index for string literal relocation
+        .rematerializable = true,
+    };
+
     table[@intFromEnum(Op.const_8)] = .{ .name = "Const8", .aux_type = .int8, .rematerializable = true };
     table[@intFromEnum(Op.const_16)] = .{ .name = "Const16", .aux_type = .int16, .rematerializable = true };
     table[@intFromEnum(Op.const_32)] = .{ .name = "Const32", .aux_type = .int32, .rematerializable = true };
@@ -1412,6 +1420,7 @@ const op_test_cases = [_]OpTestCase{
     .{ .op = .const_float, .name = "ConstFloat", .arg_len = 0, .rematerializable = true },
     .{ .op = .const_nil, .name = "ConstNil", .arg_len = 0, .rematerializable = true },
     .{ .op = .const_string, .name = "ConstString", .arg_len = 0, .rematerializable = true },
+    .{ .op = .const_ptr, .name = "ConstPtr", .arg_len = 0, .rematerializable = true },
 
     // Arithmetic - binary commutative
     .{ .op = .add, .name = "Add", .arg_len = 2, .commutative = true },
@@ -1503,7 +1512,7 @@ test "Non-commutative operations (table-driven)" {
 
 /// Test cases for rematerializable (constant) operations.
 const rematerializable_ops = [_]Op{
-    .const_bool, .const_int, .const_float, .const_nil, .const_string,
+    .const_bool, .const_int, .const_float, .const_nil, .const_string, .const_ptr,
     .const_8,    .const_16,  .const_32,    .const_64,
     .init_mem,   .addr,      .local_addr,
     // ARM64 immediates

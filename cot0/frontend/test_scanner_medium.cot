@@ -1,0 +1,27 @@
+// Medium scanner test - add struct with string
+import "token.cot"
+
+struct Scanner {
+    source: string,
+    pos: i64,
+}
+
+fn scanner_new(source: string) Scanner {
+    return Scanner{ .source = source, .pos = 0 };
+}
+
+fn scanner_at_end(s: *Scanner) bool {
+    return s.pos >= len(s.source);
+}
+
+fn scan_number(s: *Scanner) Token {
+    let start: i64 = s.pos;
+    s.pos = s.pos + 1;
+    return token_new(TokenType.Int, start, s.pos - start);
+}
+
+fn main() i64 {
+    var s: Scanner = scanner_new("123");
+    let t: Token = scan_number(&s);
+    return t.start;
+}

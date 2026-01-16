@@ -1146,8 +1146,68 @@ pub const Lowerer = struct {
             .switch_expr => |se| {
                 return try self.lowerSwitchExpr(se);
             },
+            .struct_init => |si| {
+                // Struct literals as expressions (e.g., return Point{ .x = 1, .y = 2 })
+                // Strategy: Create a temporary local, initialize it, and return a load of it
+                return try self.lowerStructInitExpr(si);
+            },
             else => return ir.null_node,
         }
+    }
+
+    /// Lower a struct literal expression (not in a variable declaration).
+    /// Creates a temporary local, initializes it field-by-field, and returns a load.
+    fn lowerStructInitExpr(self: *Lowerer, si: ast.StructInit) Error!ir.NodeIndex {
+        const fb = self.current_func orelse return ir.null_node;
+
+        // Look up the struct type
+        const struct_type_idx = self.type_reg.lookupByName(si.type_name) orelse {
+            debug.log(.lower, "lowerStructInitExpr: type '{s}' not found", .{si.type_name});
+            return ir.null_node;
+        };
+
+        const type_info = self.type_reg.get(struct_type_idx);
+        const struct_type = switch (type_info) {
+            .struct_type => |s| s,
+            else => {
+                debug.log(.lower, "lowerStructInitExpr: '{s}' is not a struct", .{si.type_name});
+                return ir.null_node;
+            },
+        };
+
+        debug.log(.lower, "lowerStructInitExpr: struct '{s}' ({d} fields)", .{ si.type_name, struct_type.fields.len });
+
+        // Create a temporary local for the struct
+        const size = self.type_reg.sizeOf(struct_type_idx);
+        const temp_name = "__struct_tmp";
+        const temp_idx = try fb.addLocalWithSize(temp_name, struct_type_idx, true, size);
+
+        // Initialize each field
+        for (si.fields) |field_init| {
+            // Find the field in the struct type
+            var found = false;
+            for (struct_type.fields, 0..) |struct_field, i| {
+                if (std.mem.eql(u8, struct_field.name, field_init.name)) {
+                    const field_idx: u32 = @intCast(i);
+                    const field_offset: i64 = @intCast(struct_field.offset);
+
+                    // Lower the value expression
+                    const value_node = try self.lowerExprNode(field_init.value);
+
+                    // Store to field offset (same as lowerStructInit)
+                    _ = try fb.emitStoreLocalField(temp_idx, field_idx, field_offset, value_node, si.span);
+                    debug.log(.lower, "  field '{s}' at offset {d}", .{ field_init.name, field_offset });
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                debug.log(.lower, "  field '{s}' not found in struct", .{field_init.name});
+            }
+        }
+
+        // Return a load of the temporary - the struct value
+        return try fb.emitLoadLocal(temp_idx, struct_type_idx, si.span);
     }
 
     fn lowerLiteral(self: *Lowerer, lit: ast.Literal) Error!ir.NodeIndex {
@@ -1334,11 +1394,19 @@ pub const Lowerer = struct {
         }
 
         // Check if base is a local variable (optimized path)
+        // BUG-005: Only use optimized path for direct struct locals, NOT pointer-to-struct.
+        // When base_type is a pointer, we must dereference first via lowerExprNode.
+        // This is Go's ODOT vs ODOTPTR distinction.
+        const base_is_pointer = switch (base_type) {
+            .pointer => true,
+            else => false,
+        };
+
         const base_node = self.tree.getNode(fa.base) orelse return ir.null_node;
         const base_expr = base_node.asExpr() orelse return ir.null_node;
 
-        if (base_expr == .ident) {
-            // Base is an identifier - check if it's a local variable
+        if (base_expr == .ident and !base_is_pointer) {
+            // Base is an identifier AND a direct struct - check if it's a local variable
             if (fb.lookupLocal(base_expr.ident.name)) |local_idx| {
                 // Emit FieldLocal for direct access to struct local
                 return try fb.emitFieldLocal(local_idx, field_idx, field_offset, field_type, fa.span);

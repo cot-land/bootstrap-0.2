@@ -310,6 +310,14 @@ zig cc myprogram.o runtime/cot_runtime.o -o myprogram -lSystem
 - Callee: save x8 to x19, copy result to [x19] on return
 - Test: `cot0/frontend/token_test.cot` - 5/5 tests pass
 
+**Unified ABI Analysis (2026-01-16):**
+Following Go's pattern, ABI decisions are now computed once and shared by all phases:
+- `ABIParamResultInfo` in `src/ssa/abi.zig` is the single source of truth
+- Added `uses_hidden_return` and `hidden_return_size` fields
+- `AuxCall` accessor methods: `usesHiddenReturn()`, `hiddenReturnSize()`, `offsetOfArg()`, `offsetOfResult()`
+- Removed old `hidden_ret_ptr` and `hidden_ret_size` fields from `AuxCall`
+- Both `expand_calls` and codegen use the same ABI analysis - no more guesswork
+
 ---
 
 ### Phase 7: Import/Multiple Files (P1) - COMPLETE

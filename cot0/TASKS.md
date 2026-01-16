@@ -9,60 +9,36 @@
 ## Current Status
 
 ✅ **BUG-004 FIXED:** Struct returns > 16 bytes now work correctly.
+✅ **BUG-005 FIXED:** Logical NOT operator now works for booleans.
+✅ **BUG-006 FIXED:** `not` keyword added as synonym for `!`.
+✅ **BUG-002 FIXED:** Struct literals implemented.
+✅ **Unified ABI Analysis:** Following Go's pattern, ABI decisions centralized in `abi.zig`.
+
 - `token_test.cot`: 5/5 tests pass
 - All 142 e2e tests pass
 
-**Next Blockers:** Scanner.cot requires 4 features not yet implemented.
+**Next Blocker:** Scanner.cot requires `@string(ptr, len)` builtin.
 
 ---
 
 ## Immediate Blockers for scanner.cot
 
-### BUG-005: Logical NOT operator broken (P0)
+### BUG-005: Logical NOT operator broken (P0) ✅ FIXED
 
-**Status:** Open - BLOCKING
-**File:** `src/codegen/arm64.zig:1491`
+**Status:** Fixed
+**Fix:** For boolean types, uses `EOR Rd, Rm, #1` (XOR with 1) instead of MVN.
 
-**Problem:** The `not` SSA op uses MVN (bitwise NOT) instead of logical NOT.
-- `!true` should be `false` (0), but returns `0xFFFFFFFFFFFFFFFE` (non-zero = true)
-- `!false` correctly returns `0xFFFFFFFFFFFFFFFF` (non-zero = true... wrong!)
+### BUG-006: `not` keyword not recognized (P0) ✅ FIXED
 
-**Fix:** For boolean types, use `EOR Rd, Rm, #1` (XOR with 1) instead of MVN.
+**Status:** Fixed
+**Fix:** Added `not` as a keyword that parses as unary `!` operator.
 
-```zig
-// Current (WRONG for booleans):
-try self.emit(asm_mod.encodeMVN(dest_reg, op_reg));
+### BUG-002: Struct literals not implemented (P0) ✅ FIXED
 
-// Fix: Check type and use EOR for bools
-const type_size = self.getTypeSize(value.type_idx);
-if (type_size == 1) {
-    // Boolean: flip lowest bit with XOR
-    try self.emit(asm_mod.encodeEORImm(dest_reg, op_reg, 1));
-} else {
-    // Integer: bitwise NOT
-    try self.emit(asm_mod.encodeMVN(dest_reg, op_reg));
-}
-```
+**Status:** Fixed
+**Fix:** Implemented struct literal parsing following Go's composite literal pattern.
 
-### BUG-006: `not` keyword not recognized (P0)
-
-**Status:** Open - BLOCKING
-**File:** `src/frontend/scanner.zig` or `parser.zig`
-
-**Problem:** `while not scanner_at_end(s)` fails with "expected expression"
-
-**Fix:** Add `not` as a keyword that parses as unary `!` operator.
-
-### BUG-002: Struct literals not implemented (P0)
-
-**Status:** Open - BLOCKING
-**File:** `src/frontend/parser.zig`
-
-**Problem:** `Scanner{ .source = source, .pos = 0 }` fails parsing.
-
-**Fix:** Implement struct literal parsing following Go's composite literal pattern.
-
-### Missing: @string(ptr, len) builtin (P0)
+### Missing: @string(ptr, len) builtin (P0) - BLOCKING
 
 **Status:** Not implemented - BLOCKING
 **File:** Would need `src/frontend/parser.zig`, `checker.zig`, `lower.zig`
@@ -75,14 +51,14 @@ if (type_size == 1) {
 
 ## Execution Order (Priority)
 
-### Sprint 1: Unblock scanner.cot (4 issues)
+### Sprint 1: Unblock scanner.cot (4 issues) - 3/4 DONE
 
-| Order | Issue | Effort | Dependency |
-|-------|-------|--------|------------|
-| 1 | BUG-005: Fix `!` for booleans | Small | None |
-| 2 | BUG-006: Add `not` keyword | Small | BUG-005 |
-| 3 | BUG-002: Struct literals | Medium | None |
-| 4 | @string builtin | Medium | None |
+| Order | Issue | Effort | Status |
+|-------|-------|--------|--------|
+| 1 | BUG-005: Fix `!` for booleans | Small | ✅ Done |
+| 2 | BUG-006: Add `not` keyword | Small | ✅ Done |
+| 3 | BUG-002: Struct literals | Medium | ✅ Done |
+| 4 | @string builtin | Medium | **Remaining** |
 
 **After Sprint 1:** scanner.cot should compile and run tests.
 

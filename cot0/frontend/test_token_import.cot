@@ -1,0 +1,7 @@
+// Test importing token.cot
+import "token.cot"
+
+fn main() i64 {
+    let t: Token = token_new(TokenType.Int, 10, 5);
+    return t.start;
+}

@@ -29,6 +29,7 @@ const arm64_codegen = @import("codegen/arm64.zig");
 const regalloc_mod = @import("ssa/regalloc.zig");
 const stackalloc_mod = @import("ssa/stackalloc.zig");
 const expand_calls = @import("ssa/passes/expand_calls.zig");
+const decompose = @import("ssa/passes/decompose.zig");
 
 // Debug infrastructure
 const pipeline_debug = @import("pipeline_debug.zig");
@@ -382,6 +383,9 @@ pub const Driver = struct {
             debug.log(.ssa, "SSA build complete: {} blocks", .{ssa_func.numBlocks()});
             self.debug.afterSSA(ssa_func, "build");
 
+            // COT_TRACE: Dump SSA after build
+            pipeline_debug.tracePhase(ssa_func, "SSA Build (IR -> SSA)");
+
             // Phase 4a.5: Expand calls - decompose aggregate types before register allocation
             // Pass type_reg to detect large struct returns (>16B) for hidden pointer handling
             debug.log(.ssa, "Running expand_calls...", .{});
@@ -391,6 +395,22 @@ pub const Driver = struct {
             };
             debug.log(.ssa, "expand_calls complete", .{});
             self.debug.afterSSA(ssa_func, "expand_calls");
+
+            // COT_TRACE: Dump SSA after expand_calls
+            pipeline_debug.tracePhase(ssa_func, "Expand Calls (decompose aggregates)");
+
+            // Phase 4a.6: Decompose - ensure no SSA value > 8 bytes
+            // Go reference: cmd/compile/internal/ssa/decompose.go
+            debug.log(.ssa, "Running decompose...", .{});
+            decompose.decompose(ssa_func, type_reg) catch |e| {
+                debug.log(.ssa, "decompose failed: {}", .{e});
+                return e;
+            };
+            debug.log(.ssa, "decompose complete", .{});
+            self.debug.afterSSA(ssa_func, "decompose");
+
+            // COT_TRACE: Dump SSA after decompose
+            pipeline_debug.tracePhase(ssa_func, "Decompose (16-byte → 8-byte)");
 
             // Phase 4b: Register allocation (includes liveness)
             debug.log(.regalloc, "Starting register allocation...", .{});
@@ -405,6 +425,9 @@ pub const Driver = struct {
 
             debug.log(.regalloc, "Regalloc complete: {} spills", .{regalloc_state.num_spills});
             self.debug.afterSSA(ssa_func, "regalloc");
+
+            // COT_TRACE: Dump SSA after regalloc
+            pipeline_debug.tracePhase(ssa_func, "Register Allocation");
 
             // Phase 4b.5: Stack allocation (assigns spill slot offsets)
             const stack_result = stackalloc_mod.stackalloc(ssa_func) catch |e| {

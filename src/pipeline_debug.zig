@@ -8,22 +8,27 @@
 //!
 //! ## Usage
 //!
-//! ```zig
-//! var driver = Driver.init(allocator);
-//! driver.setDebugPhases(.{
-//!     .parse = true,
-//!     .lower = true,
-//!     .ssa = true,
-//! });
-//! ```
+//! Set environment variables:
+//! - `COT_DEBUG=parse,lower,ssa,regalloc` - Enable debug for specific phases
+//! - `COT_DEBUG=all` - Enable all debug output
+//! - `COT_TRACE=funcname` - Trace a specific function through ALL passes (like GOSSAFUNC)
 //!
-//! Or set environment variable: COT_DEBUG=parse,lower,ssa,regalloc
+//! ## Example
+//!
+//! ```bash
+//! # Trace main function through entire pipeline
+//! COT_TRACE=main ./zig-out/bin/cot test.cot -o test
+//!
+//! # Debug specific phases
+//! COT_DEBUG=ssa,codegen ./zig-out/bin/cot test.cot -o test
+//! ```
 
 const std = @import("std");
 const ast_mod = @import("frontend/ast.zig");
 const ir_mod = @import("frontend/ir.zig");
 const ssa_func_mod = @import("ssa/func.zig");
 const ssa_debug = @import("ssa/debug.zig");
+const TypeRegistry = @import("frontend/types.zig").TypeRegistry;
 
 const Allocator = std.mem.Allocator;
 
@@ -38,6 +43,7 @@ pub const DebugPhases = struct {
     regalloc: bool = false,
     codegen: bool = false,
     strings: bool = false,
+    abi: bool = false,
     all: bool = false,
 
     /// Parse from environment variable COT_DEBUG
@@ -59,6 +65,7 @@ pub const DebugPhases = struct {
             if (std.mem.eql(u8, trimmed, "regalloc")) result.regalloc = true;
             if (std.mem.eql(u8, trimmed, "codegen")) result.codegen = true;
             if (std.mem.eql(u8, trimmed, "strings")) result.strings = true;
+            if (std.mem.eql(u8, trimmed, "abi")) result.abi = true;
         }
         return result;
     }
@@ -73,6 +80,7 @@ pub const DebugPhases = struct {
             .regalloc => self.regalloc,
             .codegen => self.codegen,
             .strings => self.strings,
+            .abi => self.abi,
         };
     }
 };
@@ -85,6 +93,7 @@ pub const Phase = enum {
     regalloc,
     codegen,
     strings, // String literal handling through the pipeline
+    abi, // ABI analysis
 };
 
 // ============================================================================
@@ -97,10 +106,30 @@ pub const Phase = enum {
 // ============================================================================
 
 var global_phases: ?DebugPhases = null;
+var global_trace_func: ?[]const u8 = null;
 
 /// Initialize global debug state. Call once at startup.
 pub fn initGlobal() void {
     global_phases = DebugPhases.fromEnv();
+    global_trace_func = std.posix.getenv("COT_TRACE");
+    if (global_trace_func != null) {
+        std.debug.print("\n╔══════════════════════════════════════════════════════════════════╗\n", .{});
+        std.debug.print("║  COT_TRACE enabled for function: {s:<30} ║\n", .{global_trace_func.?});
+        std.debug.print("║  Tracing through ALL pipeline phases                              ║\n", .{});
+        std.debug.print("╚══════════════════════════════════════════════════════════════════╝\n\n", .{});
+    }
+}
+
+/// Check if we should trace a specific function.
+/// Like Go's GOSSAFUNC - enables full pipeline tracing for one function.
+pub fn shouldTrace(func_name: []const u8) bool {
+    const trace = global_trace_func orelse return false;
+    return std.mem.eql(u8, trace, func_name);
+}
+
+/// Get the trace function name (if any)
+pub fn getTraceFunc() ?[]const u8 {
+    return global_trace_func;
 }
 
 /// Check if a phase has debug output enabled.
@@ -121,6 +150,119 @@ pub fn log(phase: Phase, comptime fmt: []const u8, args: anytype) void {
 pub fn logRaw(phase: Phase, comptime fmt: []const u8, args: anytype) void {
     if (!isEnabled(phase)) return;
     std.debug.print(fmt, args);
+}
+
+// ============================================================================
+// Function Tracing (Go's GOSSAFUNC pattern)
+// ============================================================================
+
+/// Trace a function through a pipeline phase.
+/// Prints SSA with full type information to identify issues quickly.
+pub fn tracePhase(func: *const ssa_func_mod.Func, phase_name: []const u8) void {
+    if (!shouldTrace(func.name)) return;
+
+    std.debug.print("\n┌─────────────────────────────────────────────────────────────────┐\n", .{});
+    std.debug.print("│ PHASE: {s:<55} │\n", .{phase_name});
+    std.debug.print("│ FUNC:  {s:<55} │\n", .{func.name});
+    std.debug.print("└─────────────────────────────────────────────────────────────────┘\n", .{});
+
+    // Print blocks with full value info
+    for (func.blocks.items) |b| {
+        std.debug.print("\n  b{d} ({s}):\n", .{ b.id, @tagName(b.kind) });
+
+        // Predecessors
+        if (b.preds.len > 0) {
+            std.debug.print("    preds: ", .{});
+            for (b.preds, 0..) |pred, i| {
+                if (i > 0) std.debug.print(", ", .{});
+                std.debug.print("b{d}", .{pred.b.id});
+            }
+            std.debug.print("\n", .{});
+        }
+
+        // Values with FULL type info - critical for debugging
+        for (b.values.items) |v| {
+            traceValue(v);
+        }
+
+        // Control values
+        if (b.numControls() > 0) {
+            std.debug.print("    control: ", .{});
+            for (b.controlValues(), 0..) |cv, i| {
+                if (i > 0) std.debug.print(", ", .{});
+                std.debug.print("v{d}", .{cv.id});
+            }
+            std.debug.print("\n", .{});
+        }
+
+        // Successors
+        if (b.succs.len > 0) {
+            std.debug.print("    succs: ", .{});
+            for (b.succs, 0..) |succ, i| {
+                if (i > 0) std.debug.print(", ", .{});
+                std.debug.print("b{d}", .{succ.b.id});
+            }
+            std.debug.print("\n", .{});
+        }
+    }
+
+    std.debug.print("\n", .{});
+}
+
+/// Trace a single value with complete type information.
+/// Format: v{id}: TYPE({size}B) = OP arg1, arg2 [aux] {uses}
+fn traceValue(v: *const @import("ssa/value.zig").Value) void {
+    const dead = if (v.uses == 0 and !v.hasSideEffects()) " [DEAD]" else "";
+    const type_name = TypeRegistry.basicTypeName(v.type_idx);
+    const size = TypeRegistry.basicTypeSize(v.type_idx);
+
+    // Symbol prefix by operation type for easier scanning
+    const op_prefix: []const u8 = switch (v.op) {
+        .static_call, .call => ">",
+        .arm64_ret, .x86_64_ret => "<",
+        .store => "v",
+        .load, .arg => "^",
+        .phi => "P",
+        .string_make, .slice_make => "+",
+        .select_n => "*",
+        .copy => "=",
+        else => " ",
+    };
+
+    std.debug.print("    {s} v{d}: {s}({d}B) = {s}", .{
+        op_prefix,
+        v.id,
+        type_name,
+        size,
+        @tagName(v.op),
+    });
+
+    // Arguments
+    if (v.args.len > 0) {
+        std.debug.print(" ", .{});
+        for (v.args, 0..) |arg, i| {
+            if (i > 0) std.debug.print(", ", .{});
+            const arg_type = TypeRegistry.basicTypeName(arg.type_idx);
+            std.debug.print("v{d}:{s}", .{ arg.id, arg_type });
+        }
+    }
+
+    // Auxiliary data
+    switch (v.aux) {
+        .none => {},
+        .string => |s| std.debug.print(" \"{s}\"", .{s}),
+        .symbol => |sym| std.debug.print(" @{*}", .{sym}),
+        .symbol_off => |so| std.debug.print(" @{*}+{d}", .{ so.sym, so.offset }),
+        .call => std.debug.print(" <call>", .{}),
+        .type_ref => |t| std.debug.print(" type({d})", .{t}),
+        .cond => |c| std.debug.print(" cond({s})", .{@tagName(c)}),
+    }
+
+    if (v.aux_int != 0) {
+        std.debug.print(" [{d}]", .{v.aux_int});
+    }
+
+    std.debug.print("{s} uses={d}\n", .{ dead, v.uses });
 }
 
 /// Pipeline debugger - outputs intermediate representations after each phase.
