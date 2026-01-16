@@ -1,0 +1,202 @@
+// Cot0 AST Tests
+// Tests for AST node creation and manipulation
+
+import "ast.cot"
+
+// Global test pool - avoid malloc complexity
+var g_nodes: [100]Node;
+var g_children: [500]i64;
+var g_pool: NodePool;
+
+fn init_test_pool() *NodePool {
+    g_pool.nodes = &g_nodes[0];
+    g_pool.count = 0;
+    g_pool.children = &g_children[0];
+    g_pool.children_count = 0;
+    return &g_pool;
+}
+
+fn reset_pool(pool: *NodePool) {
+    pool.count = 0;
+    pool.children_count = 0;
+}
+
+// Test 1: Create integer literal
+fn test_int_lit() i64 {
+    let pool: *NodePool = init_test_pool();
+
+    let idx: i64 = node_int_lit(pool, 42, 0, 2);
+
+    // Check node was created
+    if idx != 0 { return 1; }
+
+    // Check node kind
+    let n: *Node = node_get(pool, idx);
+    if n.kind != NodeKind.IntLit { return 2; }
+
+    // Check value
+    if n.field0 != 42 { return 3; }
+
+    return 0;
+}
+
+// Test 2: Create identifier
+fn test_ident() i64 {
+    let pool: *NodePool = init_test_pool();
+
+    let idx: i64 = node_ident(pool, 0, 3, 0, 3);  // "foo" at offset 0, length 3
+
+    if idx != 0 { return 1; }
+
+    let n: *Node = node_get(pool, idx);
+    if n.kind != NodeKind.Ident { return 2; }
+    if n.field0 != 0 { return 3; }  // name_start
+    if n.field1 != 3 { return 4; }  // name_len
+
+    return 0;
+}
+
+// Test 3: Create binary expression
+fn test_binary() i64 {
+    let pool: *NodePool = init_test_pool();
+
+    // Create operands
+    let left: i64 = node_int_lit(pool, 1, 0, 1);
+    let right: i64 = node_int_lit(pool, 2, 4, 5);
+
+    // Create binary add
+    let add_idx: i64 = node_binary(pool, BinaryOp.Add, left, right, 0, 5);
+
+    let n: *Node = node_get(pool, add_idx);
+    if n.kind != NodeKind.BinaryExpr { return 1; }
+    if n.field0 != left { return 2; }   // left operand
+    if n.field1 != right { return 3; }  // right operand
+    if n.field2 != 0 { return 4; }      // op = Add = 0
+
+    return 0;
+}
+
+// Test 4: Create return statement
+fn test_return() i64 {
+    let pool: *NodePool = init_test_pool();
+
+    let value: i64 = node_int_lit(pool, 42, 7, 9);
+    let ret_idx: i64 = node_return(pool, value, 0, 10);
+
+    let n: *Node = node_get(pool, ret_idx);
+    if n.kind != NodeKind.ReturnStmt { return 1; }
+    if n.field0 != value { return 2; }
+
+    return 0;
+}
+
+// Test 5: Create block statement with children array
+fn test_block() i64 {
+    let pool: *NodePool = init_test_pool();
+
+    // Create two statements
+    let val1: i64 = node_int_lit(pool, 1, 0, 1);
+    let val2: i64 = node_int_lit(pool, 2, 0, 1);
+    let stmt1: i64 = node_return(pool, val1, 0, 10);
+    let stmt2: i64 = node_return(pool, val2, 0, 10);
+
+    // Add to children array
+    let children_start: i64 = pool.children_count;
+    node_add_child(pool, stmt1);
+    node_add_child(pool, stmt2);
+
+    // Create block
+    let block_idx: i64 = node_block(pool, children_start, 2, 0, 20);
+
+    let n: *Node = node_get(pool, block_idx);
+    if n.kind != NodeKind.BlockStmt { return 1; }
+    if n.field0 != children_start { return 2; }
+    if n.field1 != 2 { return 3; }  // 2 statements
+
+    // Check children retrieval
+    let child0: i64 = node_child(pool, children_start, 0);
+    let child1: i64 = node_child(pool, children_start, 1);
+    if child0 != stmt1 { return 4; }
+    if child1 != stmt2 { return 5; }
+
+    return 0;
+}
+
+// Test 6: Node kind helpers
+fn test_kind_helpers() i64 {
+    if not is_expr(NodeKind.IntLit) { return 1; }
+    if not is_expr(NodeKind.Ident) { return 2; }
+    if not is_expr(NodeKind.BinaryExpr) { return 3; }
+    if not is_expr(NodeKind.CallExpr) { return 4; }
+
+    if is_expr(NodeKind.ReturnStmt) { return 5; }
+    if is_expr(NodeKind.BlockStmt) { return 6; }
+
+    if not is_stmt(NodeKind.ReturnStmt) { return 7; }
+    if not is_stmt(NodeKind.ExprStmt) { return 8; }
+    if not is_stmt(NodeKind.BlockStmt) { return 9; }
+
+    if is_stmt(NodeKind.IntLit) { return 10; }
+
+    if not is_decl(NodeKind.FnDecl) { return 11; }
+    if not is_decl(NodeKind.ParamDecl) { return 12; }
+    if is_decl(NodeKind.IntLit) { return 13; }
+
+    return 0;
+}
+
+// Test 7: Token to binop conversion
+fn test_token_to_binop() i64 {
+    if token_to_binop(TokenType.Plus) != 0 { return 1; }   // Add
+    if token_to_binop(TokenType.Minus) != 1 { return 2; }  // Sub
+    if token_to_binop(TokenType.Star) != 2 { return 3; }   // Mul
+    if token_to_binop(TokenType.Slash) != 3 { return 4; }  // Div
+    if token_to_binop(TokenType.Ident) != -1 { return 5; } // Not a binop
+
+    return 0;
+}
+
+fn main() i64 {
+    var failed: i64 = 0;
+
+    if test_int_lit() != 0 {
+        println("FAIL: test_int_lit");
+        failed = failed + 1;
+    }
+
+    if test_ident() != 0 {
+        println("FAIL: test_ident");
+        failed = failed + 1;
+    }
+
+    if test_binary() != 0 {
+        println("FAIL: test_binary");
+        failed = failed + 1;
+    }
+
+    if test_return() != 0 {
+        println("FAIL: test_return");
+        failed = failed + 1;
+    }
+
+    if test_block() != 0 {
+        println("FAIL: test_block");
+        failed = failed + 1;
+    }
+
+    if test_kind_helpers() != 0 {
+        println("FAIL: test_kind_helpers");
+        failed = failed + 1;
+    }
+
+    if test_token_to_binop() != 0 {
+        println("FAIL: test_token_to_binop");
+        failed = failed + 1;
+    }
+
+    if failed == 0 {
+        println("All 7 AST tests passed!");
+    }
+
+    return failed;
+}

@@ -197,7 +197,9 @@ pub const Lowerer = struct {
         }
 
         // Add as global (for non-constant or non-evaluatable constants)
-        const global = ir.Global.init(var_decl.name, type_idx, var_decl.is_const, var_decl.span);
+        // Compute actual type size for proper memory allocation
+        const type_size: u32 = @intCast(self.type_reg.sizeOf(type_idx));
+        const global = ir.Global.initWithSize(var_decl.name, type_idx, var_decl.is_const, var_decl.span, type_size);
         try self.builder.addGlobal(global);
     }
 
@@ -706,6 +708,17 @@ pub const Lowerer = struct {
                         _ = try fb.emitStoreLocalField(local_idx, field_idx, field_offset, value_node, assign.span);
                         return;
                     }
+
+                    // Try global variable (g_pool.field = value)
+                    if (self.builder.lookupGlobal(base_expr.ident.name)) |g| {
+                        // Get address of global struct
+                        const global_type = g.global.type_idx;
+                        const ptr_type = self.type_reg.makePointer(global_type) catch TypeRegistry.VOID;
+                        const global_addr = try fb.emitAddrGlobal(g.idx, base_expr.ident.name, ptr_type, assign.span);
+                        // Store to field at offset
+                        _ = try fb.emitStoreField(global_addr, field_idx, field_offset, value_node, assign.span);
+                        return;
+                    }
                 }
 
                 // Handle nested field access (e.g., o.inner.field = value)
@@ -1094,15 +1107,23 @@ pub const Lowerer = struct {
                     // Lower the index expression
                     const index_node = try self.lowerExprNode(idx.idx);
 
-                    // Check if base is a local variable
+                    // Check if base is a local or global variable
                     const base_node = self.tree.getNode(idx.base) orelse return ir.null_node;
                     const base_expr = base_node.asExpr() orelse return ir.null_node;
                     if (base_expr == .ident) {
+                        // Try local variable first
                         if (fb.lookupLocal(base_expr.ident.name)) |local_idx| {
                             // Get address of local array, then compute element address
                             const local_type = fb.locals.items[local_idx].type_idx;
                             const base_ptr_type = self.type_reg.makePointer(local_type) catch TypeRegistry.VOID;
                             const base_addr = try fb.emitAddrLocal(local_idx, base_ptr_type, addr.span);
+                            return try fb.emitAddrIndex(base_addr, index_node, elem_size, ptr_type, addr.span);
+                        }
+                        // Try global variable
+                        if (self.builder.lookupGlobal(base_expr.ident.name)) |g| {
+                            // Get address of global array, then compute element address
+                            const base_ptr_type = self.type_reg.makePointer(g.global.type_idx) catch TypeRegistry.VOID;
+                            const base_addr = try fb.emitAddrGlobal(g.idx, base_expr.ident.name, base_ptr_type, addr.span);
                             return try fb.emitAddrIndex(base_addr, index_node, elem_size, ptr_type, addr.span);
                         }
                     }
@@ -1113,12 +1134,89 @@ pub const Lowerer = struct {
 
                 // Handle &x - address of simple identifier
                 if (operand_expr == .ident) {
+                    // Try local variable first
                     if (fb.lookupLocal(operand_expr.ident.name)) |local_idx| {
                         const local_type = fb.locals.items[local_idx].type_idx;
                         const ptr_type = self.type_reg.makePointer(local_type) catch TypeRegistry.VOID;
                         return try fb.emitAddrLocal(local_idx, ptr_type, addr.span);
                     }
+                    // Try global variable
+                    if (self.builder.lookupGlobal(operand_expr.ident.name)) |g| {
+                        const ptr_type = self.type_reg.makePointer(g.global.type_idx) catch TypeRegistry.VOID;
+                        return try fb.emitAddrGlobal(g.idx, operand_expr.ident.name, ptr_type, addr.span);
+                    }
                 }
+
+                // Handle &local.field - address of struct field
+                if (operand_expr == .field_access) {
+                    const fa = operand_expr.field_access;
+                    // Get base (should be an identifier)
+                    const base_node = self.tree.getNode(fa.base) orelse return ir.null_node;
+                    const base_expr = base_node.asExpr() orelse return ir.null_node;
+
+                    if (base_expr == .ident) {
+                        // Try local variable
+                        if (fb.lookupLocal(base_expr.ident.name)) |local_idx| {
+                            const local_type = fb.locals.items[local_idx].type_idx;
+
+                            // Get field info
+                            const type_data = self.type_reg.get(local_type);
+                            if (type_data == .struct_type) {
+                                const struct_type = type_data.struct_type;
+                                // Find the field
+                                for (struct_type.fields) |field| {
+                                    if (std.mem.eql(u8, field.name, fa.field)) {
+                                        // Get pointer to local, then add field offset
+                                        // Result type is pointer to field type
+                                        const struct_ptr_type = self.type_reg.makePointer(local_type) catch TypeRegistry.VOID;
+                                        const local_addr = try fb.emitAddrLocal(local_idx, struct_ptr_type, addr.span);
+                                        const field_ptr_type = self.type_reg.makePointer(field.type_idx) catch TypeRegistry.VOID;
+                                        return try fb.emitAddrOffset(local_addr, @intCast(field.offset), field_ptr_type, addr.span);
+                                    }
+                                }
+                            }
+
+                            // Handle &ptr.field - pointer to struct case
+                            // Load the pointer, then add field offset
+                            if (type_data == .pointer) {
+                                const elem_type = self.type_reg.get(type_data.pointer.elem);
+                                if (elem_type == .struct_type) {
+                                    const struct_type = elem_type.struct_type;
+                                    for (struct_type.fields) |field| {
+                                        if (std.mem.eql(u8, field.name, fa.field)) {
+                                            // Load the pointer value from local
+                                            const ptr_val = try fb.emitLoadLocal(local_idx, local_type, addr.span);
+                                            // Add field offset
+                                            const field_ptr_type = self.type_reg.makePointer(field.type_idx) catch TypeRegistry.VOID;
+                                            return try fb.emitAddrOffset(ptr_val, @intCast(field.offset), field_ptr_type, addr.span);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Try global variable
+                        if (self.builder.lookupGlobal(base_expr.ident.name)) |g| {
+                            const global_type = g.global.type_idx;
+
+                            // Get field info
+                            const type_data = self.type_reg.get(global_type);
+                            if (type_data == .struct_type) {
+                                const struct_type = type_data.struct_type;
+                                // Find the field
+                                for (struct_type.fields) |field| {
+                                    if (std.mem.eql(u8, field.name, fa.field)) {
+                                        // Get pointer to global, then add field offset
+                                        const struct_ptr_type = self.type_reg.makePointer(global_type) catch TypeRegistry.VOID;
+                                        const global_addr = try fb.emitAddrGlobal(g.idx, base_expr.ident.name, struct_ptr_type, addr.span);
+                                        const field_ptr_type = self.type_reg.makePointer(field.type_idx) catch TypeRegistry.VOID;
+                                        return try fb.emitAddrOffset(global_addr, @intCast(field.offset), field_ptr_type, addr.span);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 return ir.null_node;
             },
             .deref => |d| {
@@ -1675,7 +1773,16 @@ pub const Lowerer = struct {
             const func_type = self.type_reg.get(sym.type_idx);
             if (func_type == .func) {
                 return_type = func_type.func.return_type;
+                debug.log(.lower, "lowerCall: '{s}' return_type={d} (size={d}B)", .{
+                    func_name,
+                    return_type,
+                    self.type_reg.sizeOf(return_type),
+                });
+            } else {
+                debug.log(.lower, "lowerCall: '{s}' found but not a func type", .{func_name});
             }
+        } else {
+            debug.log(.lower, "lowerCall: '{s}' NOT FOUND in scope", .{func_name});
         }
 
         // Direct call to named function

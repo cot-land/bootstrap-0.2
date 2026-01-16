@@ -1195,12 +1195,14 @@ pub const Checker = struct {
 
     /// Check struct initialization.
     fn checkStructInit(self: *Checker, si: ast.StructInit) CheckError!TypeIndex {
-        const sym = self.scope.lookup(si.type_name) orelse {
+        // Look up struct type in type registry (not scope - types are registered separately)
+        // Following Go's pattern: type names come from the type system, not the symbol table
+        const struct_type_idx = self.types.lookupBasic(si.type_name) orelse {
             self.errUndefined(si.span.start, si.type_name);
             return invalid_type;
         };
 
-        const struct_type = self.types.get(sym.type_idx);
+        const struct_type = self.types.get(struct_type_idx);
         switch (struct_type) {
             .struct_type => |st| {
                 for (si.fields) |field_init| {
@@ -1219,7 +1221,7 @@ pub const Checker = struct {
                         self.err.errorWithCode(field_init.span.start, .e301, "unknown field in struct initializer");
                     }
                 }
-                return sym.type_idx;
+                return struct_type_idx;
             },
             else => {
                 self.err.errorWithCode(si.span.start, .e300, "not a struct type");

@@ -107,17 +107,29 @@ pub const SSABuilder = struct {
         // With memory-based SSA, parameters need to be stored to their stack slots
         // so that load_local (which uses local_addr + load) can read them.
         //
-        // CRITICAL: Emit ALL arg ops FIRST, then ALL stores SECOND.
-        // This ensures arg registers (x0-x7) aren't overwritten by local_addr
-        // computations before we can store them.
+        // CRITICAL: Emit ALL arg ops FIRST, then slice_make ops, then stores.
+        // This ensures arg registers (x0-x7) aren't overwritten before being captured.
         //
-        // Phase 1: Create all arg values (captures values from ABI registers)
+        // BUG-010 FIX: Previously, string params created arg+arg+slice_make inline,
+        // causing slice_make to be emitted BEFORE subsequent arg ops. This allowed
+        // slice_make to clobber x2 before the pool arg (at x2) was captured.
+        //
+        // Now we use 3 phases:
+        // Phase 1: Create ALL arg ops (captures all ABI register values)
+        // Phase 2: Create slice_make ops for string params
+        // Phase 3: Store all params to stack slots
+        //
         // String/slice params take TWO registers (ptr + len), so we track the
         // physical register index separately from the logical param index.
         var param_values = std.ArrayListUnmanaged(*Value){};
         var param_indices = std.ArrayListUnmanaged(usize){};
         var phys_reg_idx: i32 = 0; // Physical register index (x0, x1, ...)
 
+        // Track string params separately so we can create slice_make after all args
+        var string_params = std.ArrayListUnmanaged(struct { ptr: *Value, len: *Value, idx: usize }){};
+        defer string_params.deinit(allocator);
+
+        // Phase 1: Create ALL arg ops first
         for (ir_func.locals, 0..) |local, i| {
             if (local.is_param) {
                 if (local.type_idx == TypeRegistry.STRING) {
@@ -134,14 +146,8 @@ pub const SSABuilder = struct {
                     try entry.addValue(allocator, len_val);
                     phys_reg_idx += 1;
 
-                    // Combine into slice_make to form the string
-                    const string_val = try func.newValue(.slice_make, TypeRegistry.STRING, entry, .{});
-                    string_val.addArg2(ptr_val, len_val);
-                    try entry.addValue(allocator, string_val);
-
-                    try param_values.append(allocator, string_val);
-                    try param_indices.append(allocator, i);
-                    try vars.put(@intCast(i), string_val);
+                    // Remember for Phase 2 - don't create slice_make yet!
+                    try string_params.append(allocator, .{ .ptr = ptr_val, .len = len_val, .idx = i });
                 } else {
                     // Regular parameter: single register
                     const param_val = try func.newValue(.arg, local.type_idx, entry, .{});
@@ -156,7 +162,18 @@ pub const SSABuilder = struct {
             }
         }
 
-        // Phase 2: Store all args to their stack slots
+        // Phase 2: Create slice_make ops for string params (AFTER all args are captured)
+        for (string_params.items) |sp| {
+            const string_val = try func.newValue(.slice_make, TypeRegistry.STRING, entry, .{});
+            string_val.addArg2(sp.ptr, sp.len);
+            try entry.addValue(allocator, string_val);
+
+            try param_values.append(allocator, string_val);
+            try param_indices.append(allocator, sp.idx);
+            try vars.put(@intCast(sp.idx), string_val);
+        }
+
+        // Phase 3: Store all args to their stack slots
         for (param_values.items, param_indices.items) |param_val, local_idx| {
             const local = ir_func.locals[local_idx];
 
@@ -717,15 +734,30 @@ pub const SSABuilder = struct {
                 const left = try self.convertNode(b.left) orelse return error.MissingValue;
                 const right = try self.convertNode(b.right) orelse return error.MissingValue;
 
-                // Check for pointer arithmetic (Go: OpAddPtr)
-                // If result type is pointer and op is add/sub, use add_ptr/sub_ptr
+                // Check for pointer arithmetic (Zig: ptr_add/ptr_sub with scaling)
+                // If result type is pointer and op is add/sub, scale offset by element size
                 const result_type = self.type_registry.get(node.type_idx);
                 if (result_type == .pointer and (b.op == .add or b.op == .sub)) {
                     const ptr_op: Op = if (b.op == .add) .add_ptr else .sub_ptr;
+
+                    // Get element size from pointer type (following Zig's analyzePtrArithmetic)
+                    const elem_type = result_type.pointer.elem;
+                    const elem_size = self.type_registry.sizeOf(elem_type);
+
+                    // Scale offset: offset_scaled = right * elem_size
+                    const size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                    size_val.aux_int = @intCast(elem_size);
+                    try cur.addValue(self.allocator, size_val);
+
+                    const scaled_offset = try self.func.newValue(.mul, TypeRegistry.I64, cur, .{});
+                    scaled_offset.addArg2(right, size_val);
+                    try cur.addValue(self.allocator, scaled_offset);
+
+                    // Now do pointer arithmetic with scaled offset
                     const val = try self.func.newValue(ptr_op, node.type_idx, cur, .{});
-                    val.addArg2(left, right);
+                    val.addArg2(left, scaled_offset);
                     try cur.addValue(self.allocator, val);
-                    debug.log(.ssa, "    n{} -> v{} {s} (ptr arith)", .{ node_idx, val.id, @tagName(ptr_op) });
+                    debug.log(.ssa, "    n{} -> v{} {s} (ptr arith, elem_size={d})", .{ node_idx, val.id, @tagName(ptr_op), elem_size });
                     break :blk val;
                 }
 
@@ -820,7 +852,10 @@ pub const SSABuilder = struct {
                 }
 
                 try cur.addValue(self.allocator, call_val);
-                debug.log(.ssa, "    n{} -> v{} call '{s}' with {} args", .{ node_idx, call_val.id, c.func_name, c.args.len });
+                const type_size = self.type_registry.sizeOf(node.type_idx);
+                debug.log(.ssa, "    n{} -> v{} call '{s}' with {} args, type_idx={}, size={}B", .{
+                    node_idx, call_val.id, c.func_name, c.args.len, node.type_idx, type_size,
+                });
                 break :blk call_val;
             },
 
@@ -848,6 +883,26 @@ pub const SSABuilder = struct {
                 const val = try self.func.newValue(.local_addr, node.type_idx, cur, .{});
                 val.aux_int = @intCast(l.local_idx);
                 try cur.addValue(self.allocator, val);
+                break :blk val;
+            },
+
+            .addr_global => |g| blk: {
+                // Get address of global variable - produces pointer to global
+                const val = try self.func.newValue(.global_addr, node.type_idx, cur, .{});
+                val.aux = .{ .string = g.name };
+                try cur.addValue(self.allocator, val);
+                debug.log(.ssa, "    n{} -> v{} addr_global '{s}'", .{ node_idx, val.id, g.name });
+                break :blk val;
+            },
+
+            .addr_offset => |ao| blk: {
+                // Address offset: base address + constant offset
+                const base_val = try self.convertNode(ao.base) orelse return error.MissingValue;
+                const val = try self.func.newValue(.off_ptr, node.type_idx, cur, .{});
+                val.addArg(base_val);
+                val.aux_int = ao.offset;
+                try cur.addValue(self.allocator, val);
+                debug.log(.ssa, "    n{} -> v{} addr_offset (base=v{}, offset={})", .{ node_idx, val.id, base_val.id, ao.offset });
                 break :blk val;
             },
 

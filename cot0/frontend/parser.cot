@@ -1,0 +1,512 @@
+// Cot0 Parser
+// Recursive descent parser with precedence climbing for expressions
+//
+// Design follows Go's cmd/compile/internal/syntax/parser.go patterns:
+// - Parser struct embeds scanner state
+// - Precedence climbing for binary expressions
+// - Helper functions got() and want() for token consumption
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/syntax/parser.go
+
+import "token.cot"
+import "scanner.cot"
+import "ast.cot"
+
+// ============================================================================
+// Parser Structure
+// ============================================================================
+
+struct Parser {
+    source: string,      // Source code being parsed
+    scanner: Scanner,    // Embedded scanner
+    current: Token,      // Current token
+    pool: *NodePool,     // AST node pool for allocation
+    had_error: bool,     // Error flag
+}
+
+// ============================================================================
+// Parser Initialization
+// ============================================================================
+
+fn parser_new(source: string, pool: *NodePool) Parser {
+    var p: Parser;
+    p.source = source;
+    p.scanner = scanner_new(source);
+    p.pool = pool;
+    p.had_error = false;
+    // Prime the parser with first token
+    p.current = scanner_next(&p.scanner);
+    return p;
+}
+
+// ============================================================================
+// Token Consumption Helpers (following Go's pattern)
+// ============================================================================
+
+// Advance to next token
+fn parser_advance(p: *Parser) {
+    p.current = scanner_next(&p.scanner);
+}
+
+// Check if current token matches expected type (don't consume)
+fn parser_check(p: *Parser, expected: TokenType) bool {
+    return p.current.kind == expected;
+}
+
+// Consume current token if it matches (returns true if consumed)
+fn parser_got(p: *Parser, expected: TokenType) bool {
+    if parser_check(p, expected) {
+        parser_advance(p);
+        return true;
+    }
+    return false;
+}
+
+// Require current token to match (error if not)
+fn parser_want(p: *Parser, expected: TokenType) bool {
+    if parser_got(p, expected) {
+        return true;
+    }
+    p.had_error = true;
+    return false;
+}
+
+// Check for end of file
+fn parser_at_end(p: *Parser) bool {
+    return p.current.kind == TokenType.Eof;
+}
+
+// ============================================================================
+// Operator Helpers
+// ============================================================================
+
+// Get precedence of current token (0 = none, 1 = +/-, 2 = *//)
+fn parser_prec(p: *Parser) i64 {
+    let kind: TokenType = p.current.kind;
+    if kind == TokenType.Plus  { return 1; }
+    if kind == TokenType.Minus { return 1; }
+    if kind == TokenType.Star  { return 2; }
+    if kind == TokenType.Slash { return 2; }
+    return 0;
+}
+
+// Get BinaryOp as i64 from current token
+fn parser_binop_int(p: *Parser) i64 {
+    let kind: TokenType = p.current.kind;
+    if kind == TokenType.Plus  { return 0; }  // Add
+    if kind == TokenType.Minus { return 1; }  // Sub
+    if kind == TokenType.Star  { return 2; }  // Mul
+    if kind == TokenType.Slash { return 3; }  // Div
+    return 0;  // Default
+}
+
+// ============================================================================
+// Primitive Expression Parsing
+// ============================================================================
+
+// Parse integer literal: 42
+fn parse_int_lit(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    let end: i64 = p.current.end;
+
+    // Parse the integer value from source
+    var value: i64 = 0;
+    var i: i64 = start;
+    while i < start + end {
+        let c: u8 = p.source[i];
+        if c >= 48 and c <= 57 {  // '0' - '9'
+            value = value * 10 + (c - 48);
+        }
+        i = i + 1;
+    }
+
+    parser_advance(p);
+    return node_int_lit(p.pool, value, start, start + end);
+}
+
+// Parse identifier: foo (not including call - that's handled separately)
+fn parse_ident_only(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    let length: i64 = p.current.end;
+    parser_advance(p);
+    return node_ident(p.pool, start, length, start, start + length);
+}
+
+// ============================================================================
+// Primary Expression Parsing (no recursion)
+// ============================================================================
+
+// Parse atom: int_lit | ident (without call or parens)
+fn parse_atom(p: *Parser) i64 {
+    let kind: TokenType = p.current.kind;
+
+    // Integer literal
+    if kind == TokenType.Int {
+        return parse_int_lit(p);
+    }
+
+    // Identifier
+    if kind == TokenType.Ident {
+        return parse_ident_only(p);
+    }
+
+    // Error - unexpected token
+    p.had_error = true;
+    return node_int_lit(p.pool, 0, 0, 0);  // Return dummy node
+}
+
+// ============================================================================
+// Helper to create binary node with int op
+// ============================================================================
+
+fn make_binary_node(p: *Parser, op_int: i64, left: i64, right: i64) i64 {
+    let left_node: *Node = node_get(p.pool, left);
+    let right_node: *Node = node_get(p.pool, right);
+    // Use direct enum values to avoid potential compiler issues with enum variables
+    if op_int == 0 {
+        return node_binary(p.pool, BinaryOp.Add, left, right, left_node.start, right_node.end);
+    }
+    if op_int == 1 {
+        return node_binary(p.pool, BinaryOp.Sub, left, right, left_node.start, right_node.end);
+    }
+    if op_int == 2 {
+        return node_binary(p.pool, BinaryOp.Mul, left, right, left_node.start, right_node.end);
+    }
+    if op_int == 3 {
+        return node_binary(p.pool, BinaryOp.Div, left, right, left_node.start, right_node.end);
+    }
+    return node_binary(p.pool, BinaryOp.Add, left, right, left_node.start, right_node.end);
+}
+
+// ============================================================================
+// Expression Parsing (with precedence climbing)
+// ============================================================================
+
+// Parse expression inside parens (inline to avoid recursion issues)
+fn parse_paren_inner(p: *Parser) i64 {
+    var inner: i64 = parse_atom(p);
+    var cur_prec: i64 = parser_prec(p);
+
+    // Continue with binary operators inside parens
+    while cur_prec > 0 {
+        var op1_int: i64 = parser_binop_int(p);
+        var op1_prec: i64 = cur_prec;
+        parser_advance(p);
+        var right1: i64 = parse_atom(p);
+
+        // Handle higher precedence on right
+        var right_prec: i64 = parser_prec(p);
+        while right_prec > op1_prec {
+            var op2_int: i64 = parser_binop_int(p);
+            parser_advance(p);
+            var right2: i64 = parse_atom(p);
+            right1 = make_binary_node(p, op2_int, right1, right2);
+            right_prec = parser_prec(p);
+        }
+
+        inner = make_binary_node(p, op1_int, inner, right1);
+        cur_prec = parser_prec(p);
+    }
+
+    return inner;
+}
+
+// Parse a single argument expression (inline)
+fn parse_arg_expr(p: *Parser) i64 {
+    var arg: i64 = parse_atom(p);
+    var arg_cur_prec: i64 = parser_prec(p);
+
+    while arg_cur_prec > 0 {
+        var arg_op_int: i64 = parser_binop_int(p);
+        var arg_op_prec: i64 = arg_cur_prec;
+        parser_advance(p);
+        var arg_right: i64 = parse_atom(p);
+
+        var arg_right_prec: i64 = parser_prec(p);
+        while arg_right_prec > arg_op_prec {
+            var arg_op2_int: i64 = parser_binop_int(p);
+            parser_advance(p);
+            var arg_right2: i64 = parse_atom(p);
+            arg_right = make_binary_node(p, arg_op2_int, arg_right, arg_right2);
+            arg_right_prec = parser_prec(p);
+        }
+
+        arg = make_binary_node(p, arg_op_int, arg, arg_right);
+        arg_cur_prec = parser_prec(p);
+    }
+
+    return arg;
+}
+
+// Parse unary/primary expression including calls and parens
+fn parse_unary(p: *Parser) i64 {
+    let kind: TokenType = p.current.kind;
+
+    // Parenthesized expression
+    if kind == TokenType.LParen {
+        parser_advance(p);
+        let inner: i64 = parse_paren_inner(p);
+        parser_want(p, TokenType.RParen);
+        return inner;
+    }
+
+    // Identifier - check for call
+    if kind == TokenType.Ident {
+        let ident: i64 = parse_ident_only(p);
+
+        // Check for function call
+        if parser_check(p, TokenType.LParen) {
+            let call_start: i64 = p.current.start;
+            parser_advance(p);  // Consume '('
+
+            // Record start of arguments in children array
+            let args_start: i64 = p.pool.children_count;
+            var args_count: i64 = 0;
+
+            // Parse argument list
+            if not parser_check(p, TokenType.RParen) {
+                // First argument
+                let first_arg: i64 = parse_arg_expr(p);
+                node_add_child(p.pool, first_arg);
+                args_count = args_count + 1;
+
+                // Additional arguments
+                while parser_got(p, TokenType.Comma) {
+                    let next_arg: i64 = parse_arg_expr(p);
+                    node_add_child(p.pool, next_arg);
+                    args_count = args_count + 1;
+                }
+            }
+
+            let end: i64 = p.current.start + p.current.end;
+            parser_want(p, TokenType.RParen);
+
+            return node_call(p.pool, ident, args_start, args_count, call_start, end);
+        }
+        return ident;
+    }
+
+    // Other atoms
+    return parse_atom(p);
+}
+
+// Parse binary expression with precedence climbing
+// Following Go's binaryExpr pattern from parser.go:865-882
+fn parse_binary_expr(p: *Parser, left: i64, min_prec: i64) i64 {
+    var x: i64 = left;
+    var bin_cur_prec: i64 = parser_prec(p);
+
+    // While current operator has higher precedence than minimum
+    while bin_cur_prec > min_prec {
+        var bin_op_int: i64 = parser_binop_int(p);
+        var bin_op_prec: i64 = bin_cur_prec;
+
+        parser_advance(p);  // Consume operator
+
+        // Parse right operand
+        var right: i64 = parse_unary(p);
+
+        // Handle higher-precedence operators on the right
+        right = parse_binary_expr(p, right, bin_op_prec);
+
+        // Create binary node
+        x = make_binary_node(p, bin_op_int, x, right);
+        bin_cur_prec = parser_prec(p);
+    }
+
+    return x;
+}
+
+// Parse any expression
+fn parse_expr(p: *Parser) i64 {
+    let left: i64 = parse_unary(p);
+    return parse_binary_expr(p, left, 0);
+}
+
+// ============================================================================
+// Statement Parsing
+// ============================================================================
+
+// Parse return statement: return expr;
+fn parse_return_stmt(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    parser_want(p, TokenType.Return);
+
+    // Optional return value
+    var value: i64 = -1;
+    if not parser_check(p, TokenType.Semi) {
+        value = parse_expr(p);
+    }
+
+    let end: i64 = p.current.start + p.current.end;
+    parser_want(p, TokenType.Semi);
+
+    return node_return(p.pool, value, start, end);
+}
+
+// Parse expression statement: expr;
+fn parse_expr_stmt(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    let expr: i64 = parse_expr(p);
+    let end: i64 = p.current.start + p.current.end;
+    parser_want(p, TokenType.Semi);
+    return node_expr_stmt(p.pool, expr, start, end);
+}
+
+// Parse a statement (dispatch based on token)
+fn parse_stmt(p: *Parser) i64 {
+    let kind: TokenType = p.current.kind;
+
+    if kind == TokenType.Return {
+        return parse_return_stmt(p);
+    }
+
+    // Default: expression statement
+    return parse_expr_stmt(p);
+}
+
+// Parse block: { stmt* }
+fn parse_block(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    parser_want(p, TokenType.LBrace);
+
+    // Record start of statements in children array
+    let stmts_start: i64 = p.pool.children_count;
+    var stmts_count: i64 = 0;
+
+    // Parse statements until '}'
+    while not parser_check(p, TokenType.RBrace) and not parser_at_end(p) {
+        let stmt: i64 = parse_stmt(p);
+        node_add_child(p.pool, stmt);
+        stmts_count = stmts_count + 1;
+    }
+
+    let end: i64 = p.current.start + p.current.end;
+    parser_want(p, TokenType.RBrace);
+
+    return node_block(p.pool, stmts_start, stmts_count, start, end);
+}
+
+// ============================================================================
+// Declaration Parsing
+// ============================================================================
+
+// Parse parameter: name: type
+fn parse_param(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+
+    // Parameter name
+    let name_start: i64 = p.current.start;
+    let name_len: i64 = p.current.end;
+    parser_want(p, TokenType.Ident);
+
+    // Colon
+    parser_want(p, TokenType.Colon);
+
+    // Type (i64 for now)
+    let type_start: i64 = p.current.start;
+    let type_len: i64 = p.current.end;
+    parser_want(p, TokenType.I64);
+
+    let end: i64 = type_start + type_len;
+    return node_param(p.pool, name_start, name_len, type_start, type_len, start, end);
+}
+
+// Parse function declaration: fn name(params) ret_type { body }
+fn parse_fn_decl(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    parser_want(p, TokenType.Fn);
+
+    // Function name
+    let name_start: i64 = p.current.start;
+    let name_len: i64 = p.current.end;
+    parser_want(p, TokenType.Ident);
+
+    // Parameters
+    parser_want(p, TokenType.LParen);
+    let params_start: i64 = p.pool.children_count;
+    var params_count: i64 = 0;
+
+    if not parser_check(p, TokenType.RParen) {
+        // First parameter
+        let param: i64 = parse_param(p);
+        node_add_child(p.pool, param);
+        params_count = params_count + 1;
+
+        // Additional parameters
+        while parser_got(p, TokenType.Comma) {
+            let next_param: i64 = parse_param(p);
+            node_add_child(p.pool, next_param);
+            params_count = params_count + 1;
+        }
+    }
+    parser_want(p, TokenType.RParen);
+
+    // Return type
+    let ret_type_start: i64 = p.current.start;
+    let ret_type_len: i64 = p.current.end;
+    parser_want(p, TokenType.I64);
+
+    // Body
+    let body: i64 = parse_block(p);
+
+    let end: i64 = p.current.start;
+
+    // Create function declaration node
+    let fn_idx: i64 = node_fn_decl(p.pool, name_start, name_len, params_start, params_count, ret_type_start, ret_type_len, body, start, end);
+
+    // Store body and ret_type info in children array for retrieval
+    node_add_child(p.pool, body);
+    node_add_child(p.pool, ret_type_start);
+    node_add_child(p.pool, ret_type_len);
+
+    return fn_idx;
+}
+
+// ============================================================================
+// Top-Level Parsing
+// ============================================================================
+
+// Parse a single top-level declaration
+fn parse_decl(p: *Parser) i64 {
+    if parser_check(p, TokenType.Fn) {
+        return parse_fn_decl(p);
+    }
+
+    // Error - unexpected token at top level
+    p.had_error = true;
+    parser_advance(p);  // Skip bad token
+    return -1;
+}
+
+// Parse entire file (list of declarations)
+fn parse_file(p: *Parser) i64 {
+    // Store declarations in children array
+    let decls_start: i64 = p.pool.children_count;
+    var decls_count: i64 = 0;
+
+    while not parser_at_end(p) {
+        let decl: i64 = parse_decl(p);
+        if decl != -1 {
+            node_add_child(p.pool, decl);
+            decls_count = decls_count + 1;
+        }
+    }
+
+    // Return a block node representing the file
+    return node_block(p.pool, decls_start, decls_count, 0, p.scanner.pos);
+}
+
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+// Get source text for a node (name, etc.)
+fn get_source_text(p: *Parser, start: i64, length: i64) string {
+    return @string(p.source.ptr + start, length);
+}
+
+// Check if parser encountered errors
+fn parser_had_error(p: *Parser) bool {
+    return p.had_error;
+}

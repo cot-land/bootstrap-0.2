@@ -453,15 +453,32 @@ pub const ARM64CodeGen = struct {
         var cur_hidden_offset: u32 = 0;
         for (f.blocks.items) |block| {
             for (block.values.items) |value| {
-                if (value.op == .static_call) {
+                if (value.op == .static_call or value.op == .closure_call) {
+                    // Check if this call uses hidden return
+                    // Method 1: aux_call knows about it
+                    // Method 2: return type > 16B (ARM64 ABI rule)
+                    var uses_hidden = false;
+                    var ret_size: u32 = 0;
+
                     if (value.aux_call) |aux_call| {
                         if (aux_call.usesHiddenReturn()) {
-                            const ret_size = aux_call.hiddenReturnSize();
-                            const aligned_size = (ret_size + 15) & ~@as(u32, 15); // 16-byte align
-                            try self.hidden_ret_offsets.put(self.allocator, value, cur_hidden_offset);
-                            debug.log(.codegen, "  Pre-allocated hidden return for call: offset={d}, size={d}", .{ cur_hidden_offset, aligned_size });
-                            cur_hidden_offset += aligned_size;
+                            uses_hidden = true;
+                            ret_size = aux_call.hiddenReturnSize();
                         }
+                    } else {
+                        // No aux_call - check type size directly
+                        const type_size = self.getTypeSize(value.type_idx);
+                        if (type_size > 16) {
+                            uses_hidden = true;
+                            ret_size = type_size;
+                        }
+                    }
+
+                    if (uses_hidden and ret_size > 0) {
+                        const aligned_size = (ret_size + 15) & ~@as(u32, 15); // 16-byte align
+                        try self.hidden_ret_offsets.put(self.allocator, value, cur_hidden_offset);
+                        debug.log(.codegen, "  Pre-allocated hidden return for call v{d}: offset={d}, size={d}", .{ value.id, cur_hidden_offset, aligned_size });
+                        cur_hidden_offset += aligned_size;
                     }
                 }
             }
@@ -1409,9 +1426,11 @@ pub const ARM64CodeGen = struct {
             // === String Operations (after expand_calls decomposition) ===
 
             .string_ptr => {
-                // string_ptr(ptr_val) -> copy ptr value to dest register
-                // After expand_calls refactor: arg is the actual ptr component value,
-                // NOT a slice_make. This ensures liveness is properly tracked.
+                // string_ptr(val) -> copy ptr value to dest register
+                //
+                // After architectural fix with expand_calls + applyDecRules:
+                // - string_ptr(string_make(ptr, len)) → copy(ptr)
+                // So this op should only see normal values now.
                 const args = value.args;
                 if (args.len >= 1) {
                     const ptr_val = args[0];
@@ -1430,9 +1449,11 @@ pub const ARM64CodeGen = struct {
             },
 
             .string_len => {
-                // string_len(len_val) -> copy len value to dest register
-                // After expand_calls refactor: arg is the actual len component value,
-                // NOT a slice_make. This ensures liveness is properly tracked.
+                // string_len(val) -> copy len value to dest register
+                //
+                // After architectural fix with expand_calls + applyDecRules:
+                // - string_len(string_make(ptr, len)) → copy(len)
+                // So this op should only see normal values now.
                 const args = value.args;
                 if (args.len >= 1) {
                     const len_val = args[0];
@@ -1472,28 +1493,31 @@ pub const ARM64CodeGen = struct {
 
             .select_n => {
                 // select_n(call, idx) -> extract the idx-th result from a multi-value call
-                // After expand_calls: idx=0 selects ptr, idx=1 selects len
-                // aux_int contains the index
+                //
+                // Following Go's architecture: select_n is created IMMEDIATELY after the call
+                // by expand_calls, so x0/x1 still have the return values.
+                // Regalloc tracks select_n as a normal SSA value.
                 //
                 // ARM64 ABI for 16-byte return (like string = ptr + len):
-                // - ptr returned in x0
-                // - len returned in x1, but saved to x8 immediately after call
-                //   (because x1 may be clobbered by subsequent operations)
-                // So: idx=0 → x0 (ptr), idx=1 → x8 (len saved from x1)
+                // - idx=0 → x0 (ptr)
+                // - idx=1 → x8 (len, saved from x1 by caller to avoid clobbering)
+                //
+                // The call (string_concat/static_call) saves x1 to x8 immediately after
+                // return, so select_n[1] reads from x8. This avoids the problem where
+                // regalloc assigns x1 to select_n[0], clobbering x1 before select_n[1].
                 const args = value.args;
                 if (args.len >= 1) {
                     const idx: u5 = @intCast(value.aux_int);
                     const dest_reg = self.getDestRegForValue(value);
 
-                    // Map result index to register:
-                    // idx=0 → x0 (ptr stays in x0)
-                    // idx=1 → x8 (len was saved from x1 to x8)
+                    // idx=0 → x0, idx=1 → x8 (saved from x1)
                     const src_reg: u5 = if (idx == 0) 0 else 8;
+
                     if (src_reg != dest_reg) {
                         try self.emit(asm_mod.encodeADDImm(dest_reg, src_reg, 0, 0)); // MOV dest, src
                     }
                     try self.value_regs.put(self.allocator, value, dest_reg);
-                    debug.log(.codegen, "      select_n idx={d} x{d} -> x{d}", .{ idx, src_reg, dest_reg });
+                    debug.log(.codegen, "      select_n[{d}] x{d} -> x{d}", .{ idx, src_reg, dest_reg });
                 }
             },
 
@@ -1508,7 +1532,7 @@ pub const ARM64CodeGen = struct {
 
                     // Get ABI info from AuxCall (attached by expand_calls pass)
                     // Reference: Go's regalloc.go regspec() which queries AuxCall.Reg()
-                    var fn_name: []const u8 = "___cot_str_concat";
+                    var fn_name: []const u8 = "__cot_str_concat";
                     if (value.aux_call) |aux_call| {
                         fn_name = aux_call.fn_name;
                         debug.log(.codegen, "      AuxCall: {s}", .{fn_name});
@@ -1575,11 +1599,11 @@ pub const ARM64CodeGen = struct {
                     try self.emit(asm_mod.encodeBL(0));
                     debug.log(.codegen, "      -> BL {s}", .{target_name});
 
-                    // Save len to x8 to avoid clobbering by subsequent operations.
-                    // Keep ptr in x0 - select_n idx=0 expects ptr in x0, idx=1 expects len in x8.
-                    // Reference: Go's ABI handling preserves result registers or saves them.
-                    try self.emit(asm_mod.encodeADDImm(8, 1, 0, 0)); // x8 = x1 (len)
-
+                    // Save x1 to x8 immediately after call.
+                    // This is necessary because regalloc might assign x1 to select_n[0],
+                    // which would clobber x1 before select_n[1] can read it.
+                    // select_n[1] reads from x8 instead of x1.
+                    try self.emit(asm_mod.encodeADDImm(8, 1, 0, 0)); // x8 = x1
                     try self.value_regs.put(self.allocator, value, 0);
                     debug.log(.codegen, "      Results: x0 (ptr), x1->x8 (len)", .{});
                 } else if (args.len >= 2) {
@@ -1951,8 +1975,11 @@ pub const ARM64CodeGen = struct {
                 // Go's pattern: pre-allocate space in frame rather than dynamic SP adjustment.
                 // This keeps local_addr SP-relative offsets stable.
                 if (self.hidden_ret_offsets.get(value)) |rel_offset| {
-                    const aux_call = value.aux_call.?;
-                    const ret_size = aux_call.hiddenReturnSize();
+                    // Get return size from aux_call if available, otherwise from type size
+                    const ret_size: u32 = if (value.aux_call) |aux_call|
+                        aux_call.hiddenReturnSize()
+                    else
+                        self.getTypeSize(value.type_idx);
 
                     // Compute frame-relative address for this call's hidden return area
                     // hidden_ret_frame_offset is the base (after locals), rel_offset is per-call
@@ -2004,22 +2031,15 @@ pub const ARM64CodeGen = struct {
                 // Emit BL with offset 0 (linker will fix)
                 try self.emit(asm_mod.encodeBL(0));
 
-                // BUG-003: For multi-value returns (16-byte types or SSA_RESULTS after expand_calls),
-                // save x1 to x8 immediately. The regalloc doesn't know x1 is also part of
-                // the result, so it may reuse x1 for subsequent values.
-                //
-                // After expand_calls, string-returning calls have type SSA_RESULTS.
-                // We detect this by checking:
-                // 1. type_size == 16 (original string/struct return)
-                // 2. type_idx == SSA_RESULTS (expanded multi-value return)
+                // For multi-value returns (16-byte types like strings), save x1 to x8.
+                // This is necessary because regalloc might assign x1 to select_n[0],
+                // which would clobber x1 before select_n[1] can read it.
+                // select_n[1] reads from x8 instead of x1.
                 const type_size = self.getTypeSize(value.type_idx);
                 const is_multi_value = (type_size == 16) or (value.type_idx == TypeRegistry.SSA_RESULTS);
-                debug.log(.codegen, "      BL check: type_size={d}, type_idx={d}, SSA_RESULTS={d}, is_multi={}", .{ type_size, value.type_idx, TypeRegistry.SSA_RESULTS, is_multi_value });
                 if (is_multi_value) {
-                    const save_inst = asm_mod.encodeADDImm(8, 1, 0, 0);
-                    debug.log(.codegen, "      EMITTING x8=x1 save: 0x{x}", .{save_inst});
-                    try self.emit(save_inst); // x8 = x1 (save second half)
-                    debug.log(.codegen, "      -> BL {s}, result in x0+x1, saved x1 to x8", .{raw_name});
+                    try self.emit(asm_mod.encodeADDImm(8, 1, 0, 0)); // x8 = x1
+                    debug.log(.codegen, "      -> BL {s}, result in x0+x1, x1->x8", .{raw_name});
                 } else {
                     debug.log(.codegen, "      -> BL {s}, result in x0", .{raw_name});
                 }
@@ -2220,15 +2240,42 @@ pub const ARM64CodeGen = struct {
                     const field_off: i64 = value.aux_int;
                     const dest_reg = self.getDestRegForValue(value);
 
-                    const base_reg = self.getRegForValue(base) orelse blk: {
-                        // Need to get base into a register first
-                        try self.ensureInReg(base, dest_reg);
-                        break :blk dest_reg;
-                    };
+                    // WORKAROUND: If base is local_addr and its register was clobbered,
+                    // regenerate it. This happens when regalloc reuses the register for
+                    // a load, but off_ptr still needs the original address.
+                    var base_reg: u5 = undefined;
+                    if (base.op == .local_addr) {
+                        // Regenerate local_addr directly - don't trust the cached register
+                        // because it may have been clobbered by a load that used the same register
+                        const local_idx: usize = @intCast(base.aux_int);
+                        if (local_idx < self.func.local_offsets.len) {
+                            const local_offset = self.func.local_offsets[local_idx];
+                            try self.emit(asm_mod.encodeADDImm(dest_reg, 31, @intCast(local_offset), 0));
+                            base_reg = dest_reg;
+                            debug.log(.codegen, "      -> ADD x{d}, SP, #{d} (regen local_addr {d})", .{ dest_reg, local_offset, local_idx });
+                        } else {
+                            // Fallback - shouldn't happen but be safe
+                            base_reg = self.getRegForValue(base) orelse blk: {
+                                try self.ensureInReg(base, dest_reg);
+                                break :blk dest_reg;
+                            };
+                        }
+                    } else {
+                        base_reg = self.getRegForValue(base) orelse blk: {
+                            // Need to get base into a register first
+                            try self.ensureInReg(base, dest_reg);
+                            break :blk dest_reg;
+                        };
+                    }
 
-                    // ADD Rd, Rn, #offset
-                    try self.emit(asm_mod.encodeADDImm(dest_reg, base_reg, @intCast(field_off), 0));
-                    debug.log(.codegen, "      -> ADD x{d}, x{d}, #{d} (off_ptr)", .{ dest_reg, base_reg, field_off });
+                    // ADD Rd, Rn, #offset (only if there's an actual offset to add)
+                    if (field_off != 0) {
+                        try self.emit(asm_mod.encodeADDImm(dest_reg, base_reg, @intCast(field_off), 0));
+                        debug.log(.codegen, "      -> ADD x{d}, x{d}, #{d} (off_ptr)", .{ dest_reg, base_reg, field_off });
+                    } else if (base_reg != dest_reg) {
+                        try self.emit(asm_mod.encodeADDImm(dest_reg, base_reg, 0, 0));
+                        debug.log(.codegen, "      -> ADD x{d}, x{d}, #0 (off_ptr copy)", .{ dest_reg, base_reg });
+                    }
                     try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
@@ -2489,6 +2536,104 @@ pub const ARM64CodeGen = struct {
 
                     debug.log(.codegen, "      -> CMP x{d}, #0; CSEL x{d}, x{d}, x{d}, NE", .{ cond_reg, dest_reg, then_reg, else_reg });
                     try self.value_regs.put(self.allocator, value, dest_reg);
+                }
+            },
+
+            // === Bulk Memory Copy (OpMove) ===
+            // Go reference: OpMove for non-SSA aggregates (>32 bytes)
+            // args[0] = dest addr, args[1] = src value (select_n), args[2] = mem (optional)
+            // aux_int = size in bytes
+            .move => {
+                if (value.args.len >= 2) {
+                    const dest_addr = value.args[0];
+                    const src_val = value.args[1]; // select_n from call result
+
+                    const type_size: u32 = @intCast(value.aux_int);
+
+                    // Get destination address register
+                    const dest_reg = self.getRegForValue(dest_addr) orelse blk: {
+                        const temp_reg = self.allocateReg();
+                        try self.ensureInReg(dest_addr, temp_reg);
+                        break :blk temp_reg;
+                    };
+
+                    // Resolve source address from hidden_ret_offsets
+                    // For >16B returns via hidden pointer, the result is at a frame offset
+                    //
+                    // CRITICAL: Regalloc may have rewritten the original call value to a
+                    // load_reg or copy. We need to trace back through passthrough ops
+                    // to find the original static_call/closure_call value.
+                    var src_reg: u5 = undefined;
+                    debug.log(.codegen, "      move: src_val v{d} op={s}", .{ src_val.id, @tagName(src_val.op) });
+
+                    // Trace back through passthrough ops to find original call
+                    var trace_val = src_val;
+                    var found_offset: ?u32 = null;
+                    var trace_count: u32 = 0;
+                    while (trace_count < 10) : (trace_count += 1) {
+                        // Try to find in hidden_ret_offsets
+                        if (self.hidden_ret_offsets.get(trace_val)) |rel_offset| {
+                            found_offset = rel_offset;
+                            debug.log(.codegen, "      move: found offset {d} at v{d} ({s})", .{ rel_offset, trace_val.id, @tagName(trace_val.op) });
+                            break;
+                        }
+
+                        // Trace through passthrough operations
+                        if (trace_val.op == .load_reg and trace_val.args.len > 0) {
+                            trace_val = trace_val.args[0];
+                        } else if (trace_val.op == .copy and trace_val.args.len > 0) {
+                            trace_val = trace_val.args[0];
+                        } else if (trace_val.op == .select_n and trace_val.args.len > 0) {
+                            trace_val = trace_val.args[0];
+                        } else {
+                            // Can't trace further
+                            break;
+                        }
+                    }
+
+                    if (found_offset) |rel_offset| {
+                        // Compute source address from frame offset into x19
+                        const frame_offset: u12 = @intCast(self.hidden_ret_frame_offset + rel_offset);
+                        try self.emit(asm_mod.encodeADDImm(19, 31, frame_offset, 0)); // x19 = SP + offset
+                        src_reg = 19;
+                        debug.log(.codegen, "      move: src at frame offset {d} -> x19", .{frame_offset});
+                    } else {
+                        // Fallback: use src_val's register (shouldn't happen for >16B)
+                        debug.log(.codegen, "      move: WARNING no hidden_ret_offset found, using register", .{});
+                        src_reg = self.getRegForValue(src_val) orelse blk: {
+                            const temp_reg = self.allocateReg();
+                            try self.ensureInReg(src_val, temp_reg);
+                            break :blk temp_reg;
+                        };
+                    }
+
+                    debug.log(.codegen, "      -> OpMove {d}B: [x{d}] <- [x{d}]", .{ type_size, dest_reg, src_reg });
+
+                    // Copy data in 16-byte chunks using LDP/STP
+                    // Use x16, x17 as temp registers (intra-procedure call scratch)
+                    var copy_off: u32 = 0;
+                    while (copy_off + 16 <= type_size) {
+                        const ldp_off: i7 = @intCast(@divExact(@as(i32, @intCast(copy_off)), 8));
+                        try self.emit(asm_mod.encodeLdpStp(16, 17, src_reg, ldp_off, .signed_offset, true)); // LDP
+                        try self.emit(asm_mod.encodeLdpStp(16, 17, dest_reg, ldp_off, .signed_offset, false)); // STP
+                        copy_off += 16;
+                    }
+                    // Handle remaining 8 bytes
+                    if (copy_off + 8 <= type_size) {
+                        const ldr_off: u12 = @intCast(@divExact(copy_off, 8));
+                        try self.emit(asm_mod.encodeLdrStr(16, src_reg, ldr_off, true)); // LDR
+                        try self.emit(asm_mod.encodeLdrStr(16, dest_reg, ldr_off, false)); // STR
+                        copy_off += 8;
+                    }
+                    // Handle remaining bytes one at a time
+                    while (copy_off < type_size) {
+                        const ld_size = asm_mod.LdStSize.byte;
+                        try self.emit(asm_mod.encodeLdrStrSized(16, src_reg, @intCast(copy_off), ld_size, true));
+                        try self.emit(asm_mod.encodeLdrStrSized(16, dest_reg, @intCast(copy_off), ld_size, false));
+                        copy_off += 1;
+                    }
+
+                    debug.log(.codegen, "      -> copied {d}B via OpMove", .{type_size});
                 }
             },
 

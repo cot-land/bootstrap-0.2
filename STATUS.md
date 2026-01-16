@@ -4,10 +4,31 @@
 
 ## Current State
 
-**145 e2e tests passing.** Core language features complete. Sprint 1 bugs fixed:
+**145 e2e tests passing.** Core language features complete.
+
+### Cot0 Self-Hosting Progress
+
+| Module | Status | Tests |
+|--------|--------|-------|
+| token.cot | ✅ Complete | N/A (data only) |
+| scanner.cot | ✅ Complete | 11/11 pass |
+| ast.cot | ✅ Complete | 7/7 pass |
+| parser.cot | 🔧 In Progress | Compiles, tests failing |
+
+### Recent Bug Fixes (2026-01-16)
+
+**Compiler Bugs Fixed:**
+- BUG-011: `off_ptr` register clobbering - When regalloc assigned the same register to both `local_addr` and a subsequent `load`, the `off_ptr` would use the clobbered value. Fix: `off_ptr` codegen now regenerates `local_addr` directly from `self.func.local_offsets` when the base is a `local_addr` op. ✅
+- BUG-010: `slice_make` clobbering arg registers - When a string param was followed by other params, `slice_make` was emitted BEFORE the subsequent `arg` ops. This allowed regalloc to assign `slice_make` to x2, overwriting the pool argument before it was captured. Fix: 3-phase param init - create ALL `arg` ops first, THEN `slice_make`, THEN stores. ✅
+- BUG-007: Struct literal type lookup - `checkStructInit` was using `scope.lookup()` instead of `types.lookupBasic()`. Types come from the type registry, not the symbol table. ✅
+- BUG-008: `&ptr.field` pattern - Added handling for address-of when base is pointer-to-struct (e.g., `&p.scanner` where `p: *Parser`) ✅
+- BUG-009: `addr_offset` IR node - Added `emitAddrOffset()` and SSA conversion for `off_ptr` ✅
+
+**Previous Bug Fixes:**
 - BUG-005: Logical NOT (EOR vs MVN for booleans) ✅
 - BUG-006: `not` keyword as synonym for `!` ✅
 - BUG-002: Struct literals (`Point{ .x = 10, .y = 20 }`) ✅
+- BUG-004: Large struct returns (>16B via hidden pointer) ✅
 - String indexing (`s[i]` returns u8) ✅
 - `len()` on field access (`len(s.source)`) ✅
 - `string_make` decomposition for SSA storage ✅
@@ -280,10 +301,12 @@ fn main() i64 {
 - ✅ `string_make` reassembles string from components
 
 **Implementation Notes:**
-- String concatenation requires the runtime library (`runtime/cot_runtime.c`)
+- String concatenation requires the runtime library (`runtime/cot_runtime.zig`)
 - The `expand_calls` pass (following Go's pattern) decomposes aggregate types
 - `__cot_str_concat(ptr1, len1, ptr2, len2)` returns `(ptr, len)` in `(x0, x1)`
-- After call, results saved to x8/x9 to avoid register clobbering by select_n
+- `expandCallResults()` creates `select_n[0]` (x0/ptr) and `select_n[1]` (x1/len) immediately after call
+- `string_make` aggregates the select_n values back into a string type
+- After BL, x1 is saved to x8 to prevent clobbering when select_n writes to x1
 
 **Runtime Library:**
 The compiler generates calls to `___cot_str_concat` which must be linked:

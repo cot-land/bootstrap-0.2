@@ -510,6 +510,8 @@ pub const Node = struct {
         func_addr: FuncAddr,
         /// Get address of local variable.
         addr_local: AddrLocal,
+        /// Get address of global variable.
+        addr_global: GlobalRef,
         /// Load value from local.
         load_local: LocalRef,
         /// Store value to local.
@@ -1044,6 +1046,16 @@ pub const FuncBuilder = struct {
         return self.emit(Node.init(.{ .addr_local = .{ .local_idx = local_idx } }, type_idx, span));
     }
 
+    /// Emit address of global variable.
+    pub fn emitAddrGlobal(self: *FuncBuilder, global_idx: GlobalIdx, name: []const u8, type_idx: TypeIndex, span: Span) !NodeIndex {
+        return self.emit(Node.init(.{ .addr_global = .{ .global_idx = global_idx, .name = name } }, type_idx, span));
+    }
+
+    /// Emit address offset (base address + constant offset).
+    pub fn emitAddrOffset(self: *FuncBuilder, base: NodeIndex, offset: i64, type_idx: TypeIndex, span: Span) !NodeIndex {
+        return self.emit(Node.init(.{ .addr_offset = .{ .base = base, .offset = offset } }, type_idx, span));
+    }
+
     /// Emit binary operation.
     pub fn emitBinary(self: *FuncBuilder, op: BinaryOp, left: NodeIndex, right: NodeIndex, type_idx: TypeIndex, span: Span) !NodeIndex {
         return self.emit(Node.init(.{ .binary = .{ .op = op, .left = left, .right = right } }, type_idx, span));
@@ -1262,6 +1274,16 @@ pub const Global = struct {
             .size = 8,
         };
     }
+
+    pub fn initWithSize(name: []const u8, type_idx: TypeIndex, is_const: bool, span: Span, size: u32) Global {
+        return .{
+            .name = name,
+            .type_idx = type_idx,
+            .is_const = is_const,
+            .span = span,
+            .size = size,
+        };
+    }
 };
 
 // ============================================================================
@@ -1458,6 +1480,7 @@ pub fn debugPrintNode(node: *const Node, writer: anytype) !void {
 
         .local_ref => |l| try writer.print("local_ref local={d}", .{l.local_idx}),
         .global_ref => |g| try writer.print("global_ref {s}", .{g.name}),
+        .addr_global => |g| try writer.print("addr_global {s}", .{g.name}),
         .func_addr => |f| try writer.print("func_addr {s}", .{f.name}),
         .addr_local => |l| try writer.print("addr_local local={d}", .{l.local_idx}),
         .load_local => |l| try writer.print("load_local local={d}", .{l.local_idx}),

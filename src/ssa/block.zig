@@ -315,6 +315,20 @@ pub const Block = struct {
         try self.values.append(allocator, v);
     }
 
+    /// Insert a value before another value in this block
+    pub fn insertValueBefore(self: *Block, allocator: std.mem.Allocator, new_val: *Value, before: *Value) !void {
+        new_val.block = self;
+        // Find the position of 'before'
+        for (self.values.items, 0..) |v, i| {
+            if (v == before) {
+                try self.values.insert(allocator, i, new_val);
+                return;
+            }
+        }
+        // If not found, append to end
+        try self.values.append(allocator, new_val);
+    }
+
     /// Format for debugging
     pub fn format(
         self: *const Block,

@@ -1,0 +1,341 @@
+// Cot0 AST Node Definitions
+// Minimal AST for: i64, arithmetic, functions, return
+//
+// Design follows Go's cmd/compile/internal/syntax patterns:
+// - Nodes identified by kind enum
+// - Expressions and statements distinguished by kind
+// - Functions store lists of parameters and body statements
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/syntax/nodes.go
+
+import "token.cot"
+
+// ============================================================================
+// Node Kinds
+// ============================================================================
+
+// NodeKind identifies what type of AST node this is.
+// Split into expressions (produce values) and statements (perform actions).
+enum NodeKind {
+    // Expressions (produce values)
+    IntLit,         // Integer literal: 42
+    Ident,          // Identifier: foo
+    BinaryExpr,     // Binary operation: a + b
+    CallExpr,       // Function call: add(1, 2)
+
+    // Statements (perform actions)
+    ReturnStmt,     // return expr;
+    ExprStmt,       // expression as statement: foo();
+    BlockStmt,      // { stmt; stmt; }
+
+    // Declarations
+    FnDecl,         // fn name(params) ret { body }
+    ParamDecl,      // name: type
+
+    // Special
+    BadNode,        // Error placeholder
+}
+
+// Binary operators for expressions
+enum BinaryOp {
+    Add,    // +
+    Sub,    // -
+    Mul,    // *
+    Div,    // /
+}
+
+// ============================================================================
+// Node Index (pool-based allocation)
+// ============================================================================
+
+// Node indices are i64 for simplicity. -1 = null/invalid.
+const NULL_NODE: i64 = -1;
+
+// ============================================================================
+// AST Node Structure
+// ============================================================================
+
+// Node is the universal AST node type.
+// Each node has a kind and kind-specific fields stored in a flat layout.
+// This mirrors Go's approach where each node type embeds a base node.
+struct Node {
+    kind: NodeKind,
+
+    // Source location (token start/end)
+    start: i64,
+    end: i64,
+
+    // Kind-specific fields (union-like, interpret based on kind)
+    // For IntLit: value is the integer value
+    // For Ident: name_start, name_len index into source
+    // For BinaryExpr: left, right are Node indices, op is BinaryOp
+    // For CallExpr: callee is Node index, args_start, args_count in args array
+    // For ReturnStmt: value is Node index (-1 if no value)
+    // For ExprStmt: value is Node index
+    // For BlockStmt: stmts_start, stmts_count in stmts array
+    // For FnDecl: name_start, name_len, params_start, params_count, ret_type, body
+    // For ParamDecl: name_start, name_len, type_start, type_len
+
+    // Generic fields (interpreted by kind)
+    field0: i64,    // Multi-purpose field 0
+    field1: i64,    // Multi-purpose field 1
+    field2: i64,    // Multi-purpose field 2
+    field3: i64,    // Multi-purpose field 3
+}
+
+// ============================================================================
+// Node Pool (arena allocation)
+// ============================================================================
+
+// Maximum nodes in a compilation unit
+const MAX_NODES: i64 = 10000;
+const MAX_CHILDREN: i64 = 50000;  // For args, stmts, params arrays
+
+struct NodePool {
+    nodes: *Node,           // Array of MAX_NODES nodes
+    count: i64,             // Current node count
+
+    // Child arrays (for storing lists of node indices)
+    children: *i64,         // Array of node indices for args/stmts/params
+    children_count: i64,
+}
+
+// ============================================================================
+// Node Constructors
+// ============================================================================
+
+// Create an integer literal node
+fn node_int_lit(pool: *NodePool, value: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.IntLit;
+    n.start = start;
+    n.end = end;
+    n.field0 = value;  // The integer value
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create an identifier node
+fn node_ident(pool: *NodePool, name_start: i64, name_len: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.Ident;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;  // Offset in source
+    n.field1 = name_len;    // Length of name
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a binary expression node
+fn node_binary(pool: *NodePool, op: BinaryOp, left: i64, right: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.BinaryExpr;
+    n.start = start;
+    n.end = end;
+    n.field0 = left;        // Left operand (node index)
+    n.field1 = right;       // Right operand (node index)
+    // Store op as integer - BinaryOp enum ordinal
+    if op == BinaryOp.Add { n.field2 = 0; }
+    if op == BinaryOp.Sub { n.field2 = 1; }
+    if op == BinaryOp.Mul { n.field2 = 2; }
+    if op == BinaryOp.Div { n.field2 = 3; }
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a function call node
+fn node_call(pool: *NodePool, callee: i64, args_start: i64, args_count: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.CallExpr;
+    n.start = start;
+    n.end = end;
+    n.field0 = callee;      // Callee node index
+    n.field1 = args_start;  // Start index in children array
+    n.field2 = args_count;  // Number of arguments
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a return statement node
+fn node_return(pool: *NodePool, value: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ReturnStmt;
+    n.start = start;
+    n.end = end;
+    n.field0 = value;       // Return value (-1 if void)
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create an expression statement node
+fn node_expr_stmt(pool: *NodePool, expr: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ExprStmt;
+    n.start = start;
+    n.end = end;
+    n.field0 = expr;        // Expression node index
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a block statement node
+fn node_block(pool: *NodePool, stmts_start: i64, stmts_count: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.BlockStmt;
+    n.start = start;
+    n.end = end;
+    n.field0 = stmts_start; // Start index in children array
+    n.field1 = stmts_count; // Number of statements
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a parameter declaration node
+fn node_param(pool: *NodePool, name_start: i64, name_len: i64, type_start: i64, type_len: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ParamDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;  // Parameter name offset
+    n.field1 = name_len;    // Parameter name length
+    n.field2 = type_start;  // Type name offset
+    n.field3 = type_len;    // Type name length
+
+    return idx;
+}
+
+// Create a function declaration node
+fn node_fn_decl(pool: *NodePool, name_start: i64, name_len: i64,
+                params_start: i64, params_count: i64,
+                ret_type_start: i64, ret_type_len: i64,
+                body: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.FnDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;      // Function name offset
+    n.field1 = name_len;        // Function name length
+    n.field2 = params_start;    // Start index in children array
+    n.field3 = params_count;    // Number of parameters
+
+    // Note: We need more fields for ret_type and body
+    // For now, store body in the next node slot (hacky but works for cot0)
+    // A real implementation would use a FnDecl-specific struct
+
+    return idx;
+}
+
+// ============================================================================
+// Node Accessors
+// ============================================================================
+
+// Get node at index
+fn node_get(pool: *NodePool, idx: i64) *Node {
+    return pool.nodes + idx;
+}
+
+// Check if node index is valid
+fn node_valid(idx: i64) bool {
+    return idx != NULL_NODE;
+}
+
+// Get child node index from children array
+fn node_child(pool: *NodePool, children_start: i64, offset: i64) i64 {
+    let ptr: *i64 = pool.children + children_start + offset;
+    return ptr.*;
+}
+
+// Add child node to children array
+fn node_add_child(pool: *NodePool, child_idx: i64) i64 {
+    let idx: i64 = pool.children_count;
+    let ptr: *i64 = pool.children + idx;
+    ptr.* = child_idx;
+    pool.children_count = pool.children_count + 1;
+    return idx;
+}
+
+// ============================================================================
+// Node Kind Helpers
+// ============================================================================
+
+fn is_expr(kind: NodeKind) bool {
+    return kind == NodeKind.IntLit or
+           kind == NodeKind.Ident or
+           kind == NodeKind.BinaryExpr or
+           kind == NodeKind.CallExpr;
+}
+
+fn is_stmt(kind: NodeKind) bool {
+    return kind == NodeKind.ReturnStmt or
+           kind == NodeKind.ExprStmt or
+           kind == NodeKind.BlockStmt;
+}
+
+fn is_decl(kind: NodeKind) bool {
+    return kind == NodeKind.FnDecl or
+           kind == NodeKind.ParamDecl;
+}
+
+// ============================================================================
+// BinaryOp Helpers
+// ============================================================================
+
+// Convert token to binary op (returns -1 if not a binary op token)
+fn token_to_binop(tok_kind: TokenType) i64 {
+    if tok_kind == TokenType.Plus  { return 0; }  // BinaryOp.Add
+    if tok_kind == TokenType.Minus { return 1; }  // BinaryOp.Sub
+    if tok_kind == TokenType.Star  { return 2; }  // BinaryOp.Mul
+    if tok_kind == TokenType.Slash { return 3; }  // BinaryOp.Div
+    return -1;
+}
+
+fn binop_from_int(val: i64) BinaryOp {
+    if val == 0 { return BinaryOp.Add; }
+    if val == 1 { return BinaryOp.Sub; }
+    if val == 2 { return BinaryOp.Mul; }
+    if val == 3 { return BinaryOp.Div; }
+    return BinaryOp.Add;  // Default (should not happen)
+}

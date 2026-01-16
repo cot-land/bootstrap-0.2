@@ -416,7 +416,16 @@ pub const Op = enum(u16) {
     // --- Memory Operations with Write Barrier (for GC) ---
     /// Store with write barrier (notifies GC)
     store_wb,
-    /// Memory copy: move(dst, src, mem) → mem. aux_int: size
+    /// Bulk memory copy for non-SSA aggregates.
+    /// Go reference: OpMove in opGen.go
+    ///
+    /// Args: [dest_addr, src_addr, mem]
+    /// aux_int: size in bytes to copy
+    /// Returns: new memory state
+    ///
+    /// Used by expand_calls for types that fail CanSSA (>32 bytes).
+    /// These types cannot be loaded into registers, so we copy
+    /// them directly in memory using LDP/STP loops.
     move,
     /// Zero memory: zero(ptr, mem) → mem. aux_int: size
     zero,

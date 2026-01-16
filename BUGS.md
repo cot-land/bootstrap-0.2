@@ -35,7 +35,130 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
-(No open bugs blocking cot0 scanner.cot)
+### BUG-009: Pointer arithmetic not scaling by element size (DESIGN ISSUE)
+
+**Status:** Open - NEEDS DESIGN REVIEW
+**Priority:** P0 (blocking cot0 ast_test.cot)
+**Discovered:** 2026-01-16
+
+**Description:**
+Expression `pool.nodes + idx` (where `pool.nodes` is `*Node` and `idx` is `i64`) produces incorrect address. The `add_ptr` SSA operation receives raw index instead of `idx * sizeof(Node)`.
+
+**Test Case:** `cot0/frontend/ast_test.cot`
+```cot
+let n: *Node = pool.nodes + idx;  // Crashes - wrong address calculation
+```
+
+**SSA Output Shows:**
+```
+v32: composite(8B) = load v31 : uses=1       // loads pool.nodes (pointer)
+v34: i64(8B) = load v33 : uses=1             // loads idx (raw integer)
+v35: composite(8B) = add_ptr v32, v34        // ptr + idx (NOT scaled!)
+```
+
+**CRITICAL DESIGN QUESTION:**
+
+Go does NOT support C-style pointer arithmetic:
+```go
+// NOT ALLOWED in Go:
+ptr := &arr[0]
+ptr = ptr + 1  // COMPILE ERROR - can't add to pointer
+
+// REQUIRED in Go:
+elem := arr[i]      // Index into array
+elem := slice[i]    // Index into slice
+ptr := &arr[i]      // Address of element
+```
+
+**Options:**
+
+**Option A: Follow Go strictly (RECOMMENDED)**
+- Make `ptr + int` a compile error
+- Require `&arr[idx]` for address of element
+- Require `ptr[idx]` or `ptr.*` for dereferencing
+- Pros: Safer, simpler, matches Go, avoids this entire class of bugs
+- Cons: Less flexible for unsafe low-level code
+
+**Option B: Support C-style pointer arithmetic**
+- `ptr + int` scales by element size
+- Requires tracking pointee type in binary operations
+- Need to modify: checker.zig, lower.zig, ssa_builder.zig
+- Pros: More flexible
+- Cons: Complex, error-prone, NOT Go-like, high bug surface
+
+**Recommendation:** Follow Go. The code in ast_test.cot should be rewritten:
+```cot
+// BEFORE (C-style):
+let n: *Node = pool.nodes + idx;
+
+// AFTER (Go-style):
+// But wait - pool.nodes is *Node, not []Node!
+// In Go, you can't index a raw pointer.
+// Design needs to use slices or array pointers properly.
+```
+
+**Go Source Evidence:**
+
+From `~/learning/go/src/cmd/compile/internal/typecheck/universe.go:100-130`:
+```go
+// okforarith is ONLY set for:
+// - Integer types (IsInt)
+// - Float types (IsFloat)
+// - Complex types (IsComplex)
+// POINTERS ARE NOT INCLUDED
+```
+
+From `~/learning/go/src/cmd/compile/internal/typecheck/universe.go:183`:
+```go
+okfor[ir.OSUB] = okforarith[:]  // SUB only works on arithmetic types
+okfor[ir.OADD] = okforadd[:]    // ADD only works on addable types (no pointers!)
+```
+
+**Conclusion:** Go explicitly does NOT allow `ptr + int` - it's a type error.
+
+**Decision (Follow Go):**
+1. Add compile error in `checker.zig` for `ptr + int` operations
+2. Update SYNTAX.md to document that pointer arithmetic is not supported
+3. Rewrite ast_test.cot to use proper Go-style patterns
+
+**ast_test.cot Fix:**
+```cot
+// BEFORE (C-style - should be compile error):
+let n: *Node = pool.nodes + idx;
+
+// AFTER (Go-style option 1 - use array/slice with address-of):
+// Change pool.nodes from *Node to []Node slice
+// let n: *Node = &pool.nodes[idx];
+
+// AFTER (Go-style option 2 - use proper function):
+fn node_get(pool: *NodePool, idx: i64) *Node {
+    // Internal implementation can use addr_index which scales properly
+}
+```
+
+---
+
+### BUG-008: Missing `addr_global` IR node (FIXED)
+
+**Status:** Fixed
+**Priority:** P0 (was blocking cot0 ast_test.cot)
+**Discovered:** 2026-01-16
+**Fixed:** 2026-01-16
+
+**Description:**
+`&g_pool` (address of global variable) returned `ir.null_node`, causing SSA builder panic with "index out of bounds: 4294967295".
+
+**Root Cause:**
+IR layer had `addr_local` for taking address of local variables, but no equivalent for globals.
+
+**Fix:**
+1. `src/frontend/ir.zig` - Added `addr_global: GlobalRef` to Node union
+2. `src/frontend/ir.zig` - Added `emitAddrGlobal()` to FuncBuilder
+3. `src/frontend/ssa_builder.zig` - Added `.addr_global` case producing `.global_addr` SSA op
+4. `src/frontend/lower.zig` - Added global lookup in `&x` handling (lines 1122-1126)
+5. `src/frontend/lower.zig` - Added global lookup in `&arr[idx]` handling (lines 1109-1115)
+
+---
 
 ---
 

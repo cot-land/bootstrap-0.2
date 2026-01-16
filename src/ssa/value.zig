@@ -36,11 +36,76 @@ const std = @import("std");
 const types = @import("../core/types.zig");
 const Op = @import("op.zig").Op;
 const abi = @import("abi.zig");
+const TypeRegistry = @import("../frontend/types.zig").TypeRegistry;
 
 const ID = types.ID;
 const TypeIndex = types.TypeIndex;
 const Pos = types.Pos;
 const INVALID_ID = types.INVALID_ID;
+
+// ============================================================================
+// SSA Size Limits (Go reference: cmd/compile/internal/ssa/decompose.go:408)
+// ============================================================================
+
+/// Maximum number of fields for SSA-able struct.
+/// Go: MaxStruct = 4
+pub const MAX_STRUCT_FIELDS: usize = 4;
+
+/// Maximum size (bytes) for SSA-able type.
+/// Go: sizeLimit = MaxStruct * types.PtrSize = 4 * 8 = 32
+pub const MAX_SSA_SIZE: u32 = MAX_STRUCT_FIELDS * 8;
+
+/// Check if a type can be represented as an SSA Value.
+///
+/// Go reference: cmd/compile/internal/ssa/value.go:614
+///
+/// Returns false for:
+/// - Types > 32 bytes
+/// - Structs with > 4 fields
+/// - Structs containing non-SSA fields (recursive check)
+/// - Arrays with > 1 element
+///
+/// This is critical for expand_calls: types that fail CanSSA
+/// must be handled via OpMove (bulk memory copy), not decomposition.
+pub fn canSSA(type_idx: TypeIndex, type_reg: *const TypeRegistry) bool {
+    // Basic types always SSA-able
+    if (type_idx < TypeRegistry.FIRST_USER_TYPE) {
+        const size = TypeRegistry.basicTypeSize(type_idx);
+        return size <= MAX_SSA_SIZE;
+    }
+
+    // Check size limit first
+    const size = type_reg.sizeOf(type_idx);
+    if (size > MAX_SSA_SIZE) {
+        return false;
+    }
+
+    // Check type-specific constraints
+    const t = type_reg.get(type_idx);
+    switch (t) {
+        .struct_type => |st| {
+            // Too many fields
+            if (st.fields.len > MAX_STRUCT_FIELDS) {
+                return false;
+            }
+            // Check each field recursively
+            for (st.fields) |field| {
+                if (!canSSA(field.type_idx, type_reg)) {
+                    return false;
+                }
+            }
+            return true;
+        },
+        .array => |at| {
+            // Go: arrays with > 1 element can't be SSA'd (dynamic indexing)
+            if (at.length > 1) {
+                return false;
+            }
+            return canSSA(at.elem, type_reg);
+        },
+        else => return true,
+    }
+}
 
 /// Symbol with offset - used for addressing modes.
 /// Go reference: cmd/compile/internal/ssa/value.go auxSymOff
