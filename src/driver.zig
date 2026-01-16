@@ -30,6 +30,7 @@ const regalloc_mod = @import("ssa/regalloc.zig");
 const stackalloc_mod = @import("ssa/stackalloc.zig");
 const expand_calls = @import("ssa/passes/expand_calls.zig");
 const decompose = @import("ssa/passes/decompose.zig");
+const schedule = @import("ssa/passes/schedule.zig");
 
 // Debug infrastructure
 const pipeline_debug = @import("pipeline_debug.zig");
@@ -412,7 +413,21 @@ pub const Driver = struct {
             // COT_TRACE: Dump SSA after decompose
             pipeline_debug.tracePhase(ssa_func, "Decompose (16-byte → 8-byte)");
 
-            // Phase 4b: Register allocation (includes liveness)
+            // Phase 4b: Schedule pass (Go's pattern: schedule BEFORE regalloc)
+            // Go reference: cmd/compile/internal/ssa/schedule.go
+            debug.log(.schedule, "Starting schedule pass...", .{});
+            schedule.schedule(ssa_func) catch |e| {
+                debug.log(.schedule, "Schedule failed: {}", .{e});
+                ssa_func.deinit();
+                self.allocator.destroy(ssa_func);
+                ssa_builder.deinit();
+                return e;
+            };
+            debug.log(.schedule, "Schedule complete", .{});
+            self.debug.afterSSA(ssa_func, "schedule");
+            pipeline_debug.tracePhase(ssa_func, "Schedule (value ordering)");
+
+            // Phase 4c: Register allocation (includes liveness)
             debug.log(.regalloc, "Starting register allocation...", .{});
             var regalloc_state = regalloc_mod.regalloc(self.allocator, ssa_func) catch |e| {
                 debug.log(.regalloc, "Regalloc failed: {}", .{e});

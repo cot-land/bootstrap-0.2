@@ -40,6 +40,7 @@ pub const DebugPhases = struct {
     check: bool = false,
     lower: bool = false,
     ssa: bool = false,
+    schedule: bool = false,
     regalloc: bool = false,
     codegen: bool = false,
     strings: bool = false,
@@ -62,6 +63,7 @@ pub const DebugPhases = struct {
             if (std.mem.eql(u8, trimmed, "check")) result.check = true;
             if (std.mem.eql(u8, trimmed, "lower")) result.lower = true;
             if (std.mem.eql(u8, trimmed, "ssa")) result.ssa = true;
+            if (std.mem.eql(u8, trimmed, "schedule")) result.schedule = true;
             if (std.mem.eql(u8, trimmed, "regalloc")) result.regalloc = true;
             if (std.mem.eql(u8, trimmed, "codegen")) result.codegen = true;
             if (std.mem.eql(u8, trimmed, "strings")) result.strings = true;
@@ -77,6 +79,7 @@ pub const DebugPhases = struct {
             .check => self.check,
             .lower => self.lower,
             .ssa => self.ssa,
+            .schedule => self.schedule,
             .regalloc => self.regalloc,
             .codegen => self.codegen,
             .strings => self.strings,
@@ -90,6 +93,7 @@ pub const Phase = enum {
     check,
     lower,
     ssa,
+    schedule, // Value scheduling before regalloc
     regalloc,
     codegen,
     strings, // String literal handling through the pipeline
