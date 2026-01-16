@@ -2,7 +2,7 @@
 // COT END-TO-END TEST SUITE
 // ============================================================================
 //
-// Progress: 145 / 145 tests passing
+// Progress: 160 / 160 tests passing
 //
 // ============================================================================
 // STATUS TRACKER
@@ -83,7 +83,9 @@
 //   [x] test_logical_or_true_first - logical OR short-circuit
 //   [x] test_logical_or_true_second - logical OR second true
 //   [x] test_logical_and_chain - chained AND
-//   [x] test_logical_or_chain - chained OR
+//   [x] test_logical_or_chain - chained OR (one true)
+//   [x] test_logical_or_chain_all_false - chained OR 3 conditions all false (BUG-015)
+//   [x] test_logical_or_chain_4_false - chained OR 4 conditions all false
 //   [x] test_enum_first - enum first variant
 //   [x] test_enum_second - enum second variant
 //   [x] test_enum_third - enum third variant
@@ -883,12 +885,32 @@ fn test_logical_and_chain() i64 {
     return 0;
 }
 
-// Test chained OR
+// Test chained OR (one true)
 fn test_logical_or_chain() i64 {
     if 1 == 2 or 2 == 3 or 3 == 3 {
         return 42;
     }
     return 0;
+}
+
+// Test chained OR with 3 conditions ALL false (BUG-015 regression test)
+fn test_logical_or_chain_all_false() i64 {
+    let x: i64 = 100;
+    // All conditions are false, should NOT enter the if block
+    if x == 1 or x == 2 or x == 3 {
+        return 0;  // Wrong!
+    }
+    return 42;
+}
+
+// Test chained OR with 4 conditions ALL false
+fn test_logical_or_chain_4_false() i64 {
+    let c: i64 = 65;  // 'A'
+    // Simulates scanner's skip_whitespace: c == 32 or c == 9 or c == 10 or c == 13
+    if c == 32 or c == 9 or c == 10 or c == 13 {
+        return 0;  // Wrong! 'A' is not whitespace
+    }
+    return 42;
 }
 
 // ============================================================================
@@ -1939,6 +1961,8 @@ fn main() i64 {
     if test_logical_or_true_second() != 42 { println("FAIL: test_logical_or_true_second"); failed += 1; }
     if test_logical_and_chain() != 42 { println("FAIL: test_logical_and_chain"); failed += 1; }
     if test_logical_or_chain() != 42 { println("FAIL: test_logical_or_chain"); failed += 1; }
+    if test_logical_or_chain_all_false() != 42 { println("FAIL: test_logical_or_chain_all_false"); failed += 1; }
+    if test_logical_or_chain_4_false() != 42 { println("FAIL: test_logical_or_chain_4_false"); failed += 1; }
 
     // TIER 13: Enums
     if test_enum_first() != 42 { println("FAIL: test_enum_first"); failed += 1; }
@@ -2074,7 +2098,7 @@ fn main() i64 {
 
     // Summary
     if failed == 0 {
-        println("All 158 tests passed!");
+        println("All 160 tests passed!");
     }
 
     return failed;

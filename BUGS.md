@@ -129,6 +129,72 @@ Added `lowerSwitchStatement()` that creates proper control flow:
 
 ---
 
+### BUG-015: Chained logical OR with 3+ conditions always evaluates to true (FIXED)
+
+**Status:** Fixed
+**Priority:** P0
+**Discovered:** 2026-01-16
+**Fixed:** 2026-01-16
+
+**Description:**
+Logical OR expressions with 3 or more conditions incorrectly evaluate to true even when all conditions are false. For example:
+```cot
+let x: i64 = 100;
+if x == 1 or x == 2 or x == 3 {  // Should be false, but evaluates to true!
+    return 2;
+}
+```
+
+This bug caused the scanner's `skip_whitespace` function (which uses `c == 32 or c == 9 or c == 10 or c == 13`) to incorrectly skip over non-whitespace characters, breaking all parser tests.
+
+**Root Cause:**
+The IR processing loop evaluates all nodes in a flat list, including operands of logical OR/AND. For `(x == 1 or x == 2) or x == 3`:
+1. The IR has nodes for `x == 1`, `x == 2`, `x == 3` followed by the OR nodes
+2. The loop evaluates ALL comparison nodes in the current block before reaching the OR
+3. When `convertLogicalOp` creates `eval_right_block` for the right operand, the values are already cached from the wrong block
+4. The cached values (in wrong block) are used instead of creating new values in the correct control flow block
+
+The result is that values for `x == 3` are evaluated in the merge block of the inner OR rather than in the outer OR's eval_right_block.
+
+**Go Reference:**
+Go (`ssagen/ssa.go:3398-3442`) uses a variable-based approach for logical ops:
+```go
+case ir.OANDAND, ir.OOROR:
+    // Store left in variable, conditionally evaluate right
+    el := s.expr(n.X)
+    s.vars[n] = el
+    // ... control flow ...
+    er := s.expr(n.Y)
+    s.vars[n] = er
+    return s.variable(n, ...)  // Creates phi automatically
+```
+Go doesn't have the pre-evaluation problem because it evaluates expressions on-demand.
+
+**Fix:**
+`src/frontend/ssa_builder.zig` - Pre-scan IR to identify nodes that are operands of logical ops, then skip them in the main loop:
+```zig
+// Pre-scan: mark nodes that are operands of logical ops
+var logical_operands = std.AutoHashMapUnmanaged(ir.NodeIndex, void){};
+for (ir_blocks) |block| {
+    for (block.nodes) |node_idx| {
+        if (node.data == .binary and b.op.isLogical()) {
+            try self.markLogicalOperands(b.left, &logical_operands);
+            try self.markLogicalOperands(b.right, &logical_operands);
+        }
+    }
+}
+
+// Main loop: skip operands of logical ops
+for (ir_block.nodes) |node_idx| {
+    if (logical_operands.contains(node_idx)) continue;
+    _ = try self.convertNode(node_idx);
+}
+```
+
+This ensures operands of logical ops are only evaluated by `convertLogicalOp` in the correct SSA block.
+
+---
+
 ## Fixed Bugs
 
 ### BUG-012: `ptr.*.field` loads entire struct instead of field (FIXED)

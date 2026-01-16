@@ -379,6 +379,25 @@ pub const SSABuilder = struct {
             debug.log(.ssa, "  Copied {} string literals for codegen", .{self.ir_func.string_literals.len});
         }
 
+        // Pre-scan: identify nodes that are operands of logical ops.
+        // These nodes should NOT be processed in the main loop - they'll be
+        // evaluated by convertLogicalOp in the correct SSA block.
+        var logical_operands = std.AutoHashMapUnmanaged(ir.NodeIndex, void){};
+        defer logical_operands.deinit(self.allocator);
+        for (self.ir_func.blocks) |ir_block| {
+            for (ir_block.nodes) |node_idx| {
+                const node = self.ir_func.getNode(node_idx);
+                if (node.data == .binary) {
+                    const b = node.data.binary;
+                    if (b.op.isLogical()) {
+                        // Mark ALL transitive operands as "handled by logical op"
+                        try self.markLogicalOperands(b.left, &logical_operands);
+                        try self.markLogicalOperands(b.right, &logical_operands);
+                    }
+                }
+            }
+        }
+
         // Walk all IR blocks in order
         for (self.ir_func.blocks, 0..) |ir_block, i| {
             debug.log(.ssa, "  Processing IR block {}, {} nodes", .{ i, ir_block.nodes.len });
@@ -391,8 +410,13 @@ pub const SSABuilder = struct {
                 self.startBlock(ssa_block_ptr);
             }
 
-            // Convert all nodes in this block
+            // Convert all nodes in this block, EXCEPT those that are operands
+            // of logical ops (they'll be evaluated by convertLogicalOp)
             for (ir_block.nodes) |node_idx| {
+                if (logical_operands.contains(node_idx)) {
+                    // Skip - this will be evaluated by convertLogicalOp
+                    continue;
+                }
                 _ = try self.convertNode(node_idx);
             }
 
@@ -1795,8 +1819,244 @@ pub const SSABuilder = struct {
     }
 
     // ========================================================================
+    // Helper: Mark Logical Operands for Pre-scan
+    // ========================================================================
+
+    /// Recursively mark all nodes in the subtree as logical operands.
+    /// These nodes will be skipped in the main IR processing loop since
+    /// they'll be evaluated by convertLogicalOp in the correct SSA block.
+    fn markLogicalOperands(self: *SSABuilder, node_idx: ir.NodeIndex, set: *std.AutoHashMapUnmanaged(ir.NodeIndex, void)) !void {
+        // Mark this node
+        try set.put(self.allocator, node_idx, {});
+
+        // Recursively mark sub-nodes
+        const node = self.ir_func.getNode(node_idx);
+        switch (node.data) {
+            .binary => |bin| {
+                try self.markLogicalOperands(bin.left, set);
+                try self.markLogicalOperands(bin.right, set);
+            },
+            .unary => |u| {
+                try self.markLogicalOperands(u.operand, set);
+            },
+            .convert => |c| {
+                try self.markLogicalOperands(c.operand, set);
+            },
+            .index_local => |i| {
+                try self.markLogicalOperands(i.index, set);
+            },
+            .index_value => |i| {
+                try self.markLogicalOperands(i.base, set);
+                try self.markLogicalOperands(i.index, set);
+            },
+            .field_value => |f| {
+                try self.markLogicalOperands(f.base, set);
+            },
+            .slice_ptr => |s| {
+                try self.markLogicalOperands(s.slice, set);
+            },
+            .slice_len => |s| {
+                try self.markLogicalOperands(s.slice, set);
+            },
+            .ptr_load_value => |p| {
+                try self.markLogicalOperands(p.ptr, set);
+            },
+            .addr_offset => |a| {
+                try self.markLogicalOperands(a.base, set);
+            },
+            .addr_index => |a| {
+                try self.markLogicalOperands(a.base, set);
+                try self.markLogicalOperands(a.index, set);
+            },
+            .union_tag => |u| {
+                try self.markLogicalOperands(u.value, set);
+            },
+            .union_payload => |u| {
+                try self.markLogicalOperands(u.value, set);
+            },
+            .call => |c| {
+                for (c.args) |arg| {
+                    try self.markLogicalOperands(arg, set);
+                }
+            },
+            .call_indirect => |c| {
+                try self.markLogicalOperands(c.callee, set);
+                for (c.args) |arg| {
+                    try self.markLogicalOperands(arg, set);
+                }
+            },
+            // Leaf nodes - no sub-nodes to mark
+            .const_int, .const_float, .const_bool, .const_null, .const_slice,
+            .load_local, .local_ref, .global_ref, .func_addr, .addr_local, .addr_global,
+            .field_local, .ptr_load, .ptr_field, .nop => {},
+            // These shouldn't appear in logical operand subtrees typically
+            else => {},
+        }
+    }
+
+    // ========================================================================
     // Helper: Short-Circuit Logical Operators
     // ========================================================================
+
+    /// Clear cached values for a node and all its sub-nodes.
+    /// This is needed for logical operators where the right operand must be
+    /// evaluated in a different block (eval_right_block) than where it was
+    /// originally processed in the flat IR node list.
+    fn clearNodeCache(self: *SSABuilder, node_idx: ir.NodeIndex) void {
+        // Remove this node from cache
+        _ = self.node_values.remove(node_idx);
+
+        // Recursively clear sub-nodes based on node type
+        const node = self.ir_func.getNode(node_idx);
+        switch (node.data) {
+            .binary => |bin| {
+                self.clearNodeCache(bin.left);
+                self.clearNodeCache(bin.right);
+            },
+            .unary => |u| {
+                self.clearNodeCache(u.operand);
+            },
+            .call => |c| {
+                for (c.args) |arg| {
+                    self.clearNodeCache(arg);
+                }
+            },
+            .call_indirect => |c| {
+                self.clearNodeCache(c.callee);
+                for (c.args) |arg| {
+                    self.clearNodeCache(arg);
+                }
+            },
+            .convert => |c| {
+                self.clearNodeCache(c.operand);
+            },
+            .index_local => |i| {
+                self.clearNodeCache(i.index);
+            },
+            .index_value => |i| {
+                self.clearNodeCache(i.base);
+                self.clearNodeCache(i.index);
+            },
+            .store_index_local => |s| {
+                self.clearNodeCache(s.index);
+                self.clearNodeCache(s.value);
+            },
+            .store_index_value => |s| {
+                self.clearNodeCache(s.base);
+                self.clearNodeCache(s.index);
+                self.clearNodeCache(s.value);
+            },
+            .store_local => |s| {
+                self.clearNodeCache(s.value);
+            },
+            .field_value => |f| {
+                self.clearNodeCache(f.base);
+            },
+            .store_local_field => |f| {
+                self.clearNodeCache(f.value);
+            },
+            .store_field => |f| {
+                self.clearNodeCache(f.base);
+                self.clearNodeCache(f.value);
+            },
+            .str_concat => |sc| {
+                self.clearNodeCache(sc.left);
+                self.clearNodeCache(sc.right);
+            },
+            .string_header => |sh| {
+                self.clearNodeCache(sh.ptr);
+                self.clearNodeCache(sh.len);
+            },
+            .ret => |r| {
+                if (r.value) |v| {
+                    self.clearNodeCache(v);
+                }
+            },
+            .branch => |br| {
+                self.clearNodeCache(br.condition);
+            },
+            .select => |s| {
+                self.clearNodeCache(s.condition);
+                self.clearNodeCache(s.then_value);
+                self.clearNodeCache(s.else_value);
+            },
+            .slice_local => |s| {
+                if (s.start) |l| self.clearNodeCache(l);
+                if (s.end) |h| self.clearNodeCache(h);
+            },
+            .slice_value => |s| {
+                self.clearNodeCache(s.base);
+                if (s.start) |l| self.clearNodeCache(l);
+                if (s.end) |h| self.clearNodeCache(h);
+            },
+            .slice_ptr => |s| {
+                self.clearNodeCache(s.slice);
+            },
+            .slice_len => |s| {
+                self.clearNodeCache(s.slice);
+            },
+            .ptr_store => |p| {
+                self.clearNodeCache(p.value);
+            },
+            .ptr_field_store => |p| {
+                self.clearNodeCache(p.value);
+            },
+            .ptr_load_value => |p| {
+                self.clearNodeCache(p.ptr);
+            },
+            .ptr_store_value => |p| {
+                self.clearNodeCache(p.ptr);
+                self.clearNodeCache(p.value);
+            },
+            .addr_offset => |a| {
+                self.clearNodeCache(a.base);
+            },
+            .addr_index => |a| {
+                self.clearNodeCache(a.base);
+                self.clearNodeCache(a.index);
+            },
+            .list_push => |l| {
+                self.clearNodeCache(l.value);
+            },
+            .list_get => |l| {
+                self.clearNodeCache(l.index);
+            },
+            .list_set => |l| {
+                self.clearNodeCache(l.index);
+                self.clearNodeCache(l.value);
+            },
+            .map_set => |m| {
+                self.clearNodeCache(m.key);
+                self.clearNodeCache(m.value);
+            },
+            .map_get => |m| {
+                self.clearNodeCache(m.key);
+            },
+            .map_has => |m| {
+                self.clearNodeCache(m.key);
+            },
+            .union_init => |u| {
+                if (u.payload) |v| self.clearNodeCache(v);
+            },
+            .union_tag => |u| {
+                self.clearNodeCache(u.value);
+            },
+            .union_payload => |u| {
+                self.clearNodeCache(u.value);
+            },
+            .phi => |p| {
+                for (p.sources) |src| {
+                    self.clearNodeCache(src.value);
+                }
+            },
+            // Leaf nodes and nodes without sub-node references to clear
+            .const_int, .const_float, .const_bool, .const_null, .const_slice,
+            .load_local, .local_ref, .global_ref, .global_store, .func_addr,
+            .addr_local, .addr_global, .field_local, .ptr_load, .ptr_field,
+            .list_new, .list_len, .list_free, .map_new, .map_free,
+            .nop, .jump => {},
+        }
+    }
 
     /// Convert logical AND/OR with short-circuit evaluation.
     /// For `a and b`: if a is false, result is false; else result is b
@@ -1805,10 +2065,17 @@ pub const SSABuilder = struct {
     /// Creates control flow blocks to avoid evaluating right operand unnecessarily.
     fn convertLogicalOp(self: *SSABuilder, b: ir.Binary, result_type: TypeIndex) anyerror!*Value {
         const is_and = (b.op == .@"and");
-        const cur = self.cur_block orelse return error.NoCurrentBlock;
+        const before_left_block = self.cur_block;
 
         // Evaluate left operand first
         const left = try self.convertNode(b.left) orelse return error.MissingValue;
+
+        // IMPORTANT: Recapture cur_block AFTER evaluating left operand.
+        // If left is itself a logical op (nested or/and), it creates new blocks
+        // and changes self.cur_block. We must use the current block after that.
+        // This follows Go's pattern in ssagen/ssa.go:3398
+        const cur = self.cur_block orelse return error.NoCurrentBlock;
+        _ = before_left_block; // Unused now, kept for documentation purposes
 
         // Create blocks for control flow:
         // - eval_right: evaluate right operand
@@ -1836,6 +2103,12 @@ pub const SSABuilder = struct {
 
         // Block: evaluate right operand
         self.cur_block = eval_right_block;
+
+        // CRITICAL: Clear cached values for the right operand subtree.
+        // The IR processing loop may have already evaluated these nodes in
+        // the wrong block. We need fresh values in eval_right_block.
+        self.clearNodeCache(b.right);
+
         const right = try self.convertNode(b.right) orelse return error.MissingValue;
 
         // Jump to merge
