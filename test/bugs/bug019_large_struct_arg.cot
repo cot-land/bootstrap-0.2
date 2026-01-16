@@ -1,0 +1,34 @@
+// BUG-019: Large struct (>16B) by-value arguments not passed correctly
+//
+// ARM64 ABI requires structs > 16 bytes to be passed by reference,
+// but our compiler tries to decompose them into registers.
+//
+// Go Reference: ~/learning/go/src/cmd/compile/internal/ssa/expand_calls.go:373-385
+// When !hasRegs() && !CanSSA(at), Go uses OpMove for memory-to-memory copy.
+
+struct BigNode {
+    kind: i64,
+    type_idx: i64,
+    value: i64,
+    left: i64,
+    right: i64,
+    op: i64,
+}  // 48 bytes - 6 x i64 fields
+
+fn get_value(node: BigNode) i64 {
+    return node.value;
+}
+
+fn main() i64 {
+    var node: BigNode = BigNode{
+        .kind = 1,
+        .type_idx = 2,
+        .value = 42,
+        .left = 3,
+        .right = 4,
+        .op = 5,
+    };
+    let v: i64 = get_value(node);  // Passes 48B struct by value
+    if v != 42 { return 1; }
+    return 0;
+}

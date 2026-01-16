@@ -256,6 +256,50 @@ fn handleWideSelect(_: *Func, sel: *Value, store: *Value, type_reg: *const TypeR
     }
 }
 
+/// Rewrite a store of a >16B arg to use OpMove (memory-to-memory copy).
+///
+/// BUG-019 FIX
+/// Go reference: expand_calls.go lines 373-384
+///
+/// For >16B struct args, ARM64 ABI passes them by reference:
+/// - Caller passes a POINTER to the struct in x0
+/// - Callee's "arg" value IS the pointer (address), not the struct
+/// - The store from arg to local must use OpMove (mem-to-mem copy)
+///
+/// Store currently has:
+///   op = .store
+///   args[0] = dest_addr (local_addr for the parameter local)
+///   args[1] = arg (which IS the source address for >16B)
+///
+/// After rewrite:
+///   op = .move
+///   args[0] = dest_addr
+///   args[1] = arg (source address)
+///   aux_int = type_size
+fn rewriteWideArgStore(_: *Func, arg_val: *Value, store: *Value, type_size: u32) !void {
+    debug.log(.ssa, "  rewriteWideArgStore: arg v{d}, store v{d}, size={d}B", .{
+        arg_val.id,
+        store.id,
+        type_size,
+    });
+
+    // Verify the store has the expected structure
+    if (store.args.len < 2) {
+        debug.log(.ssa, "    -> ERROR: store has < 2 args", .{});
+        return;
+    }
+
+    // The arg value IS the source address (pointer passed in x0)
+    // The store's args[0] is the dest address (local for parameter)
+    // Convert store to move: dst, src, size
+
+    store.op = .move;
+    store.aux_int = @intCast(type_size);
+    store.type_idx = TypeRegistry.VOID;
+
+    debug.log(.ssa, "    -> converted store v{d} to OpMove ({d}B)", .{ store.id, type_size });
+}
+
 /// Handle a normal (small) select by decomposing into components.
 fn handleNormalSelect(f: *Func, sel: *Value, type_reg: *const TypeRegistry) !void {
     _ = f;
@@ -275,9 +319,18 @@ fn handleNormalSelect(f: *Func, sel: *Value, type_reg: *const TypeRegistry) !voi
 }
 
 /// Expand call arguments - decompose aggregates into components.
+///
+/// BUG-019 FIX: For >16B struct args, pass address instead of trying to load.
+/// Go reference: expand_calls.go lines 373-385 decomposeAsNecessary
+///
+/// When arg is OpLoad of a !CanSSA type (>16B), Go creates:
+///   OpMove(dest_stack, load.Args[0], mem)
+/// and passes the dest_stack address.
+///
+/// Our simpler approach: if arg is a Load of >16B type, we pass Load.Args[0]
+/// (the source address) directly. The caller already has the struct on stack,
+/// so we pass that address. The callee will copy from it using OpMove.
 fn expandCallArgs(f: *Func, call_val: *Value, type_reg: *const TypeRegistry) !void {
-    _ = type_reg;
-
     // Build new args list, expanding strings into ptr/len pairs
     var new_args = std.ArrayListUnmanaged(*Value){};
     defer new_args.deinit(f.allocator);
@@ -286,16 +339,26 @@ fn expandCallArgs(f: *Func, call_val: *Value, type_reg: *const TypeRegistry) !vo
     // For closure_call, first arg is the function pointer - skip it
     const start_idx: usize = if (call_val.op == .closure_call) 1 else 0;
 
-    // Check if any args need expansion
+    // Check if any args need expansion (strings OR >16B struct loads)
     for (call_val.args[start_idx..]) |arg| {
         if (arg.type_idx == TypeRegistry.STRING) {
             needs_expansion = true;
             break;
         }
+        // BUG-019: Check for >16B struct types that need pass-by-reference
+        // Only applies to struct types loaded from memory, not other large types
+        const arg_type = type_reg.get(arg.type_idx);
+        if (arg_type == .struct_type) {
+            const arg_size = type_reg.sizeOf(arg.type_idx);
+            if (arg_size > 16 and arg.op == .load) {
+                needs_expansion = true;
+                break;
+            }
+        }
     }
 
     if (!needs_expansion) {
-        return; // No strings, nothing to do
+        return; // No strings or large structs, nothing to do
     }
 
     debug.log(.ssa, "  expandCallArgs: v{d}", .{call_val.id});
@@ -349,8 +412,23 @@ fn expandCallArgs(f: *Func, call_val: *Value, type_reg: *const TypeRegistry) !vo
                 });
             }
         } else {
-            // Non-string arg, keep as-is
-            try new_args.append(f.allocator, arg);
+            // Check for >16B struct types that need pass-by-reference (BUG-019)
+            const arg_type = type_reg.get(arg.type_idx);
+            const arg_size = type_reg.sizeOf(arg.type_idx);
+            if (arg_type == .struct_type and arg_size > 16 and arg.op == .load and arg.args.len >= 1) {
+                // BUG-019 FIX: Pass the source address, not the loaded value
+                // Go reference: expand_calls.go line 379 - use a.Args[0] (load source)
+                const source_addr = arg.args[0];
+                try new_args.append(f.allocator, source_addr);
+                debug.log(.ssa, "    >16B struct arg v{d} ({d}B load) -> pass addr v{d}", .{
+                    arg.id,
+                    arg_size,
+                    source_addr.id,
+                });
+            } else {
+                // Non-struct or small arg, keep as-is
+                try new_args.append(f.allocator, arg);
+            }
         }
     }
 

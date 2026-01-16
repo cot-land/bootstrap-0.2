@@ -150,7 +150,14 @@ pub const SSABuilder = struct {
                     try string_params.append(allocator, .{ .ptr = ptr_val, .len = len_val, .idx = i });
                 } else {
                     // Regular parameter: single register
-                    const param_val = try func.newValue(.arg, local.type_idx, entry, .{});
+                    // BUG-019 FIX: >16B struct types are passed by reference (pointer in x0)
+                    // Go reference: expand_calls.go lines 373-385
+                    const local_type_info = type_registry.get(local.type_idx);
+                    const type_size = type_registry.sizeOf(local.type_idx);
+                    const is_large_struct = (local_type_info == .struct_type) and (type_size > 16);
+                    const arg_type = if (is_large_struct) TypeRegistry.I64 else local.type_idx;
+
+                    const param_val = try func.newValue(.arg, arg_type, entry, .{});
                     param_val.aux_int = phys_reg_idx;
                     try entry.addValue(allocator, param_val);
                     phys_reg_idx += 1;
@@ -207,9 +214,23 @@ pub const SSABuilder = struct {
                 addr_val.aux_int = @intCast(local_idx);
                 try entry.addValue(allocator, addr_val);
 
-                const store_val = try func.newValue(.store, TypeRegistry.VOID, entry, .{});
-                store_val.addArg2(addr_val, param_val);
-                try entry.addValue(allocator, store_val);
+                // BUG-019 FIX: >16B struct types are passed by reference
+                // Go reference: expand_calls.go lines 373-385
+                // param_val is a POINTER to source, use OpMove to copy
+                const local_type_info = type_registry.get(local.type_idx);
+                const type_size = type_registry.sizeOf(local.type_idx);
+                const is_large_struct = (local_type_info == .struct_type) and (type_size > 16);
+                if (is_large_struct) {
+                    // OpMove: copy from param_val (source ptr) to addr_val (dest)
+                    const move_val = try func.newValue(.move, TypeRegistry.VOID, entry, .{});
+                    move_val.aux_int = @intCast(type_size);
+                    move_val.addArg2(addr_val, param_val);
+                    try entry.addValue(allocator, move_val);
+                } else {
+                    const store_val = try func.newValue(.store, TypeRegistry.VOID, entry, .{});
+                    store_val.addArg2(addr_val, param_val);
+                    try entry.addValue(allocator, store_val);
+                }
             }
         }
         param_values.deinit(allocator);
@@ -633,14 +654,19 @@ pub const SSABuilder = struct {
             },
 
             // === Global Variable Access ===
+            // Go pattern: Globals are NEVER in SSA registers (!name.OnStack() fails canSSA).
+            // Always use address-based access: global_addr -> off_ptr -> load field.
+            // Reference: ~/learning/go/src/cmd/compile/internal/ssagen/ssa.go:5239
             .global_ref => |g| blk: {
                 // Get address of global using symbol name
                 const addr_val = try self.func.newValue(.global_addr, TypeRegistry.VOID, cur, .{});
                 addr_val.aux = .{ .string = g.name };
                 try cur.addValue(self.allocator, addr_val);
 
-                // Check if loading a slice type - need to decompose into (ptr, len)
                 const load_type = self.type_registry.get(node.type_idx);
+                const type_size = self.type_registry.sizeOf(node.type_idx);
+
+                // Check if loading a slice type - need to decompose into (ptr, len)
                 if (load_type == .slice) {
                     // Load ptr from offset 0
                     const ptr_load = try self.func.newValue(.load, TypeRegistry.I64, cur, .{});
@@ -667,7 +693,15 @@ pub const SSABuilder = struct {
                     break :blk slice_val;
                 }
 
-                // Regular load for non-slice types
+                // BUG-018 FIX: For structs (> 8 bytes), don't load into registers.
+                // Return just the address - field_value will use off_ptr + load.
+                // Go: globals always use address path, never SSA registers.
+                if (load_type == .struct_type and type_size > 8) {
+                    debug.log(.ssa, "    global_ref (struct) '{s}' -> v{} (addr only, {d}B)", .{ g.name, addr_val.id, type_size });
+                    break :blk addr_val;
+                }
+
+                // For scalar types <= 8 bytes: load the value
                 const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
                 load_val.addArg(addr_val);
                 try cur.addValue(self.allocator, load_val);

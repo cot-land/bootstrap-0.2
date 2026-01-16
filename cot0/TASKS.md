@@ -2,13 +2,13 @@
 
 **Goal:** Self-hosting Cot compiler written in Cot.
 
-**Last Updated:** 2026-01-16
+**Last Updated:** 2026-01-17
 
 ---
 
 ## Current Status
 
-**All 160 e2e tests pass.**
+**All 166 e2e tests pass.**
 
 | Test File | Status |
 |-----------|--------|
@@ -33,8 +33,9 @@
 
 ---
 
-## Recent Bug Fixes (2026-01-16)
+## Recent Bug Fixes (2026-01-17)
 
+- BUG-019: Large struct (>16B) by-value args ✅ FIXED
 - BUG-017: Imported consts in binary expressions ✅ FIXED
 - BUG-016: Const on right side of comparison ✅ FIXED
 - BUG-015: Chained OR (3+ conditions) ✅ FIXED

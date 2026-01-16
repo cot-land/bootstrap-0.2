@@ -2329,6 +2329,70 @@ pub const ARM64CodeGen = struct {
                             copy_off += 1;
                         }
                         debug.log(.codegen, "      -> copied {d}B struct from [x{d}] to [x{d}]", .{ type_size, src_reg, addr_reg });
+                    } else if (type_size > 16 and val.op == .load) {
+                        // BUG-018 FIX: For >16B loads, can't fit in registers.
+                        // Do memory-to-memory copy using source address from load's argument.
+                        // Go pattern: LoweredMove does memory-to-memory copy.
+                        // Reference: ~/learning/go/src/cmd/compile/internal/ssa/_gen/ARM64Ops.go
+                        //
+                        // CRITICAL: The source address may have been computed earlier and its
+                        // register overwritten. We must re-compute it here.
+                        const src_addr = val.args[0];
+                        var src_reg: u5 = 19; // Use x19 for source address
+
+                        // Re-compute the source address into x19
+                        // Check if it's a local_addr - compute fresh from SP
+                        if (src_addr.op == .local_addr) {
+                            const local_idx: u32 = @intCast(src_addr.aux_int);
+                            if (local_idx < self.func.local_offsets.len) {
+                                const local_off = self.func.local_offsets[local_idx];
+                                try self.emit(asm_mod.encodeADDImm(src_reg, 31, @intCast(local_off), 0));
+                                debug.log(.codegen, "      store >16B: recomputed local_addr {d} at SP+{d} -> x{d}", .{ local_idx, local_off, src_reg });
+                            } else {
+                                debug.log(.codegen, "      store >16B: local_idx {d} out of range!", .{local_idx});
+                            }
+                        } else {
+                            // For other address types, try to get from register or recompute
+                            const maybe_reg = self.getRegForValue(src_addr);
+                            if (maybe_reg) |reg| {
+                                if (reg != addr_reg) {
+                                    src_reg = reg;
+                                } else {
+                                    // Same register - need to save addr_reg first
+                                    try self.emit(asm_mod.encodeADDImm(18, addr_reg, 0, 0)); // x18 = dst
+                                    try self.ensureInReg(src_addr, 19);
+                                    // Restore dst to addr_reg (but we changed it to x18)
+                                    // Actually simpler: just put src in x19
+                                    try self.ensureInReg(src_addr, src_reg);
+                                }
+                            } else {
+                                try self.ensureInReg(src_addr, src_reg);
+                            }
+                        }
+
+                        debug.log(.codegen, "      store >16B load: copying {d}B from [x{d}] to [x{d}]", .{ type_size, src_reg, addr_reg });
+
+                        // Copy data in 16-byte chunks using LDP/STP
+                        var copy_off: u32 = 0;
+                        while (copy_off + 16 <= type_size) {
+                            const ldp_off: i7 = @intCast(@divExact(@as(i32, @intCast(copy_off)), 8));
+                            try self.emit(asm_mod.encodeLdpStp(16, 17, src_reg, ldp_off, .signed_offset, true));
+                            try self.emit(asm_mod.encodeLdpStp(16, 17, addr_reg, ldp_off, .signed_offset, false));
+                            copy_off += 16;
+                        }
+                        if (copy_off + 8 <= type_size) {
+                            const ldr_off: u12 = @intCast(@divExact(copy_off, 8));
+                            try self.emit(asm_mod.encodeLdrStr(16, src_reg, ldr_off, true));
+                            try self.emit(asm_mod.encodeLdrStr(16, addr_reg, ldr_off, false));
+                            copy_off += 8;
+                        }
+                        while (copy_off < type_size) {
+                            const ld_size = asm_mod.LdStSize.byte;
+                            try self.emit(asm_mod.encodeLdrStrSized(16, src_reg, @intCast(copy_off), ld_size, true));
+                            try self.emit(asm_mod.encodeLdrStrSized(16, addr_reg, @intCast(copy_off), ld_size, false));
+                            copy_off += 1;
+                        }
+                        debug.log(.codegen, "      -> copied {d}B struct via load from [x{d}] to [x{d}]", .{ type_size, src_reg, addr_reg });
                     } else if (type_size == 16 and val.op == .static_call) {
                         // After static_call returning struct: first half in x0, second half was saved to x8
                         // BUG-003 fix: The second half was saved to x8 immediately after the call

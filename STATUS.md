@@ -1,10 +1,10 @@
 # Bootstrap 0.2 - Project Status
 
-**Last Updated: 2026-01-16**
+**Last Updated: 2026-01-17**
 
 ## Current State
 
-**160 e2e tests passing.** Core language features complete.
+**166 e2e tests passing.** Core language features complete.
 
 ### Self-Hosting Progress
 
@@ -19,20 +19,18 @@ See [cot0/TASKS.md](cot0/TASKS.md) for detailed self-hosting progress.
 | types.cot | In Progress | 2/2 pass |
 | checker.cot | In Progress | 2/2 pass |
 
-### Open Bugs (2026-01-16)
+### Open Bugs (2026-01-17)
 
 None currently.
 
-### Recent Bug Fixes (2026-01-16)
+### Recent Bug Fixes (2026-01-17)
 
+- BUG-019: Large struct (>16B) by-value arguments - Pass by reference following ARM64 ABI
 - BUG-017: Imported consts in binary expressions - Check checker's scope for imported constants in lowerIdent
 - BUG-016: Const identifier on right side of comparison - Added proper 1-token lookahead to distinguish struct literals
 - BUG-015: Chained OR (3+ conditions) - Pre-scan IR to skip logical operands in main loop
 - BUG-014: Switch statements - Now supports both expression and statement modes
 - BUG-013: String concatenation in loops - Fixed use count tracking in expand_calls
-- BUG-012: `ptr.*.field` codegen - Following Go's ODOTPTR pattern
-- BUG-011: `off_ptr` register clobbering fix
-- BUG-010: `slice_make` arg register clobbering fix
 
 See [BUGS.md](BUGS.md) for complete bug history.
 

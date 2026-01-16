@@ -35,6 +35,87 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
+### BUG-019: Large struct (>16B) by-value arguments not passed correctly (FIXED)
+
+**Status:** Fixed
+**Priority:** P0 (was blocking ir_test.cot)
+**Discovered:** 2026-01-16
+**Fixed:** 2026-01-16
+
+**Description:**
+When passing a struct larger than 16 bytes by value to a function, the callee receives corrupted data. ARM64 ABI requires structs > 16 bytes to be passed by reference (pointer in x0), but our compiler tries to pass them in registers which cannot hold 48+ bytes.
+
+**Test File:** `test/bugs/bug019_large_struct_arg.cot`
+```cot
+struct BigNode {
+    kind: i64,
+    type_idx: i64,
+    value: i64,
+    left: i64,
+    right: i64,
+    op: i64,
+}  // 48 bytes - 6 x i64 fields
+
+fn get_value(node: BigNode) i64 {
+    return node.value;
+}
+
+fn main() i64 {
+    var node: BigNode = BigNode{
+        .kind = 1,
+        .type_idx = 2,
+        .value = 42,
+        .left = 3,
+        .right = 4,
+        .op = 5,
+    };
+    let v: i64 = get_value(node);  // Passes 48B struct by value
+    if v != 42 { return 1; }
+    return 0;
+}
+```
+**Expected:** Exit 0
+**Actual:** Exit 1 (corrupted value)
+
+**Go Reference:**
+`~/learning/go/src/cmd/compile/internal/ssa/expand_calls.go` lines 373-385:
+```go
+if !rc.hasRegs() && !CanSSA(at) {
+    dst := x.offsetFrom(b, rc.storeDest, rc.storeOffset, types.NewPtr(at))
+    if a.Op == OpLoad {
+        m0 = b.NewValue3A(pos, OpMove, types.TypeMem, at, dst, a.Args[0], m0)
+        m0.AuxInt = at.Size()
+        return m0
+    }
+}
+```
+
+Go's pattern:
+1. `CanSSA()` returns false for structs > 32B or with many fields
+2. When `!hasRegs() && !CanSSA()`, use `OpMove` for memory-to-memory copy
+3. Source must be an `OpLoad` - creates `OpMove(dst, src_addr, mem)` with `AuxInt = size`
+4. The callee receives a pointer to the copy on the stack
+
+**Root Cause:**
+Our `expand_calls.zig` decomposes all struct arguments into individual fields regardless of size. For >16B structs, there aren't enough registers. Go's pattern copies the entire struct to stack and passes a pointer.
+
+**Fix:**
+Two coordinated changes following Go's expand_calls.go pattern:
+
+1. **Caller side** (`src/ssa/passes/expand_calls.zig` in `expandCallArgs`):
+   - For >16B struct args that are `load` ops, pass `load.args[0]` (source address) instead of the load value
+   - Only applies to struct types (not arrays, strings, or other large types)
+
+2. **Callee side** (`src/frontend/ssa_builder.zig` in SSA builder init):
+   - For >16B struct parameters, treat the arg as a pointer (I64 type)
+   - Use OpMove to copy from that pointer to the local's stack slot
+
+Key insight: Only struct types needed this handling because:
+- Arrays are already passed by reference via lower.zig
+- Strings (16B) are decomposed into ptr/len components
+
+---
+
 ### BUG-013: String concatenation in loops causes segfault (FIXED)
 
 **Status:** Fixed

@@ -2,7 +2,7 @@
 // COT END-TO-END TEST SUITE
 // ============================================================================
 //
-// Progress: 160 / 160 tests passing
+// Progress: 166 / 166 tests passing
 //
 // ============================================================================
 // STATUS TRACKER
@@ -1851,6 +1851,124 @@ fn test_pressure_in_loop() i64 {
 }
 
 // ============================================================================
+// TIER 26: BUG REGRESSION TESTS
+// ============================================================================
+// Each test here exercises a specific bug that was found and fixed.
+// These ensure we don't regress on fixed bugs.
+
+// --- BUG-003: Struct with enum field layout ---
+// Enums are 4 bytes but were incorrectly sized, causing field offset corruption
+
+enum TokenKind {
+    Number,
+    Ident,
+    Plus,
+}
+
+struct TokenWithEnum {
+    kind: TokenKind,
+    x: i64,
+    y: i64,
+}
+
+fn test_bug003_struct_enum_field() i64 {
+    var t: TokenWithEnum;
+    t.kind = TokenKind.Ident;
+    t.x = 10;
+    t.y = 20;
+    // If enum size is wrong, x and y will have corrupted values
+    return t.x + t.y;  // Should be 30
+}
+
+// --- BUG-004: Large struct return (>16B) ---
+// ARM64 ABI: >16B structs must be returned via hidden pointer (x8)
+
+struct BigReturn {
+    a: i64,
+    b: i64,
+    c: i64,
+}  // 24 bytes - must use hidden return pointer
+
+fn make_big_return(x: i64, y: i64, z: i64) BigReturn {
+    var s: BigReturn;
+    s.a = x;
+    s.b = y;
+    s.c = z;
+    return s;
+}
+
+fn test_bug004_large_struct_return() i64 {
+    let s: BigReturn = make_big_return(10, 20, 12);
+    return s.a + s.b + s.c;  // Should be 42
+}
+
+// --- BUG-012: ptr.*.field access ---
+// Was loading entire struct instead of computing ptr + offset
+
+struct NodeForPtrDeref {
+    kind: i64,
+    value: i64,
+}
+
+fn get_value_via_ptr(p: *NodeForPtrDeref) i64 {
+    return p.*.value;  // Access field through pointer dereference
+}
+
+fn test_bug012_ptr_deref_field() i64 {
+    var node: NodeForPtrDeref;
+    node.kind = 5;
+    node.value = 42;
+    return get_value_via_ptr(&node);  // Should be 42
+}
+
+// --- BUG-016: Const on right side of comparison ---
+// Parser assumed uppercase + { was struct literal
+
+const BUG016_CONST: i64 = 42;
+
+fn test_bug016_const_right_side() i64 {
+    let a: i64 = 42;
+    if a == BUG016_CONST {  // Const on RIGHT side
+        return 42;
+    }
+    return 0;
+}
+
+// --- BUG-019: Large struct (>16B) passed by value ---
+// ARM64: >16B structs must be passed by reference (pointer in register)
+
+struct BigArg {
+    a: i64,
+    b: i64,
+    c: i64,
+    d: i64,
+    e: i64,
+    f: i64,
+}  // 48 bytes - 6 x i64
+
+fn sum_big_arg(s: BigArg) i64 {
+    return s.a + s.b + s.c + s.d + s.e + s.f;
+}
+
+fn test_bug019_large_struct_arg() i64 {
+    var s: BigArg;
+    s.a = 1;
+    s.b = 2;
+    s.c = 3;
+    s.d = 4;
+    s.e = 5;
+    s.f = 27;  // Sum = 42
+    return sum_big_arg(s);  // Should be 42
+}
+
+// --- BUG-019b: Large struct arg with struct literal ---
+
+fn test_bug019b_large_struct_literal_arg() i64 {
+    let s: BigArg = BigArg{ .a = 7, .b = 7, .c = 7, .d = 7, .e = 7, .f = 7 };
+    return sum_big_arg(s);  // 7*6 = 42
+}
+
+// ============================================================================
 // MAIN - Test Runner
 // ============================================================================
 
@@ -2096,9 +2214,17 @@ fn main() i64 {
     // Combined stress: register pressure in loops
     if test_pressure_in_loop() != 140 { println("FAIL: test_pressure_in_loop"); failed += 1; }
 
+    // TIER 26: Bug Regression Tests
+    if test_bug003_struct_enum_field() != 30 { println("FAIL: test_bug003_struct_enum_field"); failed += 1; }
+    if test_bug004_large_struct_return() != 42 { println("FAIL: test_bug004_large_struct_return"); failed += 1; }
+    if test_bug012_ptr_deref_field() != 42 { println("FAIL: test_bug012_ptr_deref_field"); failed += 1; }
+    if test_bug016_const_right_side() != 42 { println("FAIL: test_bug016_const_right_side"); failed += 1; }
+    if test_bug019_large_struct_arg() != 42 { println("FAIL: test_bug019_large_struct_arg"); failed += 1; }
+    if test_bug019b_large_struct_literal_arg() != 42 { println("FAIL: test_bug019b_large_struct_literal_arg"); failed += 1; }
+
     // Summary
     if failed == 0 {
-        println("All 160 tests passed!");
+        println("All 166 tests passed!");
     }
 
     return failed;

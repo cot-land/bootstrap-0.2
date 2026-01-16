@@ -1,0 +1,427 @@
+// Cot0 Intermediate Representation
+// Strongly typed IR following Go's cmd/compile/internal/ir patterns.
+//
+// Design principles (from Go + bootstrap-0.2):
+// 1. Op discriminator drives type switching
+// 2. Every operation has explicit fields
+// 3. Uses pointers for arrays (like ast.cot)
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/ir/
+// Reference: bootstrap-0.2/src/frontend/ir.zig
+
+import "types.cot"
+
+// ============================================================================
+// Index Types - Distinct to prevent mixing
+// ============================================================================
+
+const NULL_NODE: i64 = -1;
+const NULL_LOCAL: i64 = -1;
+const NULL_BLOCK: i64 = -1;
+
+// ============================================================================
+// Binary Operation Kinds (Go's OADD, OSUB, OEQ, etc.)
+// ============================================================================
+
+enum BinaryOp {
+    // Arithmetic
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+
+    // Comparison
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+
+    // Logical
+    And,
+    Or,
+
+    // Bitwise
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+}
+
+// Check if this is a comparison operation (returns bool)
+fn is_comparison(op: BinaryOp) bool {
+    if op == BinaryOp.Eq { return true; }
+    if op == BinaryOp.Ne { return true; }
+    if op == BinaryOp.Lt { return true; }
+    if op == BinaryOp.Le { return true; }
+    if op == BinaryOp.Gt { return true; }
+    if op == BinaryOp.Ge { return true; }
+    return false;
+}
+
+// Check if this is an arithmetic operation
+fn is_arithmetic(op: BinaryOp) bool {
+    if op == BinaryOp.Add { return true; }
+    if op == BinaryOp.Sub { return true; }
+    if op == BinaryOp.Mul { return true; }
+    if op == BinaryOp.Div { return true; }
+    if op == BinaryOp.Mod { return true; }
+    return false;
+}
+
+// Check if this is a logical operation
+fn is_logical(op: BinaryOp) bool {
+    if op == BinaryOp.And { return true; }
+    if op == BinaryOp.Or { return true; }
+    return false;
+}
+
+// Check if this is a bitwise operation
+fn is_bitwise(op: BinaryOp) bool {
+    if op == BinaryOp.BitAnd { return true; }
+    if op == BinaryOp.BitOr { return true; }
+    if op == BinaryOp.BitXor { return true; }
+    if op == BinaryOp.Shl { return true; }
+    if op == BinaryOp.Shr { return true; }
+    return false;
+}
+
+// ============================================================================
+// Unary Operation Kinds (Go's ONEG, ONOT, etc.)
+// ============================================================================
+
+enum UnaryOp {
+    Neg,      // Arithmetic negation: -x
+    Not,      // Logical not: !x
+    BitNot,   // Bitwise not: ~x
+}
+
+// ============================================================================
+// IR Node Kinds (Go's Op enum)
+// ============================================================================
+
+enum IRNodeKind {
+    // Constants
+    ConstInt,
+    ConstBool,
+    ConstNull,
+
+    // Variable access
+    LoadLocal,
+    StoreLocal,
+    AddrLocal,
+
+    // Operations
+    Binary,
+    Unary,
+
+    // Control flow
+    Call,
+    Return,
+    Jump,
+    Branch,
+
+    // Phi (SSA)
+    Phi,
+
+    // Misc
+    Nop,
+}
+
+// ============================================================================
+// IR Node - A single operation
+// ============================================================================
+
+struct IRNode {
+    kind: IRNodeKind,
+    type_idx: i64,        // Result type
+
+    // Fields used depending on kind:
+    // ConstInt: value
+    // Binary: op, left, right
+    // Unary: op, left (operand)
+    // LoadLocal/StoreLocal/AddrLocal: left (local_idx)
+    // StoreLocal: right (value)
+    // Call: func_name_start, func_name_len, args_start, args_count
+    // Return: left (value), or -1 for void
+    // Jump: left (target_block)
+    // Branch: left (condition), right (then_block), value (else_block)
+
+    value: i64,           // ConstInt value, or else_block for Branch
+    left: i64,            // Left operand, local_idx, condition, etc.
+    right: i64,           // Right operand, value for store, etc.
+    op: i64,              // Operator code (BinaryOp or UnaryOp cast to i64)
+
+    // For Call nodes
+    func_name_start: i64,
+    func_name_len: i64,
+    args_start: i64,
+    args_count: i64,
+}
+
+fn ir_node_new(kind: IRNodeKind, type_idx: i64) IRNode {
+    return IRNode{
+        .kind = kind,
+        .type_idx = type_idx,
+        .value = 0,
+        .left = NULL_NODE,
+        .right = NULL_NODE,
+        .op = 0,
+        .func_name_start = 0,
+        .func_name_len = 0,
+        .args_start = 0,
+        .args_count = 0,
+    };
+}
+
+// Check if node is a terminator (ends a basic block)
+fn ir_node_is_terminator(node: *IRNode) bool {
+    if node.kind == IRNodeKind.Return { return true; }
+    if node.kind == IRNodeKind.Jump { return true; }
+    if node.kind == IRNodeKind.Branch { return true; }
+    return false;
+}
+
+// Check if node is a constant
+fn ir_node_is_constant(node: *IRNode) bool {
+    if node.kind == IRNodeKind.ConstInt { return true; }
+    if node.kind == IRNodeKind.ConstBool { return true; }
+    if node.kind == IRNodeKind.ConstNull { return true; }
+    return false;
+}
+
+// ============================================================================
+// Node Pool - Arena for IR nodes (pointer-based like ast.cot)
+// ============================================================================
+
+struct NodePool {
+    nodes: *IRNode,       // Externally allocated array
+    nodes_count: i64,
+    nodes_cap: i64,
+}
+
+fn node_pool_init(pool: *NodePool, nodes: *IRNode, cap: i64) {
+    pool.nodes = nodes;
+    pool.nodes_count = 0;
+    pool.nodes_cap = cap;
+}
+
+fn node_pool_add(pool: *NodePool, node: IRNode) i64 {
+    if pool.nodes_count >= pool.nodes_cap {
+        return NULL_NODE;
+    }
+    let idx: i64 = pool.nodes_count;
+    let ptr: *IRNode = pool.nodes + idx;
+    ptr.* = node;
+    pool.nodes_count = pool.nodes_count + 1;
+    return idx;
+}
+
+fn node_pool_get(pool: *NodePool, idx: i64) *IRNode {
+    return pool.nodes + idx;
+}
+
+fn node_pool_add_const_int(pool: *NodePool, value: i64, type_idx: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.ConstInt, type_idx);
+    node.value = value;
+    return node_pool_add(pool, node);
+}
+
+fn node_pool_add_binary(pool: *NodePool, op: i64, left: i64, right: i64, type_idx: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.Binary, type_idx);
+    node.op = op;
+    node.left = left;
+    node.right = right;
+    return node_pool_add(pool, node);
+}
+
+// ============================================================================
+// Local Variable
+// ============================================================================
+
+struct IRLocal {
+    name_start: i64,      // Offset into source for name
+    name_len: i64,        // Length of name
+    type_idx: i64,        // Type index
+    is_mutable: bool,     // Can be modified?
+    is_param: bool,       // Is this a parameter?
+    param_idx: i64,       // Parameter index (if is_param)
+    size: i64,            // Size in bytes
+    offset: i64,          // Stack frame offset
+}
+
+fn ir_local_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) IRLocal {
+    return IRLocal{
+        .name_start = name_start,
+        .name_len = name_len,
+        .type_idx = type_idx,
+        .is_mutable = is_mutable,
+        .is_param = false,
+        .param_idx = 0,
+        .size = 8,
+        .offset = 0,
+    };
+}
+
+fn ir_local_new_param(name_start: i64, name_len: i64, type_idx: i64, param_idx: i64) IRLocal {
+    return IRLocal{
+        .name_start = name_start,
+        .name_len = name_len,
+        .type_idx = type_idx,
+        .is_mutable = false,
+        .is_param = true,
+        .param_idx = param_idx,
+        .size = 8,
+        .offset = 0,
+    };
+}
+
+// ============================================================================
+// Function Builder - Constructs IR functions (pointer-based)
+// ============================================================================
+
+struct FuncBuilder {
+    name_start: i64,
+    name_len: i64,
+    return_type: i64,
+
+    locals: *IRLocal,         // Externally allocated
+    locals_count: i64,
+    locals_cap: i64,
+
+    nodes: *IRNode,           // Externally allocated
+    nodes_count: i64,
+    nodes_cap: i64,
+
+    // Block tracking (simple: just node ranges for now)
+    current_block: i64,
+}
+
+fn func_builder_init(fb: *FuncBuilder, name_start: i64, name_len: i64, return_type: i64,
+                     locals: *IRLocal, locals_cap: i64,
+                     nodes: *IRNode, nodes_cap: i64) {
+    fb.name_start = name_start;
+    fb.name_len = name_len;
+    fb.return_type = return_type;
+    fb.locals = locals;
+    fb.locals_count = 0;
+    fb.locals_cap = locals_cap;
+    fb.nodes = nodes;
+    fb.nodes_count = 0;
+    fb.nodes_cap = nodes_cap;
+    fb.current_block = 0;
+}
+
+fn func_builder_add_local(fb: *FuncBuilder, name_start: i64, name_len: i64,
+                          type_idx: i64, is_mutable: bool) i64 {
+    if fb.locals_count >= fb.locals_cap {
+        return NULL_LOCAL;
+    }
+    let idx: i64 = fb.locals_count;
+    let ptr: *IRLocal = fb.locals + idx;
+    ptr.* = ir_local_new(name_start, name_len, type_idx, is_mutable);
+    fb.locals_count = fb.locals_count + 1;
+    return idx;
+}
+
+fn func_builder_add_param(fb: *FuncBuilder, name_start: i64, name_len: i64,
+                          type_idx: i64, param_idx: i64) i64 {
+    if fb.locals_count >= fb.locals_cap {
+        return NULL_LOCAL;
+    }
+    let idx: i64 = fb.locals_count;
+    let ptr: *IRLocal = fb.locals + idx;
+    ptr.* = ir_local_new_param(name_start, name_len, type_idx, param_idx);
+    fb.locals_count = fb.locals_count + 1;
+    return idx;
+}
+
+fn func_builder_emit(fb: *FuncBuilder, node: IRNode) i64 {
+    if fb.nodes_count >= fb.nodes_cap {
+        return NULL_NODE;
+    }
+    let idx: i64 = fb.nodes_count;
+    let ptr: *IRNode = fb.nodes + idx;
+    ptr.* = node;
+    fb.nodes_count = fb.nodes_count + 1;
+    return idx;
+}
+
+fn func_builder_emit_const_int(fb: *FuncBuilder, value: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.ConstInt, TYPE_I64);
+    node.value = value;
+    return func_builder_emit(fb, node);
+}
+
+fn func_builder_emit_const_bool(fb: *FuncBuilder, value: bool) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.ConstBool, TYPE_BOOL);
+    if value {
+        node.value = 1;
+    } else {
+        node.value = 0;
+    }
+    return func_builder_emit(fb, node);
+}
+
+fn func_builder_emit_load_local(fb: *FuncBuilder, local_idx: i64) i64 {
+    let local: *IRLocal = fb.locals + local_idx;
+    var node: IRNode = ir_node_new(IRNodeKind.LoadLocal, local.type_idx);
+    node.left = local_idx;
+    return func_builder_emit(fb, node);
+}
+
+fn func_builder_emit_store_local(fb: *FuncBuilder, local_idx: i64, value: i64) i64 {
+    let local: *IRLocal = fb.locals + local_idx;
+    var node: IRNode = ir_node_new(IRNodeKind.StoreLocal, local.type_idx);
+    node.left = local_idx;
+    node.right = value;
+    return func_builder_emit(fb, node);
+}
+
+fn func_builder_emit_binary(fb: *FuncBuilder, op: i64, left: i64, right: i64, type_idx: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.Binary, type_idx);
+    node.op = op;
+    node.left = left;
+    node.right = right;
+    return func_builder_emit(fb, node);
+}
+
+fn func_builder_emit_unary(fb: *FuncBuilder, op: i64, operand: i64, type_idx: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.Unary, type_idx);
+    node.op = op;
+    node.left = operand;
+    return func_builder_emit(fb, node);
+}
+
+fn func_builder_emit_return(fb: *FuncBuilder, value: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.Return, TYPE_VOID);
+    node.left = value;
+    return func_builder_emit(fb, node);
+}
+
+fn func_builder_emit_return_void(fb: *FuncBuilder) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.Return, TYPE_VOID);
+    node.left = NULL_NODE;
+    return func_builder_emit(fb, node);
+}
+
+// ============================================================================
+// IR Function (completed function)
+// ============================================================================
+
+struct IRFunc {
+    name_start: i64,
+    name_len: i64,
+    return_type: i64,
+
+    locals: *IRLocal,
+    locals_count: i64,
+
+    nodes: *IRNode,
+    nodes_count: i64,
+
+    frame_size: i64,
+}

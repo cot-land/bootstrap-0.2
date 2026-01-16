@@ -728,6 +728,6 @@ fn main() i64 {
 
 See `test/e2e/all_tests.cot` for the full test suite.
 
-**Current:** 142 e2e tests passing
+**Current:** 166 e2e tests passing
 
 Core language complete: arithmetic, functions, control flow, structs, arrays, slices, pointers, enums, bitwise/logical operators, for-in loops, string operations, extern functions, defer statements, global variables.
