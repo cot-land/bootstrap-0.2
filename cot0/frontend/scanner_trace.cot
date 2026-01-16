@@ -1,0 +1,36 @@
+// Trace with actual Parser struct
+import "token.cot"
+import "scanner.cot"
+import "ast.cot"
+import "parser.cot"
+
+var g_nodes: [200]Node;
+var g_children: [1000]i64;
+var g_pool: NodePool;
+
+fn init_pool() *NodePool {
+    g_pool.nodes = &g_nodes[0];
+    g_pool.count = 0;
+    g_pool.children = &g_children[0];
+    g_pool.children_count = 0;
+    return &g_pool;
+}
+
+fn main() i64 {
+    let pool: *NodePool = init_pool();
+
+    // Call parser_new which returns Parser by value (>16 bytes)
+    var p: Parser = parser_new("42", pool);
+
+    // Check scanner field first
+    if len(p.scanner.source) != 2 { return 5; }
+    if p.scanner.source[0] != 52 { return 6; }
+
+    // Check token
+    if p.current.kind == TokenType.Int { return 100; }
+    if p.current.kind == TokenType.Ident { return 101; }
+    if p.current.kind == TokenType.Eof { return 130; }
+    if p.current.kind == TokenType.Error { return 131; }
+
+    return 199;
+}

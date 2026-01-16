@@ -183,11 +183,7 @@ pub const ARM64CodeGen = struct {
     /// Register allocation results (borrowed reference, owned by caller)
     regalloc_state: ?*const regalloc.RegAllocState,
 
-    /// Simple value-to-register mapping for MVP (before full regalloc integration)
-    value_regs: std.AutoHashMapUnmanaged(*const Value, u5),
-
-    /// Next register to allocate for MVP (simple linear allocation)
-    next_reg: u5 = 0,
+    // Phase 1: Removed value_regs and next_reg - codegen must only use regalloc
 
     /// Stack frame size for spilled values (set from stackalloc)
     frame_size: u32 = 16, // Default: just FP/LR
@@ -242,7 +238,7 @@ pub const ARM64CodeGen = struct {
             .symbols = .{},
             .relocations = .{},
             .regalloc_state = null,
-            .value_regs = .{},
+            // Phase 1: Removed value_regs
             .spill_slot_map = .{},
             .block_offsets = .{},
             .branch_fixups = .{},
@@ -257,7 +253,7 @@ pub const ARM64CodeGen = struct {
         self.code.deinit(self.allocator);
         self.symbols.deinit(self.allocator);
         self.relocations.deinit(self.allocator);
-        self.value_regs.deinit(self.allocator);
+        // Phase 1: Removed value_regs
         self.spill_slot_map.deinit(self.allocator);
         self.block_offsets.deinit(self.allocator);
         self.branch_fixups.deinit(self.allocator);
@@ -410,11 +406,10 @@ pub const ARM64CodeGen = struct {
         debug.log(.codegen, "Generating code for function '{s}', {d} blocks", .{ name, f.blocks.items.len });
 
         // Clear state for new function
-        self.value_regs.clearRetainingCapacity();
+        // Phase 1: Removed value_regs and next_reg
         self.block_offsets.clearRetainingCapacity();
         self.branch_fixups.clearRetainingCapacity();
         self.hidden_ret_offsets.clearRetainingCapacity();
-        self.next_reg = 0; // Reset register allocation
         self.has_hidden_return = false; // Reset hidden return state
         self.hidden_ret_space_needed = 0;
 
@@ -513,9 +508,7 @@ pub const ARM64CodeGen = struct {
         });
 
         // Pre-allocate registers for all phi nodes
-        // This is necessary so that phi moves know the destination register
-        // before the phi block is generated
-        try self.preAllocatePhiRegisters(f);
+        // Phase 1: Removed preAllocatePhiRegisters call - regalloc handles phi allocation
 
         // Emit prologue (Go's approach: only save FP/LR)
         debug.log(.codegen, "  Emitting prologue", .{});
@@ -532,25 +525,7 @@ pub const ARM64CodeGen = struct {
         debug.log(.codegen, "  Function '{s}' done, code size: {d} bytes", .{ name, self.offset() - start_offset });
     }
 
-    /// Pre-allocate registers for all phi nodes in the function.
-    /// This is called before code generation so that phi moves can
-    /// look up the destination register before the phi is generated.
-    /// NOTE: When regalloc_state exists, we use regalloc's assignments instead.
-    fn preAllocatePhiRegisters(self: *ARM64CodeGen, f: *const Func) !void {
-        // Skip pre-allocation if regalloc has already assigned registers
-        if (self.regalloc_state != null) {
-            return;
-        }
-
-        for (f.blocks.items) |block| {
-            for (block.values.items) |value| {
-                if (value.op == .phi) {
-                    const dest_reg = self.allocateReg();
-                    try self.value_regs.put(self.allocator, value, dest_reg);
-                }
-            }
-        }
-    }
+    // Phase 1: Removed preAllocatePhiRegisters - regalloc handles phi allocation
 
     /// Apply all pending branch fixups.
     fn applyBranchFixups(self: *ARM64CodeGen) !void {
@@ -1037,7 +1012,6 @@ pub const ARM64CodeGen = struct {
                 // Get destination register from regalloc (or fallback to naive)
                 const dest_reg = self.getDestRegForValue(value);
                 try self.emitLoadImmediate(dest_reg, value.aux_int);
-                try self.value_regs.put(self.allocator, value, dest_reg);
                 debug.log(.codegen, "      -> x{d} = #{d}", .{ dest_reg, value.aux_int });
             },
 
@@ -1045,14 +1019,12 @@ pub const ARM64CodeGen = struct {
                 const dest_reg = self.getDestRegForValue(value);
                 const imm: i64 = if (value.aux_int != 0) 1 else 0;
                 try self.emitLoadImmediate(dest_reg, imm);
-                try self.value_regs.put(self.allocator, value, dest_reg);
             },
 
             .const_nil => {
                 // Null/nil is just 0 (like Go's nil)
                 const dest_reg = self.getDestRegForValue(value);
                 try self.emitLoadImmediate(dest_reg, 0);
-                try self.value_regs.put(self.allocator, value, dest_reg);
             },
 
             .const_string => {
@@ -1095,7 +1067,6 @@ pub const ARM64CodeGen = struct {
                     ref_idx,
                 });
 
-                try self.value_regs.put(self.allocator, value, dest_reg);
                 debug.log(.codegen, "      -> x{d} = str[{d}] len={d} (pending reloc)", .{ dest_reg, string_index, str_data.len });
             },
 
@@ -1127,7 +1098,6 @@ pub const ARM64CodeGen = struct {
                     .string_data = str_copy,
                 });
 
-                try self.value_regs.put(self.allocator, value, dest_reg);
                 debug.log(.codegen, "      -> x{d} = ptr[{d}] (pending reloc)", .{ dest_reg, string_index });
             },
 
@@ -1145,7 +1115,6 @@ pub const ARM64CodeGen = struct {
                     };
                     const dest_reg = self.getDestRegForValue(value);
                     try self.emit(asm_mod.encodeADDReg(dest_reg, op1_reg, op2_reg));
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -1162,7 +1131,6 @@ pub const ARM64CodeGen = struct {
                     };
                     const dest_reg = self.getDestRegForValue(value);
                     try self.emit(asm_mod.encodeSUBReg(dest_reg, op1_reg, op2_reg));
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -1179,7 +1147,6 @@ pub const ARM64CodeGen = struct {
                     };
                     const dest_reg = self.getDestRegForValue(value);
                     try self.emit(asm_mod.encodeMUL(dest_reg, op1_reg, op2_reg));
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -1196,7 +1163,6 @@ pub const ARM64CodeGen = struct {
                     };
                     const dest_reg = self.getDestRegForValue(value);
                     try self.emit(asm_mod.encodeSDIV(dest_reg, op1_reg, op2_reg));
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -1216,7 +1182,6 @@ pub const ARM64CodeGen = struct {
                     };
                     const dest_reg = self.getDestRegForValue(value);
                     try self.emit(asm_mod.encodeADDReg(dest_reg, ptr_reg, off_reg));
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                     debug.log(.codegen, "      -> ADD x{d}, x{d}, x{d} (add_ptr)", .{ dest_reg, ptr_reg, off_reg });
                 }
             },
@@ -1235,7 +1200,6 @@ pub const ARM64CodeGen = struct {
                     };
                     const dest_reg = self.getDestRegForValue(value);
                     try self.emit(asm_mod.encodeSUBReg(dest_reg, ptr_reg, off_reg));
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                     debug.log(.codegen, "      -> SUB x{d}, x{d}, x{d} (sub_ptr)", .{ dest_reg, ptr_reg, off_reg });
                 }
             },
@@ -1260,7 +1224,6 @@ pub const ARM64CodeGen = struct {
                     if (ptr_reg != dest_reg) {
                         try self.emit(asm_mod.encodeADDImm(dest_reg, ptr_reg, 0, 0));
                     }
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                     debug.log(.codegen, "      slice_make ptr=x{d} -> x{d}", .{ ptr_reg, dest_reg });
                 }
             },
@@ -1310,7 +1273,6 @@ pub const ARM64CodeGen = struct {
                         }
                         debug.log(.codegen, "      slice_ptr (other) x{d} -> x{d}", .{ slice_reg, dest_reg });
                     }
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -1419,7 +1381,6 @@ pub const ARM64CodeGen = struct {
                         try self.emit(asm_mod.encodeADDImm(dest_reg, slice_reg, 0, 0));
                         debug.log(.codegen, "      slice_len (fallback) x{d} -> x{d}", .{ slice_reg, dest_reg });
                     }
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -1444,7 +1405,6 @@ pub const ARM64CodeGen = struct {
                         try self.emit(asm_mod.encodeADDImm(dest_reg, src_reg, 0, 0));
                     }
                     debug.log(.codegen, "      string_ptr x{d} -> x{d}", .{ src_reg, dest_reg });
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -1467,7 +1427,6 @@ pub const ARM64CodeGen = struct {
                         try self.emit(asm_mod.encodeADDImm(dest_reg, src_reg, 0, 0));
                     }
                     debug.log(.codegen, "      string_len x{d} -> x{d}", .{ src_reg, dest_reg });
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -1486,7 +1445,6 @@ pub const ARM64CodeGen = struct {
                         break :blk @as(u5, 0);
                     };
                     // NO code generated - just track that this value is at ptr's location
-                    try self.value_regs.put(self.allocator, value, ptr_reg);
                     debug.log(.codegen, "      string_make (virtual) ptr=x{d}", .{ptr_reg});
                 }
             },
@@ -1516,7 +1474,6 @@ pub const ARM64CodeGen = struct {
                     if (src_reg != dest_reg) {
                         try self.emit(asm_mod.encodeADDImm(dest_reg, src_reg, 0, 0)); // MOV dest, src
                     }
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                     debug.log(.codegen, "      select_n[{d}] x{d} -> x{d}", .{ idx, src_reg, dest_reg });
                 }
             },
@@ -1604,13 +1561,11 @@ pub const ARM64CodeGen = struct {
                     // which would clobber x1 before select_n[1] can read it.
                     // select_n[1] reads from x8 instead of x1.
                     try self.emit(asm_mod.encodeADDImm(8, 1, 0, 0)); // x8 = x1
-                    try self.value_regs.put(self.allocator, value, 0);
                     debug.log(.codegen, "      Results: x0 (ptr), x1->x8 (len)", .{});
                 } else if (args.len >= 2) {
                     // Old path (before expand_calls): 2 string args
                     // This shouldn't happen anymore, but keep for safety
                     debug.log(.codegen, "      string_concat (old): 2 string args - unexpected!", .{});
-                    try self.value_regs.put(self.allocator, value, 0);
                 }
             },
 
@@ -1625,7 +1580,6 @@ pub const ARM64CodeGen = struct {
                     const dest_reg = self.getDestRegForValue(value);
                     // XZR is register 31
                     try self.emit(asm_mod.encodeSUBReg(dest_reg, 31, op_reg));
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -1655,7 +1609,6 @@ pub const ARM64CodeGen = struct {
                         try self.emit(asm_mod.encodeMVN(dest_reg, op_reg));
                         debug.log(.codegen, "      -> NOT (int): MVN x{d}, x{d}", .{ dest_reg, op_reg });
                     }
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -1677,7 +1630,6 @@ pub const ARM64CodeGen = struct {
                     try self.emit(asm_mod.encodeSDIV(16, op1_reg, op2_reg)); // x16 = a / b
                     try self.emit(asm_mod.encodeMUL(16, 16, op2_reg)); // x16 = (a / b) * b
                     try self.emit(asm_mod.encodeSUBReg(dest_reg, op1_reg, 16)); // dest = a - x16
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -1695,7 +1647,6 @@ pub const ARM64CodeGen = struct {
                     };
                     const dest_reg = self.getDestRegForValue(value);
                     try self.emit(asm_mod.encodeAND(dest_reg, op1_reg, op2_reg));
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -1712,7 +1663,6 @@ pub const ARM64CodeGen = struct {
                     };
                     const dest_reg = self.getDestRegForValue(value);
                     try self.emit(asm_mod.encodeORR(dest_reg, op1_reg, op2_reg));
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -1729,7 +1679,6 @@ pub const ARM64CodeGen = struct {
                     };
                     const dest_reg = self.getDestRegForValue(value);
                     try self.emit(asm_mod.encodeEOR(dest_reg, op1_reg, op2_reg));
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -1746,7 +1695,6 @@ pub const ARM64CodeGen = struct {
                     };
                     const dest_reg = self.getDestRegForValue(value);
                     try self.emit(asm_mod.encodeLSL(dest_reg, op1_reg, op2_reg));
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -1763,14 +1711,12 @@ pub const ARM64CodeGen = struct {
                     };
                     const dest_reg = self.getDestRegForValue(value);
                     try self.emit(asm_mod.encodeLSR(dest_reg, op1_reg, op2_reg));
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
             .arg => {
                 // Function argument - already in register per ABI
-                const arg_idx: u5 = @intCast(value.aux_int);
-                try self.value_regs.put(self.allocator, value, arg_idx);
+                // Register is assigned by regalloc based on aux_int (arg index)
             },
 
             // === Comparison Operations ===
@@ -1801,7 +1747,6 @@ pub const ARM64CodeGen = struct {
                         else => .eq,
                     };
                     try self.emit(asm_mod.encodeCSET(dest_reg, cond));
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -1817,7 +1762,6 @@ pub const ARM64CodeGen = struct {
                         // Source not in a register - try to regenerate
                         debug.log(.codegen, "      copy: src v{d} not in register, regenerating", .{src.id});
                         try self.ensureInReg(src, dest_reg);
-                        try self.value_regs.put(self.allocator, value, dest_reg);
                         break :blk dest_reg;
                     };
                     if (src_reg != dest_reg) {
@@ -1828,7 +1772,6 @@ pub const ARM64CodeGen = struct {
                         debug.log(.codegen, "      copy (no-op, same reg x{d})", .{dest_reg});
                     }
                 }
-                try self.value_regs.put(self.allocator, value, dest_reg);
             },
 
             // Sign extension ops
@@ -1848,7 +1791,6 @@ pub const ARM64CodeGen = struct {
                         try self.emit(asm_mod.encodeSXTB32(dest_reg, src_reg));
                     }
                 }
-                try self.value_regs.put(self.allocator, value, dest_reg);
             },
             .sign_ext16to32, .sign_ext16to64 => {
                 const dest_reg = self.getDestRegForValue(value);
@@ -1866,7 +1808,6 @@ pub const ARM64CodeGen = struct {
                         try self.emit(asm_mod.encodeSXTH32(dest_reg, src_reg));
                     }
                 }
-                try self.value_regs.put(self.allocator, value, dest_reg);
             },
             .sign_ext32to64 => {
                 const dest_reg = self.getDestRegForValue(value);
@@ -1880,7 +1821,6 @@ pub const ARM64CodeGen = struct {
                     // SXTW: sign-extend word to 64-bit
                     try self.emit(asm_mod.encodeSXTW(dest_reg, src_reg));
                 }
-                try self.value_regs.put(self.allocator, value, dest_reg);
             },
 
             // Zero extension ops
@@ -1900,7 +1840,6 @@ pub const ARM64CodeGen = struct {
                         try self.emit(asm_mod.encodeUXTB32(dest_reg, src_reg));
                     }
                 }
-                try self.value_regs.put(self.allocator, value, dest_reg);
             },
             .zero_ext16to32, .zero_ext16to64 => {
                 const dest_reg = self.getDestRegForValue(value);
@@ -1918,7 +1857,6 @@ pub const ARM64CodeGen = struct {
                         try self.emit(asm_mod.encodeUXTH32(dest_reg, src_reg));
                     }
                 }
-                try self.value_regs.put(self.allocator, value, dest_reg);
             },
             .zero_ext32to64 => {
                 // Zero-extend 32-bit to 64-bit: just use 32-bit MOV (upper bits auto-cleared)
@@ -1929,7 +1867,6 @@ pub const ARM64CodeGen = struct {
                     try self.ensureInReg(src, dest_reg);
                     // Writing to Wd automatically zeroes upper 32 bits of Xd
                 }
-                try self.value_regs.put(self.allocator, value, dest_reg);
             },
 
             // Truncation ops - just use narrower register form (mask if needed)
@@ -1943,19 +1880,17 @@ pub const ARM64CodeGen = struct {
                     // the lower bits of the register. If we need to store it,
                     // the store instruction will use the appropriate size.
                 }
-                try self.value_regs.put(self.allocator, value, dest_reg);
             },
 
             .phi => {
                 // Phi values are handled at block boundaries (see emitPhiMoves)
-                // Register was pre-allocated in preAllocatePhiRegisters
+                // Register is assigned by regalloc
                 // Nothing to do here - the phi moves happen at predecessor blocks
             },
 
             .fwd_ref => {
                 // Should not appear after phi insertion
-                const dest_reg = self.allocateReg();
-                try self.value_regs.put(self.allocator, value, dest_reg);
+                std.debug.panic("fwd_ref should not appear after phi insertion", .{});
             },
 
             .static_call => static_call_blk: {
@@ -2011,7 +1946,6 @@ pub const ARM64CodeGen = struct {
 
                     // The result "value" is now the ADDRESS where the struct data lives.
                     // Subsequent store operations will copy from this address.
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                     debug.log(.codegen, "      -> BL {s}, >16B result at [x{d}] (SP+{d})", .{ raw_name, dest_reg, frame_offset });
                     break :static_call_blk;
                 }
@@ -2046,7 +1980,6 @@ pub const ARM64CodeGen = struct {
 
                 // Result is in x0 - regalloc will handle spill/reload if needed
                 // Go's approach: don't move to callee-saved, let regalloc spill
-                try self.value_regs.put(self.allocator, value, 0);
             },
 
             .closure_call => {
@@ -2097,7 +2030,6 @@ pub const ARM64CodeGen = struct {
                 }
 
                 // Result is in x0
-                try self.value_regs.put(self.allocator, value, 0);
             },
 
             .store_reg => {
@@ -2145,7 +2077,6 @@ pub const ARM64CodeGen = struct {
                     try self.emit(asm_mod.encodeLdrStr(dest_reg, 31, spill_off, true)); // true = load
                     debug.log(.codegen, "      -> LDR x{d}, [SP, #{d}]", .{ dest_reg, spill_off });
 
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -2169,7 +2100,6 @@ pub const ARM64CodeGen = struct {
                     try self.emit(asm_mod.encodeADDImm(dest_reg, 31, 0, 0));
                     debug.log(.codegen, "      -> ADD x{d}, SP, #0 (local_addr {d} - NO OFFSET!)", .{ dest_reg, local_idx });
                 }
-                try self.value_regs.put(self.allocator, value, dest_reg);
             },
 
             .global_addr => {
@@ -2199,7 +2129,6 @@ pub const ARM64CodeGen = struct {
                 });
 
                 debug.log(.codegen, "      -> ADRP+ADD x{d}, _{s} (global)", .{ dest_reg, global_name });
-                try self.value_regs.put(self.allocator, value, dest_reg);
             },
 
             .addr => {
@@ -2229,7 +2158,6 @@ pub const ARM64CodeGen = struct {
                 });
 
                 debug.log(.codegen, "      -> ADRP+ADD x{d}, _{s}", .{ dest_reg, func_name });
-                try self.value_regs.put(self.allocator, value, dest_reg);
             },
 
             .off_ptr => {
@@ -2276,7 +2204,6 @@ pub const ARM64CodeGen = struct {
                         try self.emit(asm_mod.encodeADDImm(dest_reg, base_reg, 0, 0));
                         debug.log(.codegen, "      -> ADD x{d}, x{d}, #0 (off_ptr copy)", .{ dest_reg, base_reg });
                     }
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -2288,10 +2215,9 @@ pub const ARM64CodeGen = struct {
                     const dest_reg = self.getDestRegForValue(value);
 
                     const addr_reg = self.getRegForValue(addr) orelse blk: {
-                        // Address should already be computed, but fallback
-                        const temp_reg = self.allocateReg();
-                        try self.ensureInReg(addr, temp_reg);
-                        break :blk temp_reg;
+                        // Address should already be computed - use x16 as scratch
+                        try self.ensureInReg(addr, 16);
+                        break :blk @as(u5, 16);
                     };
 
                     // CRITICAL: Use type-sized load instruction
@@ -2313,7 +2239,6 @@ pub const ARM64CodeGen = struct {
                             type_name,
                             type_size,
                         });
-                        try self.value_regs.put(self.allocator, value, dest_reg);
                     } else {
                         const ld_size = asm_mod.LdStSize.fromBytes(type_size);
                         try self.emit(asm_mod.encodeLdrStrSized(dest_reg, addr_reg, 0, ld_size, true));
@@ -2326,7 +2251,6 @@ pub const ARM64CodeGen = struct {
                             type_name,
                             type_size,
                         });
-                        try self.value_regs.put(self.allocator, value, dest_reg);
                     }
                 }
             },
@@ -2339,7 +2263,7 @@ pub const ARM64CodeGen = struct {
                     const val = value.args[1];
 
                     const addr_reg = self.getRegForValue(addr) orelse blk: {
-                        const temp_reg = self.allocateReg();
+                        const temp_reg: u5 = 16; // Phase 1: use x16 as scratch
                         try self.ensureInReg(addr, temp_reg);
                         break :blk temp_reg;
                     };
@@ -2376,7 +2300,7 @@ pub const ARM64CodeGen = struct {
                         } else {
                             // Fallback (shouldn't happen for >16B)
                             src_reg = self.getRegForValue(val) orelse blk: {
-                                const temp_reg = self.allocateReg();
+                                const temp_reg: u5 = 16; // Phase 1: use x16 as scratch
                                 try self.ensureInReg(val, temp_reg);
                                 break :blk temp_reg;
                             };
@@ -2421,7 +2345,7 @@ pub const ARM64CodeGen = struct {
                         // 16-byte load (string/slice) was loaded with LDP into val_reg and val_reg+1
                         // Store both halves with STP
                         const val_reg = self.getRegForValue(val) orelse blk: {
-                            const temp_reg = self.allocateReg();
+                            const temp_reg: u5 = 16; // Phase 1: use x16 as scratch
                             try self.ensureInReg(val, temp_reg);
                             break :blk temp_reg;
                         };
@@ -2452,7 +2376,7 @@ pub const ARM64CodeGen = struct {
                     } else if (type_size == 16 and val.op == .const_string) {
                         // Store const_string: ptr is in val_reg, len needs to be loaded as immediate
                         const val_reg = self.getRegForValue(val) orelse blk: {
-                            const temp_reg = self.allocateReg();
+                            const temp_reg: u5 = 16; // Phase 1: use x16 as scratch
                             try self.ensureInReg(val, temp_reg);
                             break :blk temp_reg;
                         };
@@ -2484,7 +2408,7 @@ pub const ARM64CodeGen = struct {
                         });
                     } else {
                         const val_reg = self.getRegForValue(val) orelse blk: {
-                            const temp_reg = self.allocateReg();
+                            const temp_reg: u5 = 16; // Phase 1: use x16 as scratch
                             try self.ensureInReg(val, temp_reg);
                             break :blk temp_reg;
                         };
@@ -2535,7 +2459,6 @@ pub const ARM64CodeGen = struct {
                     try self.emit(asm_mod.encodeCSEL(dest_reg, then_reg, else_reg, .ne));
 
                     debug.log(.codegen, "      -> CMP x{d}, #0; CSEL x{d}, x{d}, x{d}, NE", .{ cond_reg, dest_reg, then_reg, else_reg });
-                    try self.value_regs.put(self.allocator, value, dest_reg);
                 }
             },
 
@@ -2552,7 +2475,7 @@ pub const ARM64CodeGen = struct {
 
                     // Get destination address register
                     const dest_reg = self.getRegForValue(dest_addr) orelse blk: {
-                        const temp_reg = self.allocateReg();
+                        const temp_reg: u5 = 16; // Phase 1: use x16 as scratch
                         try self.ensureInReg(dest_addr, temp_reg);
                         break :blk temp_reg;
                     };
@@ -2601,7 +2524,7 @@ pub const ARM64CodeGen = struct {
                         // Fallback: use src_val's register (shouldn't happen for >16B)
                         debug.log(.codegen, "      move: WARNING no hidden_ret_offset found, using register", .{});
                         src_reg = self.getRegForValue(src_val) orelse blk: {
-                            const temp_reg = self.allocateReg();
+                            const temp_reg: u5 = 16; // Phase 1: use x16 as scratch
                             try self.ensureInReg(src_val, temp_reg);
                             break :blk temp_reg;
                         };
@@ -2644,12 +2567,7 @@ pub const ARM64CodeGen = struct {
     }
 
     /// Allocate a register for a new value
-    fn allocateReg(self: *ARM64CodeGen) u5 {
-        // Simple linear allocation: x0-x15 are caller-saved
-        const reg = self.next_reg;
-        self.next_reg = if (self.next_reg >= 15) 0 else self.next_reg + 1;
-        return reg;
-    }
+    // Phase 1: Removed allocateReg() - codegen must only use regalloc assignments
 
     /// Allocate a callee-saved register (x19-x28) for values that must survive calls.
     /// Ensure a value is in the specified register, regenerating if needed
@@ -2678,34 +2596,29 @@ pub const ARM64CodeGen = struct {
         }
     }
 
-    /// Get register for a value from regalloc (preferred) or value_regs fallback
+    /// Get register for a value from regalloc ONLY (Go's pattern)
+    /// Phase 1: Removed value_regs fallback - codegen must only use regalloc assignments
     fn getRegForValue(self: *ARM64CodeGen, value: *const Value) ?u5 {
-        // Check value_regs FIRST for values we've explicitly placed
-        // (like static_call results saved to callee-saved registers)
-        if (self.value_regs.get(value)) |reg| {
-            return reg;
-        }
-
-        // Use the new Go-style API: value.regOrNull() looks up f.reg_alloc[v.id]
+        _ = self;
+        // Use the Go-style API: value.regOrNull() looks up f.reg_alloc[v.id]
         if (value.regOrNull()) |reg| {
             return @intCast(reg);
         }
-
         return null;
     }
 
-    /// Get destination register for a value from regalloc, or allocate naively
+    /// Get destination register for a value from regalloc ONLY (Go's pattern)
+    /// Phase 1: Removed naive fallback - if regalloc didn't assign, it's a regalloc bug
     fn getDestRegForValue(self: *ARM64CodeGen, value: *const Value) u5 {
-        // Use the new Go-style API: value.regOrNull() looks up f.reg_alloc[v.id]
+        _ = self;
+        // Use the Go-style API: value.regOrNull() looks up f.reg_alloc[v.id]
         if (value.regOrNull()) |reg| {
             debug.log(.codegen, "        getDestReg v{d}: from regalloc -> x{d}", .{ value.id, reg });
             return @intCast(reg);
         }
 
-        // Fallback: naive allocation (shouldn't happen if regalloc is working)
-        const reg = self.allocateReg();
-        debug.log(.codegen, "        getDestReg v{d}: FALLBACK to naive -> x{d}", .{ value.id, reg });
-        return reg;
+        // Phase 1: Panic instead of fallback - reveals regalloc gaps
+        std.debug.panic("codegen: v{d} ({s}) has no register assigned by regalloc - this is a regalloc bug", .{ value.id, @tagName(value.op) });
     }
 
     /// Ensure value is in x0

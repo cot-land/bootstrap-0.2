@@ -1,0 +1,13 @@
+// Basic parser test - just test Scanner and Token
+import "token.cot"
+import "scanner.cot"
+
+fn main() i64 {
+    var s: Scanner = scanner_new("42");
+
+    let tok: Token = scanner_next(&s);
+    if tok.kind != TokenType.Int { return 1; }
+
+    println("Basic test passed!");
+    return 0;
+}

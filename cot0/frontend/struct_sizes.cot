@@ -1,0 +1,13 @@
+// Check struct sizes
+import "token.cot"
+import "scanner.cot"
+import "ast.cot"
+import "parser.cot"
+
+fn main() i64 {
+    // Return size of Parser struct
+    // Scanner = string(16) + i64(8) = 24
+    // Token = enum(4) + i64(8) + i64(8) = 20 (or 24 with padding)
+    // Parser = string(16) + Scanner(24) + Token(24) + ptr(8) + bool(1) = 73+
+    return @sizeOf(Parser);
+}

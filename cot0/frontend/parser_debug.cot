@@ -1,0 +1,31 @@
+// Debug parser - simplified test for return value issue
+import "token.cot"
+import "scanner.cot"
+import "ast.cot"
+import "parser.cot"
+
+var g_nodes: [200]Node;
+var g_children: [1000]i64;
+var g_pool: NodePool;
+
+fn init_test_pool() *NodePool {
+    g_pool.nodes = &g_nodes[0];
+    g_pool.count = 0;
+    g_pool.children = &g_children[0];
+    g_pool.children_count = 0;
+    return &g_pool;
+}
+
+fn main() i64 {
+    let pool: *NodePool = init_test_pool();
+
+    // Call parser_new and check pool field
+    var p: Parser = parser_new("42", pool);
+
+    // The pool pointer should match what we passed in
+    // Return 0 if match, 1 if not
+    if p.pool == pool {
+        return 0;
+    }
+    return 1;
+}
