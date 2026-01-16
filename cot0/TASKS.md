@@ -1,6 +1,6 @@
 # Cot0 Tasks
 
-**Goal:** Minimal compiler for i64, arithmetic, functions, return.
+**Goal:** Self-hosting Cot compiler written in Cot.
 
 **Last Updated:** 2026-01-16
 
@@ -10,170 +10,97 @@
 
 **All 160 e2e tests pass.**
 
-- `token_test.cot`: 5/5 tests pass
-- `scanner_test.cot`: 11/11 tests pass
-- `ast_test.cot`: 7/7 tests pass
-- `parser_test.cot`: 10/10 tests pass
-- `types_test.cot`: 2/2 tests pass
-- `checker_test.cot`: 2/2 tests pass
-
-**Recent Bug Fixes (2026-01-16):**
-- BUG-017: Imported consts in binary expressions (OPEN) - workaround in place
-- BUG-016: Const on right side of comparison (OPEN) - workaround in place
-- BUG-015: Chained OR (3+ conditions) fixed - pre-scan IR to skip logical operands
-- BUG-014: Switch statements now supported (both expression and statement modes)
-- BUG-013: String concatenation in loops fixed (use count tracking)
-- BUG-012: `ptr.*.field` codegen fixed
-- BUG-004: Struct returns > 16 bytes fixed
-- BUG-005/006: Logical NOT and `not` keyword fixed
-- BUG-002: Struct literals implemented
-
-**Sprint 1 COMPLETE!** Scanner.cot compiles and tests pass.
-**Sprint 2 COMPLETE!** Parser.cot compiles and all 10 tests pass.
-**Sprint 3 IN PROGRESS:** types.cot and checker.cot created with basic tests.
-**Sprint 4 NEXT:** IR & SSA (ir.cot, lower.cot)
+| Test File | Status |
+|-----------|--------|
+| `token_test.cot` | 5/5 pass ✓ |
+| `scanner_test.cot` | 11/11 pass ✓ |
+| `ast_test.cot` | 7/7 pass ✓ |
+| `parser_test.cot` | 10/10 pass ✓ |
+| `types_test.cot` | 2/2 pass ✓ |
+| `checker_test.cot` | 2/2 pass ✓ |
 
 ---
 
-## Immediate Blockers for scanner.cot
+## Sprint Progress
 
-### BUG-005: Logical NOT operator broken (P0) ✅ FIXED
-
-**Status:** Fixed
-**Fix:** For boolean types, uses `EOR Rd, Rm, #1` (XOR with 1) instead of MVN.
-
-### BUG-006: `not` keyword not recognized (P0) ✅ FIXED
-
-**Status:** Fixed
-**Fix:** Added `not` as a keyword that parses as unary `!` operator.
-
-### BUG-002: Struct literals not implemented (P0) ✅ FIXED
-
-**Status:** Fixed
-**Fix:** Implemented struct literal parsing following Go's composite literal pattern.
-
-### @string(ptr, len) builtin (P0) ✅ FIXED
-
-**Status:** Fixed (was already implemented)
-**Implementation:** Following Go's `unsafe.String(ptr, len)` → `StringHeaderExpr` → `OpStringMake` pattern.
-
-Parser, checker, and lowerer all handle `@string(ptr, len)`:
-- Parser: `@string(expr, expr)` syntax
-- Checker: validates ptr is `*u8`, len is integer, returns `string`
-- Lowerer: emits `string_header` IR → `string_make` SSA op
+| Sprint | Status | Files |
+|--------|--------|-------|
+| Sprint 1: Scanner | ✅ COMPLETE | token.cot, scanner.cot |
+| Sprint 2: Parser | ✅ COMPLETE | ast.cot, parser.cot |
+| Sprint 3: Type Checking | ✅ COMPLETE | types.cot, checker.cot |
+| Sprint 4: IR & SSA | **NEXT** | ir.cot, lower.cot |
+| Sprint 5: Backend | Pending | arm64/, codegen/, obj/ |
 
 ---
 
-## Execution Order (Priority)
+## Recent Bug Fixes (2026-01-16)
 
-### Sprint 1: Unblock scanner.cot (4 issues) ✅ COMPLETE
-
-| Order | Issue | Effort | Status |
-|-------|-------|--------|--------|
-| 1 | BUG-005: Fix `!` for booleans | Small | ✅ Done |
-| 2 | BUG-006: Add `not` keyword | Small | ✅ Done |
-| 3 | BUG-002: Struct literals | Medium | ✅ Done |
-| 4 | @string builtin | Medium | ✅ Done |
-
-**Result:** scanner.cot compiles successfully to object file.
-
-### Sprint 2: AST & Parser
-
-| Order | File | Dependency |
-|-------|------|------------|
-| 1 | ast.cot | scanner.cot working |
-| 2 | parser.cot | ast.cot |
-| 3 | parser_test.cot | parser.cot |
-
-### Sprint 3: Type Checking
-
-| Order | File | Dependency |
-|-------|------|------------|
-| 1 | types.cot | parser.cot |
-| 2 | checker.cot | types.cot |
-| 3 | checker_test.cot | checker.cot |
-
-### Sprint 4: IR & SSA
-
-| Order | File | Dependency |
-|-------|------|------------|
-| 1 | ir.cot | checker.cot |
-| 2 | lower.cot | ir.cot |
-| 3 | ssa/*.cot | lower.cot |
-
-### Sprint 5: Backend & Integration
-
-| Order | File | Dependency |
-|-------|------|------------|
-| 1 | arm64/asm.cot | ssa working |
-| 2 | codegen/arm64.cot | asm.cot |
-| 3 | obj/macho.cot | codegen |
-| 4 | main.cot | All above |
+- BUG-017: Imported consts in binary expressions ✅ FIXED
+- BUG-016: Const on right side of comparison ✅ FIXED
+- BUG-015: Chained OR (3+ conditions) ✅ FIXED
+- BUG-014: Switch statements ✅ FIXED
+- BUG-013: String concatenation in loops ✅ FIXED
 
 ---
 
-## Phase 1: Frontend
+## Phase 1: Frontend ✅ COMPLETE
 
 ### token.cot ✅ COMPLETE
-- [x] TokenType enum (Int, Ident, Fn, Return, I64, punctuation, operators)
+- [x] TokenType enum (all tokens, keywords, operators)
 - [x] Token struct (type, start, length)
 - [x] token_new() constructor
-- [x] is_keyword() for fn/return/i64
-
-### token_test.cot ✅ COMPLETE (5/5 pass)
-- [x] Test token creation
-- [x] Test keyword recognition - 5/5 tests pass
+- [x] is_keyword() for keyword lookup
 
 ### scanner.cot ✅ COMPLETE
 - [x] Scanner struct (source, pos)
 - [x] scanner_new(), scanner_next()
 - [x] skip_whitespace(), skip_comments
-- [x] scan_number() for integer literals
-- [x] scan_ident() for identifiers/keywords
-- [x] Compiles successfully to object file
-- [x] All scanner_test.cot tests pass (11/11)
+- [x] scan_number(), scan_ident(), scan_string()
+- [x] All 11 scanner tests pass
 
-### scanner_test.cot ✅ COMPLETE (11/11 pass)
-- [x] Test single tokens (int, ident, keywords)
-- [x] Test whitespace handling
-- [x] Test punctuation and operators
-- [x] Test EOF token
-- [x] Test multi-token sequences
-- [x] Test full function tokenization
+### ast.cot ✅ COMPLETE
+- [x] NodeKind enum for all AST node types
+- [x] Node struct with kind and fields
+- [x] NodePool for memory management
+- [x] All 7 ast tests pass
 
-### ast.cot
-- [ ] Node types: IntLit, Ident, BinaryOp, Call, Return, FnDecl, Block
-- [ ] AST node struct with tagged union
+### parser.cot ✅ COMPLETE
+- [x] Parser struct (scanner, current token)
+- [x] parse_expr(), parse_stmt(), parse_fn()
+- [x] Operator precedence (Pratt parsing)
+- [x] All 10 parser tests pass
 
-### parser.cot
-- [ ] Parser struct (scanner, current token)
-- [ ] parse_expr(), parse_stmt(), parse_fn()
-- [ ] Operator precedence for +, -, *, /
+### types.cot ✅ COMPLETE
+- [x] TypeKind enum (Bool, I8-I64, U8-U64, Void, Pointer, etc.)
+- [x] Type struct with kind, elem, size, align
+- [x] TypePool for type interning
+- [x] TYPE_* constants (TYPE_I64, TYPE_BOOL, etc.)
+- [x] Predicate functions (is_numeric, is_integer, etc.)
+- [x] All 2 types tests pass
 
-### parser_test.cot
-- [ ] Test expression parsing
-- [ ] Test function parsing
-
-### types.cot
-- [ ] Type enum (I64, Void, Fn)
-- [ ] Type comparison
-
-### checker.cot
-- [ ] Symbol table (name -> type)
-- [ ] check_expr(), check_fn()
-- [ ] Type inference for literals
-- [ ] Function call validation
+### checker.cot ✅ COMPLETE
+- [x] Symbol struct (name, kind, type_idx)
+- [x] SymbolKind enum (variable, constant, function, type)
+- [x] Scope and ScopePool for name resolution
+- [x] Checker struct with type_pool, scope_pool
+- [x] check_expr(), check_stmt() scaffolding
+- [x] All 2 checker tests pass
 
 ---
 
-## Phase 2: IR & SSA
+## Phase 2: IR & SSA (Sprint 4) - NEXT
 
 ### ir.cot
-- [ ] IR node types matching ast.cot
-- [ ] IR builder
+- [ ] IRNodeKind enum (const_int, binary, load, store, call, ret, etc.)
+- [ ] IRNode struct with kind and operands
+- [ ] IRFunc struct (name, blocks, locals)
+- [ ] IRBuilder for constructing IR
 
 ### lower.cot
 - [ ] AST to IR conversion
+- [ ] Expression lowering
+- [ ] Statement lowering
+- [ ] Function lowering
 
 ### ssa/op.cot
 - [ ] Op enum (const_int, add, sub, mul, div, call, ret)
@@ -189,10 +116,11 @@ Parser, checker, and lowerer all handle `@string(ptr, len)`:
 
 ### ssa/builder.cot
 - [ ] IR to SSA conversion
+- [ ] Phi node insertion
 
 ---
 
-## Phase 3: Backend
+## Phase 3: Backend (Sprint 5)
 
 ### arm64/asm.cot
 - [ ] Instruction encoding for: MOV, ADD, SUB, MUL, SDIV, BL, RET
@@ -200,7 +128,7 @@ Parser, checker, and lowerer all handle `@string(ptr, len)`:
 
 ### codegen/arm64.cot
 - [ ] SSA to ARM64 conversion
-- [ ] Register allocation (simple linear scan)
+- [ ] Register allocation
 - [ ] Function prologue/epilogue
 
 ### obj/macho.cot
@@ -225,7 +153,13 @@ Parser, checker, and lowerer all handle `@string(ptr, len)`:
 
 - [x] `token_test.cot` passes (5/5)
 - [x] `scanner_test.cot` passes (11/11)
-- [ ] `parser_test.cot` passes
+- [x] `ast_test.cot` passes (7/7)
+- [x] `parser_test.cot` passes (10/10)
+- [x] `types_test.cot` passes (2/2)
+- [x] `checker_test.cot` passes (2/2)
 - [x] Can compile: `fn main() i64 { return 42; }`
 - [x] Can compile: `fn main() i64 { return 20 + 22; }`
 - [x] Can compile: `fn add(a: i64, b: i64) i64 { return a + b; } fn main() i64 { return add(20, 22); }`
+- [ ] ir.cot compiles and tests pass
+- [ ] lower.cot compiles and tests pass
+- [ ] Can self-compile minimal subset
