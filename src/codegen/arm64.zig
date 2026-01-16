@@ -817,11 +817,22 @@ pub const ARM64CodeGen = struct {
                                 };
                             }
                         } else if (ret_val.op == .static_call) {
-                            // For >16B call results, our convention is that the register holds the address
-                            src_addr_reg = self.getRegForValue(ret_val) orelse blk: {
-                                try self.ensureInReg(ret_val, 16);
-                                break :blk @as(u5, 16);
-                            };
+                            // BUG FIX: For >16B call results, the result is at a pre-allocated
+                            // frame location, NOT in a register. x0 is garbage after hidden return calls.
+                            if (self.hidden_ret_offsets.get(ret_val)) |rel_offset| {
+                                // Result is at frame location - compute address into x19
+                                // Note: Can't use x16/x17 as they're used as temps in the copy loop
+                                const frame_offset: u12 = @intCast(self.hidden_ret_frame_offset + rel_offset);
+                                try self.emit(asm_mod.encodeADDImm(19, 31, frame_offset, 0));
+                                src_addr_reg = 19;
+                                debug.log(.codegen, "      ret static_call: result at frame offset {d}, loaded addr to x19", .{frame_offset});
+                            } else {
+                                // Normal call (<=16B) - result in register
+                                src_addr_reg = self.getRegForValue(ret_val) orelse blk: {
+                                    try self.ensureInReg(ret_val, 16);
+                                    break :blk @as(u5, 16);
+                                };
+                            }
                         } else {
                             // Fallback
                             src_addr_reg = self.getRegForValue(ret_val) orelse blk: {
@@ -1247,11 +1258,20 @@ pub const ARM64CodeGen = struct {
                     const dest_reg = self.getDestRegForValue(value);
 
                     if (slice_val.op == .static_call) {
-                        // Call result: ptr is in x0 after the call
-                        if (dest_reg != 0) {
-                            try self.emit(asm_mod.encodeADDImm(dest_reg, 0, 0, 0)); // MOV dest, x0
+                        // Call result: check if it used hidden return
+                        if (self.hidden_ret_offsets.get(slice_val)) |rel_offset| {
+                            // >16B result at frame location - load ptr from offset 0
+                            const frame_offset: u12 = @intCast(self.hidden_ret_frame_offset + rel_offset);
+                            try self.emit(asm_mod.encodeADDImm(16, 31, frame_offset, 0)); // x16 = frame addr
+                            try self.emit(asm_mod.encodeLdrStr(dest_reg, 16, 0, true)); // load ptr
+                            debug.log(.codegen, "      slice_ptr (>16B call) [SP+{d}] -> x{d}", .{ frame_offset, dest_reg });
+                        } else {
+                            // <=16B result in x0
+                            if (dest_reg != 0) {
+                                try self.emit(asm_mod.encodeADDImm(dest_reg, 0, 0, 0)); // MOV dest, x0
+                            }
+                            debug.log(.codegen, "      slice_ptr (call result) x0 -> x{d}", .{dest_reg});
                         }
-                        debug.log(.codegen, "      slice_ptr (call result) x0 -> x{d}", .{dest_reg});
                     } else if ((slice_val.op == .slice_make or slice_val.op == .string_make) and slice_val.args.len >= 1) {
                         // slice_make/string_make: ptr is args[0]
                         const ptr_reg = self.getRegForValue(slice_val.args[0]) orelse blk: {
@@ -1287,12 +1307,28 @@ pub const ARM64CodeGen = struct {
                     const dest_reg = self.getDestRegForValue(value);
 
                     if (slice_val.op == .static_call or slice_val.op == .string_concat) {
-                        // Call result: len is in x1 after the call
-                        // Move x1 to dest_reg
-                        if (dest_reg != 1) {
-                            try self.emit(asm_mod.encodeADDImm(dest_reg, 1, 0, 0)); // MOV dest, x1
+                        // Call result: check if it used hidden return
+                        if (slice_val.op == .static_call) {
+                            if (self.hidden_ret_offsets.get(slice_val)) |rel_offset| {
+                                // >16B result at frame location - load len from offset 8
+                                const frame_offset: u12 = @intCast(self.hidden_ret_frame_offset + rel_offset);
+                                try self.emit(asm_mod.encodeADDImm(16, 31, frame_offset, 0)); // x16 = frame addr
+                                try self.emit(asm_mod.encodeLdrStr(dest_reg, 16, 1, true)); // load len at +8
+                                debug.log(.codegen, "      slice_len (>16B call) [SP+{d}+8] -> x{d}", .{ frame_offset, dest_reg });
+                            } else {
+                                // <=16B result: len in x1
+                                if (dest_reg != 1) {
+                                    try self.emit(asm_mod.encodeADDImm(dest_reg, 1, 0, 0)); // MOV dest, x1
+                                }
+                                debug.log(.codegen, "      slice_len (call result) x1 -> x{d}", .{dest_reg});
+                            }
+                        } else {
+                            // string_concat: always <=16B, len in x1
+                            if (dest_reg != 1) {
+                                try self.emit(asm_mod.encodeADDImm(dest_reg, 1, 0, 0)); // MOV dest, x1
+                            }
+                            debug.log(.codegen, "      slice_len (string_concat) x1 -> x{d}", .{dest_reg});
                         }
-                        debug.log(.codegen, "      slice_len (call result) x1 -> x{d}", .{dest_reg});
                     } else if (slice_val.op == .slice_make and slice_val.args.len >= 2) {
                         // slice_make: len is args[1]
                         const len_reg = self.getRegForValue(slice_val.args[1]) orelse blk: {
@@ -2280,14 +2316,24 @@ pub const ARM64CodeGen = struct {
                         try self.emit(asm_mod.encodeLdpStp(0, 8, actual_addr_reg, 0, .signed_offset, false));
                         debug.log(.codegen, "      -> STP x0, x8, [x{d}] (store string_concat 16B)", .{actual_addr_reg});
                     } else if (type_size > 16 and val.op == .static_call) {
-                        // BUG-004: After static_call returning >16B struct via hidden pointer
-                        // val's register holds the SOURCE address of the data
-                        // We need to COPY the data from source to destination
-                        const src_reg = self.getRegForValue(val) orelse blk: {
-                            const temp_reg = self.allocateReg();
-                            try self.ensureInReg(val, temp_reg);
-                            break :blk temp_reg;
-                        };
+                        // BUG-004 FIX: For >16B static_call, result is at pre-allocated frame location
+                        // NOT in a register. Use hidden_ret_offsets to find the source address.
+                        var src_reg: u5 = undefined;
+                        if (self.hidden_ret_offsets.get(val)) |rel_offset| {
+                            // Compute source address from frame offset into x19
+                            // Note: Can't use x16/x17 as they're used as temps in the copy loop
+                            const frame_offset: u12 = @intCast(self.hidden_ret_frame_offset + rel_offset);
+                            try self.emit(asm_mod.encodeADDImm(19, 31, frame_offset, 0)); // x19 = SP + offset
+                            src_reg = 19;
+                            debug.log(.codegen, "      store >16B: src at frame offset {d} -> x19", .{frame_offset});
+                        } else {
+                            // Fallback (shouldn't happen for >16B)
+                            src_reg = self.getRegForValue(val) orelse blk: {
+                                const temp_reg = self.allocateReg();
+                                try self.ensureInReg(val, temp_reg);
+                                break :blk temp_reg;
+                            };
+                        }
 
                         debug.log(.codegen, "      store >16B: copying {d}B from [x{d}] to [x{d}]", .{ type_size, src_reg, addr_reg });
 
@@ -2584,33 +2630,65 @@ pub const ARM64CodeGen = struct {
         }
 
         // Handle any remaining cycles using x16 as temp
-        // A cycle exists if we have moves like: x0->x1, x1->x0
+        // Cycles can be 2-way (x0->x1, x1->x0) or 3+ way (x0->x2, x2->x1, x1->x0)
+        // We need to trace the FULL cycle before making any moves
         for (0..num_moves) |mi| {
             if (moves[mi].done) continue;
 
-            // This move is part of a cycle - break it using x16
-            if (moves[mi].src) |src| {
-                // Save our source to x16
-                try self.emit(asm_mod.encodeADDImm(16, src, 0, 0));
-                debug.log(.codegen, "      cycle: save x{d} -> x16", .{src});
+            // This move is part of a cycle - trace the full cycle first
+            if (moves[mi].src) |start_src| {
+                // Save the starting value to x16
+                try self.emit(asm_mod.encodeADDImm(16, start_src, 0, 0));
+                debug.log(.codegen, "      cycle: save x{d} -> x16", .{start_src});
 
-                // Find the move that was blocking us (has dest == our src)
-                for (0..num_moves) |oi| {
-                    if (moves[oi].done) continue;
-                    if (moves[oi].dest == src) {
-                        // Do that move first
-                        if (moves[oi].src) |os| {
-                            try self.emit(asm_mod.encodeADDImm(moves[oi].dest, os, 0, 0));
-                            debug.log(.codegen, "      cycle: x{d} -> x{d}", .{ os, moves[oi].dest });
-                        } else {
-                            try self.regenerateValue(moves[oi].dest, moves[oi].value);
+                // Trace the cycle: follow the chain of moves until we get back to start_src
+                // The cycle is: start_src -> ... -> start_src
+                // We need to do moves in reverse chain order
+                var current_dest = start_src; // We need to fill this dest
+                var cycle_len: usize = 0;
+                const max_cycle_len: usize = 8;
+                var cycle_order: [8]usize = undefined; // Indices of moves in cycle order
+
+                while (cycle_len < max_cycle_len) {
+                    // Find the move that writes to current_dest
+                    var found = false;
+                    for (0..num_moves) |oi| {
+                        if (moves[oi].done) continue;
+                        if (moves[oi].dest == current_dest) {
+                            cycle_order[cycle_len] = oi;
+                            cycle_len += 1;
+                            // The next dest to fill is this move's source
+                            if (moves[oi].src) |next_dest| {
+                                if (next_dest == start_src) {
+                                    // Cycle complete - we're back to the start
+                                    found = true;
+                                    break;
+                                }
+                                current_dest = next_dest;
+                                found = true;
+                            }
+                            break;
                         }
-                        moves[oi].done = true;
-                        break;
                     }
+                    if (!found or current_dest == start_src) break;
                 }
 
-                // Now do our move from x16
+                // Now execute the cycle moves in order (from cycle_order)
+                // Each move's source is still valid because we haven't touched it yet
+                for (0..cycle_len) |ci| {
+                    const move_idx = cycle_order[ci];
+                    if (moves[move_idx].src) |src| {
+                        // Special case: if src == start_src, use x16 instead (we saved it)
+                        const actual_src: u5 = if (src == start_src) 16 else src;
+                        try self.emit(asm_mod.encodeADDImm(moves[move_idx].dest, actual_src, 0, 0));
+                        debug.log(.codegen, "      cycle: x{d} -> x{d}", .{ actual_src, moves[move_idx].dest });
+                    } else {
+                        try self.regenerateValue(moves[move_idx].dest, moves[move_idx].value);
+                    }
+                    moves[move_idx].done = true;
+                }
+
+                // Finally, complete the starting move: x16 -> start move's dest
                 try self.emit(asm_mod.encodeADDImm(moves[mi].dest, 16, 0, 0));
                 debug.log(.codegen, "      cycle: x16 -> x{d}", .{moves[mi].dest});
                 moves[mi].done = true;
