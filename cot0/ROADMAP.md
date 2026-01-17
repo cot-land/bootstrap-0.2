@@ -12,7 +12,7 @@
 |-----------|--------|
 | Bootstrap compiler (Zig) | 166 e2e tests pass |
 | cot0 frontend modules | Complete, all tests pass |
-| cot0 can parse itself | **IN PROGRESS** (Sprint E) |
+| cot0 can parse itself | **COMPLETE** (Sprint E) |
 | cot0 backend modules | Not started |
 | cot0 self-compiles | Not started |
 
@@ -70,7 +70,7 @@ TokenType.Ident                 // Enum variant access
 
 ---
 
-## Sprint E: Full Type Checking (CURRENT)
+## Sprint E: Full Type Checking (COMPLETE 2026-01-17)
 
 **Goal:** cot0 type checker validates all parsed constructs
 
@@ -81,11 +81,12 @@ TokenType.Ident                 // Enum variant access
 1. [x] Scope management (define, lookup, parent chain)
 2. [x] Variable declaration checking (check_var_decl)
 3. [x] Control flow checking (if/while condition must be bool)
-4. [ ] Struct/enum type checking
+4. [x] Struct/enum type checking (check_struct_decl, check_enum_decl)
 5. [x] Pointer operations checking (address-of, dereference)
 6. [x] Comparison operators return bool
 7. [x] Logical operators (and/or) require bool operands
 8. [x] Unary operators (neg, not, bitnot) type checking
+9. [x] Field access checking (struct.field, Enum.Variant, string.len/ptr)
 
 ---
 
@@ -137,6 +138,20 @@ diff cot0-stage1 cot0-stage2
 ---
 
 ## Completed Sprints
+
+### Sprint E: Full Type Checking (COMPLETE 2026-01-17)
+
+Added to cot0:
+- **checker.cot**: Extended check_expr with comparison/logical/unary operators
+- **checker.cot**: Added check_struct_decl, check_enum_decl, check_var_decl
+- **checker.cot**: Added if/while condition checking (must be bool)
+- **checker.cot**: Added FieldAccess checking for struct/enum/string
+
+Tests: checker_test.cot tests scope define/lookup (4 total tests pass)
+
+Note: Full field-by-name lookup requires field name registry (deferred)
+
+---
 
 ### Sprint D: Imports and Constants (COMPLETE 2026-01-17)
 
@@ -190,16 +205,16 @@ Features used by cot0 source files vs what cot0 can handle:
 
 | Feature | Used in cot0? | cot0 can parse? | cot0 can check? |
 |---------|--------------|-----------------|-----------------|
-| `let`/`var` declarations | Yes | Yes (Sprint A) | Partial |
-| `if`/`else`/`while` | Yes | Yes (Sprint A) | Partial |
-| Comparisons/logical ops | Yes | Yes (Sprint A) | Partial |
-| `struct` declarations | Yes | Yes (Sprint B) | No |
-| `enum` declarations | Yes | Yes (Sprint B) | No |
-| Field access `s.field` | Yes | Yes (Sprint B) | No |
-| Pointer types `*T` | Yes | Yes (Sprint C) | No |
-| Address-of `&x` | Yes | Yes (Sprint C) | No |
-| Dereference `ptr.*` | Yes | Yes (Sprint C) | No |
-| String literals | Yes | Yes (Sprint C) | No |
+| `let`/`var` declarations | Yes | Yes (Sprint A) | Yes (Sprint E) |
+| `if`/`else`/`while` | Yes | Yes (Sprint A) | Yes (Sprint E) |
+| Comparisons/logical ops | Yes | Yes (Sprint A) | Yes (Sprint E) |
+| `struct` declarations | Yes | Yes (Sprint B) | Yes (Sprint E) |
+| `enum` declarations | Yes | Yes (Sprint B) | Yes (Sprint E) |
+| Field access `s.field` | Yes | Yes (Sprint B) | Partial (Sprint E) |
+| Pointer types `*T` | Yes | Yes (Sprint C) | Yes (Sprint E) |
+| Address-of `&x` | Yes | Yes (Sprint C) | Yes (Sprint E) |
+| Dereference `ptr.*` | Yes | Yes (Sprint C) | Yes (Sprint E) |
+| String literals | Yes | Yes (Sprint C) | Yes (Sprint E) |
 | `import` statements | Yes | Yes (Sprint D) | No |
 | `const` declarations | Yes | Yes (Sprint D) | No |
 

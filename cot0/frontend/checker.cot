@@ -368,6 +368,40 @@ fn check_expr(chk: *Checker, node_idx: i64) i64 {
         return type_elem(chk.type_pool, operand_type);
     }
 
+    // FieldAccess -> check base is struct/enum, return field/variant type
+    if node.kind == NodeKind.FieldAccess {
+        let base: i64 = node.field0;
+        let field_start: i64 = node.field1;
+        let field_len: i64 = node.field2;
+
+        let base_type: i64 = check_expr(chk, base);
+
+        // Struct field access: returns field type
+        // Note: Full field name lookup requires field registry (not implemented)
+        // For now, just verify base is struct and return i64 as placeholder
+        if is_struct(chk.type_pool, base_type) {
+            // TODO: Look up actual field type by name
+            // For now return i64 as placeholder
+            return TYPE_I64;
+        }
+
+        // Enum variant access: returns the enum type itself
+        if is_enum(chk.type_pool, base_type) {
+            return base_type;
+        }
+
+        // String .len and .ptr access
+        if is_string(chk.type_pool, base_type) {
+            // .len returns i64
+            // .ptr returns *u8
+            // For simplicity, return i64 for both (ptr is address which is i64)
+            return TYPE_I64;
+        }
+
+        chk.error_count = chk.error_count + 1;
+        return TYPE_INVALID;
+    }
+
     return TYPE_INVALID;
 }
 
@@ -504,6 +538,57 @@ fn check_var_decl(chk: *Checker, node_idx: i64) {
     let mutable: bool = is_let == 0;
     let sym: Symbol = symbol_new(name_start, name_len, SymbolKind.Variable,
                                   var_type, node_idx, mutable);
+    scope_define(chk.scope_pool, chk.current_scope, sym);
+}
+
+// ============================================================================
+// Type Checking - Struct/Enum Declarations
+// ============================================================================
+
+// Check a struct declaration and register type
+fn check_struct_decl(chk: *Checker, node_idx: i64) {
+    if node_idx < 0 { return; }
+
+    let node: *Node = node_get(chk.ast_pool, node_idx);
+    if node.kind != NodeKind.StructDecl { return; }
+
+    let name_start: i64 = node.field0;
+    let name_len: i64 = node.field1;
+    let fields_start: i64 = node.field2;
+    let fields_count: i64 = node.field3;
+
+    // Calculate struct size (simplified - assume 8 bytes per field)
+    let size: i64 = fields_count * 8;
+    let align: i64 = 8;
+
+    // Create struct type
+    let struct_type: i64 = type_make_struct(chk.type_pool, name_start, name_len,
+                                             fields_start, fields_count, size, align);
+
+    // Register as type name in scope
+    let sym: Symbol = symbol_new(name_start, name_len, SymbolKind.TypeName,
+                                  struct_type, node_idx, false);
+    scope_define(chk.scope_pool, chk.current_scope, sym);
+}
+
+// Check an enum declaration and register type
+fn check_enum_decl(chk: *Checker, node_idx: i64) {
+    if node_idx < 0 { return; }
+
+    let node: *Node = node_get(chk.ast_pool, node_idx);
+    if node.kind != NodeKind.EnumDecl { return; }
+
+    let name_start: i64 = node.field0;
+    let name_len: i64 = node.field1;
+    let variants_start: i64 = node.field2;
+    let variants_count: i64 = node.field3;
+
+    // Create enum type
+    let enum_type: i64 = type_make_enum(chk.type_pool, name_start, name_len, variants_count);
+
+    // Register as type name in scope
+    let sym: Symbol = symbol_new(name_start, name_len, SymbolKind.TypeName,
+                                  enum_type, node_idx, false);
     scope_define(chk.scope_pool, chk.current_scope, sym);
 }
 
