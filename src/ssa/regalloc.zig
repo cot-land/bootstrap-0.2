@@ -810,15 +810,24 @@ pub const RegAllocState = struct {
                     }
                     try self.assignReg(v, 0);
                 } else if (v.op == .arg) {
-                    // Function argument - fixed register per ABI (x0, x1, ..., x7)
-                    const arg_reg: RegNum = @intCast(v.aux_int);
-                    if (self.regs[arg_reg].v != null) {
-                        // Another value is in this register - need to spill it
-                        if (try self.spillReg(arg_reg, block, false)) |spill| {
-                            try new_values.append(self.allocator, spill);
+                    // Function argument - ARM64 ABI: x0-x7 for first 8, stack for rest
+                    const arg_idx: usize = @intCast(v.aux_int);
+                    if (arg_idx < 8) {
+                        // Register argument
+                        const arg_reg: RegNum = @intCast(arg_idx);
+                        if (self.regs[arg_reg].v != null) {
+                            // Another value is in this register - need to spill it
+                            if (try self.spillReg(arg_reg, block, false)) |spill| {
+                                try new_values.append(self.allocator, spill);
+                            }
                         }
+                        try self.assignReg(v, arg_reg);
+                    } else {
+                        // Stack argument (arg 9+) - allocate a register and mark for stack load
+                        // The codegen will emit a load from the appropriate stack slot
+                        const reg = try self.allocReg(ARM64Regs.allocatable, block);
+                        try self.assignReg(v, reg);
                     }
-                    try self.assignReg(v, arg_reg);
                 } else {
                     const reg = try self.allocReg(ARM64Regs.allocatable, block);
                     try self.assignReg(v, reg);

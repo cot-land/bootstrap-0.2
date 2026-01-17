@@ -37,9 +37,23 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ### BUG-029: Reading struct pointer field through function parameter causes crash
 
-**Status:** Open
+**Status:** FIXED
 **Priority:** P1
 **Discovered:** 2026-01-17
+**Fixed:** 2026-01-18
+
+**Root Cause:**
+Multiple issues in how global struct and array field access was handled:
+1. `lowerFieldAccess` didn't handle global struct identifiers - it fell through to load the struct value instead of using the address
+2. `lowerIndex` didn't handle global array identifiers - same issue
+3. `index_value` in SSA builder always loaded struct elements, but field_value expected an address
+4. `lowerAssign` for field_access didn't handle when base was an index expression (e.g., `arr[0].field = value`)
+
+**Fix:**
+1. Added global struct handling in `lowerFieldAccess` using `emitAddrGlobal` (lower.zig:1524-1531)
+2. Added global array handling in `lowerIndex` using `emitAddrGlobal` (lower.zig:1626-1633)
+3. Added struct check in `index_value` to return address instead of loading (ssa_builder.zig:1318-1324)
+4. Added index expression handling in field_access assignment (lower.zig:734-776)
 
 **Description:**
 When a function reads a pointer field from a struct passed as a parameter, and then passes that pointer to another function, the program crashes with SIGSEGV (exit 139). The same operations work when done directly in the caller.
@@ -89,69 +103,81 @@ Need to investigate how Go handles nested pointer field access through function 
 
 ---
 
-### BUG-028: Taking address of local array element causes runtime crash
+### BUG-030: Functions with >8 arguments don't work (ARM64 stack args missing)
 
-**Status:** Open
+**Status:** FIXED
 **Priority:** P1
-**Discovered:** 2026-01-17
+**Discovered:** 2026-01-18
+**Fixed:** 2026-01-18
 
-**Description:**
-Using `&arr[0]` where `arr` is a local array variable (e.g., `let source: [1]u8 = undefined;`) causes a runtime segfault (exit 139). The same code works with global arrays or with `null`.
+**Root Cause:**
+ARM64 AAPCS64 requires first 8 arguments in x0-x7, with arguments 9+ passed on the stack.
+Our `setupCallArgs` only handled the first 8 arguments and silently ignored the rest.
+The callee side also didn't know how to read stack arguments.
+
+**Fix:**
+1. Updated `setupCallArgs` in `arm64.zig` to:
+   - Allocate 16-byte aligned stack space for stack args (AAPCS64 requirement)
+   - Store arguments 9+ to [SP], [SP+8], etc.
+   - Return the stack cleanup size for the caller to restore SP after call
+
+2. Updated `.arg` handler in `arm64.zig` to:
+   - For arg indices >= 8, emit LDR from [FP + frame_size + N*8] where N = arg_idx - 8
+   - Register args (0-7) already work via regalloc
+
+3. Updated regalloc to:
+   - For arg indices >= 8, allocate any available register (not fixed to x0-x7)
+   - Codegen handles the stack load
 
 **Reproducer:**
 ```cot
-fn test() i64 {
-    let source: [1]u8 = undefined;
-    let ptr: *u8 = &source[0];  // Causes crash when ptr is used
+fn sum9(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64) i64 {
+    return a + b + c + d + e + f + g + h + i;
+}
+
+fn test_9args() i64 {
+    let result: i64 = sum9(1, 2, 3, 4, 5, 6, 7, 8, 9);
+    if result == 45 { return 42; }  // Expected: 45
     return 0;
 }
 ```
 
-**Workaround:**
-Use `null` instead of `&local_array[0]` when the pointer value isn't actually used, or use global arrays.
-
-**Debug Output:**
-Need to investigate with COT_DEBUG=all to trace the issue.
-
 **Go Reference:**
-Need to investigate how Go handles `&local_array[index]`.
+Go's calling convention is register-based for both args and returns, but the ARM64 backend
+in `cmd/compile/internal/ssa/rewriteARM64.go` handles stack spills similarly.
+
+---
+
+### BUG-028: Taking address of local array element causes runtime crash
+
+**Status:** FIXED
+**Priority:** P1
+**Discovered:** 2026-01-17
+**Fixed:** 2026-01-18
+
+**Root Cause:**
+When a local array was initialized with `undefined`, the `lowerArrayInit` function in lower.zig fell through to the "array copy" case which tried to copy elements from the undefined value (const_nil). This resulted in SSA code that loaded from a null address.
+
+**Fix:**
+Added explicit handling for `.literal` with `kind == .undefined_lit` in `lowerArrayInit` to return early without generating any initialization code, leaving the memory uninitialized as intended.
+
+**Description:**
+Using `&arr[0]` where `arr` is a local array variable (e.g., `let source: [1]u8 = undefined;`) causes a runtime segfault (exit 139). The same code works with global arrays or with `null`.
 
 ---
 
 ### BUG-027: Direct global array field access causes compiler panic
 
-**Status:** Open
+**Status:** FIXED
 **Priority:** P1
 **Discovered:** 2026-01-17
+**Fixed:** 2026-01-18
+
+**Root Cause:**
+Fixed as part of BUG-029 fix. The global array/struct handling added in lower.zig properly handles direct global array element field access by using `emitAddrGlobal` to get the global's address instead of falling through to code that tried to load the value.
 
 **Description:**
 Direct access to a global array element's field like `g_nodes[0].kind = X` causes a compiler panic in getTypeSize with "integer does not fit". The same operation works through a pointer.
-
-**Reproducer:**
-```cot
-var g_nodes: [100]Node;
-
-fn test() i64 {
-    g_nodes[0].kind = NodeKind.IntLit;  // PANIC in compiler
-    return 0;
-}
-```
-
-**Workaround:**
-Access through a pointer:
-```cot
-let node: *Node = &g_nodes[0];
-node.kind = NodeKind.IntLit;  // Works
-```
-
-**Error:**
-```
-panic: integer does not fit
-src/frontend/types.zig:XXX in getTypeSize
-```
-
-**Go Reference:**
-Need to investigate how Go lowers array element field access.
 
 ---
 

@@ -427,6 +427,13 @@ pub const Lowerer = struct {
                     _ = try fb.emitStoreIndexLocal(local_idx, idx_node, elem_node, elem_size, span);
                 }
             },
+            // undefined: Leave memory uninitialized (following Go/Zig semantics)
+            .literal => |lit| {
+                if (lit.kind == .undefined_lit) return;
+                // Other literals fall through to default handling
+                const value_node_ir = try self.lowerExprNode(value_idx);
+                _ = try fb.emitStoreLocal(local_idx, value_node_ir, span);
+            },
             else => {
                 // Array copy: var b: [N]T = a
                 // Following Go's pattern from ssagen/ssa.go: arrays use memory operations
@@ -729,6 +736,51 @@ pub const Lowerer = struct {
                     // Emit store to nested field
                     _ = try fb.emitStoreField(base_addr, field_idx, field_offset, value_node, assign.span);
                     return;
+                }
+
+                // Handle array element field access (e.g., arr[i].field = value)
+                // BUG-029 fix: Need to compute element address and store to field
+                if (base_expr == .index) {
+                    const idx = base_expr.index;
+                    const idx_base_type_idx = self.inferExprType(idx.base);
+                    const idx_base_type = self.type_reg.get(idx_base_type_idx);
+                    const elem_type: TypeIndex = switch (idx_base_type) {
+                        .array => |a| a.elem,
+                        else => return, // Not an array
+                    };
+                    const elem_size = self.type_reg.sizeOf(elem_type);
+
+                    // Lower the index expression
+                    const index_node = try self.lowerExprNode(idx.idx);
+
+                    // Get the base address - need to handle local vs global arrays
+                    const idx_base_node = self.tree.getNode(idx.base) orelse return;
+                    const idx_base_expr = idx_base_node.asExpr() orelse return;
+
+                    if (idx_base_expr == .ident) {
+                        // Check if it's a local array
+                        if (fb.lookupLocal(idx_base_expr.ident.name)) |local_idx| {
+                            // Local array - get address and index
+                            const local = fb.locals.items[local_idx];
+                            const array_ptr_type = self.type_reg.makePointer(local.type_idx) catch TypeRegistry.VOID;
+                            const array_addr = try fb.emitAddrLocal(local_idx, array_ptr_type, assign.span);
+                            const elem_ptr_type = self.type_reg.makePointer(elem_type) catch TypeRegistry.VOID;
+                            const elem_addr = try fb.emitAddrIndex(array_addr, index_node, elem_size, elem_ptr_type, assign.span);
+                            _ = try fb.emitStoreField(elem_addr, field_idx, field_offset, value_node, assign.span);
+                            return;
+                        }
+
+                        // Check if it's a global array
+                        if (self.builder.lookupGlobal(idx_base_expr.ident.name)) |g| {
+                            const global_type = g.global.type_idx;
+                            const ptr_type = self.type_reg.makePointer(global_type) catch TypeRegistry.VOID;
+                            const global_addr = try fb.emitAddrGlobal(g.idx, idx_base_expr.ident.name, ptr_type, assign.span);
+                            const elem_ptr_type = self.type_reg.makePointer(elem_type) catch TypeRegistry.VOID;
+                            const elem_addr = try fb.emitAddrIndex(global_addr, index_node, elem_size, elem_ptr_type, assign.span);
+                            _ = try fb.emitStoreField(elem_addr, field_idx, field_offset, value_node, assign.span);
+                            return;
+                        }
+                    }
                 }
 
                 // Pointer field store handled above via ident check
@@ -1520,6 +1572,15 @@ pub const Lowerer = struct {
                 // Emit FieldLocal for direct access to struct local
                 return try fb.emitFieldLocal(local_idx, field_idx, field_offset, field_type, fa.span);
             }
+
+            // BUG-029 fix: Check if it's a global struct variable
+            // Following Go's ODOT pattern: get address, compute offset, load field
+            if (self.builder.lookupGlobal(base_expr.ident.name)) |g| {
+                const global_type = g.global.type_idx;
+                const ptr_type = self.type_reg.makePointer(global_type) catch TypeRegistry.VOID;
+                const global_addr = try fb.emitAddrGlobal(g.idx, base_expr.ident.name, ptr_type, fa.span);
+                return try fb.emitFieldValue(global_addr, field_idx, field_offset, field_type, fa.span);
+            }
         }
 
         // BUG-012 fix: For p.*.field (deref then field access), don't load entire struct.
@@ -1612,6 +1673,15 @@ pub const Lowerer = struct {
                 }
                 // Regular local array - emit index_local for direct access
                 return try fb.emitIndexLocal(local_idx, index_node, elem_size, elem_type, idx.span);
+            }
+
+            // BUG-029 fix: Check if it's a global array variable
+            // Following Go's pattern: get address, compute element offset, load
+            if (self.builder.lookupGlobal(base_expr.ident.name)) |g| {
+                const global_type = g.global.type_idx;
+                const ptr_type = self.type_reg.makePointer(global_type) catch TypeRegistry.VOID;
+                const global_addr = try fb.emitAddrGlobal(g.idx, base_expr.ident.name, ptr_type, idx.span);
+                return try fb.emitIndexValue(global_addr, index_node, elem_size, elem_type, idx.span);
             }
         }
 

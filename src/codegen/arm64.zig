@@ -1733,8 +1733,25 @@ pub const ARM64CodeGen = struct {
             },
 
             .arg => {
-                // Function argument - already in register per ABI
-                // Register is assigned by regalloc based on aux_int (arg index)
+                // Function argument - ARM64 ABI: x0-x7 for first 8, stack for rest
+                const arg_idx: usize = @intCast(value.aux_int);
+                if (arg_idx >= 8) {
+                    // Stack argument - load from caller's stack frame
+                    // After prologue, SP points to our frame.
+                    // Caller pushed stack args before calling, and after the call,
+                    // they're at [SP + frame_size + N*8] where N = arg_idx - 8
+                    const dest_reg = self.getDestRegForValue(value);
+                    // Stack args are relative to the frame pointer + frame_size
+                    // After STP x29, x30, [SP, #-framesize]!, the caller's stack args
+                    // are at [x29 + frame_size + (arg_idx-8)*8]
+                    // ARM64 LDR unsigned offset is scaled by 8 for 64-bit ops
+                    const byte_offset = self.frame_size + (arg_idx - 8) * 8;
+                    const stack_offset: u12 = @intCast(@divExact(byte_offset, 8));
+                    try self.emit(asm_mod.encodeLdrStr(dest_reg, 29, stack_offset, true));
+                    debug.log(.codegen, "      -> LDR x{d}, [x29, #{d}] (stack arg {d})", .{ dest_reg, byte_offset, arg_idx });
+                }
+                // For register arguments (arg_idx < 8), regalloc already assigned
+                // the correct register, so no code needs to be emitted
             },
 
             // === Comparison Operations ===
@@ -1944,8 +1961,8 @@ pub const ARM64CodeGen = struct {
                     // ADD x8, sp, #frame_offset
                     try self.emit(asm_mod.encodeADDImm(8, 31, frame_offset, 0));
 
-                    // 2. Setup arguments in x0-x7
-                    try self.setupCallArgs(args);
+                    // 2. Setup arguments in x0-x7 (and stack for args 9+)
+                    const stack_cleanup = try self.setupCallArgs(args);
 
                     // 3. Record relocation and make the call
                     try self.relocations.append(self.allocator, .{
@@ -1953,6 +1970,12 @@ pub const ARM64CodeGen = struct {
                         .target = target_name,
                     });
                     try self.emit(asm_mod.encodeBL(0));
+
+                    // 3b. Clean up stack arguments if any
+                    if (stack_cleanup > 0) {
+                        try self.emit(asm_mod.encodeADDImm(31, 31, stack_cleanup, 0));
+                        debug.log(.codegen, "      stack cleanup: ADD SP, SP, #{d}", .{stack_cleanup});
+                    }
 
                     // 4. After call: result is at [sp + frame_offset]. Store address in scratch reg.
                     // CRITICAL: Use x0 since the call is complete and x0 is free.
@@ -1969,10 +1992,10 @@ pub const ARM64CodeGen = struct {
                 }
 
                 // Normal call path (return <= 16B fits in registers)
-                // Use parallel copy to move arguments to x0-x7
+                // Use parallel copy to move arguments to x0-x7 (and stack for args 9+)
                 // This prevents clobbering when args are in each other's target registers
                 // E.g., if arg0 is in x1 and arg1 is in x0, naive sequential moves fail
-                try self.setupCallArgs(args);
+                const stack_cleanup = try self.setupCallArgs(args);
 
                 // Record relocation for linker to resolve
                 try self.relocations.append(self.allocator, .{
@@ -1982,6 +2005,12 @@ pub const ARM64CodeGen = struct {
 
                 // Emit BL with offset 0 (linker will fix)
                 try self.emit(asm_mod.encodeBL(0));
+
+                // Clean up stack arguments if any
+                if (stack_cleanup > 0) {
+                    try self.emit(asm_mod.encodeADDImm(31, 31, stack_cleanup, 0));
+                    debug.log(.codegen, "      stack cleanup: ADD SP, SP, #{d}", .{stack_cleanup});
+                }
 
                 // For multi-value returns (16-byte types like strings), save x1 to x8.
                 // This is necessary because regalloc might assign x1 to select_n[0],
@@ -2030,16 +2059,17 @@ pub const ARM64CodeGen = struct {
                         target_reg = 17;
                     }
 
-                    // Collect moves for actual arguments to x0-x7
-                    const max_args = @min(actual_args.len, 8);
-                    var temp_args: [8]*Value = undefined;
-                    for (actual_args[0..max_args], 0..) |arg, i| {
-                        temp_args[i] = arg;
-                    }
-                    try self.setupCallArgs(temp_args[0..max_args]);
+                    // Setup actual arguments (including stack args if > 8)
+                    const stack_cleanup = try self.setupCallArgs(actual_args);
 
                     // Emit BLR to call through function pointer
                     try self.emit(asm_mod.encodeBLR(target_reg));
+
+                    // Clean up stack arguments if any
+                    if (stack_cleanup > 0) {
+                        try self.emit(asm_mod.encodeADDImm(31, 31, stack_cleanup, 0));
+                        debug.log(.codegen, "      stack cleanup: ADD SP, SP, #{d}", .{stack_cleanup});
+                    }
                     debug.log(.codegen, "      -> BLR x{d} (indirect call with {} args), result in x0", .{ target_reg, actual_args.len });
                 } else {
                     // No arguments, just call through function pointer
@@ -2706,10 +2736,47 @@ pub const ARM64CodeGen = struct {
     /// Ensure value is in x0
     /// Setup call arguments using parallel copy to avoid clobbering
     /// Uses x16 as scratch register for breaking cycles
-    fn setupCallArgs(self: *ARM64CodeGen, args: []*Value) !void {
-        if (args.len == 0) return;
+    /// Returns the number of stack argument bytes that need cleanup after call
+    fn setupCallArgs(self: *ARM64CodeGen, args: []*Value) !u12 {
+        if (args.len == 0) return 0;
 
-        const max_args = @min(args.len, 8);
+        // ARM64 AAPCS64: first 8 args in x0-x7, rest on stack
+        const max_reg_args = @min(args.len, 8);
+
+        // Handle stack arguments (args 9+) - store in reverse order
+        // ARM64 AAPCS64: stack args at [SP], [SP+8], etc.
+        // CRITICAL: SP must always be 16-byte aligned!
+        const num_stack_args = if (args.len > 8) args.len - 8 else 0;
+        // Round up to 16-byte alignment
+        const stack_bytes = num_stack_args * 8;
+        const stack_size: u12 = @intCast(((stack_bytes + 15) / 16) * 16);
+
+        if (num_stack_args > 0) {
+            // Allocate stack space for stack arguments
+            // SUB SP, SP, #stack_size
+            try self.emit(asm_mod.encodeSUBImm(31, 31, stack_size, 0));
+            debug.log(.codegen, "      stack args: SUB SP, SP, #{d} ({d} args)", .{ stack_size, num_stack_args });
+
+            // Store stack arguments
+            // ARM64 LDR/STR unsigned offset is scaled by 8 for 64-bit ops
+            for (args[8..], 0..) |arg, i| {
+                const byte_offset = i * 8;
+                const scaled_offset: u12 = @intCast(@divExact(byte_offset, 8));
+                // Get value into a register
+                if (self.getRegForValue(arg)) |src_reg| {
+                    // STR src_reg, [SP, #offset]
+                    try self.emit(asm_mod.encodeLdrStr(src_reg, 31, scaled_offset, false)); // false = store
+                    debug.log(.codegen, "      stack arg {d}: STR x{d}, [SP, #{d}]", .{ i + 8, src_reg, byte_offset });
+                } else {
+                    // Need to regenerate value into x16 first
+                    try self.regenerateValue(16, arg);
+                    try self.emit(asm_mod.encodeLdrStr(16, 31, scaled_offset, false));
+                    debug.log(.codegen, "      stack arg {d}: regen x16, STR x16, [SP, #{d}]", .{ i + 8, byte_offset });
+                }
+            }
+        }
+
+        const max_args = max_reg_args;
 
         // Collect moves: (src_reg or null, dest_reg, value)
         const Move = struct {
@@ -2838,6 +2905,8 @@ pub const ARM64CodeGen = struct {
                 moves[mi].done = true;
             }
         }
+
+        return stack_size;
     }
 
     /// Regenerate a value into a register (for consts, etc.)

@@ -1296,7 +1296,7 @@ pub const SSABuilder = struct {
                 // 1. Convert base (already an address)
                 // 2. Convert index and compute offset (index * elem_size)
                 // 3. Add offset to base address (add_ptr)
-                // 4. Load the value
+                // 4. Load the value (unless it's a struct - return address for field access)
                 const base_val = try self.convertNode(i.base) orelse return error.MissingValue;
                 const index_val = try self.convertNode(i.index) orelse return error.MissingValue;
 
@@ -1314,6 +1314,14 @@ pub const SSABuilder = struct {
                 const elem_addr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, .{});
                 elem_addr.addArg2(base_val, offset_val);
                 try cur.addValue(self.allocator, elem_addr);
+
+                // BUG-029 fix: If element is a struct, return address (no load)
+                // This matches field_value behavior - structs need address for further field access
+                const elem_type = self.type_registry.get(node.type_idx);
+                if (elem_type == .struct_type) {
+                    debug.log(.ssa, "    index_value base=v{} index=v{} elem_size={d} -> v{} (struct addr)", .{ base_val.id, index_val.id, i.elem_size, elem_addr.id });
+                    break :blk elem_addr;
+                }
 
                 // Load the value from the element address
                 const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
