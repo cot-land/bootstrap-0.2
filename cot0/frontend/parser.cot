@@ -714,11 +714,6 @@ fn parse_fn_decl(p: *Parser) i64 {
     // Note: we store ret_type_handle in ret_type_len field (ret_type_start for user types)
     let fn_idx: i64 = node_fn_decl(p.pool, name_start, name_len, params_start, params_count, ret_type_start, ret_type_handle, body, start, end);
 
-    // Store body and ret_type info in children array for retrieval
-    node_add_child(p.pool, body);
-    node_add_child(p.pool, ret_type_start);
-    node_add_child(p.pool, ret_type_handle);
-
     return fn_idx;
 }
 
@@ -823,11 +818,76 @@ fn parse_enum_decl(p: *Parser) i64 {
 }
 
 // ============================================================================
+// Sprint D: Import and Const Declarations
+// ============================================================================
+
+// Parse import declaration: import "path";
+fn parse_import(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    parser_want(p, TokenType.Import);
+
+    // Expect string literal for path
+    if not parser_check(p, TokenType.StringLit) {
+        p.had_error = true;
+        return -1;
+    }
+
+    let path_token_start: i64 = p.current.start;
+    let path_token_len: i64 = p.current.end;
+    // Path content starts after opening quote
+    let path_start: i64 = path_token_start + 1;
+    // Path length is token length - 2 (for both quotes)
+    let path_len: i64 = path_token_len - 2;
+    parser_advance(p);
+
+    let end: i64 = p.current.start + p.current.end;
+    parser_want(p, TokenType.Semi);
+
+    return node_import_decl(p.pool, path_start, path_len, start, end);
+}
+
+// Parse const declaration: const NAME = expr; or const NAME: type = expr;
+fn parse_const_decl(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    parser_want(p, TokenType.Const);
+
+    // Constant name
+    let name_start: i64 = p.current.start;
+    let name_len: i64 = p.current.end;
+    parser_want(p, TokenType.Ident);
+
+    // Optional type annotation
+    var type_handle: i64 = -1;
+    if parser_got(p, TokenType.Colon) {
+        type_handle = parse_type(p);
+    }
+
+    // Required initializer
+    parser_want(p, TokenType.Eq);
+    let init_expr: i64 = parse_expr(p);
+
+    let end: i64 = p.current.start + p.current.end;
+    parser_want(p, TokenType.Semi);
+
+    return node_const_decl(p.pool, name_start, name_len, type_handle, init_expr, start, end);
+}
+
+// ============================================================================
 // Top-Level Parsing
 // ============================================================================
 
 // Parse a single top-level declaration
 fn parse_decl(p: *Parser) i64 {
+    // Import must come first
+    if parser_check(p, TokenType.Import) {
+        return parse_import(p);
+    }
+
+    // Const declaration
+    if parser_check(p, TokenType.Const) {
+        return parse_const_decl(p);
+    }
+
     if parser_check(p, TokenType.Fn) {
         return parse_fn_decl(p);
     }

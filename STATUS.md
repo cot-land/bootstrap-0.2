@@ -15,7 +15,7 @@ See [cot0/ROADMAP.md](cot0/ROADMAP.md) for detailed self-hosting progress.
 | token.cot | Complete | 5/5 pass |
 | scanner.cot | Complete | 18/18 pass |
 | ast.cot | Complete | 7/7 pass |
-| parser.cot | Complete | 18/18 pass |
+| parser.cot | Complete | 22/22 pass |
 | types.cot | Complete | 2/2 pass |
 | checker.cot | Complete | 2/2 pass |
 | ir.cot | Complete | passes |

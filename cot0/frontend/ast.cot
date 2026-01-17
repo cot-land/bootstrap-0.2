@@ -38,9 +38,11 @@ enum NodeKind {
     FnDecl,         // fn name(params) ret { body }
     ParamDecl,      // name: type
     VarDecl,        // let/var name: type = expr;
+    ConstDecl,      // const name = expr;
     StructDecl,     // struct Name { fields }
     EnumDecl,       // enum Name { variants }
     FieldDecl,      // name: type (struct field)
+    ImportDecl,     // import "path";
 
     // Member access
     FieldAccess,    // expr.field
@@ -469,6 +471,52 @@ fn node_deref(pool: *NodePool, operand: i64, start: i64, end: i64) i64 {
 }
 
 // ============================================================================
+// Sprint D: Imports and Constants
+// Following Go's cmd/compile/internal/syntax/nodes.go patterns
+// ============================================================================
+
+// Create an import declaration node: import "path";
+// field0: path_start (offset in source, after opening quote)
+// field1: path_len (length of path string, excluding quotes)
+fn node_import_decl(pool: *NodePool, path_start: i64, path_len: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ImportDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = path_start;      // Import path offset (after quote)
+    n.field1 = path_len;        // Import path length
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a const declaration node: const NAME = expr;
+// field0: name_start
+// field1: name_len
+// field2: type_handle (-1 if no type annotation)
+// field3: init_expr node index
+fn node_const_decl(pool: *NodePool, name_start: i64, name_len: i64,
+                   type_handle: i64, init_expr: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ConstDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;      // Constant name offset
+    n.field1 = name_len;        // Constant name length
+    n.field2 = type_handle;     // Type (-1 if inferred)
+    n.field3 = init_expr;       // Initializer expression
+
+    return idx;
+}
+
+// ============================================================================
 // Sprint B: Struct/Enum Declarations
 // Following Go's cmd/compile/internal/syntax/nodes.go patterns
 // ============================================================================
@@ -626,9 +674,11 @@ fn is_decl(kind: NodeKind) bool {
     return kind == NodeKind.FnDecl or
            kind == NodeKind.ParamDecl or
            kind == NodeKind.VarDecl or
+           kind == NodeKind.ConstDecl or
            kind == NodeKind.StructDecl or
            kind == NodeKind.EnumDecl or
-           kind == NodeKind.FieldDecl;
+           kind == NodeKind.FieldDecl or
+           kind == NodeKind.ImportDecl;
 }
 
 // ============================================================================

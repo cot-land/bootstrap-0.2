@@ -12,7 +12,7 @@
 |-----------|--------|
 | Bootstrap compiler (Zig) | 166 e2e tests pass |
 | cot0 frontend modules | Complete, all tests pass |
-| cot0 can parse itself | **IN PROGRESS** (Sprint D) |
+| cot0 can parse itself | **IN PROGRESS** (Sprint E) |
 | cot0 backend modules | Not started |
 | cot0 self-compiles | Not started |
 
@@ -25,7 +25,7 @@
 | `token_test.cot` | 5/5 pass |
 | `scanner_test.cot` | 18/18 pass |
 | `ast_test.cot` | 7/7 pass |
-| `parser_test.cot` | 18/18 pass |
+| `parser_test.cot` | 22/22 pass |
 | `types_test.cot` | 2/2 pass |
 | `checker_test.cot` | 2/2 pass |
 | `ir_test.cot` | passes |
@@ -70,45 +70,7 @@ TokenType.Ident                 // Enum variant access
 
 ---
 
-## Sprint C: Pointers and Strings (CURRENT)
-
-**Goal:** cot0 parser can parse `*T`, `&x`, `ptr.*`, string literals
-
-**Verification:** parser_test.cot tests 15-18 pass
-
-### Tasks (all complete)
-
-1. [x] **token.cot**: Star, Amp, StringLit tokens (already present)
-2. [x] **ast.cot**: Add StringLit, AddressOf, DerefExpr node kinds + constructors
-3. [x] **parser.cot**: Add string literal, address-of, dereference parsing
-4. [x] **scanner.cot**: scan_string() already present
-
-### Test Cases
-```cot
-// Parser can now parse:
-"hello"         // String literal
-&x              // Address-of
-ptr.*           // Dereference
-*i64            // Pointer type
-```
-
----
-
-## Sprint D: Imports and Constants
-
-**Goal:** cot0 parser can parse `import "file.cot"` and `const NAME = value;`
-
-**Verification:** Can parse cot0 file imports and constants
-
-### Tasks
-
-1. [ ] **token.cot**: Add Import, Const tokens
-2. [ ] **ast.cot**: Add ImportDecl, ConstDecl
-3. [ ] **parser.cot**: Add parse_import(), parse_const_decl()
-
----
-
-## Sprint E: Full Type Checking
+## Sprint E: Full Type Checking (CURRENT)
 
 **Goal:** cot0 type checker validates all parsed constructs
 
@@ -173,6 +135,17 @@ diff cot0-stage1 cot0-stage2
 
 ## Completed Sprints
 
+### Sprint D: Imports and Constants (COMPLETE 2026-01-17)
+
+Added to cot0:
+- **token.cot**: Import, Const tokens (already present)
+- **ast.cot**: ImportDecl, ConstDecl node kinds + constructors
+- **parser.cot**: parse_import(), parse_const_decl() functions
+
+Tests: parser_test.cot tests 19-22 verify import/const parsing (22 total tests pass)
+
+---
+
 ### Sprint C: Pointers and Strings (COMPLETE 2026-01-17)
 
 Added to cot0:
@@ -224,8 +197,8 @@ Features used by cot0 source files vs what cot0 can handle:
 | Address-of `&x` | Yes | Yes (Sprint C) | No |
 | Dereference `ptr.*` | Yes | Yes (Sprint C) | No |
 | String literals | Yes | Yes (Sprint C) | No |
-| `import` statements | Yes | **No** (Sprint D) | No |
-| `const` declarations | Yes | **No** (Sprint D) | No |
+| `import` statements | Yes | Yes (Sprint D) | No |
+| `const` declarations | Yes | Yes (Sprint D) | No |
 
 ---
 

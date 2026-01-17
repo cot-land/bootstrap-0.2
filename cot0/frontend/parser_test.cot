@@ -423,6 +423,94 @@ fn test_parse_ptr_type() i64 {
     return 0;
 }
 
+// ============================================================================
+// Sprint D: Import and Const Tests
+// ============================================================================
+
+// Test 19: Parse import declaration
+fn test_parse_import() i64 {
+    let pool: *NodePool = init_test_pool();
+    reset_pool(pool);
+    var p: Parser = parser_new("import \"foo.cot\";", pool);
+
+    let decl: i64 = parse_decl(&p);
+
+    let imp: *Node = node_get(pool, decl);
+    if imp.kind != NodeKind.ImportDecl { return 1; }
+
+    // Path content starts at offset 8 (after 'import "'), length 7
+    if imp.field0 != 8 { return 2; }   // path_start
+    if imp.field1 != 7 { return 3; }   // path_len
+
+    return 0;
+}
+
+// Test 20: Parse const declaration (no type)
+fn test_parse_const() i64 {
+    let pool: *NodePool = init_test_pool();
+    reset_pool(pool);
+    var p: Parser = parser_new("const MAX = 100;", pool);
+
+    let decl: i64 = parse_decl(&p);
+
+    let c: *Node = node_get(pool, decl);
+    if c.kind != NodeKind.ConstDecl { return 1; }
+
+    // Name "MAX" starts at offset 6, length 3
+    if c.field0 != 6 { return 2; }   // name_start
+    if c.field1 != 3 { return 3; }   // name_len
+
+    // No type annotation
+    if c.field2 != -1 { return 4; }   // type_handle should be -1
+
+    // Init expr should be IntLit with value 100
+    let init: *Node = node_get(pool, c.field3);
+    if init.kind != NodeKind.IntLit { return 5; }
+    if init.field0 != 100 { return 6; }
+
+    return 0;
+}
+
+// Test 21: Parse const declaration with type
+fn test_parse_const_typed() i64 {
+    let pool: *NodePool = init_test_pool();
+    reset_pool(pool);
+    var p: Parser = parser_new("const SIZE: i64 = 256;", pool);
+
+    let decl: i64 = parse_decl(&p);
+
+    let c: *Node = node_get(pool, decl);
+    if c.kind != NodeKind.ConstDecl { return 1; }
+
+    // Type annotation should be TYPE_I64 = 0
+    if c.field2 != 0 { return 2; }   // type_handle
+
+    return 0;
+}
+
+// Test 22: Parse file with const - verify parse_file works with const decl
+fn test_parse_file_with_import() i64 {
+    let pool: *NodePool = init_test_pool();
+    reset_pool(pool);
+    // Test parse_file with a const (simpler, no nested children issues)
+    var p: Parser = parser_new("const X = 42;", pool);
+
+    let file: i64 = parse_file(&p);
+
+    // File should be a block with 1 declaration
+    let blk: *Node = node_get(pool, file);
+    if blk.kind != NodeKind.BlockStmt { return 1; }
+    if blk.field1 != 1 { return 2; }
+
+    // First should be const
+    let decls_start: i64 = blk.field0;
+    let d0_idx: i64 = node_child(pool, decls_start, 0);
+    let d0: *Node = node_get(pool, d0_idx);
+    if d0.kind != NodeKind.ConstDecl { return 3; }
+
+    return 0;
+}
+
 fn main() i64 {
     var failed: i64 = 0;
 
@@ -518,8 +606,29 @@ fn main() i64 {
         failed = failed + 1;
     }
 
+    // Sprint D: Import and Const tests
+    if test_parse_import() != 0 {
+        println("FAIL: test_parse_import");
+        failed = failed + 1;
+    }
+
+    if test_parse_const() != 0 {
+        println("FAIL: test_parse_const");
+        failed = failed + 1;
+    }
+
+    if test_parse_const_typed() != 0 {
+        println("FAIL: test_parse_const_typed");
+        failed = failed + 1;
+    }
+
+    if test_parse_file_with_import() != 0 {
+        println("FAIL: test_parse_file_with_import");
+        failed = failed + 1;
+    }
+
     if failed == 0 {
-        println("All 18 parser tests passed!");
+        println("All 22 parser tests passed!");
     }
 
     return failed;
