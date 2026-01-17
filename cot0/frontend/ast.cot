@@ -19,10 +19,13 @@ import "token.cot"
 enum NodeKind {
     // Expressions (produce values)
     IntLit,         // Integer literal: 42
+    StringLit,      // String literal: "hello"
     Ident,          // Identifier: foo
     BinaryExpr,     // Binary operation: a + b
     CallExpr,       // Function call: add(1, 2)
     UnaryExpr,      // Unary operation: -x, !x
+    AddressOf,      // Address-of: &x
+    DerefExpr,      // Dereference: ptr.*
 
     // Statements (perform actions)
     ReturnStmt,     // return expr;
@@ -406,6 +409,66 @@ fn node_unary(pool: *NodePool, op: UnaryOp, operand: i64, start: i64, end: i64) 
 }
 
 // ============================================================================
+// Sprint C: Pointers and Strings
+// Following Go's cmd/compile/internal/syntax/nodes.go patterns
+// ============================================================================
+
+// Create a string literal node
+// field0: string_start (offset in source, after opening quote)
+// field1: string_len (length of string content, excluding quotes)
+fn node_string_lit(pool: *NodePool, str_start: i64, str_len: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.StringLit;
+    n.start = start;
+    n.end = end;
+    n.field0 = str_start;       // String content offset (after quote)
+    n.field1 = str_len;         // String content length
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create an address-of expression node: &expr
+// field0: operand node index
+fn node_address_of(pool: *NodePool, operand: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.AddressOf;
+    n.start = start;
+    n.end = end;
+    n.field0 = operand;         // Operand expression
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a dereference expression node: expr.*
+// field0: operand node index (the pointer expression)
+fn node_deref(pool: *NodePool, operand: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.DerefExpr;
+    n.start = start;
+    n.end = end;
+    n.field0 = operand;         // Pointer expression
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// ============================================================================
 // Sprint B: Struct/Enum Declarations
 // Following Go's cmd/compile/internal/syntax/nodes.go patterns
 // ============================================================================
@@ -541,10 +604,13 @@ fn node_add_child(pool: *NodePool, child_idx: i64) i64 {
 
 fn is_expr(kind: NodeKind) bool {
     return kind == NodeKind.IntLit or
+           kind == NodeKind.StringLit or
            kind == NodeKind.Ident or
            kind == NodeKind.BinaryExpr or
            kind == NodeKind.CallExpr or
            kind == NodeKind.UnaryExpr or
+           kind == NodeKind.AddressOf or
+           kind == NodeKind.DerefExpr or
            kind == NodeKind.FieldAccess;
 }
 

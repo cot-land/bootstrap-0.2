@@ -12,7 +12,7 @@
 |-----------|--------|
 | Bootstrap compiler (Zig) | 166 e2e tests pass |
 | cot0 frontend modules | Complete, all tests pass |
-| cot0 can parse itself | **IN PROGRESS** (Sprint C) |
+| cot0 can parse itself | **IN PROGRESS** (Sprint D) |
 | cot0 backend modules | Not started |
 | cot0 self-compiles | Not started |
 
@@ -25,7 +25,7 @@
 | `token_test.cot` | 5/5 pass |
 | `scanner_test.cot` | 18/18 pass |
 | `ast_test.cot` | 7/7 pass |
-| `parser_test.cot` | 14/14 pass |
+| `parser_test.cot` | 18/18 pass |
 | `types_test.cot` | 2/2 pass |
 | `checker_test.cot` | 2/2 pass |
 | `ir_test.cot` | passes |
@@ -70,18 +70,27 @@ TokenType.Ident                 // Enum variant access
 
 ---
 
-## Sprint C: Pointers and Strings
+## Sprint C: Pointers and Strings (CURRENT)
 
 **Goal:** cot0 parser can parse `*T`, `&x`, `ptr.*`, string literals
 
-**Verification:** Can parse `scanner.cot` (uses *Scanner, &s, s.*, "string")
+**Verification:** parser_test.cot tests 15-18 pass
 
-### Tasks
+### Tasks (all complete)
 
-1. [ ] **token.cot**: Add Ampersand, Star (for pointer type)
-2. [ ] **ast.cot**: Add PointerType, AddressOf, DerefExpr, StringLit
-3. [ ] **parser.cot**: Add parse_pointer_type(), parse_address_of(), parse_deref()
-4. [ ] **scanner.cot**: Add scan_string() for string literals
+1. [x] **token.cot**: Star, Amp, StringLit tokens (already present)
+2. [x] **ast.cot**: Add StringLit, AddressOf, DerefExpr node kinds + constructors
+3. [x] **parser.cot**: Add string literal, address-of, dereference parsing
+4. [x] **scanner.cot**: scan_string() already present
+
+### Test Cases
+```cot
+// Parser can now parse:
+"hello"         // String literal
+&x              // Address-of
+ptr.*           // Dereference
+*i64            // Pointer type
+```
 
 ---
 
@@ -164,6 +173,16 @@ diff cot0-stage1 cot0-stage2
 
 ## Completed Sprints
 
+### Sprint C: Pointers and Strings (COMPLETE 2026-01-17)
+
+Added to cot0:
+- **ast.cot**: StringLit, AddressOf, DerefExpr node kinds + constructors
+- **parser.cot**: String literal in parse_atom(), address-of in parse_unary(), dereference in postfix loop
+
+Tests: parser_test.cot tests 15-18 verify pointer/string parsing (18 total tests pass)
+
+---
+
 ### Sprint B: Struct and Enum Declarations (COMPLETE 2026-01-17)
 
 Added to cot0:
@@ -198,13 +217,13 @@ Features used by cot0 source files vs what cot0 can handle:
 | `let`/`var` declarations | Yes | Yes (Sprint A) | Partial |
 | `if`/`else`/`while` | Yes | Yes (Sprint A) | Partial |
 | Comparisons/logical ops | Yes | Yes (Sprint A) | Partial |
-| `struct` declarations | Yes | **No** (Sprint B) | No |
-| `enum` declarations | Yes | **No** (Sprint B) | No |
-| Field access `s.field` | Yes | **No** (Sprint B) | No |
-| Pointer types `*T` | Yes | **No** (Sprint C) | No |
-| Address-of `&x` | Yes | **No** (Sprint C) | No |
-| Dereference `ptr.*` | Yes | **No** (Sprint C) | No |
-| String literals | Yes | **No** (Sprint C) | No |
+| `struct` declarations | Yes | Yes (Sprint B) | No |
+| `enum` declarations | Yes | Yes (Sprint B) | No |
+| Field access `s.field` | Yes | Yes (Sprint B) | No |
+| Pointer types `*T` | Yes | Yes (Sprint C) | No |
+| Address-of `&x` | Yes | Yes (Sprint C) | No |
+| Dereference `ptr.*` | Yes | Yes (Sprint C) | No |
+| String literals | Yes | Yes (Sprint C) | No |
 | `import` statements | Yes | **No** (Sprint D) | No |
 | `const` declarations | Yes | **No** (Sprint D) | No |
 

@@ -338,6 +338,91 @@ fn test_parse_chained_access() i64 {
     return 0;
 }
 
+// ============================================================================
+// Sprint C: Pointer and String Tests
+// ============================================================================
+
+// Test 15: Parse string literal
+fn test_parse_string_lit() i64 {
+    let pool: *NodePool = init_test_pool();
+    reset_pool(pool);
+    var p: Parser = parser_new("\"hello\"", pool);
+
+    let expr: i64 = parse_expr(&p);
+
+    let s: *Node = node_get(pool, expr);
+    if s.kind != NodeKind.StringLit { return 1; }
+
+    // String content starts at offset 1 (after quote), length 5
+    if s.field0 != 1 { return 2; }   // str_start
+    if s.field1 != 5 { return 3; }   // str_len
+
+    return 0;
+}
+
+// Test 16: Parse address-of expression
+fn test_parse_address_of() i64 {
+    let pool: *NodePool = init_test_pool();
+    reset_pool(pool);
+    var p: Parser = parser_new("&x", pool);
+
+    let expr: i64 = parse_expr(&p);
+
+    let addr: *Node = node_get(pool, expr);
+    if addr.kind != NodeKind.AddressOf { return 1; }
+
+    // Operand should be identifier "x"
+    let operand: *Node = node_get(pool, addr.field0);
+    if operand.kind != NodeKind.Ident { return 2; }
+
+    return 0;
+}
+
+// Test 17: Parse dereference expression
+fn test_parse_deref() i64 {
+    let pool: *NodePool = init_test_pool();
+    reset_pool(pool);
+    var p: Parser = parser_new("ptr.*", pool);
+
+    let expr: i64 = parse_expr(&p);
+
+    let deref: *Node = node_get(pool, expr);
+    if deref.kind != NodeKind.DerefExpr { return 1; }
+
+    // Operand should be identifier "ptr"
+    let operand: *Node = node_get(pool, deref.field0);
+    if operand.kind != NodeKind.Ident { return 2; }
+
+    return 0;
+}
+
+// Test 18: Parse pointer type in function parameter
+fn test_parse_ptr_type() i64 {
+    let pool: *NodePool = init_test_pool();
+    reset_pool(pool);
+    var p: Parser = parser_new("fn foo(p: *i64) i64 { return 0; }", pool);
+
+    let decl: i64 = parse_decl(&p);
+
+    let fn_node: *Node = node_get(pool, decl);
+    if fn_node.kind != NodeKind.FnDecl { return 1; }
+
+    // Check 1 parameter
+    if fn_node.field3 != 1 { return 2; }   // params_count
+
+    // Check first parameter has pointer type
+    let params_start: i64 = fn_node.field2;
+    let p0_idx: i64 = node_child(pool, params_start, 0);
+    let p0: *Node = node_get(pool, p0_idx);
+    if p0.kind != NodeKind.ParamDecl { return 3; }
+
+    // Type handle should be TYPE_PTR_BASE + TYPE_I64 = 10 + 0 = 10
+    // Note: TYPE_I64 in parser.cot is 0, TYPE_PTR_BASE is 10
+    if p0.field3 != 10 { return 4; }  // type_handle stored in field3
+
+    return 0;
+}
+
 fn main() i64 {
     var failed: i64 = 0;
 
@@ -412,8 +497,29 @@ fn main() i64 {
         failed = failed + 1;
     }
 
+    // Sprint C: Pointer and String tests
+    if test_parse_string_lit() != 0 {
+        println("FAIL: test_parse_string_lit");
+        failed = failed + 1;
+    }
+
+    if test_parse_address_of() != 0 {
+        println("FAIL: test_parse_address_of");
+        failed = failed + 1;
+    }
+
+    if test_parse_deref() != 0 {
+        println("FAIL: test_parse_deref");
+        failed = failed + 1;
+    }
+
+    if test_parse_ptr_type() != 0 {
+        println("FAIL: test_parse_ptr_type");
+        failed = failed + 1;
+    }
+
     if failed == 0 {
-        println("All 14 parser tests passed!");
+        println("All 18 parser tests passed!");
     }
 
     return failed;

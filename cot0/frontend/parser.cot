@@ -215,6 +215,18 @@ fn parse_atom(p: *Parser) i64 {
         return parse_int_lit(p);
     }
 
+    // String literal: "hello"
+    if kind == TokenType.StringLit {
+        let start: i64 = p.current.start;
+        let length: i64 = p.current.end;
+        // String content starts after opening quote
+        let str_start: i64 = start + 1;
+        // String content length is length - 2 (for both quotes)
+        let str_len: i64 = length - 2;
+        parser_advance(p);
+        return node_string_lit(p.pool, str_start, str_len, start, start + length);
+    }
+
     // Boolean literal: true
     if kind == TokenType.True {
         let start: i64 = p.current.start;
@@ -357,6 +369,14 @@ fn parse_unary(p: *Parser) i64 {
         return node_unary(p.pool, UnaryOp.BitNot, operand, start, p.current.start);
     }
 
+    // Address-of: &expr
+    if kind == TokenType.Amp {
+        let start: i64 = p.current.start;
+        parser_advance(p);
+        let operand: i64 = parse_unary(p);
+        return node_address_of(p.pool, operand, start, p.current.start);
+    }
+
     // Parenthesized expression
     if kind == TokenType.LParen {
         parser_advance(p);
@@ -372,18 +392,25 @@ fn parse_unary(p: *Parser) i64 {
         // Loop to handle chained postfix operations: foo.bar.baz, Type.Variant, foo()
         var done: bool = false;
         while not done {
-            // Check for field access: expr.field or Type.Variant
+            // Check for field access or dereference: expr.field or expr.*
             if parser_check(p, TokenType.Dot) {
                 parser_advance(p);  // Consume '.'
 
-                // Field/variant name
-                let field_start: i64 = p.current.start;
-                let field_len: i64 = p.current.end;
-                parser_want(p, TokenType.Ident);
+                // Check for dereference: expr.*
+                if parser_check(p, TokenType.Star) {
+                    let result_node: *Node = node_get(p.pool, result);
+                    parser_advance(p);  // Consume '*'
+                    result = node_deref(p.pool, result, result_node.start, p.current.start);
+                } else {
+                    // Field/variant name
+                    let field_start: i64 = p.current.start;
+                    let field_len: i64 = p.current.end;
+                    parser_want(p, TokenType.Ident);
 
-                let result_node: *Node = node_get(p.pool, result);
-                result = node_field_access(p.pool, result, field_start, field_len,
-                                          result_node.start, p.current.start);
+                    let result_node: *Node = node_get(p.pool, result);
+                    result = node_field_access(p.pool, result, field_start, field_len,
+                                              result_node.start, p.current.start);
+                }
             }
             // Check for function call
             else if parser_check(p, TokenType.LParen) {
