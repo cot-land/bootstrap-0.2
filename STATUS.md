@@ -13,11 +13,12 @@ See [cot0/TASKS.md](cot0/TASKS.md) for detailed self-hosting progress.
 | Module | Status | Tests |
 |--------|--------|-------|
 | token.cot | Complete | 5/5 pass |
-| scanner.cot | Complete | 11/11 pass |
+| scanner.cot | Complete | 18/18 pass |
 | ast.cot | Complete | 7/7 pass |
-| parser.cot | Complete | 10/10 pass |
-| types.cot | In Progress | 2/2 pass |
-| checker.cot | In Progress | 2/2 pass |
+| parser.cot | Complete | 14/14 pass |
+| types.cot | Complete | 2/2 pass |
+| checker.cot | Complete | 2/2 pass |
+| ir.cot | Complete | passes |
 
 ### Open Bugs (2026-01-17)
 
@@ -25,6 +26,7 @@ None currently.
 
 ### Recent Bug Fixes (2026-01-17)
 
+- BUG-025: String pointer becomes null after many accesses - Implemented Go's per-instruction use distance tracking in regalloc
 - BUG-024: String pointer becomes null in string comparisons - Added slice_len/slice_ptr rewrite rules to decompose pass
 - BUG-023: Stack slot reuse causes value corruption - Disabled slot reuse for store_reg values, fixed liveness propagation
 - BUG-022: Comparison operands use same register - Fixed register allocation for comparisons in functions with many if statements

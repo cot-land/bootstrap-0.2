@@ -365,40 +365,60 @@ fn parse_unary(p: *Parser) i64 {
         return inner;
     }
 
-    // Identifier - check for call
+    // Identifier - check for call or field access
     if kind == TokenType.Ident {
-        let ident: i64 = parse_ident_only(p);
+        var result: i64 = parse_ident_only(p);
 
-        // Check for function call
-        if parser_check(p, TokenType.LParen) {
-            let call_start: i64 = p.current.start;
-            parser_advance(p);  // Consume '('
+        // Loop to handle chained postfix operations: foo.bar.baz, Type.Variant, foo()
+        var done: bool = false;
+        while not done {
+            // Check for field access: expr.field or Type.Variant
+            if parser_check(p, TokenType.Dot) {
+                parser_advance(p);  // Consume '.'
 
-            // Record start of arguments in children array
-            let args_start: i64 = p.pool.children_count;
-            var args_count: i64 = 0;
+                // Field/variant name
+                let field_start: i64 = p.current.start;
+                let field_len: i64 = p.current.end;
+                parser_want(p, TokenType.Ident);
 
-            // Parse argument list
-            if not parser_check(p, TokenType.RParen) {
-                // First argument
-                let first_arg: i64 = parse_arg_expr(p);
-                node_add_child(p.pool, first_arg);
-                args_count = args_count + 1;
-
-                // Additional arguments
-                while parser_got(p, TokenType.Comma) {
-                    let next_arg: i64 = parse_arg_expr(p);
-                    node_add_child(p.pool, next_arg);
-                    args_count = args_count + 1;
-                }
+                let result_node: *Node = node_get(p.pool, result);
+                result = node_field_access(p.pool, result, field_start, field_len,
+                                          result_node.start, p.current.start);
             }
+            // Check for function call
+            else if parser_check(p, TokenType.LParen) {
+                let call_start: i64 = p.current.start;
+                parser_advance(p);  // Consume '('
 
-            let end: i64 = p.current.start + p.current.end;
-            parser_want(p, TokenType.RParen);
+                // Record start of arguments in children array
+                let args_start: i64 = p.pool.children_count;
+                var args_count: i64 = 0;
 
-            return node_call(p.pool, ident, args_start, args_count, call_start, end);
+                // Parse argument list
+                if not parser_check(p, TokenType.RParen) {
+                    // First argument
+                    let first_arg: i64 = parse_arg_expr(p);
+                    node_add_child(p.pool, first_arg);
+                    args_count = args_count + 1;
+
+                    // Additional arguments
+                    while parser_got(p, TokenType.Comma) {
+                        let next_arg: i64 = parse_arg_expr(p);
+                        node_add_child(p.pool, next_arg);
+                        args_count = args_count + 1;
+                    }
+                }
+
+                let end: i64 = p.current.start + p.current.end;
+                parser_want(p, TokenType.RParen);
+
+                result = node_call(p.pool, result, args_start, args_count, call_start, end);
+            }
+            else {
+                done = true;
+            }
         }
-        return ident;
+        return result;
     }
 
     // Other atoms
@@ -676,6 +696,106 @@ fn parse_fn_decl(p: *Parser) i64 {
 }
 
 // ============================================================================
+// Sprint B: Struct/Enum Declaration Parsing
+// Following Go's cmd/compile/internal/syntax/parser.go patterns
+// ============================================================================
+
+// Parse struct field: name: type,
+fn parse_struct_field(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+
+    // Field name
+    let name_start: i64 = p.current.start;
+    let name_len: i64 = p.current.end;
+    parser_want(p, TokenType.Ident);
+
+    // Colon
+    parser_want(p, TokenType.Colon);
+
+    // Type
+    let type_start: i64 = p.current.start;
+    let type_handle: i64 = parse_type(p);
+
+    let end: i64 = p.current.start;
+
+    // Comma is optional (handled by caller)
+    return node_field_decl(p.pool, name_start, name_len, type_start, type_handle, start, end);
+}
+
+// Parse struct declaration: struct Name { fields }
+fn parse_struct_decl(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    parser_want(p, TokenType.Struct);
+
+    // Struct name
+    let name_start: i64 = p.current.start;
+    let name_len: i64 = p.current.end;
+    parser_want(p, TokenType.Ident);
+
+    // Opening brace
+    parser_want(p, TokenType.LBrace);
+
+    // Parse fields
+    let fields_start: i64 = p.pool.children_count;
+    var fields_count: i64 = 0;
+
+    while not parser_check(p, TokenType.RBrace) and not parser_at_end(p) {
+        let field: i64 = parse_struct_field(p);
+        node_add_child(p.pool, field);
+        fields_count = fields_count + 1;
+
+        // Optional comma between fields
+        parser_got(p, TokenType.Comma);
+    }
+
+    let end: i64 = p.current.start + p.current.end;
+    parser_want(p, TokenType.RBrace);
+
+    return node_struct_decl(p.pool, name_start, name_len, fields_start, fields_count, start, end);
+}
+
+// Parse enum variant: just an identifier
+// Stores as an Ident node (variant_start, variant_len)
+fn parse_enum_variant(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    let name_len: i64 = p.current.end;
+    parser_want(p, TokenType.Ident);
+    return node_ident(p.pool, start, name_len, start, start + name_len);
+}
+
+// Parse enum declaration: enum Name { variants }
+fn parse_enum_decl(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    parser_want(p, TokenType.Enum);
+
+    // Enum name
+    let name_start: i64 = p.current.start;
+    let name_len: i64 = p.current.end;
+    parser_want(p, TokenType.Ident);
+
+    // Opening brace
+    parser_want(p, TokenType.LBrace);
+
+    // Parse variants
+    let variants_start: i64 = p.pool.children_count;
+    var variants_count: i64 = 0;
+
+    while not parser_check(p, TokenType.RBrace) and not parser_at_end(p) {
+        let variant: i64 = parse_enum_variant(p);
+        node_add_child(p.pool, variant);
+        variants_count = variants_count + 1;
+
+        // Optional comma between variants
+        parser_got(p, TokenType.Comma);
+    }
+
+    let end: i64 = p.current.start + p.current.end;
+    parser_want(p, TokenType.RBrace);
+
+    return node_enum_decl(p.pool, name_start, name_len, variants_start, variants_count, start, end);
+}
+
+// ============================================================================
 // Top-Level Parsing
 // ============================================================================
 
@@ -683,6 +803,14 @@ fn parse_fn_decl(p: *Parser) i64 {
 fn parse_decl(p: *Parser) i64 {
     if parser_check(p, TokenType.Fn) {
         return parse_fn_decl(p);
+    }
+
+    if parser_check(p, TokenType.Struct) {
+        return parse_struct_decl(p);
+    }
+
+    if parser_check(p, TokenType.Enum) {
+        return parse_enum_decl(p);
     }
 
     // Error - unexpected token at top level

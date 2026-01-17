@@ -1,6 +1,0 @@
-// Test just importing parser.cot
-import "parser.cot"
-
-fn main() i64 {
-    return 0;
-}

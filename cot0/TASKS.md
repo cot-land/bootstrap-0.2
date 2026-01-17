@@ -13,11 +13,12 @@
 | Test File | Status |
 |-----------|--------|
 | `token_test.cot` | 5/5 pass ✓ |
-| `scanner_test.cot` | 11/11 pass ✓ |
+| `scanner_test.cot` | 18/18 pass ✓ |
 | `ast_test.cot` | 7/7 pass ✓ |
-| `parser_test.cot` | 10/10 pass ✓ |
+| `parser_test.cot` | 14/14 pass ✓ |
 | `types_test.cot` | 2/2 pass ✓ |
 | `checker_test.cot` | 2/2 pass ✓ |
+| `ir_test.cot` | passes ✓ |
 
 ---
 
@@ -35,6 +36,7 @@
 
 ## Recent Bug Fixes (2026-01-17)
 
+- BUG-025: String pointer null after many accesses ✅ FIXED (Go's use distance tracking)
 - BUG-024: String pointer null in string comparisons ✅ FIXED
 - BUG-023: Stack slot reuse causes value corruption ✅ FIXED
 - BUG-022: Comparison operands use same register ✅ FIXED
@@ -164,6 +166,6 @@
 - [x] Can compile: `fn main() i64 { return 42; }`
 - [x] Can compile: `fn main() i64 { return 20 + 22; }`
 - [x] Can compile: `fn add(a: i64, b: i64) i64 { return a + b; } fn main() i64 { return add(20, 22); }`
-- [ ] ir.cot compiles and tests pass
+- [x] ir.cot compiles and tests pass
 - [ ] lower.cot compiles and tests pass
 - [ ] Can self-compile minimal subset

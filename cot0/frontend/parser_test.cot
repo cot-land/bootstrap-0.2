@@ -238,6 +238,106 @@ fn test_parse_return_expr() i64 {
     return 0;
 }
 
+// ============================================================================
+// Sprint B: Struct/Enum Tests
+// ============================================================================
+
+// Test 11: Parse struct declaration
+fn test_parse_struct() i64 {
+    let pool: *NodePool = init_test_pool();
+    reset_pool(pool);
+    var p: Parser = parser_new("struct Point { x: i64, y: i64 }", pool);
+
+    let decl: i64 = parse_decl(&p);
+
+    let s: *Node = node_get(pool, decl);
+    if s.kind != NodeKind.StructDecl { return 1; }
+
+    // Check name offset and length
+    // "struct Point" - Point starts at offset 7, length 5
+    if s.field0 != 7 { return 2; }   // name_start
+    if s.field1 != 5 { return 3; }   // name_len
+
+    // Check 2 fields
+    if s.field3 != 2 { return 4; }   // fields_count
+
+    // Check first field
+    let fields_start: i64 = s.field2;
+    let f0_idx: i64 = node_child(pool, fields_start, 0);
+    let f0: *Node = node_get(pool, f0_idx);
+    if f0.kind != NodeKind.FieldDecl { return 5; }
+
+    return 0;
+}
+
+// Test 12: Parse enum declaration
+fn test_parse_enum() i64 {
+    let pool: *NodePool = init_test_pool();
+    reset_pool(pool);
+    var p: Parser = parser_new("enum Color { Red, Green, Blue }", pool);
+
+    let decl: i64 = parse_decl(&p);
+
+    let e: *Node = node_get(pool, decl);
+    if e.kind != NodeKind.EnumDecl { return 1; }
+
+    // Check name offset and length
+    // "enum Color" - Color starts at offset 5, length 5
+    if e.field0 != 5 { return 2; }   // name_start
+    if e.field1 != 5 { return 3; }   // name_len
+
+    // Check 3 variants
+    if e.field3 != 3 { return 4; }   // variants_count
+
+    // Check first variant is an Ident
+    let variants_start: i64 = e.field2;
+    let v0_idx: i64 = node_child(pool, variants_start, 0);
+    let v0: *Node = node_get(pool, v0_idx);
+    if v0.kind != NodeKind.Ident { return 5; }
+
+    return 0;
+}
+
+// Test 13: Parse field access
+fn test_parse_field_access() i64 {
+    let pool: *NodePool = init_test_pool();
+    reset_pool(pool);
+    var p: Parser = parser_new("point.x", pool);
+
+    let expr: i64 = parse_expr(&p);
+
+    let fa: *Node = node_get(pool, expr);
+    if fa.kind != NodeKind.FieldAccess { return 1; }
+
+    // Base should be identifier "point"
+    let base: *Node = node_get(pool, fa.field0);
+    if base.kind != NodeKind.Ident { return 2; }
+
+    // Field name "x" - starts after "point." at offset 6, length 1
+    if fa.field1 != 6 { return 3; }   // field_start
+    if fa.field2 != 1 { return 4; }   // field_len
+
+    return 0;
+}
+
+// Test 14: Parse chained field access (Type.Variant style)
+fn test_parse_chained_access() i64 {
+    let pool: *NodePool = init_test_pool();
+    reset_pool(pool);
+    var p: Parser = parser_new("TokenType.Ident", pool);
+
+    let expr: i64 = parse_expr(&p);
+
+    let fa: *Node = node_get(pool, expr);
+    if fa.kind != NodeKind.FieldAccess { return 1; }
+
+    // Base should be identifier "TokenType"
+    let base: *Node = node_get(pool, fa.field0);
+    if base.kind != NodeKind.Ident { return 2; }
+
+    return 0;
+}
+
 fn main() i64 {
     var failed: i64 = 0;
 
@@ -291,8 +391,29 @@ fn main() i64 {
         failed = failed + 1;
     }
 
+    // Sprint B: Struct/Enum tests
+    if test_parse_struct() != 0 {
+        println("FAIL: test_parse_struct");
+        failed = failed + 1;
+    }
+
+    if test_parse_enum() != 0 {
+        println("FAIL: test_parse_enum");
+        failed = failed + 1;
+    }
+
+    if test_parse_field_access() != 0 {
+        println("FAIL: test_parse_field_access");
+        failed = failed + 1;
+    }
+
+    if test_parse_chained_access() != 0 {
+        println("FAIL: test_parse_chained_access");
+        failed = failed + 1;
+    }
+
     if failed == 0 {
-        println("All 10 parser tests passed!");
+        println("All 14 parser tests passed!");
     }
 
     return failed;

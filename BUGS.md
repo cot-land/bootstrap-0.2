@@ -35,7 +35,52 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
-(none)
+### BUG-025: String pointer becomes null after many string accesses in is_keyword (FIXED)
+
+**Status:** Fixed
+**Priority:** P0 (was blocking cot0 scanner tests)
+**Discovered:** 2026-01-17
+**Fixed:** 2026-01-17
+
+**Description:**
+When calling `is_keyword` with a non-keyword (e.g., "foo"), the function crashed with a null pointer dereference at `text[0]`. Keywords like "fn" that matched early in the function worked fine.
+
+**Root Cause:**
+The register allocator's spill selection used block-level `live_out` to determine which values to spill. Values used only WITHIN a block (not live across block boundaries) had `dist = maxInt`, making them prime spill candidates even when they were needed very soon. This meant values like the string pointer in `is_keyword` could be spilled and their registers reused by the multiplication operation computing array offsets.
+
+The actual issue: when `allocReg` needed to spill a value, it picked based on "farthest use" but computed distance from `live_out`, not per-instruction use lists. Go's `regalloc.go` uses per-instruction use distances via a linked list of `Use` structs.
+
+**Go Reference:**
+`~/learning/go/src/cmd/compile/internal/ssa/regalloc.go`:
+```go
+type use struct {
+    dist int32
+    pos  src.XPos
+    next *use
+}
+
+// In assignReg - spill based on per-value use distance:
+for i, rn := range s.regs {
+    if v := s.values[vid]; v.uses != nil {
+        d := v.uses.dist  // Per-instruction distance
+        if d > maxuse { maxuse = d; ... }
+    }
+}
+```
+
+**Fix:**
+`src/ssa/regalloc.zig` - Implemented Go's per-instruction use distance tracking:
+
+1. Added `Use` struct with `dist`, `pos`, `next` fields
+2. Changed `ValState.uses` from `i32` count to `?*Use` linked list
+3. Added `addUse(id, dist, pos)` to build use lists by walking block backwards
+4. Added `advanceUses(v)` to pop uses after each instruction is processed
+5. Added `buildUseLists(block)` to initialize use lists for each block
+6. Modified `allocReg` to use `vi.uses.dist` instead of block-level `live_out` for spill selection
+
+This ensures values are spilled based on when they're actually next used, not just whether they're live-out of the block.
+
+**Test:** `half_scanner_test.cot` scanning "foo" now passes with exit code 0
 
 ---
 

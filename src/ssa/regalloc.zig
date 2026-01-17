@@ -98,13 +98,27 @@ pub const EndReg = struct {
     c: *Value, // Post-regalloc copy (may equal v)
 };
 
+/// Use record for tracking distance to next use of a value.
+/// Go reference: regalloc.go lines 219-227
+/// Uses are stored in a linked list, sorted by distance (closest first).
+pub const Use = struct {
+    /// Distance from start of block to this use.
+    /// dist == 0: used by first instruction in block
+    /// dist == len(b.Values)-1: used by last instruction in block
+    /// dist == len(b.Values): used by block's control value
+    /// dist > len(b.Values): used by a subsequent block
+    dist: i32,
+    pos: Pos,
+    next: ?*Use, // Linked list of uses in nondecreasing dist order
+};
+
 /// Per-value state - PERSISTENT across all blocks
 /// Go reference: regalloc.go lines 231-239
 pub const ValState = struct {
     regs: RegMask = 0, // Which registers hold this value (PERSISTENT)
     spill: ?*Value = null, // StoreReg instruction
     spill_used: bool = false,
-    uses: i32 = 0, // Remaining uses - decremented as args are processed
+    uses: ?*Use = null, // Linked list of uses in this block (Go pattern)
     rematerializeable: bool = false, // Can be recomputed cheaply (Go's pattern)
     needs_reg: bool = true, // Value needs a register (not void/memory)
 
@@ -167,6 +181,18 @@ pub const RegAllocState = struct {
     // needed by stackalloc to compute proper interference.
     spill_live: std.AutoHashMapUnmanaged(ID, std.ArrayListUnmanaged(ID)) = .{},
 
+    // Free list of Use records for reuse (Go pattern)
+    // Go reference: regalloc.go line 314 "freeUseRecords *use"
+    free_use_records: ?*Use = null,
+
+    // Current instruction index within the block being processed
+    // Go reference: regalloc.go "curIdx"
+    cur_idx: usize = 0,
+
+    // Distance to next call instruction for each value index in current block
+    // Go reference: regalloc.go line 316 "nextCall []int32"
+    next_call: std.ArrayListUnmanaged(i32) = .{},
+
     // Stats
     num_spills: u32 = 0,
 
@@ -207,12 +233,150 @@ pub const RegAllocState = struct {
             list.deinit(self.allocator);
         }
         self.spill_live.deinit(self.allocator);
+
+        // Free next_call array
+        self.next_call.deinit(self.allocator);
+
+        // Free Use records from free list
+        var use_ptr = self.free_use_records;
+        while (use_ptr) |u| {
+            const next = u.next;
+            self.allocator.destroy(u);
+            use_ptr = next;
+        }
     }
 
     /// Get spillLive for stackalloc
     /// Returns a reference to the spillLive map (caller should not modify)
     pub fn getSpillLive(self: *const Self) *const std.AutoHashMapUnmanaged(ID, std.ArrayListUnmanaged(ID)) {
         return &self.spill_live;
+    }
+
+    // =========================================
+    // Use Distance Tracking (Go pattern)
+    // Go reference: regalloc.go lines 854-920
+    // =========================================
+
+    /// Add a use record for a value at the given distance from block start.
+    /// All calls to addUse must happen with nonincreasing dist (walking backwards).
+    /// Go reference: regalloc.go addUse() line 856
+    fn addUse(self: *Self, id: ID, dist: i32, pos: Pos) void {
+        if (id >= self.values.len) return;
+
+        // Get a Use record from free list or allocate new
+        var r: *Use = undefined;
+        if (self.free_use_records) |free| {
+            r = free;
+            self.free_use_records = free.next;
+        } else {
+            r = self.allocator.create(Use) catch return;
+        }
+
+        r.dist = dist;
+        r.pos = pos;
+        r.next = self.values[id].uses;
+        self.values[id].uses = r;
+
+        // Verify ordering (dist should be nonincreasing)
+        if (r.next) |next| {
+            if (dist > next.dist) {
+                debug.log(.regalloc, "WARNING: uses added in wrong order for v{d}: {d} > {d}", .{ id, dist, next.dist });
+            }
+        }
+    }
+
+    /// Advance uses of v's args after processing v.
+    /// Pops the current use off each arg's use list.
+    /// Frees registers for args that have no more uses (or next use is after a call).
+    /// Go reference: regalloc.go advanceUses() line 872
+    fn advanceUses(self: *Self, v: *Value) void {
+        for (v.args) |arg| {
+            if (arg.id >= self.values.len) continue;
+            const vi = &self.values[arg.id];
+            if (!vi.needs_reg) continue;
+
+            const r = vi.uses orelse continue;
+            vi.uses = r.next;
+
+            // Check if value is dead or next use is after a call
+            const next_call_dist = if (self.cur_idx < self.next_call.items.len)
+                self.next_call.items[self.cur_idx]
+            else
+                std.math.maxInt(i32);
+
+            if (r.next == null or r.next.?.dist > next_call_dist) {
+                // Value is dead or not used until after a call - free its registers
+                self.freeRegs(vi.regs);
+            }
+
+            // Return Use record to free list
+            r.next = self.free_use_records;
+            self.free_use_records = r;
+        }
+    }
+
+    /// Clear all use lists for values (called at start of each block).
+    fn clearUses(self: *Self) void {
+        for (self.values) |*vi| {
+            // Return all Use records to free list
+            var u = vi.uses;
+            while (u) |use| {
+                const next = use.next;
+                use.next = self.free_use_records;
+                self.free_use_records = use;
+                u = next;
+            }
+            vi.uses = null;
+        }
+    }
+
+    /// Build use lists for a block by walking backwards through values.
+    /// Go reference: regalloc.go lines 1033-1082
+    fn buildUseLists(self: *Self, block: *Block) !void {
+        // Clear existing uses from previous block
+        self.clearUses();
+
+        const num_values = block.values.items.len;
+
+        // Resize next_call array if needed
+        try self.next_call.resize(self.allocator, num_values);
+
+        // Add pseudo-uses for values live out of this block
+        const live_out = self.live.getLiveOut(block.id);
+        for (live_out) |info| {
+            // dist > len(b.Values) means used by subsequent block
+            self.addUse(info.id, @intCast(num_values + @as(usize, @intCast(info.dist))), info.pos);
+        }
+
+        // Add pseudo-use for control values (e.g., condition of branch)
+        for (block.controlValues()) |ctrl| {
+            if (ctrl.id < self.values.len and self.values[ctrl.id].needs_reg) {
+                self.addUse(ctrl.id, @intCast(num_values), block.pos);
+            }
+        }
+
+        // Walk backwards through values, adding uses for args
+        var next_call_dist: i32 = std.math.maxInt(i32);
+        var i: usize = num_values;
+        while (i > 0) {
+            i -= 1;
+            const v = block.values.items[i];
+
+            // Track distance to next call
+            if (v.op.info().call) {
+                next_call_dist = @intCast(i);
+            }
+            self.next_call.items[i] = next_call_dist;
+
+            // Add uses for this value's arguments
+            for (v.args) |arg| {
+                if (arg.id >= self.values.len) continue;
+                if (!self.values[arg.id].needs_reg) continue;
+                self.addUse(arg.id, @intCast(i), v.pos);
+            }
+        }
+
+        debug.log(.regalloc, "  Built use lists for block b{d}, {d} values", .{ block.id, num_values });
     }
 
     // =========================================
@@ -232,6 +396,7 @@ pub const RegAllocState = struct {
     }
 
     fn allocReg(self: *Self, mask: RegMask, block: *Block) !RegNum {
+
         // Try to find a free register (excluding 'used' registers)
         // Go reference: regalloc.go allocReg excludes s.used
         const available_mask = mask & ~self.used;
@@ -242,11 +407,9 @@ pub const RegAllocState = struct {
         // Must spill - find register with farthest next use
         // CRITICAL: Exclude 'used' registers from spill candidates
         // These are holding arguments for the current instruction
+        // Go reference: regalloc.go allocReg() lines 458-489
         var best_reg: ?RegNum = null;
         var best_dist: i32 = -1;
-
-        // Get liveness info for this block
-        const live_out = self.live.getLiveOut(block.id);
 
         var m = available_mask; // Exclude 'used' registers from spill candidates
         while (m != 0) {
@@ -256,14 +419,10 @@ pub const RegAllocState = struct {
             if (reg >= NUM_REGS) continue;
             const v = self.regs[reg].v orelse continue;
 
-            // Get distance to next use from liveness info
-            var dist: i32 = std.math.maxInt(i32); // Default: very far (not live)
-            for (live_out) |info| {
-                if (info.id == v.id) {
-                    dist = info.dist;
-                    break;
-                }
-            }
+            // Get distance to next use from per-value use list (Go pattern)
+            // This is the key fix: uses.dist tracks INTRA-BLOCK uses correctly
+            const vi = &self.values[v.id];
+            const dist: i32 = if (vi.uses) |use| use.dist else std.math.maxInt(i32);
 
             if (dist > best_dist) {
                 best_dist = dist;
@@ -272,6 +431,11 @@ pub const RegAllocState = struct {
         }
 
         const reg = best_reg orelse return error.NoRegisterAvailable;
+        debug.log(.regalloc, "    spilling v{d} from x{d} (dist={d})", .{
+            if (self.regs[reg].v) |v| v.id else 0,
+            reg,
+            best_dist,
+        });
 
         // Spill the value in this register
         // Add to pending_spills so caller can insert it at the right position
@@ -347,6 +511,19 @@ pub const RegAllocState = struct {
         // Go reference: regalloc.go line 373 "s.used &^= regMask(1) << r"
         // Clear this register from 'used' mask
         self.used &= ~(@as(RegMask, 1) << @intCast(reg));
+    }
+
+    /// Free all registers in a mask.
+    /// Go reference: regalloc.go freeRegs()
+    fn freeRegs(self: *Self, mask: RegMask) void {
+        var m = mask;
+        while (m != 0) {
+            const reg: RegNum = @intCast(@ctz(m));
+            m &= m - 1;
+            if (reg < NUM_REGS) {
+                self.freeReg(reg);
+            }
+        }
     }
 
     /// Load a spilled value back into a register, or rematerialize it.
@@ -545,6 +722,10 @@ pub const RegAllocState = struct {
         // Handle phis first (Go's 3-pass algorithm)
         try self.allocatePhis(block, primary_pred_idx);
 
+        // Build use lists for this block (Go's key pattern for intra-block liveness)
+        // Go reference: regalloc.go lines 1033-1082
+        try self.buildUseLists(block);
+
         // Build a NEW values list with loads/spills in the correct positions
         // Go reference: regalloc.go builds output in order as it processes
         var new_values = std.ArrayListUnmanaged(*Value){};
@@ -554,7 +735,10 @@ pub const RegAllocState = struct {
         const original_values = try self.allocator.dupe(*Value, block.values.items);
         defer self.allocator.free(original_values);
 
-        for (original_values) |v| {
+        for (original_values, 0..) |v, idx| {
+            // Track current instruction index for advanceUses
+            self.cur_idx = idx;
+
             if (v.op == .phi) {
                 // Phis go first, unchanged
                 try new_values.append(self.allocator, v);
@@ -641,38 +825,10 @@ pub const RegAllocState = struct {
                 }
             }
 
-            // CRITICAL: Free registers for args that are now dead (Go's pattern)
-            // After this value consumes its args, decrement their use counts
-            // and free registers for args whose use count reaches 0
-            // BUT: Don't free if the value is live-out (needed by successor phis)
-            const live_out = self.live.getLiveOut(block.id);
-            for (v.args) |arg| {
-                if (arg.id < self.values.len) {
-                    const vs = &self.values[arg.id];
-                    if (vs.uses > 0) {
-                        vs.uses -= 1;
-                        if (vs.uses == 0) {
-                            // Check if value is live-out before freeing
-                            var is_live_out = false;
-                            for (live_out) |info| {
-                                if (info.id == arg.id) {
-                                    is_live_out = true;
-                                    break;
-                                }
-                            }
-                            if (!is_live_out) {
-                                // This arg has no more uses - free its register
-                                if (vs.firstReg()) |reg| {
-                                    debug.log(.regalloc, "    free x{d} (v{d} dead)", .{ reg, arg.id });
-                                    self.freeReg(reg);
-                                }
-                            } else {
-                                debug.log(.regalloc, "    keep x{?d} (v{d} live-out)", .{ vs.firstReg(), arg.id });
-                            }
-                        }
-                    }
-                }
-            }
+            // CRITICAL: Advance uses and free dead values (Go's pattern)
+            // Go reference: regalloc.go advanceUses() - pops current use off each arg's list
+            // and frees registers for args with no more uses (or next use after call)
+            self.advanceUses(v);
         }
 
         // Handle control values - may need loads
@@ -927,19 +1083,13 @@ pub const RegAllocState = struct {
 
         // Phase 1: Initialize per-value state
         // Go reference: regalloc.go init() lines 400-500
+        // Initialize per-value properties (rematerializeable, needs_reg)
+        // Note: uses is now a linked list, built per-block by buildUseLists()
         for (self.f.blocks.items) |block| {
             for (block.values.items) |v| {
                 if (v.id < self.values.len) {
-                    self.values[v.id].uses = v.uses;
                     self.values[v.id].rematerializeable = isRematerializeable(v);
                     self.values[v.id].needs_reg = valueNeedsReg(v);
-                }
-            }
-            // Also count control values
-            for (block.controlValues()) |ctrl| {
-                if (ctrl.id < self.values.len) {
-                    // Control values have an implicit use
-                    self.values[ctrl.id].uses = @max(self.values[ctrl.id].uses, 1);
                 }
             }
         }

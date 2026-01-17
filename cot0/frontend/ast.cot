@@ -35,6 +35,12 @@ enum NodeKind {
     FnDecl,         // fn name(params) ret { body }
     ParamDecl,      // name: type
     VarDecl,        // let/var name: type = expr;
+    StructDecl,     // struct Name { fields }
+    EnumDecl,       // enum Name { variants }
+    FieldDecl,      // name: type (struct field)
+
+    // Member access
+    FieldAccess,    // expr.field
 
     // Special
     BadNode,        // Error placeholder
@@ -400,6 +406,107 @@ fn node_unary(pool: *NodePool, op: UnaryOp, operand: i64, start: i64, end: i64) 
 }
 
 // ============================================================================
+// Sprint B: Struct/Enum Declarations
+// Following Go's cmd/compile/internal/syntax/nodes.go patterns
+// ============================================================================
+
+// Create a struct declaration node
+// struct Name { field1: type1; field2: type2; }
+// field0: name_start (offset in source)
+// field1: name_len
+// field2: fields_start (index in children array)
+// field3: fields_count
+fn node_struct_decl(pool: *NodePool, name_start: i64, name_len: i64,
+                    fields_start: i64, fields_count: i64,
+                    start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.StructDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;      // Struct name offset
+    n.field1 = name_len;        // Struct name length
+    n.field2 = fields_start;    // Start index in children array
+    n.field3 = fields_count;    // Number of fields
+
+    return idx;
+}
+
+// Create an enum declaration node
+// enum Name { Variant1, Variant2, Variant3 }
+// field0: name_start (offset in source)
+// field1: name_len
+// field2: variants_start (index in children array)
+// field3: variants_count
+fn node_enum_decl(pool: *NodePool, name_start: i64, name_len: i64,
+                  variants_start: i64, variants_count: i64,
+                  start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.EnumDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;      // Enum name offset
+    n.field1 = name_len;        // Enum name length
+    n.field2 = variants_start;  // Start index in children array
+    n.field3 = variants_count;  // Number of variants
+
+    return idx;
+}
+
+// Create a field declaration node (for struct fields)
+// name: type
+// field0: name_start
+// field1: name_len
+// field2: type_start
+// field3: type_len
+fn node_field_decl(pool: *NodePool, name_start: i64, name_len: i64,
+                   type_start: i64, type_len: i64,
+                   start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.FieldDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;      // Field name offset
+    n.field1 = name_len;        // Field name length
+    n.field2 = type_start;      // Type offset
+    n.field3 = type_len;        // Type length
+
+    return idx;
+}
+
+// Create a field access expression node
+// expr.field or Type.Variant
+// field0: base expression node index
+// field1: field_name_start
+// field2: field_name_len
+// field3: unused
+fn node_field_access(pool: *NodePool, base: i64,
+                     field_start: i64, field_len: i64,
+                     start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.FieldAccess;
+    n.start = start;
+    n.end = end;
+    n.field0 = base;            // Base expression
+    n.field1 = field_start;     // Field name offset
+    n.field2 = field_len;       // Field name length
+    n.field3 = 0;
+
+    return idx;
+}
+
+// ============================================================================
 // Node Accessors
 // ============================================================================
 
@@ -437,7 +544,8 @@ fn is_expr(kind: NodeKind) bool {
            kind == NodeKind.Ident or
            kind == NodeKind.BinaryExpr or
            kind == NodeKind.CallExpr or
-           kind == NodeKind.UnaryExpr;
+           kind == NodeKind.UnaryExpr or
+           kind == NodeKind.FieldAccess;
 }
 
 fn is_stmt(kind: NodeKind) bool {
@@ -451,7 +559,10 @@ fn is_stmt(kind: NodeKind) bool {
 fn is_decl(kind: NodeKind) bool {
     return kind == NodeKind.FnDecl or
            kind == NodeKind.ParamDecl or
-           kind == NodeKind.VarDecl;
+           kind == NodeKind.VarDecl or
+           kind == NodeKind.StructDecl or
+           kind == NodeKind.EnumDecl or
+           kind == NodeKind.FieldDecl;
 }
 
 // ============================================================================
