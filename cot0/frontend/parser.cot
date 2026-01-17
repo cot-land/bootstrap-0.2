@@ -99,16 +99,18 @@ fn parser_binop_int(p: *Parser) i64 {
 // Type kinds (matching our type system):
 //   0 = i64, 1 = i32, 2 = u8, 3 = bool, 4 = void, 5 = string
 //   10+ = pointer to type (10 + base_type)
-//   20+ = user-defined type (struct/enum name at offset)
+//   100+ = user-defined type (struct/enum name at offset)
+//
+// NOTE: These use PTYPE_ prefix to avoid collision with types.cot's TYPE_ constants
 
-const TYPE_I64: i64 = 0;
-const TYPE_I32: i64 = 1;
-const TYPE_U8: i64 = 2;
-const TYPE_BOOL: i64 = 3;
-const TYPE_VOID: i64 = 4;
-const TYPE_STRING: i64 = 5;
-const TYPE_PTR_BASE: i64 = 10;    // Pointer types start here
-const TYPE_USER_BASE: i64 = 100;  // User types start here
+const PTYPE_I64: i64 = 0;
+const PTYPE_I32: i64 = 1;
+const PTYPE_U8: i64 = 2;
+const PTYPE_BOOL: i64 = 3;
+const PTYPE_VOID: i64 = 4;
+const PTYPE_STRING: i64 = 5;
+const PTYPE_PTR_BASE: i64 = 10;    // Pointer types start here
+const PTYPE_USER_BASE: i64 = 100;  // User types start here
 
 // Parse a type: i64 | i32 | u8 | bool | void | string | *T | TypeName
 // Returns type handle (encoded as i64)
@@ -118,56 +120,56 @@ fn parse_type(p: *Parser) i64 {
     // Built-in types
     if kind == TokenType.I64 {
         parser_advance(p);
-        return TYPE_I64;
+        return PTYPE_I64;
     }
     if kind == TokenType.I32 {
         parser_advance(p);
-        return TYPE_I32;
+        return PTYPE_I32;
     }
     if kind == TokenType.U8 {
         parser_advance(p);
-        return TYPE_U8;
+        return PTYPE_U8;
     }
     if kind == TokenType.Bool {
         parser_advance(p);
-        return TYPE_BOOL;
+        return PTYPE_BOOL;
     }
     if kind == TokenType.Void {
         parser_advance(p);
-        return TYPE_VOID;
+        return PTYPE_VOID;
     }
     if kind == TokenType.String {
         parser_advance(p);
-        return TYPE_STRING;
+        return PTYPE_STRING;
     }
 
     // Pointer type: *T
     if kind == TokenType.Star {
         parser_advance(p);
         let pointee: i64 = parse_type(p);
-        return TYPE_PTR_BASE + pointee;
+        return PTYPE_PTR_BASE + pointee;
     }
 
     // User-defined type (struct/enum name) - store source offset
     if kind == TokenType.Ident {
         let offset: i64 = p.current.start;
         parser_advance(p);
-        return TYPE_USER_BASE + offset;
+        return PTYPE_USER_BASE + offset;
     }
 
     // Error - unexpected token
     p.had_error = true;
-    return TYPE_I64;  // Default
+    return PTYPE_I64;  // Default
 }
 
 // Helper to check if type is a pointer type
 fn type_is_pointer(type_handle: i64) bool {
-    return type_handle >= TYPE_PTR_BASE and type_handle < TYPE_USER_BASE;
+    return type_handle >= PTYPE_PTR_BASE and type_handle < PTYPE_USER_BASE;
 }
 
 // Helper to get pointee type from pointer type
 fn type_pointee(type_handle: i64) i64 {
-    return type_handle - TYPE_PTR_BASE;
+    return type_handle - PTYPE_PTR_BASE;
 }
 
 // ============================================================================
@@ -526,7 +528,7 @@ fn parse_var_decl(p: *Parser) i64 {
 
     // Type annotation (required for now)
     var type_start: i64 = 0;
-    var type_handle: i64 = TYPE_I64;  // Default to i64
+    var type_handle: i64 = PTYPE_I64;  // Default to i64
     if parser_got(p, TokenType.Colon) {
         type_start = p.current.start;
         type_handle = parse_type(p);

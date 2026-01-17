@@ -155,15 +155,9 @@ All core infrastructure working. BUG-027 through BUG-030 fixed on 2026-01-18.
 
 ### Progress (2026-01-18)
 - [x] `main.cot` - Basic driver with file I/O (compiles, reads files, runs)
+- [x] Module integration (name collisions resolved by renaming parser.cot constants to PTYPE_*)
 - [ ] Full codegen loop (walk SSA, emit all ops)
 - [ ] Mach-O writer (actually write .o files)
-- [ ] Module integration (resolve name collisions between imports)
-
-### Blocker: Module Name Collisions
-When importing all cot0 modules, there are name collisions (e.g., multiple `main` functions in test files, shared struct names). Need to either:
-1. Add namespace support to imports
-2. Remove test code from imported modules
-3. Use include guards / conditional compilation
 
 ### Verification
 ```bash
