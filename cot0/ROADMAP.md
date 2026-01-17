@@ -1,0 +1,210 @@
+# Cot0 Self-Hosting Roadmap
+
+**Goal:** Build a Cot compiler written in Cot that can compile itself.
+
+**Last Updated:** 2026-01-17
+
+---
+
+## Current Status
+
+| Milestone | Status |
+|-----------|--------|
+| Bootstrap compiler (Zig) | 166 e2e tests pass |
+| cot0 frontend modules | Complete, all tests pass |
+| cot0 can parse itself | **IN PROGRESS** (Sprint B) |
+| cot0 backend modules | Not started |
+| cot0 self-compiles | Not started |
+
+---
+
+## Test Status
+
+| Test File | Status |
+|-----------|--------|
+| `token_test.cot` | 5/5 pass |
+| `scanner_test.cot` | 18/18 pass |
+| `ast_test.cot` | 7/7 pass |
+| `parser_test.cot` | 14/14 pass |
+| `types_test.cot` | 2/2 pass |
+| `checker_test.cot` | 2/2 pass |
+| `ir_test.cot` | passes |
+
+---
+
+## The Path to Self-Hosting
+
+Self-hosting requires two parallel tracks:
+
+### Track 1: Bootstrap Compiler Features
+The Zig bootstrap compiler must support all features used in cot0 source files.
+
+### Track 2: Cot0 Module Implementation
+The cot0 compiler modules must be implemented in Cot.
+
+**Current blocker:** cot0 uses features (structs, enums, pointers) that cot0's parser cannot yet parse. We must extend cot0's parser before we can self-host.
+
+---
+
+## Sprint B: Struct and Enum Declarations (CURRENT)
+
+**Goal:** cot0 parser can parse `struct Name { ... }` and `enum Name { ... }`
+
+**Verification:** Can parse `token.cot` (defines TokenType enum, Token struct)
+
+### Tasks
+
+1. [ ] **token.cot**: Add tokens for Struct, Enum, Dot
+2. [ ] **ast.cot**: Add node kinds: StructDecl, EnumDecl, FieldDecl, FieldAccess, EnumAccess
+3. [ ] **parser.cot**: Add parse_struct_decl(), parse_enum_decl(), parse_field_access()
+4. [ ] **types.cot**: Add struct/enum type construction functions
+
+### Test Cases
+```cot
+// Should parse after Sprint B
+struct Point { x: i64, y: i64, }
+enum Color { Red, Green, Blue, }
+let p: Point = Point{ .x = 10, .y = 20 };
+let c: Color = Color.Red;
+```
+
+---
+
+## Sprint C: Pointers and Strings
+
+**Goal:** cot0 parser can parse `*T`, `&x`, `ptr.*`, string literals
+
+**Verification:** Can parse `scanner.cot` (uses *Scanner, &s, s.*, "string")
+
+### Tasks
+
+1. [ ] **token.cot**: Add Ampersand, Star (for pointer type)
+2. [ ] **ast.cot**: Add PointerType, AddressOf, DerefExpr, StringLit
+3. [ ] **parser.cot**: Add parse_pointer_type(), parse_address_of(), parse_deref()
+4. [ ] **scanner.cot**: Add scan_string() for string literals
+
+---
+
+## Sprint D: Imports and Constants
+
+**Goal:** cot0 parser can parse `import "file.cot"` and `const NAME = value;`
+
+**Verification:** Can parse cot0 file imports and constants
+
+### Tasks
+
+1. [ ] **token.cot**: Add Import, Const tokens
+2. [ ] **ast.cot**: Add ImportDecl, ConstDecl
+3. [ ] **parser.cot**: Add parse_import(), parse_const_decl()
+
+---
+
+## Sprint E: Full Type Checking
+
+**Goal:** cot0 type checker validates all parsed constructs
+
+**Verification:** Type checker passes on all cot0 files
+
+### Tasks
+
+1. [ ] Scope management for structs/enums/functions
+2. [ ] Variable declaration checking
+3. [ ] Control flow checking
+4. [ ] Struct/enum type checking
+5. [ ] Pointer operations checking
+
+---
+
+## Sprint F: IR & SSA
+
+**Goal:** Implement IR and SSA modules in Cot
+
+### Files to implement
+- `ir.cot` - IR node definitions and builder
+- `lower.cot` - AST to IR conversion
+- `ssa/op.cot` - SSA operations
+- `ssa/value.cot` - SSA values
+- `ssa/block.cot` - Basic blocks
+- `ssa/func.cot` - Functions
+- `ssa/builder.cot` - IR to SSA conversion
+
+---
+
+## Sprint G: Backend
+
+**Goal:** Implement code generation in Cot
+
+### Files to implement
+- `arm64/asm.cot` - Instruction encoding
+- `codegen/arm64.cot` - SSA to ARM64, register allocation
+- `obj/macho.cot` - Mach-O object file emission
+
+---
+
+## Sprint H: Integration
+
+**Goal:** Complete compiler that can compile itself
+
+### Files to implement
+- `main.cot` - Driver that runs the full pipeline
+
+### Verification
+```bash
+# Compile cot0 with bootstrap compiler
+./zig-out/bin/cot cot0/main.cot -o cot0-stage1
+
+# Compile cot0 with stage1
+./cot0-stage1 cot0/main.cot -o cot0-stage2
+
+# Verify stage1 and stage2 produce identical output
+diff cot0-stage1 cot0-stage2
+```
+
+---
+
+## Completed Sprints
+
+### Sprint A: Core Parsing Infrastructure (COMPLETE 2026-01-17)
+
+Added to cot0 parser:
+- Tokens: Let, Var, If, Else, While, Bool, True, False, And, Or, Not, EqEq, NotEq, Less, LessEq, Greater, GreaterEq
+- AST nodes: VarDecl, IfStmt, WhileStmt
+- Parser: parse_type(), parse_var_decl(), parse_if_stmt(), parse_while_stmt()
+- Operator precedence for comparisons and logical ops
+
+Bug fixes during Sprint A:
+- BUG-020 through BUG-025 (register allocation, stack slots, string handling)
+
+---
+
+## Feature Matrix
+
+Features used by cot0 source files vs what cot0 can handle:
+
+| Feature | Used in cot0? | cot0 can parse? | cot0 can check? |
+|---------|--------------|-----------------|-----------------|
+| `let`/`var` declarations | Yes | Yes (Sprint A) | Partial |
+| `if`/`else`/`while` | Yes | Yes (Sprint A) | Partial |
+| Comparisons/logical ops | Yes | Yes (Sprint A) | Partial |
+| `struct` declarations | Yes | **No** (Sprint B) | No |
+| `enum` declarations | Yes | **No** (Sprint B) | No |
+| Field access `s.field` | Yes | **No** (Sprint B) | No |
+| Pointer types `*T` | Yes | **No** (Sprint C) | No |
+| Address-of `&x` | Yes | **No** (Sprint C) | No |
+| Dereference `ptr.*` | Yes | **No** (Sprint C) | No |
+| String literals | Yes | **No** (Sprint C) | No |
+| `import` statements | Yes | **No** (Sprint D) | No |
+| `const` declarations | Yes | **No** (Sprint D) | No |
+
+---
+
+## Recent Bug Fixes
+
+- BUG-025: String pointer null after many accesses (Go's use distance tracking)
+- BUG-024: String pointer null in string comparisons
+- BUG-023: Stack slot reuse causes value corruption
+- BUG-022: Comparison operands use same register
+- BUG-021: Chained AND with 4+ conditions
+- BUG-020: Many nested if statements segfault
+
+See [../BUGS.md](../BUGS.md) for complete history.

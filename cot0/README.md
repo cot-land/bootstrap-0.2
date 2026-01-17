@@ -33,7 +33,7 @@ Mirrors the Zig compiler structure:
 ```
 cot0/
 ├── README.md           # This file
-├── TASKS.md            # Progress tracking
+├── ROADMAP.md          # Self-hosting roadmap and progress
 ├── frontend/
 │   ├── token.cot       # Token definitions
 │   ├── token_test.cot  # Tests for token.cot

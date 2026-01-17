@@ -8,7 +8,7 @@
 
 ### Self-Hosting Progress
 
-See [cot0/TASKS.md](cot0/TASKS.md) for detailed self-hosting progress.
+See [cot0/ROADMAP.md](cot0/ROADMAP.md) for detailed self-hosting progress.
 
 | Module | Status | Tests |
 |--------|--------|-------|
@@ -103,4 +103,4 @@ zig build-obj -OReleaseFast runtime/cot_runtime.zig -femit-bin=runtime/cot_runti
 - [DATA_STRUCTURES.md](DATA_STRUCTURES.md) - Go-to-Zig translations
 - [REGISTER_ALLOC.md](REGISTER_ALLOC.md) - Register allocator algorithm
 - [TESTING_FRAMEWORK.md](TESTING_FRAMEWORK.md) - Testing approach
-- [cot0/TASKS.md](cot0/TASKS.md) - Self-hosting roadmap and progress
+- [cot0/ROADMAP.md](cot0/ROADMAP.md) - Self-hosting roadmap and progress
