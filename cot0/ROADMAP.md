@@ -155,7 +155,9 @@ All core infrastructure working. BUG-027 through BUG-030 fixed on 2026-01-18.
 
 ### Progress (2026-01-18)
 - [x] `main.cot` - Basic driver with file I/O (compiles, reads files, runs)
-- [x] Module integration (name collisions resolved by renaming parser.cot constants to PTYPE_*)
+- [x] Module integration phase 1 (parser.cot constants → PTYPE_*)
+- [x] Module integration phase 2 (SSA import chains fixed, MAX_PARAMS → FUNC_MAX_PARAMS)
+- [x] All cot0 modules can now be imported together
 - [ ] Full codegen loop (walk SSA, emit all ops)
 - [ ] Mach-O writer (actually write .o files)
 
