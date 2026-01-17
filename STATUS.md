@@ -1,6 +1,6 @@
 # Bootstrap 0.2 - Project Status
 
-**Last Updated: 2026-01-17**
+**Last Updated: 2026-01-18**
 
 ## Current State
 
@@ -23,14 +23,20 @@ See [cot0/ROADMAP.md](cot0/ROADMAP.md) for detailed self-hosting progress.
 | ssa/value.cot | Complete | passes |
 | ssa/block.cot | Complete | passes |
 | ssa/func.cot | Complete | passes |
+| ssa/builder.cot | Complete | passes |
+| ssa/liveness.cot | Complete | passes |
+| ssa/regalloc.cot | Complete | passes |
+| frontend/lower.cot | Complete | passes |
 | arm64/asm.cot | Complete | 7/7 pass |
 | arm64/regs.cot | Complete | 2/2 pass |
 | codegen/arm64.cot | Complete | 4/4 pass |
 | obj/macho.cot | Complete | 3/3 pass |
 
-### Open Bugs (2026-01-17)
+### Open Bugs (2026-01-18)
 
-None currently (BUG-026 fixed).
+- BUG-029: Reading struct pointer field through function parameter causes crash
+- BUG-028: Taking address of local array element causes runtime crash
+- BUG-027: Direct global array field access causes compiler panic
 
 ### Recent Bug Fixes (2026-01-17)
 

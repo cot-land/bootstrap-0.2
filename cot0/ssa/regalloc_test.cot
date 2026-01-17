@@ -1,0 +1,149 @@
+// Test SSA Register Allocator
+import "regalloc.cot"
+
+// Storage arrays for tests
+var g_val_states: [1000]ValState;
+var g_reg_states: [32]RegState;
+
+// Liveness storage (for regalloc)
+var g_block_liveness: [50]BlockLiveness;
+var g_live_storage: [5000]LiveInfo;
+var g_next_call_storage: [50000]i64;
+
+// Func storage
+var g_blocks: [100]Block;
+var g_values: [1000]Value;
+var g_locals: [50]Local;
+
+fn main() i64 {
+    let r1: i64 = test_val_state();
+    if r1 != 0 { return r1; }
+
+    let r2: i64 = test_reg_state();
+    if r2 != 0 { return r2; }
+
+    let r3: i64 = test_register_constants();
+    if r3 != 0 { return r3; }
+
+    let r4: i64 = test_basic_alloc();
+    if r4 != 0 { return r4; }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: ValState operations
+// ============================================================================
+
+fn test_val_state() i64 {
+    var vs: ValState = val_state_new();
+
+    // Initially not in register
+    if val_state_in_reg(&vs) { return 1; }
+    if val_state_first_reg(&vs) != -1 { return 2; }
+
+    // Set a register
+    vs.regs = 1 << 5;  // x5
+    if not val_state_in_reg(&vs) { return 3; }
+    if val_state_first_reg(&vs) != 5 { return 4; }
+
+    // Multiple registers - should return first
+    vs.regs = (1 << 3) | (1 << 7);  // x3 and x7
+    if val_state_first_reg(&vs) != 3 { return 5; }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: RegState operations
+// ============================================================================
+
+fn test_reg_state() i64 {
+    var rs: RegState = reg_state_new();
+
+    // Initially free
+    if not reg_state_is_free(&rs) { return 10; }
+    if rs.value_id != INVALID_ID { return 11; }
+
+    // Assign a value
+    rs.value_id = 42;
+    if reg_state_is_free(&rs) { return 12; }
+
+    // Clear
+    reg_state_clear(&rs);
+    if not reg_state_is_free(&rs) { return 13; }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: Register constants
+// ============================================================================
+
+fn test_register_constants() i64 {
+    if NUM_REGS != 32 { return 20; }
+    if REG_X0 != 0 { return 21; }
+    if REG_X7 != 7 { return 22; }
+    if REG_FP != 29 { return 23; }
+    if REG_LR != 30 { return 24; }
+    if REG_SP != 31 { return 25; }
+
+    // Check allocatable mask includes x0-x7
+    var i: i64 = 0;
+    while i < 8 {
+        if (ALLOCATABLE_MASK & (1 << i)) == 0 { return 26; }
+        i = i + 1;
+    }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: Basic register allocation
+// ============================================================================
+
+fn test_basic_alloc() i64 {
+    // Create a simple function
+    var f: Func = undefined;
+    func_init(&f, 0, 4, 2,
+              &g_blocks[0], 100,
+              &g_values[0], 1000,
+              &g_locals[0], 50);
+
+    // Create entry block
+    let entry: i64 = func_new_entry_block(&f);
+    if entry != 0 { return 30; }
+
+    // Create some values
+    let v0: *Value = func_emit_const_int(&f, 42, 2);
+    let v1: *Value = func_emit_const_int(&f, 10, 2);
+
+    // Set up liveness result (empty for this simple test)
+    var lr: LivenessResult = undefined;
+    liveness_result_init(&lr, &g_block_liveness[0], 50);
+
+    // Initialize regalloc
+    var ra: RegAllocState = undefined;
+    regalloc_init(&ra, &f, &g_val_states[0], 1000, &g_reg_states[0], &lr);
+
+    // Ensure val states for our values
+    ensure_val_state(&ra, v0.id);
+    ensure_val_state(&ra, v1.id);
+
+    if ra.val_states_count < 2 { return 31; }
+
+    // Test find_free_reg
+    let reg: i64 = find_free_reg(&ra, ALLOCATABLE_MASK);
+    if reg < 0 { return 32; }
+
+    // Test assign_reg
+    assign_reg(&ra, v0.id, 0);
+    if not regalloc_in_reg(&ra, v0.id) { return 33; }
+    if regalloc_get_reg(&ra, v0.id) != 0 { return 34; }
+
+    // Test free_reg
+    free_reg(&ra, 0);
+    if regalloc_in_reg(&ra, v0.id) { return 35; }
+
+    return 0;
+}

@@ -35,6 +35,126 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
+### BUG-029: Reading struct pointer field through function parameter causes crash
+
+**Status:** Open
+**Priority:** P1
+**Discovered:** 2026-01-17
+
+**Description:**
+When a function reads a pointer field from a struct passed as a parameter, and then passes that pointer to another function, the program crashes with SIGSEGV (exit 139). The same operations work when done directly in the caller.
+
+**Reproducer:**
+```cot
+struct Inner {
+    count: i64,
+}
+
+struct Outer {
+    inner: *Inner,
+}
+
+fn inner_set(inner: *Inner, value: i64) {
+    inner.count = value;  // Works fine
+}
+
+fn outer_set(outer: *Outer, value: i64) {
+    // CRASH: Reading outer.inner and passing to inner_set
+    inner_set(outer.inner, value);
+}
+
+fn main() i64 {
+    var inner: Inner = undefined;
+    var outer: Outer = undefined;
+    outer.inner = &inner;
+
+    // Direct call works:
+    inner_set(outer.inner, 42);
+
+    // Through function crashes:
+    outer_set(&outer, 100);  // CRASH
+
+    return 0;
+}
+```
+
+**Workaround:**
+Perform the nested pointer access directly in the calling function rather than through a helper function.
+
+**Debug Output:**
+Need to investigate with COT_DEBUG=all to trace the issue.
+
+**Go Reference:**
+Need to investigate how Go handles nested pointer field access through function parameters.
+
+---
+
+### BUG-028: Taking address of local array element causes runtime crash
+
+**Status:** Open
+**Priority:** P1
+**Discovered:** 2026-01-17
+
+**Description:**
+Using `&arr[0]` where `arr` is a local array variable (e.g., `let source: [1]u8 = undefined;`) causes a runtime segfault (exit 139). The same code works with global arrays or with `null`.
+
+**Reproducer:**
+```cot
+fn test() i64 {
+    let source: [1]u8 = undefined;
+    let ptr: *u8 = &source[0];  // Causes crash when ptr is used
+    return 0;
+}
+```
+
+**Workaround:**
+Use `null` instead of `&local_array[0]` when the pointer value isn't actually used, or use global arrays.
+
+**Debug Output:**
+Need to investigate with COT_DEBUG=all to trace the issue.
+
+**Go Reference:**
+Need to investigate how Go handles `&local_array[index]`.
+
+---
+
+### BUG-027: Direct global array field access causes compiler panic
+
+**Status:** Open
+**Priority:** P1
+**Discovered:** 2026-01-17
+
+**Description:**
+Direct access to a global array element's field like `g_nodes[0].kind = X` causes a compiler panic in getTypeSize with "integer does not fit". The same operation works through a pointer.
+
+**Reproducer:**
+```cot
+var g_nodes: [100]Node;
+
+fn test() i64 {
+    g_nodes[0].kind = NodeKind.IntLit;  // PANIC in compiler
+    return 0;
+}
+```
+
+**Workaround:**
+Access through a pointer:
+```cot
+let node: *Node = &g_nodes[0];
+node.kind = NodeKind.IntLit;  // Works
+```
+
+**Error:**
+```
+panic: integer does not fit
+src/frontend/types.zig:XXX in getTypeSize
+```
+
+**Go Reference:**
+Need to investigate how Go lowers array element field access.
+
+---
+
 ### BUG-026: Integer literals > 2^31 not parsed correctly (FIXED)
 
 **Status:** Fixed

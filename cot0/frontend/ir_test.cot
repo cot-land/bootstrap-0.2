@@ -24,18 +24,18 @@ fn main() i64 {
 // ============================================================================
 
 fn test_binary_op() i64 {
-    // Test is_comparison
-    if not is_comparison(BinaryOp.Eq) { return 1; }
-    if not is_comparison(BinaryOp.Ne) { return 2; }
-    if not is_comparison(BinaryOp.Lt) { return 3; }
-    if is_comparison(BinaryOp.Add) { return 4; }
-    if is_comparison(BinaryOp.Sub) { return 5; }
+    // Test ir_is_comparison
+    if not ir_is_comparison(IRBinaryOp.Eq) { return 1; }
+    if not ir_is_comparison(IRBinaryOp.Ne) { return 2; }
+    if not ir_is_comparison(IRBinaryOp.Lt) { return 3; }
+    if ir_is_comparison(IRBinaryOp.Add) { return 4; }
+    if ir_is_comparison(IRBinaryOp.Sub) { return 5; }
 
-    // Test is_arithmetic
-    if not is_arithmetic(BinaryOp.Add) { return 10; }
-    if not is_arithmetic(BinaryOp.Sub) { return 11; }
-    if not is_arithmetic(BinaryOp.Mul) { return 12; }
-    if is_arithmetic(BinaryOp.Eq) { return 13; }
+    // Test ir_is_arithmetic
+    if not ir_is_arithmetic(IRBinaryOp.Add) { return 10; }
+    if not ir_is_arithmetic(IRBinaryOp.Sub) { return 11; }
+    if not ir_is_arithmetic(IRBinaryOp.Mul) { return 12; }
+    if ir_is_arithmetic(IRBinaryOp.Eq) { return 13; }
 
     return 0;
 }
@@ -46,24 +46,24 @@ fn test_binary_op() i64 {
 
 fn test_node_pool() i64 {
     // Create a node pool with global storage
-    var pool: NodePool = NodePool{
+    var pool: IRNodePool = IRNodePool{
         .nodes = &g_nodes[0],
         .nodes_count = 0,
         .nodes_cap = 100,
     };
 
     // Add a const_int node
-    let n0: i64 = node_pool_add_const_int(&pool, 42, TYPE_I64);
+    let n0: i64 = ir_node_pool_add_const_int(&pool, 42, TYPE_I64);
     if n0 != 0 { return 20; }
     if pool.nodes_count != 1 { return 21; }
 
     // Add another node
-    let n1: i64 = node_pool_add_const_int(&pool, 100, TYPE_I64);
+    let n1: i64 = ir_node_pool_add_const_int(&pool, 100, TYPE_I64);
     if n1 != 1 { return 22; }
     if pool.nodes_count != 2 { return 23; }
 
     // Get node and verify
-    let node: *IRNode = node_pool_get(&pool, n0);
+    let node: *IRNode = ir_node_pool_get(&pool, n0);
     if node.kind != IRNodeKind.ConstInt { return 24; }
     if node.value != 42 { return 25; }
 

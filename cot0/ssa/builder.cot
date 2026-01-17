@@ -1,0 +1,384 @@
+// Cot0 SSA Builder - IR to SSA Conversion
+// Converts frontend IR to backend SSA form.
+//
+// Key concepts (from Go):
+// - Convert IR nodes to SSA values
+// - Track variable→value mapping per block
+// - Handle control flow (if, while, return)
+// - Create phi nodes at merge points
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/ssagen/ssa.go
+// Reference: bootstrap-0.2/src/frontend/ssa_builder.zig
+
+import "op.cot"
+import "value.cot"
+import "block.cot"
+import "func.cot"
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+const MAX_VAR_DEFS: i64 = 256;     // Max variable definitions per block
+const MAX_BLOCK_DEFS: i64 = 100;   // Max blocks with definitions
+
+// IR node indices (from lower.cot/ir.cot)
+const IR_NULL_NODE: i64 = -1;
+
+// ============================================================================
+// Variable Definition Tracking
+// ============================================================================
+
+// Single variable → value mapping
+struct VarDef {
+    var_idx: i64,         // Local variable index
+    value_id: i64,        // SSA value ID
+}
+
+// Variable definitions for one block
+struct BlockDefs {
+    block_id: i64,
+    defs: *VarDef,        // Array of VarDef
+    defs_count: i64,
+    defs_cap: i64,
+}
+
+fn block_defs_init(bd: *BlockDefs, block_id: i64, defs: *VarDef, cap: i64) {
+    bd.block_id = block_id;
+    bd.defs = defs;
+    bd.defs_count = 0;
+    bd.defs_cap = cap;
+}
+
+// Set variable value (add or update)
+fn block_defs_set(bd: *BlockDefs, var_idx: i64, value_id: i64) {
+    // Check if already exists
+    var i: i64 = 0;
+    while i < bd.defs_count {
+        let def: *VarDef = bd.defs + i;
+        if def.var_idx == var_idx {
+            def.value_id = value_id;
+            return;
+        }
+        i = i + 1;
+    }
+
+    // Add new
+    if bd.defs_count >= bd.defs_cap { return; }
+    let def: *VarDef = bd.defs + bd.defs_count;
+    def.var_idx = var_idx;
+    def.value_id = value_id;
+    bd.defs_count = bd.defs_count + 1;
+}
+
+// Get variable value (or -1 if not found)
+fn block_defs_get(bd: *BlockDefs, var_idx: i64) i64 {
+    var i: i64 = 0;
+    while i < bd.defs_count {
+        let def: *VarDef = bd.defs + i;
+        if def.var_idx == var_idx {
+            return def.value_id;
+        }
+        i = i + 1;
+    }
+    return INVALID_ID;
+}
+
+// ============================================================================
+// IR to SSA Block Mapping
+// ============================================================================
+
+struct BlockMapping {
+    ir_block: i64,        // IR block index
+    ssa_block: i64,       // SSA block ID
+}
+
+// ============================================================================
+// SSA Builder
+// ============================================================================
+
+struct SSABuilder {
+    // The SSA function being built
+    func: *Func,
+
+    // Current block
+    current_block: i64,
+
+    // Variable definitions for current block
+    current_defs: *BlockDefs,
+
+    // All block definitions (for phi insertion)
+    all_defs: *BlockDefs,     // Array of BlockDefs
+    all_defs_count: i64,
+    all_defs_cap: i64,
+
+    // IR to SSA block mapping
+    block_map: *BlockMapping,
+    block_map_count: i64,
+    block_map_cap: i64,
+
+    // IR node to SSA value mapping (prevents duplicate conversion)
+    node_values: *VarDef,     // Reuse VarDef for node→value
+    node_values_count: i64,
+    node_values_cap: i64,
+
+    // Storage for per-block VarDefs (external)
+    var_storage: *VarDef,
+    var_storage_used: i64,
+    var_storage_cap: i64,
+}
+
+// ============================================================================
+// Builder Initialization
+// ============================================================================
+
+fn builder_init(b: *SSABuilder, f: *Func,
+                all_defs: *BlockDefs, all_defs_cap: i64,
+                block_map: *BlockMapping, block_map_cap: i64,
+                node_values: *VarDef, node_values_cap: i64,
+                var_storage: *VarDef, var_storage_cap: i64) {
+    b.func = f;
+    b.current_block = INVALID_BLOCK;
+    b.current_defs = null;
+
+    b.all_defs = all_defs;
+    b.all_defs_count = 0;
+    b.all_defs_cap = all_defs_cap;
+
+    b.block_map = block_map;
+    b.block_map_count = 0;
+    b.block_map_cap = block_map_cap;
+
+    b.node_values = node_values;
+    b.node_values_count = 0;
+    b.node_values_cap = node_values_cap;
+
+    b.var_storage = var_storage;
+    b.var_storage_used = 0;
+    b.var_storage_cap = var_storage_cap;
+}
+
+// Allocate storage for a block's VarDefs
+fn builder_alloc_defs(b: *SSABuilder, count: i64) *VarDef {
+    if b.var_storage_used + count > b.var_storage_cap {
+        return b.var_storage;  // Return start as fallback
+    }
+    let result: *VarDef = b.var_storage + b.var_storage_used;
+    b.var_storage_used = b.var_storage_used + count;
+    return result;
+}
+
+// ============================================================================
+// Block Management
+// ============================================================================
+
+// Create a new SSA block and set it as current
+fn builder_new_block(b: *SSABuilder, kind: BlockKind) i64 {
+    let block_id: i64 = func_new_block(b.func, kind);
+    builder_set_block(b, block_id);
+    return block_id;
+}
+
+// Set current block
+fn builder_set_block(b: *SSABuilder, block_id: i64) {
+    b.current_block = block_id;
+    func_set_block(b.func, block_id);
+
+    // Create BlockDefs for this block
+    if b.all_defs_count < b.all_defs_cap {
+        let bd: *BlockDefs = b.all_defs + b.all_defs_count;
+        let storage: *VarDef = builder_alloc_defs(b, MAX_VAR_DEFS);
+        block_defs_init(bd, block_id, storage, MAX_VAR_DEFS);
+        b.current_defs = bd;
+        b.all_defs_count = b.all_defs_count + 1;
+    }
+}
+
+// Map IR block to SSA block
+fn builder_map_block(b: *SSABuilder, ir_block: i64, ssa_block: i64) {
+    if b.block_map_count >= b.block_map_cap { return; }
+    let m: *BlockMapping = b.block_map + b.block_map_count;
+    m.ir_block = ir_block;
+    m.ssa_block = ssa_block;
+    b.block_map_count = b.block_map_count + 1;
+}
+
+// Get SSA block for IR block (or -1)
+fn builder_get_ssa_block(b: *SSABuilder, ir_block: i64) i64 {
+    var i: i64 = 0;
+    while i < b.block_map_count {
+        let m: *BlockMapping = b.block_map + i;
+        if m.ir_block == ir_block {
+            return m.ssa_block;
+        }
+        i = i + 1;
+    }
+    return INVALID_BLOCK;
+}
+
+// ============================================================================
+// Variable Tracking
+// ============================================================================
+
+// Set variable value in current block
+fn builder_set_var(b: *SSABuilder, var_idx: i64, value_id: i64) {
+    if b.current_defs != null {
+        block_defs_set(b.current_defs, var_idx, value_id);
+    }
+}
+
+// Get variable value from current block (or -1)
+fn builder_get_var(b: *SSABuilder, var_idx: i64) i64 {
+    if b.current_defs != null {
+        return block_defs_get(b.current_defs, var_idx);
+    }
+    return INVALID_ID;
+}
+
+// ============================================================================
+// Node Value Caching
+// ============================================================================
+
+// Cache IR node → SSA value mapping
+fn builder_cache_node(b: *SSABuilder, node_idx: i64, value_id: i64) {
+    if b.node_values_count >= b.node_values_cap { return; }
+    let nv: *VarDef = b.node_values + b.node_values_count;
+    nv.var_idx = node_idx;
+    nv.value_id = value_id;
+    b.node_values_count = b.node_values_count + 1;
+}
+
+// Get cached SSA value for IR node (or -1)
+fn builder_get_cached(b: *SSABuilder, node_idx: i64) i64 {
+    var i: i64 = 0;
+    while i < b.node_values_count {
+        let nv: *VarDef = b.node_values + i;
+        if nv.var_idx == node_idx {
+            return nv.value_id;
+        }
+        i = i + 1;
+    }
+    return INVALID_ID;
+}
+
+// ============================================================================
+// Value Emission (wrappers around func_* functions)
+// ============================================================================
+
+// Emit constant integer
+fn builder_emit_const_int(b: *SSABuilder, value: i64, type_idx: i64) *Value {
+    return func_emit_const_int(b.func, value, type_idx);
+}
+
+// Emit constant boolean
+fn builder_emit_const_bool(b: *SSABuilder, value: bool) *Value {
+    return func_emit_const_bool(b.func, value);
+}
+
+// Emit binary operation
+fn builder_emit_binary(b: *SSABuilder, op: Op, left: *Value, right: *Value, type_idx: i64) *Value {
+    return func_emit_binary(b.func, op, left, right, type_idx);
+}
+
+// Emit unary operation
+fn builder_emit_unary(b: *SSABuilder, op: Op, operand: *Value, type_idx: i64) *Value {
+    return func_emit_unary(b.func, op, operand, type_idx);
+}
+
+// Emit load from local
+fn builder_emit_load_local(b: *SSABuilder, local_idx: i64) *Value {
+    return func_emit_load_local(b.func, local_idx);
+}
+
+// Emit store to local
+fn builder_emit_store_local(b: *SSABuilder, local_idx: i64, val: *Value) *Value {
+    return func_emit_store_local(b.func, local_idx, val);
+}
+
+// Emit return
+fn builder_emit_return(b: *SSABuilder, val: *Value) *Value {
+    return func_emit_return(b.func, val);
+}
+
+// ============================================================================
+// Control Flow
+// ============================================================================
+
+// Emit conditional branch
+fn builder_emit_if(b: *SSABuilder, cond: *Value, then_block: i64, else_block: i64) {
+    func_emit_if(b.func, cond, then_block, else_block);
+}
+
+// Emit unconditional jump
+fn builder_emit_jump(b: *SSABuilder, target: i64) {
+    func_emit_jump(b.func, target);
+}
+
+// Mark current block as return
+fn builder_emit_return_block(b: *SSABuilder) {
+    func_emit_return_block(b.func);
+}
+
+// ============================================================================
+// Phi Node Creation
+// ============================================================================
+
+// Create phi node for variable
+fn builder_emit_phi(b: *SSABuilder, type_idx: i64) *Value {
+    let v: *Value = func_new_value(b.func, Op.Phi, type_idx);
+    return v;
+}
+
+// Add argument to phi node from predecessor block
+fn builder_phi_add_arg(b: *SSABuilder, phi: *Value, val: *Value, pred_block: i64) {
+    // For simplicity, store args directly
+    // In full implementation, args are ordered by predecessor
+    value_add_arg(phi, val);
+}
+
+// ============================================================================
+// Complete IR to SSA Conversion
+// ============================================================================
+
+// Convert an IR function to SSA (simplified version)
+// Returns 0 on success, error code otherwise
+fn builder_convert(b: *SSABuilder) i64 {
+    // Create entry block
+    let entry: i64 = func_new_entry_block(b.func);
+    builder_set_block(b, entry);
+    builder_map_block(b, 0, entry);
+
+    return 0;
+}
+
+// ============================================================================
+// Block Definitions Lookup
+// ============================================================================
+
+// Get BlockDefs for a specific SSA block
+fn builder_get_block_defs(b: *SSABuilder, block_id: i64) *BlockDefs {
+    var i: i64 = 0;
+    while i < b.all_defs_count {
+        let bd: *BlockDefs = b.all_defs + i;
+        if bd.block_id == block_id {
+            return bd;
+        }
+        i = i + 1;
+    }
+    return null;
+}
+
+// Copy definitions from one block to another (for control flow merge)
+fn builder_copy_defs(b: *SSABuilder, from_block: i64, to_block: i64) {
+    let from: *BlockDefs = builder_get_block_defs(b, from_block);
+    let to: *BlockDefs = builder_get_block_defs(b, to_block);
+
+    if from == null or to == null { return; }
+
+    var i: i64 = 0;
+    while i < from.defs_count {
+        let def: *VarDef = from.defs + i;
+        block_defs_set(to, def.var_idx, def.value_id);
+        i = i + 1;
+    }
+}

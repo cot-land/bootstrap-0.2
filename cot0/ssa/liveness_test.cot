@@ -1,0 +1,104 @@
+// Test SSA Liveness Analysis
+import "liveness.cot"
+
+// Storage arrays for tests
+var g_lm_entries: [256]LiveInfo;
+
+fn main() i64 {
+    let r1: i64 = test_live_info();
+    if r1 != 0 { return r1; }
+
+    let r2: i64 = test_live_map();
+    if r2 != 0 { return r2; }
+
+    let r3: i64 = test_distance_constants();
+    if r3 != 0 { return r3; }
+
+    let r4: i64 = test_block_liveness();
+    if r4 != 0 { return r4; }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: LiveInfo creation
+// ============================================================================
+
+fn test_live_info() i64 {
+    let info: LiveInfo = live_info_new(42, 10, 100);
+    if info.id != 42 { return 1; }
+    if info.dist != 10 { return 2; }
+    if info.pos != 100 { return 3; }
+    return 0;
+}
+
+// ============================================================================
+// Test: LiveMap operations
+// ============================================================================
+
+fn test_live_map() i64 {
+    var lm: LiveMap = undefined;
+    live_map_init(&lm, &g_lm_entries[0], 256);
+
+    // Initially empty
+    if lm.count != 0 { return 10; }
+    if live_map_contains(&lm, 1) { return 11; }
+
+    // Add a value
+    live_map_set(&lm, 1, 10, 0);
+    if lm.count != 1 { return 12; }
+    if not live_map_contains(&lm, 1) { return 13; }
+    if live_map_get(&lm, 1) != 10 { return 14; }
+
+    // Add another value
+    live_map_set(&lm, 2, 20, 0);
+    if lm.count != 2 { return 15; }
+
+    // Update with closer distance (should update)
+    live_map_set(&lm, 1, 5, 0);
+    if live_map_get(&lm, 1) != 5 { return 16; }
+
+    // Update with farther distance (should NOT update)
+    live_map_set(&lm, 1, 15, 0);
+    if live_map_get(&lm, 1) != 5 { return 17; }
+
+    // Remove
+    live_map_remove(&lm, 1);
+    if live_map_contains(&lm, 1) { return 18; }
+    if lm.count != 1 { return 19; }
+
+    // Clear
+    live_map_clear(&lm);
+    if lm.count != 0 { return 20; }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: Distance constants match Go
+// ============================================================================
+
+fn test_distance_constants() i64 {
+    if LIKELY_DISTANCE != 1 { return 30; }
+    if NORMAL_DISTANCE != 10 { return 31; }
+    if UNLIKELY_DISTANCE != 100 { return 32; }
+    if UNKNOWN_DISTANCE != -1 { return 33; }
+    return 0;
+}
+
+// ============================================================================
+// Test: Block Liveness initialization
+// ============================================================================
+
+var g_live_out: [128]LiveInfo;
+var g_next_call: [1000]i64;
+
+fn test_block_liveness() i64 {
+    var bl: BlockLiveness = undefined;
+    block_liveness_init(&bl, 0, &g_live_out[0], 128, &g_next_call[0], 1000);
+
+    if bl.block_id != 0 { return 40; }
+    if bl.live_out_count != 0 { return 41; }
+
+    return 0;
+}

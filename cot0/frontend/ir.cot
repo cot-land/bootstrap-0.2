@@ -13,9 +13,10 @@ import "types.cot"
 
 // ============================================================================
 // Index Types - Distinct to prevent mixing
+// NOTE: NULL_NODE is defined in ast.cot to avoid redefinition
 // ============================================================================
 
-const NULL_NODE: i64 = -1;
+const NULL_IR_NODE: i64 = -1;
 const NULL_LOCAL: i64 = -1;
 const NULL_BLOCK: i64 = -1;
 
@@ -23,7 +24,7 @@ const NULL_BLOCK: i64 = -1;
 // Binary Operation Kinds (Go's OADD, OSUB, OEQ, etc.)
 // ============================================================================
 
-enum BinaryOp {
+enum IRBinaryOp {
     // Arithmetic
     Add,
     Sub,
@@ -52,40 +53,40 @@ enum BinaryOp {
 }
 
 // Check if this is a comparison operation (returns bool)
-fn is_comparison(op: BinaryOp) bool {
-    if op == BinaryOp.Eq { return true; }
-    if op == BinaryOp.Ne { return true; }
-    if op == BinaryOp.Lt { return true; }
-    if op == BinaryOp.Le { return true; }
-    if op == BinaryOp.Gt { return true; }
-    if op == BinaryOp.Ge { return true; }
+fn ir_is_comparison(op: IRBinaryOp) bool {
+    if op == IRBinaryOp.Eq { return true; }
+    if op == IRBinaryOp.Ne { return true; }
+    if op == IRBinaryOp.Lt { return true; }
+    if op == IRBinaryOp.Le { return true; }
+    if op == IRBinaryOp.Gt { return true; }
+    if op == IRBinaryOp.Ge { return true; }
     return false;
 }
 
 // Check if this is an arithmetic operation
-fn is_arithmetic(op: BinaryOp) bool {
-    if op == BinaryOp.Add { return true; }
-    if op == BinaryOp.Sub { return true; }
-    if op == BinaryOp.Mul { return true; }
-    if op == BinaryOp.Div { return true; }
-    if op == BinaryOp.Mod { return true; }
+fn ir_is_arithmetic(op: IRBinaryOp) bool {
+    if op == IRBinaryOp.Add { return true; }
+    if op == IRBinaryOp.Sub { return true; }
+    if op == IRBinaryOp.Mul { return true; }
+    if op == IRBinaryOp.Div { return true; }
+    if op == IRBinaryOp.Mod { return true; }
     return false;
 }
 
 // Check if this is a logical operation
-fn is_logical(op: BinaryOp) bool {
-    if op == BinaryOp.And { return true; }
-    if op == BinaryOp.Or { return true; }
+fn ir_is_logical(op: IRBinaryOp) bool {
+    if op == IRBinaryOp.And { return true; }
+    if op == IRBinaryOp.Or { return true; }
     return false;
 }
 
 // Check if this is a bitwise operation
-fn is_bitwise(op: BinaryOp) bool {
-    if op == BinaryOp.BitAnd { return true; }
-    if op == BinaryOp.BitOr { return true; }
-    if op == BinaryOp.BitXor { return true; }
-    if op == BinaryOp.Shl { return true; }
-    if op == BinaryOp.Shr { return true; }
+fn ir_is_bitwise(op: IRBinaryOp) bool {
+    if op == IRBinaryOp.BitAnd { return true; }
+    if op == IRBinaryOp.BitOr { return true; }
+    if op == IRBinaryOp.BitXor { return true; }
+    if op == IRBinaryOp.Shl { return true; }
+    if op == IRBinaryOp.Shr { return true; }
     return false;
 }
 
@@ -93,7 +94,7 @@ fn is_bitwise(op: BinaryOp) bool {
 // Unary Operation Kinds (Go's ONEG, ONOT, etc.)
 // ============================================================================
 
-enum UnaryOp {
+enum IRUnaryOp {
     Neg,      // Arithmetic negation: -x
     Not,      // Logical not: !x
     BitNot,   // Bitwise not: ~x
@@ -167,8 +168,8 @@ fn ir_node_new(kind: IRNodeKind, type_idx: i64) IRNode {
         .kind = kind,
         .type_idx = type_idx,
         .value = 0,
-        .left = NULL_NODE,
-        .right = NULL_NODE,
+        .left = NULL_IR_NODE,
+        .right = NULL_IR_NODE,
         .op = 0,
         .func_name_start = 0,
         .func_name_len = 0,
@@ -194,24 +195,25 @@ fn ir_node_is_constant(node: *IRNode) bool {
 }
 
 // ============================================================================
-// Node Pool - Arena for IR nodes (pointer-based like ast.cot)
+// IR Node Pool - Arena for IR nodes (pointer-based like ast.cot)
+// NOTE: Named IRNodePool to avoid conflict with ast.cot's NodePool
 // ============================================================================
 
-struct NodePool {
+struct IRNodePool {
     nodes: *IRNode,       // Externally allocated array
     nodes_count: i64,
     nodes_cap: i64,
 }
 
-fn node_pool_init(pool: *NodePool, nodes: *IRNode, cap: i64) {
+fn ir_node_pool_init(pool: *IRNodePool, nodes: *IRNode, cap: i64) {
     pool.nodes = nodes;
     pool.nodes_count = 0;
     pool.nodes_cap = cap;
 }
 
-fn node_pool_add(pool: *NodePool, node: IRNode) i64 {
+fn ir_node_pool_add(pool: *IRNodePool, node: IRNode) i64 {
     if pool.nodes_count >= pool.nodes_cap {
-        return NULL_NODE;
+        return NULL_IR_NODE;
     }
     let idx: i64 = pool.nodes_count;
     let ptr: *IRNode = pool.nodes + idx;
@@ -220,22 +222,22 @@ fn node_pool_add(pool: *NodePool, node: IRNode) i64 {
     return idx;
 }
 
-fn node_pool_get(pool: *NodePool, idx: i64) *IRNode {
+fn ir_node_pool_get(pool: *IRNodePool, idx: i64) *IRNode {
     return pool.nodes + idx;
 }
 
-fn node_pool_add_const_int(pool: *NodePool, value: i64, type_idx: i64) i64 {
+fn ir_node_pool_add_const_int(pool: *IRNodePool, value: i64, type_idx: i64) i64 {
     var node: IRNode = ir_node_new(IRNodeKind.ConstInt, type_idx);
     node.value = value;
-    return node_pool_add(pool, node);
+    return ir_node_pool_add(pool, node);
 }
 
-fn node_pool_add_binary(pool: *NodePool, op: i64, left: i64, right: i64, type_idx: i64) i64 {
+fn ir_node_pool_add_binary(pool: *IRNodePool, op: i64, left: i64, right: i64, type_idx: i64) i64 {
     var node: IRNode = ir_node_new(IRNodeKind.Binary, type_idx);
     node.op = op;
     node.left = left;
     node.right = right;
-    return node_pool_add(pool, node);
+    return ir_node_pool_add(pool, node);
 }
 
 // ============================================================================
@@ -341,7 +343,7 @@ fn func_builder_add_param(fb: *FuncBuilder, name_start: i64, name_len: i64,
 
 fn func_builder_emit(fb: *FuncBuilder, node: IRNode) i64 {
     if fb.nodes_count >= fb.nodes_cap {
-        return NULL_NODE;
+        return NULL_IR_NODE;
     }
     let idx: i64 = fb.nodes_count;
     let ptr: *IRNode = fb.nodes + idx;
@@ -404,7 +406,7 @@ fn func_builder_emit_return(fb: *FuncBuilder, value: i64) i64 {
 
 fn func_builder_emit_return_void(fb: *FuncBuilder) i64 {
     var node: IRNode = ir_node_new(IRNodeKind.Return, TYPE_VOID);
-    node.left = NULL_NODE;
+    node.left = NULL_IR_NODE;
     return func_builder_emit(fb, node);
 }
 

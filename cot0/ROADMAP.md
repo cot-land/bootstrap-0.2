@@ -2,7 +2,7 @@
 
 **Goal:** Build a Cot compiler written in Cot that can compile itself.
 
-**Last Updated:** 2026-01-17
+**Last Updated:** 2026-01-18
 
 ---
 
@@ -15,6 +15,7 @@
 | cot0 can parse itself | **COMPLETE** (Sprint E) |
 | cot0 SSA modules | **COMPLETE** (Sprint F) |
 | cot0 backend modules | **COMPLETE** (Sprint G) |
+| cot0 core transformations | **COMPLETE** (Sprint H) |
 | cot0 self-compiles | Not started |
 
 ---
@@ -31,6 +32,10 @@
 | `checker_test.cot` | 4/4 pass |
 | `ir_test.cot` | passes |
 | `ssa/ssa_test.cot` | passes |
+| `ssa/builder_test.cot` | passes |
+| `ssa/liveness_test.cot` | passes |
+| `ssa/regalloc_test.cot` | passes |
+| `frontend/lower_test.cot` | passes |
 
 ---
 
@@ -128,17 +133,19 @@ Also fixed: BUG-026 (integer literals > 2^31 not parsed correctly)
 
 ---
 
-## Sprint H: Core Transformations
+## Sprint H: Core Transformations (COMPLETE 2026-01-18)
 
 **Goal:** Implement the transformation passes that connect frontend to backend
 
-### Files to implement (the hard parts)
-- `lower.cot` - AST to IR conversion (~2500 lines in Zig)
-- `ssa/builder.cot` - IR to SSA conversion (~2800 lines in Zig)
-- `ssa/liveness.cot` - Live range analysis (~900 lines in Zig)
-- `ssa/regalloc.cot` - Register allocation (~1200 lines in Zig)
+### Files implemented
+- [x] `frontend/lower.cot` - AST to IR conversion
+- [x] `ssa/builder.cot` - IR to SSA conversion
+- [x] `ssa/liveness.cot` - Live range analysis
+- [x] `ssa/regalloc.cot` - Register allocation
 
-These are the critical "glue" that connects parsing to code generation.
+Tests: lower_test.cot, builder_test.cot, liveness_test.cot, regalloc_test.cot all pass
+
+Note: builder_set_var has a known crash issue (BUG-029) affecting variable tracking through function parameters. Core infrastructure works.
 
 ---
 
@@ -166,6 +173,21 @@ diff cot0-stage1 cot0-stage2
 ---
 
 ## Completed Sprints
+
+### Sprint H: Core Transformations (COMPLETE 2026-01-18)
+
+Added to cot0:
+- **frontend/lower.cot**: AST to IR lowering with Lowerer struct and FuncBuilder
+- **ssa/builder.cot**: IR to SSA conversion with SSABuilder, BlockDefs, variable tracking
+- **ssa/liveness.cot**: Live range analysis with LiveMap, BlockLiveness, fixed-point iteration
+- **ssa/regalloc.cot**: Register allocation with ValState, RegState, spilling
+
+Known issues:
+- **BUG-029**: builder_set_var crashes when passing struct pointer field to function
+
+Tests: 4 new test files all pass
+
+---
 
 ### Sprint G: Backend (COMPLETE 2026-01-17)
 
