@@ -4,16 +4,15 @@
 // Reference: ~/learning/go/src/cmd/compile/internal/ssa/func.go
 // Reference: bootstrap-0.2/src/ssa/func.zig
 
-import "op.cot"
-import "value.cot"
+// Only import block.cot - it transitively imports value.cot → op.cot
 import "block.cot"
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-const MAX_PARAMS: i64 = 16;
-const MAX_LOCALS: i64 = 256;
+const FUNC_MAX_PARAMS: i64 = 16;
+const FUNC_MAX_LOCALS: i64 = 256;
 
 // ============================================================================
 // Local Variable

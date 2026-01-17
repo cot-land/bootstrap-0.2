@@ -10,9 +10,7 @@
 // Reference: ~/learning/go/src/cmd/compile/internal/ssagen/ssa.go
 // Reference: bootstrap-0.2/src/frontend/ssa_builder.zig
 
-import "op.cot"
-import "value.cot"
-import "block.cot"
+// Only import func.cot - it transitively imports block.cot → value.cot → op.cot
 import "func.cot"
 
 // ============================================================================
