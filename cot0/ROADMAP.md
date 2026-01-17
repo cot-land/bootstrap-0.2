@@ -13,6 +13,7 @@
 | Bootstrap compiler (Zig) | 166 e2e tests pass |
 | cot0 frontend modules | Complete, all tests pass |
 | cot0 can parse itself | **COMPLETE** (Sprint E) |
+| cot0 SSA modules | **COMPLETE** (Sprint F) |
 | cot0 backend modules | Not started |
 | cot0 self-compiles | Not started |
 
@@ -29,6 +30,7 @@
 | `types_test.cot` | 2/2 pass |
 | `checker_test.cot` | 4/4 pass |
 | `ir_test.cot` | passes |
+| `ssa/ssa_test.cot` | passes |
 
 ---
 
@@ -90,18 +92,23 @@ TokenType.Ident                 // Enum variant access
 
 ---
 
-## Sprint F: IR & SSA
+## Sprint F: IR & SSA (COMPLETE 2026-01-17)
 
 **Goal:** Implement IR and SSA modules in Cot
 
-### Files to implement
-- `ir.cot` - IR node definitions and builder
-- `lower.cot` - AST to IR conversion
-- `ssa/op.cot` - SSA operations
-- `ssa/value.cot` - SSA values
-- `ssa/block.cot` - Basic blocks
-- `ssa/func.cot` - Functions
-- `ssa/builder.cot` - IR to SSA conversion
+**Verification:** All SSA modules compile, ssa_test.cot passes
+
+### Files implemented
+- [x] `ir.cot` - IR node definitions and builder (already existed)
+- [ ] `lower.cot` - AST to IR conversion (deferred)
+- [x] `ssa/op.cot` - SSA operations enum with predicates
+- [x] `ssa/value.cot` - SSA values with use tracking
+- [x] `ssa/block.cot` - Basic blocks with edges
+- [x] `ssa/func.cot` - Functions with locals
+- [ ] `ssa/builder.cot` - IR to SSA conversion (deferred)
+
+Note: Added `undefined` keyword to Cot bootstrap compiler to support
+struct initialization pattern: `var v: Value = undefined;`
 
 ---
 
@@ -138,6 +145,22 @@ diff cot0-stage1 cot0-stage2
 ---
 
 ## Completed Sprints
+
+### Sprint F: IR & SSA (COMPLETE 2026-01-17)
+
+Added to cot0:
+- **ssa/op.cot**: SSA operations enum (Op) with predicates (is_constant, is_comparison, etc.)
+- **ssa/value.cot**: Value struct with use tracking, argument management, ValuePool
+- **ssa/block.cot**: Block struct with control flow, BlockKind enum, BlockPool
+- **ssa/func.cot**: Func struct with locals, emission helpers
+
+Added to bootstrap compiler:
+- **undefined keyword**: Allows `var v: Type = undefined;` pattern for struct initialization
+  - Token, AST node, parser, type checker, and lowering support
+
+Tests: ssa_test.cot passes
+
+---
 
 ### Sprint E: Full Type Checking (COMPLETE 2026-01-17)
 
