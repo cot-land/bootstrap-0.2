@@ -1,0 +1,93 @@
+// ARM64 Code Generator Tests
+// Run with: ./zig-out/bin/cot cot0/codegen/arm64_test.cot -o /tmp/codegen_test && /tmp/codegen_test
+
+import "arm64.cot"
+
+fn main() i64 {
+    let result: i64 = 0;
+
+    result = result + test_instruction_selection();
+    result = result + test_codegen_ops();
+    result = result + test_branches();
+    result = result + test_memory_ops();
+
+    return result;
+}
+
+fn test_instruction_selection() i64 {
+    // Test load selector
+    if select_load(1, false) != 1 { return 1; }  // LDRB
+    if select_load(1, true) != 2 { return 2; }   // LDRSB
+    if select_load(8, false) != 7 { return 3; }  // LDR X
+
+    // Test store selector
+    if select_store(1) != 1 { return 10; }  // STRB
+    if select_store(8) != 4 { return 11; }  // STR X
+
+    return 0;
+}
+
+fn test_codegen_ops() i64 {
+    // ADD X0, X1, X2 -> 0x8B020020
+    let add: i64 = codegen_add(0, 1, 2);
+    if add != 0x8B020020 { return 20; }
+
+    // SUB X3, X4, X5 -> 0xCB050083
+    let sub: i64 = codegen_sub(3, 4, 5);
+    if sub != 0xCB050083 { return 21; }
+
+    // AND X0, X1, X2 -> 0x8A020020
+    let and_op: i64 = codegen_and(0, 1, 2);
+    if and_op != 0x8A020020 { return 22; }
+
+    // ORR X3, X4, X5 -> 0xAA050083
+    let or_op: i64 = codegen_or(3, 4, 5);
+    if or_op != 0xAA050083 { return 23; }
+
+    // EOR X6, X7, X8 -> 0xCA0800E6
+    let xor_op: i64 = codegen_xor(6, 7, 8);
+    if xor_op != 0xCA0800E6 { return 24; }
+
+    // CMP X1, X2 -> 0xEB02003F
+    let cmp: i64 = codegen_cmp(1, 2);
+    if cmp != 0xEB02003F { return 25; }
+
+    // MOV X0, X1 (via ORR X0, XZR, X1)
+    let mov: i64 = encode_mov_reg(0, 1);
+    // ORR X0, X31, X1 -> 0xAA0103E0
+    if mov != 0xAA0103E0 { return 26; }
+
+    return 0;
+}
+
+fn test_branches() i64 {
+    // B #4 -> 0x14000001
+    let b: i64 = codegen_branch(1);
+    if b != 0x14000001 { return 30; }
+
+    // BL #100 -> 0x94000019 (25 words = 100 bytes)
+    let bl: i64 = codegen_call(25);
+    if bl != 0x94000019 { return 31; }
+
+    // RET -> 0xD65F03C0
+    let ret: i64 = codegen_return();
+    if ret != 0xD65F03C0 { return 32; }
+
+    return 0;
+}
+
+fn test_memory_ops() i64 {
+    // LDR X0, [X1, #8] -> 0xF9400420
+    let ldr: i64 = codegen_load64(0, 1, 1);
+    if ldr != 0xF9400420 { return 40; }
+
+    // STR X2, [X3, #16] -> 0xF9000862
+    let str_op: i64 = codegen_store64(2, 3, 2);
+    if str_op != 0xF9000862 { return 41; }
+
+    // LDRB W0, [X1, #0] -> 0x39400020
+    let ldrb: i64 = codegen_load8(0, 1, 0);
+    if ldrb != 0x39400020 { return 42; }
+
+    return 0;
+}

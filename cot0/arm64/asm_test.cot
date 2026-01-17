@@ -1,0 +1,153 @@
+// ARM64 Instruction Encoding Tests
+// Tests encoding functions against known-good machine code values.
+// Run with: ./zig-out/bin/cot cot0/arm64/asm_test.cot -o /tmp/asm_test && /tmp/asm_test
+//
+// Expected machine code values verified against ARM64 reference manual.
+
+import "asm.cot"
+
+fn main() i64 {
+    let result: i64 = 0;
+
+    result = result + test_move_wide();
+    result = result + test_add_sub_imm();
+    result = result + test_add_sub_reg();
+    result = result + test_load_store();
+    result = result + test_branches();
+    result = result + test_logical();
+    result = result + test_csel();
+
+    return result;
+}
+
+// ============================================================================
+// Test: Move Wide (MOVZ/MOVK)
+// ============================================================================
+
+fn test_move_wide() i64 {
+    // MOVZ X0, #0x1234 -> 0xD2824680
+    let movz_x0: i64 = encode_movz(0, 4660, 0);
+    if movz_x0 != 0xD2824680 { return 1; }
+
+    // MOVK X0, #0x5678, LSL #16 -> 0xF2AACF00
+    let movk_x0: i64 = encode_movk(0, 22136, 1);
+    if movk_x0 != 0xF2AACF00 { return 2; }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: Add/Subtract Immediate
+// ============================================================================
+
+fn test_add_sub_imm() i64 {
+    // ADD X0, X1, #100 -> 0x91019020
+    let add_imm: i64 = encode_add_imm(0, 1, 100);
+    if add_imm != 0x91019020 { return 10; }
+
+    // SUB X2, X3, #200 -> 0xD1032062
+    let sub_imm: i64 = encode_sub_imm(2, 3, 200);
+    if sub_imm != 0xD1032062 { return 11; }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: Add/Subtract Register
+// ============================================================================
+
+fn test_add_sub_reg() i64 {
+    // ADD X0, X1, X2 -> 0x8B020020
+    let add_reg: i64 = encode_add_reg(0, 1, 2);
+    if add_reg != 0x8B020020 { return 20; }
+
+    // SUB X3, X4, X5 -> 0xCB050083
+    let sub_reg: i64 = encode_sub_reg(3, 4, 5);
+    if sub_reg != 0xCB050083 { return 21; }
+
+    // CMP X1, X2 -> 0xEB02003F (SUBS XZR, X1, X2)
+    let cmp_reg: i64 = encode_cmp_reg(1, 2);
+    if cmp_reg != 0xEB02003F { return 22; }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: Load/Store
+// ============================================================================
+
+fn test_load_store() i64 {
+    // LDR X0, [X1, #8] -> 0xF9400420
+    let ldr: i64 = encode_ldr(0, 1, 1);
+    if ldr != 0xF9400420 { return 30; }
+
+    // STR X2, [X3, #16] -> 0xF9000862
+    let str_val: i64 = encode_str(2, 3, 2);
+    if str_val != 0xF9000862 { return 31; }
+
+    // LDRB W0, [X1, #0] -> 0x39400020
+    let ldrb: i64 = encode_ldrb(0, 1, 0);
+    if ldrb != 0x39400020 { return 32; }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: Branches
+// ============================================================================
+
+fn test_branches() i64 {
+    // B #4 -> 0x14000001
+    let b_fwd: i64 = encode_b(1);
+    if b_fwd != 0x14000001 { return 40; }
+
+    // BL #100 -> 0x94000019
+    let bl: i64 = encode_bl(25);
+    if bl != 0x94000019 { return 41; }
+
+    // RET -> 0xD65F03C0
+    let ret_val: i64 = encode_ret(30);
+    if ret_val != 0xD65F03C0 { return 42; }
+
+    // B.EQ #8 -> 0x54000040
+    let beq: i64 = encode_beq(2);
+    if beq != 0x54000040 { return 43; }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: Logical Operations
+// ============================================================================
+
+fn test_logical() i64 {
+    // AND X0, X1, X2 -> 0x8A020020
+    let and_reg: i64 = encode_and_reg(0, 1, 2);
+    if and_reg != 0x8A020020 { return 50; }
+
+    // ORR X3, X4, X5 -> 0xAA050083
+    let orr_reg: i64 = encode_orr_reg(3, 4, 5);
+    if orr_reg != 0xAA050083 { return 51; }
+
+    // EOR X6, X7, X8 -> 0xCA0800E6
+    let eor_reg: i64 = encode_eor_reg(6, 7, 8);
+    if eor_reg != 0xCA0800E6 { return 52; }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: Conditional Select
+// ============================================================================
+
+fn test_csel() i64 {
+    // CSEL X0, X1, X2, EQ -> 0x9A820020
+    let csel: i64 = encode_csel(0, 1, 2, COND_EQ);
+    if csel != 0x9A820020 { return 60; }
+
+    // CSET X0, EQ -> CSINC X0, XZR, XZR, NE -> 0x9A9F17E0
+    let cset: i64 = encode_cset(0, COND_EQ);
+    if cset != 0x9A9F17E0 { return 61; }
+
+    return 0;
+}

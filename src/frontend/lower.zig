@@ -1313,7 +1313,8 @@ pub const Lowerer = struct {
 
         switch (lit.kind) {
             .int => {
-                const value = std.fmt.parseInt(i64, lit.value, 10) catch 0;
+                // Use base 0 for auto-detection (0x hex, 0b binary, 0o octal)
+                const value = std.fmt.parseInt(i64, lit.value, 0) catch 0;
                 return try fb.emitConstInt(value, TypeRegistry.I64, lit.span);
             },
             .float => {
@@ -2189,7 +2190,8 @@ pub const Lowerer = struct {
                 const size_node = self.tree.getNode(arr.size) orelse return TypeRegistry.VOID;
                 const size_expr = size_node.asExpr() orelse return TypeRegistry.VOID;
                 if (size_expr == .literal and size_expr.literal.kind == .int) {
-                    const length = std.fmt.parseInt(u64, size_expr.literal.value, 10) catch return TypeRegistry.VOID;
+                    // Use base 0 for auto-detection (allows hex like [0x10]i64)
+                    const length = std.fmt.parseInt(u64, size_expr.literal.value, 0) catch return TypeRegistry.VOID;
                     return self.type_reg.makeArray(elem_type, length) catch TypeRegistry.VOID;
                 }
                 return TypeRegistry.VOID;

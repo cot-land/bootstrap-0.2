@@ -23,13 +23,18 @@ See [cot0/ROADMAP.md](cot0/ROADMAP.md) for detailed self-hosting progress.
 | ssa/value.cot | Complete | passes |
 | ssa/block.cot | Complete | passes |
 | ssa/func.cot | Complete | passes |
+| arm64/asm.cot | Complete | 7/7 pass |
+| arm64/regs.cot | Complete | 2/2 pass |
+| codegen/arm64.cot | Complete | 4/4 pass |
+| obj/macho.cot | Complete | 3/3 pass |
 
 ### Open Bugs (2026-01-17)
 
-None currently.
+None currently (BUG-026 fixed).
 
 ### Recent Bug Fixes (2026-01-17)
 
+- BUG-026: Integer literals > 2^31 not parsed correctly - Fixed parseInt base from 10 to 0 for auto-detection
 - BUG-025: String pointer becomes null after many accesses - Implemented Go's per-instruction use distance tracking in regalloc
 - BUG-024: String pointer becomes null in string comparisons - Added slice_len/slice_ptr rewrite rules to decompose pass
 - BUG-023: Stack slot reuse causes value corruption - Disabled slot reuse for store_reg values, fixed liveness propagation

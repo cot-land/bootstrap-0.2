@@ -1,0 +1,209 @@
+// Mach-O Object File Format
+// Defines constants and structures for generating Mach-O object files.
+//
+// Reference: src/obj/macho.zig (our Zig bootstrap)
+// Reference: Apple Mach-O file format documentation
+//
+// Mach-O Structure:
+// +------------------+
+// | Mach-O Header    |  32 bytes (64-bit)
+// +------------------+
+// | Load Commands    |  Variable size
+// +------------------+
+// | __TEXT Segment   |
+// |   __text section |  Code
+// +------------------+
+// | __DATA Segment   |
+// |   __data section |  Initialized data
+// +------------------+
+// | Symbol Table     |
+// +------------------+
+// | String Table     |
+// +------------------+
+
+// ============================================================================
+// Magic Numbers
+// ============================================================================
+
+// Mach-O 64-bit magic (little-endian)
+const MH_MAGIC_64: i64 = 0xFEEDFACF;
+// Big-endian version (reversed)
+const MH_CIGAM_64: i64 = 0xCFFAEDFE;
+
+// ============================================================================
+// CPU Types
+// ============================================================================
+
+// CPU type for ARM64
+const CPU_TYPE_ARM64: i64 = 0x0100000C;
+// CPU subtype for all ARM64 variants
+const CPU_SUBTYPE_ARM64_ALL: i64 = 0x00000000;
+
+// ============================================================================
+// File Types
+// ============================================================================
+
+// Relocatable object file
+const MH_OBJECT: i64 = 0x1;
+// Executable file
+const MH_EXECUTE: i64 = 0x2;
+// Dynamic library
+const MH_DYLIB: i64 = 0x6;
+
+// ============================================================================
+// Header Flags
+// ============================================================================
+
+// Object file may be safely divided into subsections
+const MH_SUBSECTIONS_VIA_SYMBOLS: i64 = 0x2000;
+
+// ============================================================================
+// Load Command Types
+// ============================================================================
+
+// 64-bit segment load command
+const LC_SEGMENT_64: i64 = 0x19;
+// Symbol table load command
+const LC_SYMTAB: i64 = 0x02;
+// Dynamic symbol table load command
+const LC_DYSYMTAB: i64 = 0x0B;
+// Build version load command
+const LC_BUILD_VERSION: i64 = 0x32;
+
+// ============================================================================
+// Section Types
+// ============================================================================
+
+// Regular section
+const S_REGULAR: i64 = 0x0;
+// Zero-filled section (BSS)
+const S_ZEROFILL: i64 = 0x1;
+// C string literals section
+const S_CSTRING_LITERALS: i64 = 0x2;
+
+// ============================================================================
+// Section Attributes
+// ============================================================================
+
+// Section contains only executable machine instructions
+const S_ATTR_PURE_INSTRUCTIONS: i64 = 0x80000000;
+// Section contains some machine instructions
+const S_ATTR_SOME_INSTRUCTIONS: i64 = 0x00000400;
+
+// ============================================================================
+// Symbol Types
+// ============================================================================
+
+// Undefined symbol
+const N_UNDF: i64 = 0x0;
+// External symbol
+const N_EXT: i64 = 0x1;
+// Symbol defined in section
+const N_SECT: i64 = 0xE;
+
+// ============================================================================
+// ARM64 Relocation Types
+// ============================================================================
+
+// Absolute address relocation
+const ARM64_RELOC_UNSIGNED: i64 = 0;
+// Subtractor for computing differences
+const ARM64_RELOC_SUBTRACTOR: i64 = 1;
+// 26-bit branch instruction (B, BL)
+const ARM64_RELOC_BRANCH26: i64 = 2;
+// ADRP instruction (page address, bits 12-32)
+const ARM64_RELOC_PAGE21: i64 = 3;
+// ADD/LDR instruction (page offset, bits 0-11)
+const ARM64_RELOC_PAGEOFF12: i64 = 4;
+// GOT page address
+const ARM64_RELOC_GOT_LOAD_PAGE21: i64 = 5;
+// GOT page offset
+const ARM64_RELOC_GOT_LOAD_PAGEOFF12: i64 = 6;
+
+// ============================================================================
+// Structure Sizes (in bytes)
+// ============================================================================
+
+// Mach-O 64-bit header size
+const MACH_HEADER_64_SIZE: i64 = 32;
+// Segment command 64 size (without sections)
+const SEGMENT_COMMAND_64_SIZE: i64 = 72;
+// Section 64 size
+const SECTION_64_SIZE: i64 = 80;
+// Symbol table command size
+const SYMTAB_COMMAND_SIZE: i64 = 24;
+// Nlist64 entry size (symbol table entry)
+const NLIST64_SIZE: i64 = 16;
+// Relocation entry size
+const RELOCATION_SIZE: i64 = 8;
+
+// ============================================================================
+// Relocation Info Encoding
+// ============================================================================
+
+// Create relocation info word
+// Format: symbolnum (24 bits) | pcrel (1) | length (2) | extern (1) | type (4)
+fn make_reloc_info(symbolnum: i64, pcrel: bool, length: i64, external: bool, reloc_type: i64) i64 {
+    var result: i64 = symbolnum & 0xFFFFFF;
+    if pcrel { result = result | (1 << 24); }
+    result = result | ((length & 3) << 25);
+    if external { result = result | (1 << 27); }
+    result = result | ((reloc_type & 15) << 28);
+    return result;
+}
+
+// ============================================================================
+// Section Numbers (1-indexed for Mach-O)
+// ============================================================================
+
+const SECT_TEXT: i64 = 1;
+const SECT_DATA: i64 = 2;
+const SECT_BSS: i64 = 3;
+const SECT_CSTRING: i64 = 4;
+
+// ============================================================================
+// Memory Protection Flags
+// ============================================================================
+
+const VM_PROT_READ: i64 = 0x1;
+const VM_PROT_WRITE: i64 = 0x2;
+const VM_PROT_EXECUTE: i64 = 0x4;
+const VM_PROT_ALL: i64 = 0x7;  // rwx
+
+// ============================================================================
+// Alignment (log2)
+// ============================================================================
+
+// Text section typically aligned to 4 bytes (2^2) for ARM64
+const TEXT_ALIGN: i64 = 2;
+// Data section aligned to 8 bytes (2^3) for 64-bit values
+const DATA_ALIGN: i64 = 3;
+// Page alignment (2^14 = 16384 for ARM64 macOS)
+const PAGE_ALIGN: i64 = 14;
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+// Check if value is a valid Mach-O magic number
+fn is_macho_magic(magic: i64) bool {
+    return magic == MH_MAGIC_64 or magic == MH_CIGAM_64;
+}
+
+// Check if file type is valid
+fn is_valid_file_type(filetype: i64) bool {
+    return filetype == MH_OBJECT or filetype == MH_EXECUTE or filetype == MH_DYLIB;
+}
+
+// Calculate padding needed for alignment
+fn padding_for_align(offset: i64, align_pow2: i64) i64 {
+    let alignment: i64 = 1 << align_pow2;
+    let remainder: i64 = offset & (alignment - 1);
+    if remainder == 0 { return 0; }
+    return alignment - remainder;
+}
+
+// Round up offset to alignment
+fn align_up(offset: i64, align_pow2: i64) i64 {
+    return offset + padding_for_align(offset, align_pow2);
+}

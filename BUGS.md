@@ -35,6 +35,30 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
+### BUG-026: Integer literals > 2^31 not parsed correctly (FIXED)
+
+**Status:** Fixed
+**Priority:** P2
+**Discovered:** 2026-01-17
+**Fixed:** 2026-01-17
+
+**Description:**
+Integer literals larger than 2^31 (2147483648) were not parsed correctly. Hex literals like `0xD2824680` produced wrong values.
+
+**Root Cause:**
+`src/frontend/lower.zig:1316` used `std.fmt.parseInt(i64, ..., 10)` with hardcoded base 10. Hex/binary/octal literals need base 0 for auto-detection.
+
+**Fix:**
+Changed `parseInt(..., 10)` to `parseInt(..., 0)` in two places:
+1. `src/frontend/lower.zig:1317` - Integer literal lowering
+2. `src/frontend/lower.zig:2194` - Array length parsing
+
+**Verified by:**
+- Comparing with Go's `strconv.ParseInt(e.Value, 0, 64)` (base 0 for auto-detect)
+- Test file: `cot0/arm64/asm_test.cot` now uses hex constants directly
+
+---
+
 ### BUG-025: String pointer becomes null after many string accesses in is_keyword (FIXED)
 
 **Status:** Fixed

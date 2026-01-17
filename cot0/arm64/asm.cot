@@ -1,0 +1,697 @@
+// ARM64 Instruction Encoding
+// Encodes ARM64 instructions into machine code (32-bit words).
+//
+// Reference: src/arm64/asm.zig (our Zig bootstrap)
+// Reference: ~/learning/go/src/cmd/internal/obj/arm64/asm7.go
+//
+// Design Philosophy (from CLAUDE.md):
+// 1. Related instructions share ONE encoding function with parameters
+// 2. The parameter makes the critical bit EXPLICIT and impossible to forget
+// 3. Every encoding has a test against known-good output
+//
+// ARM64 instructions are always 32 bits (4 bytes), little-endian.
+
+// ============================================================================
+// Register Encoding
+// ============================================================================
+
+// Encode register in Rd position (bits 4-0)
+fn encode_rd(reg: i64) i64 {
+    return reg & 31;
+}
+
+// Encode register in Rn position (bits 9-5)
+fn encode_rn(reg: i64) i64 {
+    return (reg & 31) << 5;
+}
+
+// Encode register in Rm position (bits 20-16)
+fn encode_rm(reg: i64) i64 {
+    return (reg & 31) << 16;
+}
+
+// ============================================================================
+// Move Wide (MOVZ/MOVK/MOVN)
+// ============================================================================
+
+// Move wide opcodes
+const MOVN_OP: i64 = 0;  // 0b00 - Move wide with NOT
+const MOVZ_OP: i64 = 2;  // 0b10 - Move wide with zero
+const MOVK_OP: i64 = 3;  // 0b11 - Move wide with keep
+
+// Encode move wide instruction (MOVZ, MOVK, MOVN).
+// Single function - opcode parameter makes the instruction type explicit.
+fn encode_move_wide(op: i64, rd: i64, imm16: i64, shift: i64) i64 {
+    let sf: i64 = 1;  // 64-bit
+    // Encoding: sf opc 100101 hw imm16 Rd
+    return (sf << 31) |
+           (op << 29) |
+           (37 << 23) |        // 0b100101 = 37
+           (shift << 21) |
+           ((imm16 & 65535) << 5) |
+           encode_rd(rd);
+}
+
+fn encode_movz(rd: i64, imm16: i64, shift: i64) i64 {
+    return encode_move_wide(MOVZ_OP, rd, imm16, shift);
+}
+
+fn encode_movk(rd: i64, imm16: i64, shift: i64) i64 {
+    return encode_move_wide(MOVK_OP, rd, imm16, shift);
+}
+
+fn encode_movn(rd: i64, imm16: i64, shift: i64) i64 {
+    return encode_move_wide(MOVN_OP, rd, imm16, shift);
+}
+
+// ============================================================================
+// Add/Subtract Immediate
+// ============================================================================
+
+// Encode ADD/SUB immediate.
+// Single function - is_sub parameter makes it explicit.
+fn encode_add_sub_imm(rd: i64, rn: i64, imm12: i64, shift: i64, is_sub: bool, set_flags: bool) i64 {
+    let sf: i64 = 1;  // 64-bit
+    var op: i64 = 0;
+    if is_sub { op = 1; }
+    var s: i64 = 0;
+    if set_flags { s = 1; }
+    // Encoding: sf op S 10001 sh imm12 Rn Rd
+    return (sf << 31) |
+           (op << 30) |
+           (s << 29) |
+           (17 << 24) |        // 0b10001 = 17
+           (shift << 22) |
+           ((imm12 & 4095) << 10) |
+           encode_rn(rn) |
+           encode_rd(rd);
+}
+
+fn encode_add_imm(rd: i64, rn: i64, imm12: i64) i64 {
+    return encode_add_sub_imm(rd, rn, imm12, 0, false, false);
+}
+
+fn encode_sub_imm(rd: i64, rn: i64, imm12: i64) i64 {
+    return encode_add_sub_imm(rd, rn, imm12, 0, true, false);
+}
+
+// ============================================================================
+// Add/Subtract Register
+// ============================================================================
+
+// Encode ADD/SUB register (shifted).
+// Single function - is_sub parameter makes it explicit.
+fn encode_add_sub_reg(rd: i64, rn: i64, rm: i64, is_sub: bool, set_flags: bool) i64 {
+    let sf: i64 = 1;  // 64-bit
+    var op: i64 = 0;
+    if is_sub { op = 1; }
+    var s: i64 = 0;
+    if set_flags { s = 1; }
+    // Encoding: sf op S 01011 shift 0 Rm imm6 Rn Rd
+    return (sf << 31) |
+           (op << 30) |
+           (s << 29) |
+           (11 << 24) |        // 0b01011 = 11
+           (0 << 22) |         // LSL
+           (0 << 21) |
+           encode_rm(rm) |
+           (0 << 10) |         // imm6 = 0
+           encode_rn(rn) |
+           encode_rd(rd);
+}
+
+fn encode_add_reg(rd: i64, rn: i64, rm: i64) i64 {
+    return encode_add_sub_reg(rd, rn, rm, false, false);
+}
+
+fn encode_sub_reg(rd: i64, rn: i64, rm: i64) i64 {
+    return encode_add_sub_reg(rd, rn, rm, true, false);
+}
+
+// Encode ADD/SUB extended register.
+// Required when rd or rn is SP (31), since shifted register form
+// treats reg 31 as XZR not SP.
+fn encode_add_sub_ext_reg(rd: i64, rn: i64, rm: i64, is_sub: bool) i64 {
+    let sf: i64 = 1;  // 64-bit
+    var op: i64 = 0;
+    if is_sub { op = 1; }
+    let s: i64 = 0;   // No flags
+    let option: i64 = 3;  // 0b011 = UXTX (64-bit unsigned extend)
+    // Extended register: sf op S 01011 00 1 Rm option imm3 Rn Rd
+    return (sf << 31) |
+           (op << 30) |
+           (s << 29) |
+           (11 << 24) |        // 0b01011 = 11
+           (0 << 22) |
+           (1 << 21) |         // Extended register mode
+           encode_rm(rm) |
+           (option << 13) |
+           (0 << 10) |         // imm3 = 0
+           encode_rn(rn) |
+           encode_rd(rd);
+}
+
+fn encode_add_ext_reg(rd: i64, rn: i64, rm: i64) i64 {
+    return encode_add_sub_ext_reg(rd, rn, rm, false);
+}
+
+fn encode_sub_ext_reg(rd: i64, rn: i64, rm: i64) i64 {
+    return encode_add_sub_ext_reg(rd, rn, rm, true);
+}
+
+// CMP is SUBS with Rd=XZR (register 31)
+fn encode_cmp_reg(rn: i64, rm: i64) i64 {
+    return encode_add_sub_reg(31, rn, rm, true, true);
+}
+
+// CMP immediate is SUBS with Rd=XZR
+fn encode_cmp_imm(rn: i64, imm12: i64) i64 {
+    return encode_add_sub_imm(31, rn, imm12, 0, true, true);
+}
+
+// ============================================================================
+// PC-Relative Address (ADR/ADRP)
+// ============================================================================
+
+// Encode ADR/ADRP instruction.
+// ADR:  Forms PC-relative address (adds imm to PC)
+// ADRP: Forms page address (adds imm*4096 to PC page)
+fn encode_adr(rd: i64, imm21: i64, is_page: bool) i64 {
+    let imm: i64 = imm21 & 2097151;  // 21 bits: 0x1FFFFF
+    let immlo: i64 = imm & 3;
+    let immhi: i64 = imm >> 2;
+    var op: i64 = 0;
+    if is_page { op = 1; }
+    // Encoding: op immlo 10000 immhi Rd
+    return (op << 31) |
+           (immlo << 29) |
+           (16 << 24) |        // 0b10000 = 16
+           (immhi << 5) |
+           encode_rd(rd);
+}
+
+fn encode_adrp(rd: i64, imm21: i64) i64 {
+    return encode_adr(rd, imm21, true);
+}
+
+// ============================================================================
+// Multiply/Divide
+// ============================================================================
+
+// Encode MUL (alias for MADD with Ra=XZR).
+fn encode_mul(rd: i64, rn: i64, rm: i64) i64 {
+    let sf: i64 = 1;
+    // MADD: sf 00 11011 000 Rm 0 Ra Rn Rd
+    return (sf << 31) |
+           (0 << 29) |
+           (27 << 24) |        // 0b11011 = 27
+           (0 << 21) |
+           encode_rm(rm) |
+           (0 << 15) |         // o0 = 0 for MADD
+           (31 << 10) |        // Ra = XZR
+           encode_rn(rn) |
+           encode_rd(rd);
+}
+
+// Encode SDIV/UDIV.
+// Single function - is_signed parameter makes it explicit.
+fn encode_div(rd: i64, rn: i64, rm: i64, is_signed: bool) i64 {
+    let sf: i64 = 1;
+    var o1: i64 = 0;
+    if is_signed { o1 = 1; }
+    // Encoding: sf 0 0 11010110 Rm 00001 o1 Rn Rd
+    return (sf << 31) |
+           (0 << 30) |
+           (0 << 29) |
+           (214 << 21) |       // 0b11010110 = 214
+           encode_rm(rm) |
+           (1 << 11) |         // 0b00001 = 1
+           (o1 << 10) |
+           encode_rn(rn) |
+           encode_rd(rd);
+}
+
+fn encode_sdiv(rd: i64, rn: i64, rm: i64) i64 {
+    return encode_div(rd, rn, rm, true);
+}
+
+fn encode_udiv(rd: i64, rn: i64, rm: i64) i64 {
+    return encode_div(rd, rn, rm, false);
+}
+
+// ============================================================================
+// Load/Store Register
+// ============================================================================
+
+// Size codes for load/store instructions
+const LDST_BYTE: i64 = 0;   // 0b00 - 8-bit (LDRB/STRB)
+const LDST_HALF: i64 = 1;   // 0b01 - 16-bit (LDRH/STRH)
+const LDST_WORD: i64 = 2;   // 0b10 - 32-bit (LDR W/STR W)
+const LDST_DWORD: i64 = 3;  // 0b11 - 64-bit (LDR X/STR X)
+
+// Get size code from byte count
+fn ldst_size_from_bytes(bytes: i64) i64 {
+    if bytes == 1 { return LDST_BYTE; }
+    if bytes == 2 { return LDST_HALF; }
+    if bytes == 4 { return LDST_WORD; }
+    return LDST_DWORD;
+}
+
+// Encode LDR/STR with explicit size parameter.
+// The size parameter sets bits [31:30] controlling the access width.
+fn encode_ldr_str_sized(rt: i64, rn: i64, offset: i64, size: i64, is_load: bool) i64 {
+    let v: i64 = 0;  // Not SIMD
+    var opc: i64 = 0;
+    if is_load { opc = 1; }
+    // Encoding: size 111 V 01 opc imm12 Rn Rt
+    return (size << 30) |
+           (7 << 27) |         // 0b111 = 7
+           (v << 26) |
+           (1 << 24) |         // 0b01 = 1
+           (opc << 22) |
+           ((offset & 4095) << 10) |
+           encode_rn(rn) |
+           encode_rd(rt);
+}
+
+// 64-bit load/store (backward compatible)
+fn encode_ldr_str(rt: i64, rn: i64, offset: i64, is_load: bool) i64 {
+    return encode_ldr_str_sized(rt, rn, offset, LDST_DWORD, is_load);
+}
+
+fn encode_ldr(rt: i64, rn: i64, offset: i64) i64 {
+    return encode_ldr_str(rt, rn, offset, true);
+}
+
+fn encode_str(rt: i64, rn: i64, offset: i64) i64 {
+    return encode_ldr_str(rt, rn, offset, false);
+}
+
+fn encode_ldrb(rt: i64, rn: i64, offset: i64) i64 {
+    return encode_ldr_str_sized(rt, rn, offset, LDST_BYTE, true);
+}
+
+fn encode_strb(rt: i64, rn: i64, offset: i64) i64 {
+    return encode_ldr_str_sized(rt, rn, offset, LDST_BYTE, false);
+}
+
+fn encode_ldrh(rt: i64, rn: i64, offset: i64) i64 {
+    return encode_ldr_str_sized(rt, rn, offset, LDST_HALF, true);
+}
+
+fn encode_strh(rt: i64, rn: i64, offset: i64) i64 {
+    return encode_ldr_str_sized(rt, rn, offset, LDST_HALF, false);
+}
+
+fn encode_ldrw(rt: i64, rn: i64, offset: i64) i64 {
+    return encode_ldr_str_sized(rt, rn, offset, LDST_WORD, true);
+}
+
+fn encode_strw(rt: i64, rn: i64, offset: i64) i64 {
+    return encode_ldr_str_sized(rt, rn, offset, LDST_WORD, false);
+}
+
+// ============================================================================
+// Load/Store Pair (LDP/STP)
+// ============================================================================
+
+// Encode LDP/STP with signed offset.
+// Single function - is_load parameter makes it explicit.
+fn encode_ldp_stp(rt1: i64, rt2: i64, rn: i64, imm7: i64, is_load: bool) i64 {
+    var l: i64 = 0;
+    if is_load { l = 1; }
+    // Encoding: 10 101 0 010 L imm7 Rt2 Rn Rt
+    return (2 << 30) |         // opc = 10 (64-bit)
+           (5 << 27) |         // 0b101 = 5
+           (0 << 26) |         // V = 0
+           (2 << 23) |         // 0b010 = 2 (signed offset)
+           (l << 22) |
+           ((imm7 & 127) << 15) |
+           ((rt2 & 31) << 10) |
+           encode_rn(rn) |
+           encode_rd(rt1);
+}
+
+fn encode_ldp(rt1: i64, rt2: i64, rn: i64, imm7: i64) i64 {
+    return encode_ldp_stp(rt1, rt2, rn, imm7, true);
+}
+
+fn encode_stp(rt1: i64, rt2: i64, rn: i64, imm7: i64) i64 {
+    return encode_ldp_stp(rt1, rt2, rn, imm7, false);
+}
+
+// LDP/STP with pre-index (adjust base before access)
+fn encode_ldp_stp_pre(rt1: i64, rt2: i64, rn: i64, imm7: i64, is_load: bool) i64 {
+    var l: i64 = 0;
+    if is_load { l = 1; }
+    // Encoding: 10 101 0 011 L imm7 Rt2 Rn Rt (011 = pre-index)
+    return (2 << 30) |
+           (5 << 27) |
+           (0 << 26) |
+           (3 << 23) |         // 0b011 = 3 (pre-index)
+           (l << 22) |
+           ((imm7 & 127) << 15) |
+           ((rt2 & 31) << 10) |
+           encode_rn(rn) |
+           encode_rd(rt1);
+}
+
+fn encode_ldp_pre(rt1: i64, rt2: i64, rn: i64, imm7: i64) i64 {
+    return encode_ldp_stp_pre(rt1, rt2, rn, imm7, true);
+}
+
+fn encode_stp_pre(rt1: i64, rt2: i64, rn: i64, imm7: i64) i64 {
+    return encode_ldp_stp_pre(rt1, rt2, rn, imm7, false);
+}
+
+// LDP/STP with post-index (adjust base after access)
+fn encode_ldp_stp_post(rt1: i64, rt2: i64, rn: i64, imm7: i64, is_load: bool) i64 {
+    var l: i64 = 0;
+    if is_load { l = 1; }
+    // Encoding: 10 101 0 001 L imm7 Rt2 Rn Rt (001 = post-index)
+    return (2 << 30) |
+           (5 << 27) |
+           (0 << 26) |
+           (1 << 23) |         // 0b001 = 1 (post-index)
+           (l << 22) |
+           ((imm7 & 127) << 15) |
+           ((rt2 & 31) << 10) |
+           encode_rn(rn) |
+           encode_rd(rt1);
+}
+
+fn encode_ldp_post(rt1: i64, rt2: i64, rn: i64, imm7: i64) i64 {
+    return encode_ldp_stp_post(rt1, rt2, rn, imm7, true);
+}
+
+fn encode_stp_post(rt1: i64, rt2: i64, rn: i64, imm7: i64) i64 {
+    return encode_ldp_stp_post(rt1, rt2, rn, imm7, false);
+}
+
+// ============================================================================
+// Branches
+// ============================================================================
+
+// Encode unconditional branch (B/BL).
+fn encode_branch(imm26: i64, is_link: bool) i64 {
+    var op: i64 = 0;
+    if is_link { op = 1; }
+    // Encoding: op 00101 imm26
+    return (op << 31) |
+           (5 << 26) |         // 0b00101 = 5
+           (imm26 & 67108863); // 26 bits
+}
+
+fn encode_b(imm26: i64) i64 {
+    return encode_branch(imm26, false);
+}
+
+fn encode_bl(imm26: i64) i64 {
+    return encode_branch(imm26, true);
+}
+
+// Encode branch to register (BR/BLR/RET).
+fn encode_branch_reg(rn: i64, is_link: bool, is_ret: bool) i64 {
+    var op: i64 = 0;
+    if is_link { op = 1; }
+    if is_ret { op = 2; }
+    // Encoding: 1101011 0 0 op 11111 0000 00 Rn 00000
+    return (107 << 25) |       // 0b1101011 = 107
+           (0 << 24) |
+           (0 << 23) |
+           (op << 21) |
+           (31 << 16) |        // 0b11111 = 31
+           (0 << 10) |
+           encode_rn(rn) |
+           0;                  // Rd = 0
+}
+
+fn encode_br(rn: i64) i64 {
+    return encode_branch_reg(rn, false, false);
+}
+
+fn encode_blr(rn: i64) i64 {
+    return encode_branch_reg(rn, true, false);
+}
+
+fn encode_ret(rn: i64) i64 {
+    return encode_branch_reg(rn, false, true);
+}
+
+// ============================================================================
+// Conditional Branch
+// ============================================================================
+
+// Condition codes
+const COND_EQ: i64 = 0;   // Equal (Z=1)
+const COND_NE: i64 = 1;   // Not equal (Z=0)
+const COND_CS: i64 = 2;   // Carry set / unsigned >= (C=1)
+const COND_CC: i64 = 3;   // Carry clear / unsigned < (C=0)
+const COND_MI: i64 = 4;   // Minus / negative (N=1)
+const COND_PL: i64 = 5;   // Plus / positive or zero (N=0)
+const COND_VS: i64 = 6;   // Overflow (V=1)
+const COND_VC: i64 = 7;   // No overflow (V=0)
+const COND_HI: i64 = 8;   // Unsigned > (C=1 and Z=0)
+const COND_LS: i64 = 9;   // Unsigned <= (C=0 or Z=1)
+const COND_GE: i64 = 10;  // Signed >= (N=V)
+const COND_LT: i64 = 11;  // Signed < (N!=V)
+const COND_GT: i64 = 12;  // Signed > (Z=0 and N=V)
+const COND_LE: i64 = 13;  // Signed <= (Z=1 or N!=V)
+const COND_AL: i64 = 14;  // Always
+
+// Encode conditional branch (B.cond).
+fn encode_b_cond(imm19: i64, cond: i64) i64 {
+    // Encoding: 0101010 0 imm19 0 cond
+    return (84 << 24) |        // 0b01010100 = 84
+           ((imm19 & 524287) << 5) |  // 19 bits
+           (0 << 4) |
+           (cond & 15);
+}
+
+fn encode_beq(imm19: i64) i64 { return encode_b_cond(imm19, COND_EQ); }
+fn encode_bne(imm19: i64) i64 { return encode_b_cond(imm19, COND_NE); }
+fn encode_blt(imm19: i64) i64 { return encode_b_cond(imm19, COND_LT); }
+fn encode_ble(imm19: i64) i64 { return encode_b_cond(imm19, COND_LE); }
+fn encode_bgt(imm19: i64) i64 { return encode_b_cond(imm19, COND_GT); }
+fn encode_bge(imm19: i64) i64 { return encode_b_cond(imm19, COND_GE); }
+fn encode_bhi(imm19: i64) i64 { return encode_b_cond(imm19, COND_HI); }
+fn encode_bls(imm19: i64) i64 { return encode_b_cond(imm19, COND_LS); }
+fn encode_bcs(imm19: i64) i64 { return encode_b_cond(imm19, COND_CS); }
+fn encode_bcc(imm19: i64) i64 { return encode_b_cond(imm19, COND_CC); }
+
+// ============================================================================
+// Compare and Branch (CBZ/CBNZ)
+// ============================================================================
+
+fn encode_cbz_cbnz(rt: i64, imm19: i64, is_nonzero: bool) i64 {
+    let sf: i64 = 1;  // 64-bit
+    var op: i64 = 0;
+    if is_nonzero { op = 1; }
+    // Encoding: sf 011010 op imm19 Rt
+    return (sf << 31) |
+           (26 << 25) |        // 0b011010 = 26
+           (op << 24) |
+           ((imm19 & 524287) << 5) |
+           encode_rd(rt);
+}
+
+fn encode_cbz(rt: i64, imm19: i64) i64 {
+    return encode_cbz_cbnz(rt, imm19, false);
+}
+
+fn encode_cbnz(rt: i64, imm19: i64) i64 {
+    return encode_cbz_cbnz(rt, imm19, true);
+}
+
+// ============================================================================
+// Logical Operations (AND/ORR/EOR)
+// ============================================================================
+
+// Logical operation opcodes
+const LOG_AND: i64 = 0;   // 0b00
+const LOG_ORR: i64 = 1;   // 0b01
+const LOG_EOR: i64 = 2;   // 0b10
+
+// Encode logical register operation.
+fn encode_logical_reg(rd: i64, rn: i64, rm: i64, op: i64, set_flags: bool) i64 {
+    let sf: i64 = 1;  // 64-bit
+    var n: i64 = 0;   // No NOT
+    // Encoding: sf opc 01010 shift N Rm imm6 Rn Rd
+    return (sf << 31) |
+           (op << 29) |
+           (10 << 24) |        // 0b01010 = 10
+           (0 << 22) |         // shift = LSL
+           (n << 21) |
+           encode_rm(rm) |
+           (0 << 10) |         // imm6 = 0
+           encode_rn(rn) |
+           encode_rd(rd);
+}
+
+fn encode_and_reg(rd: i64, rn: i64, rm: i64) i64 {
+    return encode_logical_reg(rd, rn, rm, LOG_AND, false);
+}
+
+fn encode_orr_reg(rd: i64, rn: i64, rm: i64) i64 {
+    return encode_logical_reg(rd, rn, rm, LOG_ORR, false);
+}
+
+fn encode_eor_reg(rd: i64, rn: i64, rm: i64) i64 {
+    return encode_logical_reg(rd, rn, rm, LOG_EOR, false);
+}
+
+// ============================================================================
+// Shift Operations
+// ============================================================================
+
+// Encode variable shift (LSL/LSR/ASR).
+fn encode_shift_var(rd: i64, rn: i64, rm: i64, op: i64) i64 {
+    let sf: i64 = 1;  // 64-bit
+    // Encoding: sf 0 0 11010110 Rm 0010 op Rn Rd
+    return (sf << 31) |
+           (0 << 30) |
+           (0 << 29) |
+           (214 << 21) |       // 0b11010110 = 214
+           encode_rm(rm) |
+           (2 << 12) |         // 0b0010 = 2
+           (op << 10) |
+           encode_rn(rn) |
+           encode_rd(rd);
+}
+
+fn encode_lsl_reg(rd: i64, rn: i64, rm: i64) i64 {
+    return encode_shift_var(rd, rn, rm, 0);  // op = 00
+}
+
+fn encode_lsr_reg(rd: i64, rn: i64, rm: i64) i64 {
+    return encode_shift_var(rd, rn, rm, 1);  // op = 01
+}
+
+fn encode_asr_reg(rd: i64, rn: i64, rm: i64) i64 {
+    return encode_shift_var(rd, rn, rm, 2);  // op = 10
+}
+
+// ============================================================================
+// Bitfield Operations (UBFM for LSL/LSR immediate)
+// ============================================================================
+
+// Encode UBFM (Unsigned Bitfield Move) - basis for LSL/LSR immediate
+fn encode_ubfm(rd: i64, rn: i64, immr: i64, imms: i64) i64 {
+    let sf: i64 = 1;  // 64-bit
+    let n: i64 = 1;   // N=1 for 64-bit
+    // Encoding: sf 10 100110 N immr imms Rn Rd
+    return (sf << 31) |
+           (2 << 29) |         // opc = 10
+           (38 << 23) |        // 0b100110 = 38
+           (n << 22) |
+           ((immr & 63) << 16) |
+           ((imms & 63) << 10) |
+           encode_rn(rn) |
+           encode_rd(rd);
+}
+
+// LSL immediate is UBFM with immr = -shift mod 64, imms = 63 - shift
+fn encode_lsl_imm(rd: i64, rn: i64, shift: i64) i64 {
+    let immr: i64 = (64 - shift) & 63;
+    let imms: i64 = 63 - shift;
+    return encode_ubfm(rd, rn, immr, imms);
+}
+
+// LSR immediate is UBFM with immr = shift, imms = 63
+fn encode_lsr_imm(rd: i64, rn: i64, shift: i64) i64 {
+    return encode_ubfm(rd, rn, shift, 63);
+}
+
+// Encode SBFM (Signed Bitfield Move) - basis for ASR immediate
+fn encode_sbfm(rd: i64, rn: i64, immr: i64, imms: i64) i64 {
+    let sf: i64 = 1;  // 64-bit
+    let n: i64 = 1;   // N=1 for 64-bit
+    // Encoding: sf 00 100110 N immr imms Rn Rd
+    return (sf << 31) |
+           (0 << 29) |         // opc = 00
+           (38 << 23) |        // 0b100110 = 38
+           (n << 22) |
+           ((immr & 63) << 16) |
+           ((imms & 63) << 10) |
+           encode_rn(rn) |
+           encode_rd(rd);
+}
+
+// ASR immediate is SBFM with immr = shift, imms = 63
+fn encode_asr_imm(rd: i64, rn: i64, shift: i64) i64 {
+    return encode_sbfm(rd, rn, shift, 63);
+}
+
+// ============================================================================
+// Conditional Select (CSEL/CSINC)
+// ============================================================================
+
+fn encode_csel(rd: i64, rn: i64, rm: i64, cond: i64) i64 {
+    let sf: i64 = 1;  // 64-bit
+    // Encoding: sf 0 0 11010100 Rm cond 0 0 Rn Rd
+    return (sf << 31) |
+           (0 << 30) |
+           (0 << 29) |
+           (212 << 21) |       // 0b11010100 = 212
+           encode_rm(rm) |
+           ((cond & 15) << 12) |
+           (0 << 11) |
+           (0 << 10) |
+           encode_rn(rn) |
+           encode_rd(rd);
+}
+
+fn encode_csinc(rd: i64, rn: i64, rm: i64, cond: i64) i64 {
+    let sf: i64 = 1;  // 64-bit
+    // Encoding: sf 0 0 11010100 Rm cond 0 1 Rn Rd
+    return (sf << 31) |
+           (0 << 30) |
+           (0 << 29) |
+           (212 << 21) |
+           encode_rm(rm) |
+           ((cond & 15) << 12) |
+           (0 << 11) |
+           (1 << 10) |
+           encode_rn(rn) |
+           encode_rd(rd);
+}
+
+// CSET is CSINC with Rn=Rm=XZR and inverted condition
+fn encode_cset(rd: i64, cond: i64) i64 {
+    let inv_cond: i64 = cond ^ 1;  // Invert condition
+    return encode_csinc(rd, 31, 31, inv_cond);
+}
+
+// ============================================================================
+// Negate
+// ============================================================================
+
+// NEG is SUB with Rn=XZR
+fn encode_neg(rd: i64, rm: i64) i64 {
+    return encode_sub_reg(rd, 31, rm);
+}
+
+// MVN (bitwise NOT) is ORN with Rn=XZR
+fn encode_mvn(rd: i64, rm: i64) i64 {
+    let sf: i64 = 1;  // 64-bit
+    // ORN: sf 01 01010 shift 1 Rm imm6 Rn Rd
+    return (sf << 31) |
+           (1 << 29) |         // opc = 01
+           (10 << 24) |        // 0b01010 = 10
+           (0 << 22) |         // shift = LSL
+           (1 << 21) |         // N = 1 (NOT)
+           encode_rm(rm) |
+           (0 << 10) |         // imm6 = 0
+           encode_rn(31) |     // Rn = XZR
+           encode_rd(rd);
+}
+
+// ============================================================================
+// NOP
+// ============================================================================
+
+fn encode_nop() i64 {
+    // NOP: 11010101 0000 0011 0010 0000 0001 1111
+    return 3573751839;  // 0xD503201F
+}
+
