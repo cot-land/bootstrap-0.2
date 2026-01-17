@@ -1,6 +1,6 @@
 # Cot Language Syntax Reference
 
-**Generated from bootstrap analysis on 2026-01-15**
+**Generated from bootstrap analysis on 2026-01-17**
 
 This document defines the Cot language syntax as implemented in bootstrap-0.2.
 
@@ -86,6 +86,17 @@ false
 ```cot
 null
 ```
+
+### Undefined Literal
+```cot
+undefined    // Represents uninitialized memory
+```
+
+**Notes:**
+- Used for variables with explicit type annotations that will be initialized field-by-field
+- Example: `var v: MyStruct = undefined;`
+- Type is determined by context (the declared variable type)
+- Safer than uninitialized memory - currently emits zero-initialized value
 
 ---
 

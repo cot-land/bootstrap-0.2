@@ -19,6 +19,10 @@ See [cot0/ROADMAP.md](cot0/ROADMAP.md) for detailed self-hosting progress.
 | types.cot | Complete | 2/2 pass |
 | checker.cot | Complete | 4/4 pass |
 | ir.cot | Complete | passes |
+| ssa/op.cot | Complete | passes |
+| ssa/value.cot | Complete | passes |
+| ssa/block.cot | Complete | passes |
+| ssa/func.cot | Complete | passes |
 
 ### Open Bugs (2026-01-17)
 
