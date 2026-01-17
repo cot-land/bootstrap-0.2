@@ -210,6 +210,11 @@ fn check_expr(chk: *Checker, node_idx: i64) i64 {
         return TYPE_I64;
     }
 
+    // StringLit -> string
+    if node.kind == NodeKind.StringLit {
+        return TYPE_STRING;
+    }
+
     // Ident -> lookup in scope
     if node.kind == NodeKind.Ident {
         let name_start: i64 = node.field0;
@@ -237,7 +242,8 @@ fn check_expr(chk: *Checker, node_idx: i64) i64 {
         let right_type: i64 = check_expr(chk, right);
 
         // For arithmetic ops, both must be numeric
-        if op == 0 or op == 1 or op == 2 or op == 3 {  // Add, Sub, Mul, Div
+        // ops: 0=Add, 1=Sub, 2=Mul, 3=Div, 4=Mod
+        if op == 0 or op == 1 or op == 2 or op == 3 or op == 4 {
             if not is_numeric(chk.type_pool, left_type) {
                 chk.error_count = chk.error_count + 1;
                 return TYPE_INVALID;
@@ -248,6 +254,39 @@ fn check_expr(chk: *Checker, node_idx: i64) i64 {
             }
             // Result is the same type (simplified - assume i64)
             return left_type;
+        }
+
+        // Comparison ops return bool
+        // ops: 5=Equal, 6=NotEqual, 7=Less, 8=LessEq, 9=Greater, 10=GreaterEq
+        if op == 5 or op == 6 or op == 7 or op == 8 or op == 9 or op == 10 {
+            // Both operands should be comparable (same type or numeric)
+            if is_numeric(chk.type_pool, left_type) and is_numeric(chk.type_pool, right_type) {
+                return TYPE_BOOL;
+            }
+            // String comparison
+            if is_string(chk.type_pool, left_type) and is_string(chk.type_pool, right_type) {
+                return TYPE_BOOL;
+            }
+            // Same type comparison (bool == bool, etc.)
+            if types_equal(chk.type_pool, left_type, right_type) {
+                return TYPE_BOOL;
+            }
+            chk.error_count = chk.error_count + 1;
+            return TYPE_INVALID;
+        }
+
+        // Logical ops (and, or) require bool operands, return bool
+        // ops: 11=And, 12=Or
+        if op == 11 or op == 12 {
+            if not is_bool(chk.type_pool, left_type) {
+                chk.error_count = chk.error_count + 1;
+                return TYPE_INVALID;
+            }
+            if not is_bool(chk.type_pool, right_type) {
+                chk.error_count = chk.error_count + 1;
+                return TYPE_INVALID;
+            }
+            return TYPE_BOOL;
         }
 
         return TYPE_INVALID;
@@ -267,6 +306,66 @@ fn check_expr(chk: *Checker, node_idx: i64) i64 {
 
         // Get return type of function
         return type_ret(chk.type_pool, callee_type);
+    }
+
+    // UnaryExpr -> check operand, return appropriate type
+    if node.kind == NodeKind.UnaryExpr {
+        let operand: i64 = node.field0;
+        let op: i64 = node.field1;  // 0=Neg, 1=Not, 2=BitNot
+
+        let operand_type: i64 = check_expr(chk, operand);
+
+        // Negation requires numeric, returns same type
+        if op == 0 {
+            if not is_numeric(chk.type_pool, operand_type) {
+                chk.error_count = chk.error_count + 1;
+                return TYPE_INVALID;
+            }
+            return operand_type;
+        }
+
+        // Logical not requires bool, returns bool
+        if op == 1 {
+            if not is_bool(chk.type_pool, operand_type) {
+                chk.error_count = chk.error_count + 1;
+                return TYPE_INVALID;
+            }
+            return TYPE_BOOL;
+        }
+
+        // Bitwise not requires integer, returns same type
+        if op == 2 {
+            if not is_integer(chk.type_pool, operand_type) {
+                chk.error_count = chk.error_count + 1;
+                return TYPE_INVALID;
+            }
+            return operand_type;
+        }
+
+        return TYPE_INVALID;
+    }
+
+    // AddressOf -> returns pointer to operand type
+    if node.kind == NodeKind.AddressOf {
+        let operand: i64 = node.field0;
+        let operand_type: i64 = check_expr(chk, operand);
+
+        // Create pointer type
+        return type_make_pointer(chk.type_pool, operand_type);
+    }
+
+    // DerefExpr -> operand must be pointer, returns element type
+    if node.kind == NodeKind.DerefExpr {
+        let operand: i64 = node.field0;
+        let operand_type: i64 = check_expr(chk, operand);
+
+        if not is_pointer(chk.type_pool, operand_type) {
+            chk.error_count = chk.error_count + 1;
+            return TYPE_INVALID;
+        }
+
+        // Return element type
+        return type_elem(chk.type_pool, operand_type);
     }
 
     return TYPE_INVALID;
@@ -326,7 +425,86 @@ fn check_stmt(chk: *Checker, node_idx: i64) bool {
         return has_return;
     }
 
+    // IfStmt -> check condition is bool, check both branches
+    if node.kind == NodeKind.IfStmt {
+        let cond: i64 = node.field0;
+        let then_body: i64 = node.field1;
+        let else_body: i64 = node.field2;
+
+        // Check condition is boolean
+        let cond_type: i64 = check_expr(chk, cond);
+        if not is_bool(chk.type_pool, cond_type) {
+            chk.error_count = chk.error_count + 1;
+        }
+
+        // Check then branch
+        let then_returns: bool = check_stmt(chk, then_body);
+
+        // Check else branch if present
+        var else_returns: bool = false;
+        if else_body >= 0 {
+            else_returns = check_stmt(chk, else_body);
+        }
+
+        // Returns only if both branches return
+        return then_returns and else_returns;
+    }
+
+    // WhileStmt -> check condition is bool, check body
+    if node.kind == NodeKind.WhileStmt {
+        let cond: i64 = node.field0;
+        let body: i64 = node.field1;
+
+        // Check condition is boolean
+        let cond_type: i64 = check_expr(chk, cond);
+        if not is_bool(chk.type_pool, cond_type) {
+            chk.error_count = chk.error_count + 1;
+        }
+
+        // Track that we're in a loop
+        let old_in_loop: bool = chk.in_loop;
+        chk.in_loop = true;
+
+        // Check body
+        check_stmt(chk, body);
+
+        // Restore loop state
+        chk.in_loop = old_in_loop;
+
+        // While loops don't guarantee return
+        return false;
+    }
+
     return false;
+}
+
+// ============================================================================
+// Type Checking - Variable Declarations
+// ============================================================================
+
+// Check a variable declaration and add to scope
+fn check_var_decl(chk: *Checker, node_idx: i64) {
+    if node_idx < 0 { return; }
+
+    let node: *Node = node_get(chk.ast_pool, node_idx);
+    if node.kind != NodeKind.VarDecl { return; }
+
+    let is_let: i64 = node.field0;      // 1 = let (immutable), 0 = var (mutable)
+    let name_start: i64 = node.field1;
+    let name_len: i64 = node.field2;
+    let init_expr: i64 = node.field3;
+
+    // Determine type from initializer expression
+    var var_type: i64 = TYPE_INVALID;
+    if init_expr >= 0 {
+        var_type = check_expr(chk, init_expr);
+    }
+
+    // Create symbol and add to current scope
+    let mutable: bool = is_let == 0;
+    let sym: Symbol = symbol_new(name_start, name_len, SymbolKind.Variable,
+                                  var_type, node_idx, mutable);
+    scope_define(chk.scope_pool, chk.current_scope, sym);
 }
 
 // ============================================================================

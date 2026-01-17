@@ -27,7 +27,7 @@
 | `ast_test.cot` | 7/7 pass |
 | `parser_test.cot` | 22/22 pass |
 | `types_test.cot` | 2/2 pass |
-| `checker_test.cot` | 2/2 pass |
+| `checker_test.cot` | 4/4 pass |
 | `ir_test.cot` | passes |
 
 ---
@@ -78,11 +78,14 @@ TokenType.Ident                 // Enum variant access
 
 ### Tasks
 
-1. [ ] Scope management for structs/enums/functions
-2. [ ] Variable declaration checking
-3. [ ] Control flow checking
+1. [x] Scope management (define, lookup, parent chain)
+2. [x] Variable declaration checking (check_var_decl)
+3. [x] Control flow checking (if/while condition must be bool)
 4. [ ] Struct/enum type checking
-5. [ ] Pointer operations checking
+5. [x] Pointer operations checking (address-of, dereference)
+6. [x] Comparison operators return bool
+7. [x] Logical operators (and/or) require bool operands
+8. [x] Unary operators (neg, not, bitnot) type checking
 
 ---
 

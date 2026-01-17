@@ -17,7 +17,7 @@ See [cot0/ROADMAP.md](cot0/ROADMAP.md) for detailed self-hosting progress.
 | ast.cot | Complete | 7/7 pass |
 | parser.cot | Complete | 22/22 pass |
 | types.cot | Complete | 2/2 pass |
-| checker.cot | Complete | 2/2 pass |
+| checker.cot | Complete | 4/4 pass |
 | ir.cot | Complete | passes |
 
 ### Open Bugs (2026-01-17)
