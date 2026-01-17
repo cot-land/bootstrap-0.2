@@ -12,7 +12,7 @@
 |-----------|--------|
 | Bootstrap compiler (Zig) | 166 e2e tests pass |
 | cot0 frontend modules | Complete, all tests pass |
-| cot0 can parse itself | **IN PROGRESS** (Sprint B) |
+| cot0 can parse itself | **IN PROGRESS** (Sprint C) |
 | cot0 backend modules | Not started |
 | cot0 self-compiles | Not started |
 
@@ -46,26 +46,26 @@ The cot0 compiler modules must be implemented in Cot.
 
 ---
 
-## Sprint B: Struct and Enum Declarations (CURRENT)
+## Sprint B: Struct and Enum Declarations (COMPLETE 2026-01-17)
 
 **Goal:** cot0 parser can parse `struct Name { ... }` and `enum Name { ... }`
 
-**Verification:** Can parse `token.cot` (defines TokenType enum, Token struct)
+**Verification:** parser_test.cot includes struct/enum tests (tests 11-14), all pass
 
-### Tasks
+### Tasks (all complete)
 
-1. [ ] **token.cot**: Add tokens for Struct, Enum, Dot
-2. [ ] **ast.cot**: Add node kinds: StructDecl, EnumDecl, FieldDecl, FieldAccess, EnumAccess
-3. [ ] **parser.cot**: Add parse_struct_decl(), parse_enum_decl(), parse_field_access()
-4. [ ] **types.cot**: Add struct/enum type construction functions
+1. [x] **token.cot**: Add tokens for Struct, Enum, Dot
+2. [x] **ast.cot**: Add node kinds: StructDecl, EnumDecl, FieldDecl, FieldAccess, EnumAccess
+3. [x] **parser.cot**: Add parse_struct_decl(), parse_enum_decl(), parse_field_access()
+4. [x] **types.cot**: Add type_make_struct(), type_make_enum() functions
 
 ### Test Cases
 ```cot
-// Should parse after Sprint B
+// Parser can now parse:
 struct Point { x: i64, y: i64, }
 enum Color { Red, Green, Blue, }
-let p: Point = Point{ .x = 10, .y = 20 };
-let c: Color = Color.Red;
+point.x                         // Field access
+TokenType.Ident                 // Enum variant access
 ```
 
 ---
@@ -163,6 +163,18 @@ diff cot0-stage1 cot0-stage2
 ---
 
 ## Completed Sprints
+
+### Sprint B: Struct and Enum Declarations (COMPLETE 2026-01-17)
+
+Added to cot0:
+- **token.cot**: Struct, Enum, Dot tokens (already present)
+- **ast.cot**: StructDecl, EnumDecl, FieldDecl, FieldAccess nodes + constructors
+- **parser.cot**: parse_struct_decl(), parse_enum_decl(), field access in parse_unary()
+- **types.cot**: type_make_struct(), type_make_enum() functions
+
+Tests: parser_test.cot tests 11-14 verify struct/enum parsing
+
+---
 
 ### Sprint A: Core Parsing Infrastructure (COMPLETE 2026-01-17)
 

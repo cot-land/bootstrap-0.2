@@ -281,6 +281,50 @@ fn type_add_param(pool: *TypePool, param_type: i64) i64 {
     return idx;
 }
 
+// Create a struct type: struct { fields }
+// fields_start and fields_count index into params array (used for field types)
+fn type_make_struct(pool: *TypePool, name_start: i64, name_len: i64,
+                    fields_start: i64, fields_count: i64, size: i64, align: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let t: *Type = pool.types + idx;
+    t.kind = TypeKind.Struct;
+    t.elem = INVALID_TYPE;
+    t.len = 0;
+    t.ret_type = INVALID_TYPE;
+    t.params_start = fields_start;  // Reuse params for field types
+    t.params_count = fields_count;
+    t.name_start = name_start;
+    t.name_len = name_len;
+    t.size = size;
+    t.align = align;
+
+    return idx;
+}
+
+// Create an enum type: enum { variants }
+// Enums are i32-sized by default (like Go)
+fn type_make_enum(pool: *TypePool, name_start: i64, name_len: i64,
+                  variants_count: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let t: *Type = pool.types + idx;
+    t.kind = TypeKind.Enum;
+    t.elem = INVALID_TYPE;
+    t.len = variants_count;  // Store variant count in len field
+    t.ret_type = INVALID_TYPE;
+    t.params_start = 0;
+    t.params_count = 0;
+    t.name_start = name_start;
+    t.name_len = name_len;
+    t.size = 4;   // Enums are 4 bytes (i32)
+    t.align = 4;
+
+    return idx;
+}
+
 // Get parameter type at index
 fn type_get_param(pool: *TypePool, params_start: i64, offset: i64) i64 {
     let ptr: *i64 = pool.params + params_start + offset;
@@ -365,6 +409,18 @@ fn is_func(pool: *TypePool, idx: i64) bool {
 fn is_string(pool: *TypePool, idx: i64) bool {
     let t: *Type = type_get(pool, idx);
     return t.kind == TypeKind.String;
+}
+
+// Check if type is a struct
+fn is_struct(pool: *TypePool, idx: i64) bool {
+    let t: *Type = type_get(pool, idx);
+    return t.kind == TypeKind.Struct;
+}
+
+// Check if type is an enum
+fn is_enum(pool: *TypePool, idx: i64) bool {
+    let t: *Type = type_get(pool, idx);
+    return t.kind == TypeKind.Enum;
 }
 
 // ============================================================================
