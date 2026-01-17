@@ -412,8 +412,20 @@ pub fn computeLiveness(allocator: std.mem.Allocator, f: *Func) !LivenessResult {
             debug.log(.regalloc, "      Initial live-out: {} values", .{old_size});
 
             // Process successors: add phi arguments
+            // Go reference: lines 2889-2906
+            // After adding phi args, we must update this block's live_out
+            // because these values are live at the END of this block
+            const before_phi_size = live.size();
             try processSuccessorPhis(allocator, &live, block);
             debug.log(.regalloc, "      After phi args: {} live", .{live.size()});
+
+            // If phi args were added, update this block's live_out
+            // Go reference: line 2905 "s.live[b.ID] = updateLive(live, s.live[b.ID])"
+            if (live.size() > before_phi_size) {
+                try result.blocks[block_idx].updateLiveOut(&live);
+                debug.log(.regalloc, "      Updated block {} live-out with phi args: {} values", .{ block.id, live.size() });
+                changed = true;
+            }
 
             // Adjust distances for block length
             const block_len: i32 = @intCast(block.values.items.len);
@@ -458,6 +470,8 @@ pub fn computeLiveness(allocator: std.mem.Allocator, f: *Func) !LivenessResult {
             debug.log(.regalloc, "      After processing values: {} live", .{live.size()});
 
             // Propagate to predecessors
+            // Go reference: regalloc.go lines 2961-2999
+            // Values live at the START of this block must be live at the END of each predecessor
             for (block.preds) |pred_edge| {
                 const pred = pred_edge.b;
 
@@ -465,38 +479,38 @@ pub fn computeLiveness(allocator: std.mem.Allocator, f: *Func) !LivenessResult {
                 const delta = branchDistance(pred, block);
                 debug.log(.regalloc, "      Propagating to pred block {}, delta={}", .{ pred.id, delta });
 
-                // Check if any new values need to be added to predecessor's live-out
+                // Build a temporary map starting with predecessor's current live-out
+                // Go reference: lines 2968-2971
+                var t = LiveMap.init();
+                defer t.deinit(allocator);
+                for (result.blocks[pred_idx].live_out) |e| {
+                    try t.setForce(allocator, e.id, e.dist, e.pos);
+                }
+
+                // Add new values from live (live at start of current block)
+                // Go reference: lines 2975-2981
+                var update = false;
                 for (live.items()) |info| {
                     const new_dist = if (info.dist == unknown_distance)
                         unknown_distance
                     else
                         info.dist + delta;
 
-                    const existing = result.blocks[pred_idx].live_out;
-                    var found = false;
-                    for (existing) |e| {
-                        if (e.id == info.id) {
-                            found = true;
-                            if (new_dist != unknown_distance and
-                                (e.dist == unknown_distance or new_dist < e.dist))
-                            {
-                                debug.log(.regalloc, "        v{} dist updated: {} -> {}", .{ info.id, e.dist, new_dist });
-                                changed = true;
-                            }
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        debug.log(.regalloc, "        v{} NEW to pred {} live-out, dist={}", .{ info.id, pred.id, new_dist });
-                        changed = true;
+                    // Update if new value OR better distance
+                    // Go reference: "if !t.contains(e.key) || d < t.get(e.key)"
+                    if (!t.contains(info.id) or (t.get(info.id) != null and new_dist < t.get(info.id).?)) {
+                        try t.setForce(allocator, info.id, new_dist, info.pos);
+                        debug.log(.regalloc, "        v{} added/updated in pred {} live-out, dist={}", .{ info.id, pred.id, new_dist });
+                        update = true;
                     }
                 }
-            }
 
-            // Update live-out if changed
-            if (live.size() != old_size or changed) {
-                try result.blocks[block_idx].updateLiveOut(&live);
-                debug.log(.regalloc, "      Updated live-out for block {}: {} values", .{ block.id, live.size() });
+                // Update predecessor's live-out if anything changed
+                if (update) {
+                    try result.blocks[pred_idx].updateLiveOut(&t);
+                    debug.log(.regalloc, "      Updated pred {} live-out: {} values", .{ pred.id, t.size() });
+                    changed = true;
+                }
             }
         }
     }

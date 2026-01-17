@@ -281,6 +281,15 @@ pub const Func = struct {
         try self.setHome(v, .{ .stack = offset });
     }
 
+    /// Clear the home assignment for a value.
+    /// Used when a rematerializeable value is evicted - the original value
+    /// should not be emitted during codegen (only the rematerialized copy).
+    pub fn clearHome(self: *Func, vid: ID) void {
+        if (vid < self.reg_alloc.len) {
+            self.reg_alloc[vid] = null;
+        }
+    }
+
     // =========================================
     // Value allocation
     // =========================================

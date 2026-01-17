@@ -1,39 +1,162 @@
 // Tests for token.cot
+// Sprint A: Extended keyword recognition
 import "token.cot"
 
 fn main() i64 {
     var passed: i64 = 0;
+    var failed: i64 = 0;
 
     // Test 1: token_new creates token correctly
     let t1: Token = token_new(TokenType.Int, 10, 15);
     if t1.start == 10 and t1.end == 15 {
         passed = passed + 1;
+    } else {
+        println("FAIL: token_new");
+        failed = failed + 1;
     }
 
     // Test 2: is_keyword recognizes "fn"
-    let fn_kw: string = "fn";
-    if is_keyword(fn_kw) == TokenType.Fn {
+    if is_keyword("fn") == TokenType.Fn {
         passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword fn");
+        failed = failed + 1;
     }
 
     // Test 3: is_keyword recognizes "i64"
-    let i64_kw: string = "i64";
-    if is_keyword(i64_kw) == TokenType.I64 {
+    if is_keyword("i64") == TokenType.I64 {
         passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword i64");
+        failed = failed + 1;
     }
 
     // Test 4: is_keyword recognizes "return"
-    let ret_kw: string = "return";
-    if is_keyword(ret_kw) == TokenType.Return {
+    if is_keyword("return") == TokenType.Return {
         passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword return");
+        failed = failed + 1;
     }
 
     // Test 5: is_keyword returns Ident for non-keywords
-    let foo: string = "foo";
-    if is_keyword(foo) == TokenType.Ident {
+    if is_keyword("foo") == TokenType.Ident {
         passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword foo");
+        failed = failed + 1;
     }
 
-    // Return number of passed tests (expect 5)
+    // Sprint A: New keyword tests
+
+    // Test 6: is_keyword recognizes "let"
+    if is_keyword("let") == TokenType.Let {
+        passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword let");
+        failed = failed + 1;
+    }
+
+    // Test 7: is_keyword recognizes "var"
+    if is_keyword("var") == TokenType.Var {
+        passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword var");
+        failed = failed + 1;
+    }
+
+    // Test 8: is_keyword recognizes "if"
+    if is_keyword("if") == TokenType.If {
+        passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword if");
+        failed = failed + 1;
+    }
+
+    // Test 9: is_keyword recognizes "else"
+    if is_keyword("else") == TokenType.Else {
+        passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword else");
+        failed = failed + 1;
+    }
+
+    // Test 10: is_keyword recognizes "while"
+    if is_keyword("while") == TokenType.While {
+        passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword while");
+        failed = failed + 1;
+    }
+
+    // Test 11: is_keyword recognizes "bool"
+    if is_keyword("bool") == TokenType.Bool {
+        passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword bool");
+        failed = failed + 1;
+    }
+
+    // Test 12: is_keyword recognizes "true"
+    if is_keyword("true") == TokenType.True {
+        passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword true");
+        failed = failed + 1;
+    }
+
+    // Test 13: is_keyword recognizes "false"
+    if is_keyword("false") == TokenType.False {
+        passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword false");
+        failed = failed + 1;
+    }
+
+    // Test 14: is_keyword recognizes "and"
+    if is_keyword("and") == TokenType.And {
+        passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword and");
+        failed = failed + 1;
+    }
+
+    // Test 15: is_keyword recognizes "or"
+    if is_keyword("or") == TokenType.Or {
+        passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword or");
+        failed = failed + 1;
+    }
+
+    // Test 16: is_keyword recognizes "not"
+    if is_keyword("not") == TokenType.Not {
+        passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword not");
+        failed = failed + 1;
+    }
+
+    // Test 17: is_keyword recognizes "struct"
+    if is_keyword("struct") == TokenType.Struct {
+        passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword struct");
+        failed = failed + 1;
+    }
+
+    // Test 18: is_keyword recognizes "enum"
+    if is_keyword("enum") == TokenType.Enum {
+        passed = passed + 1;
+    } else {
+        println("FAIL: is_keyword enum");
+        failed = failed + 1;
+    }
+
+    if failed == 0 {
+        println("All 18 token tests passed!");
+    }
+
+    // Return passed count (expect 18)
     return passed;
 }

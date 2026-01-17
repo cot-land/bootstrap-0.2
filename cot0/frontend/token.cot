@@ -1,31 +1,105 @@
 // Cot0 Token Definitions
-// Minimal token set for: i64, arithmetic, functions, return
+// Sprint A: Control flow, variables, comparison/logical operators
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/syntax/tokens.go
 
 // Token type enumeration
 enum TokenType {
     // Literals
     Int,        // 42, 0xFF, 0b1010
+    StringLit,  // "hello"
 
-    // Identifiers and keywords
+    // Identifiers
     Ident,      // foo, bar
-    Fn,         // fn
-    Return,     // return
-    I64,        // i64
 
-    // Punctuation
+    // Keywords - declarations
+    Fn,         // fn
+    Let,        // let
+    Var,        // var
+    Const,      // const
+    Struct,     // struct
+    Enum,       // enum
+    Import,     // import
+
+    // Keywords - control flow
+    Return,     // return
+    If,         // if
+    Else,       // else
+    While,      // while
+    For,        // for
+    In,         // in
+    Break,      // break
+    Continue,   // continue
+
+    // Keywords - types
+    I64,        // i64
+    I32,        // i32
+    U8,         // u8
+    Bool,       // bool
+    Void,       // void
+    String,     // string (slice type)
+
+    // Keywords - literals
+    True,       // true
+    False,      // false
+    Null,       // null
+
+    // Keywords - logical operators (word form)
+    And,        // and
+    Or,         // or
+    Not,        // not
+
+    // Punctuation - delimiters
     LParen,     // (
     RParen,     // )
     LBrace,     // {
     RBrace,     // }
+    LBracket,   // [
+    RBracket,   // ]
     Comma,      // ,
     Colon,      // :
     Semi,       // ;
+    Dot,        // .
+    At,         // @
 
-    // Operators
+    // Operators - arithmetic
     Plus,       // +
     Minus,      // -
     Star,       // *
     Slash,      // /
+    Percent,    // %
+
+    // Operators - comparison (following Go's precCmp)
+    EqEq,       // ==
+    NotEq,      // !=
+    Less,       // <
+    LessEq,     // <=
+    Greater,    // >
+    GreaterEq,  // >=
+
+    // Operators - logical (symbol form)
+    AmpAmp,     // &&
+    PipePipe,   // ||
+    Bang,       // !
+
+    // Operators - bitwise
+    Amp,        // &
+    Pipe,       // |
+    Caret,      // ^
+    Tilde,      // ~
+    LessLess,   // <<
+    GreaterGreater, // >>
+
+    // Operators - assignment
+    Eq,         // =
+    PlusEq,     // +=
+    MinusEq,    // -=
+    StarEq,     // *=
+    SlashEq,    // /=
+    PercentEq,  // %=
+    AmpEq,      // &=
+    PipeEq,     // |=
+    CaretEq,    // ^=
 
     // Special
     Eof,        // end of file
@@ -49,23 +123,64 @@ fn token_new(k: TokenType, s: i64, e: i64) Token {
 }
 
 // Check if token is a keyword
+// Following Go's pattern from syntax/scanner.go keyword lookup
 fn is_keyword(text: string) TokenType {
-    if len(text) == 2 {
-        if text[0] == 102 and text[1] == 110 {  // "fn"
-            return TokenType.Fn;
+    let n: i64 = len(text);
+
+    // Length 2 keywords
+    if n == 2 {
+        if text[0] == 102 and text[1] == 110 { return TokenType.Fn; }      // fn
+        if text[0] == 105 and text[1] == 102 { return TokenType.If; }      // if
+        if text[0] == 105 and text[1] == 110 { return TokenType.In; }      // in
+        if text[0] == 111 and text[1] == 114 { return TokenType.Or; }      // or
+        if text[0] == 117 and text[1] == 56 { return TokenType.U8; }       // u8
+    }
+
+    // Length 3 keywords
+    if n == 3 {
+        if text[0] == 105 and text[1] == 54 and text[2] == 52 { return TokenType.I64; }   // i64
+        if text[0] == 105 and text[1] == 51 and text[2] == 50 { return TokenType.I32; }   // i32
+        if text[0] == 108 and text[1] == 101 and text[2] == 116 { return TokenType.Let; } // let
+        if text[0] == 118 and text[1] == 97 and text[2] == 114 { return TokenType.Var; }  // var
+        if text[0] == 102 and text[1] == 111 and text[2] == 114 { return TokenType.For; } // for
+        if text[0] == 97 and text[1] == 110 and text[2] == 100 { return TokenType.And; }  // and
+        if text[0] == 110 and text[1] == 111 and text[2] == 116 { return TokenType.Not; } // not
+    }
+
+    // Length 4 keywords
+    if n == 4 {
+        if text[0] == 98 and text[1] == 111 and text[2] == 111 and text[3] == 108 { return TokenType.Bool; }    // bool
+        if text[0] == 118 and text[1] == 111 and text[2] == 105 and text[3] == 100 { return TokenType.Void; }   // void
+        if text[0] == 116 and text[1] == 114 and text[2] == 117 and text[3] == 101 { return TokenType.True; }   // true
+        if text[0] == 101 and text[1] == 108 and text[2] == 115 and text[3] == 101 { return TokenType.Else; }   // else
+        if text[0] == 101 and text[1] == 110 and text[2] == 117 and text[3] == 109 { return TokenType.Enum; }   // enum
+        if text[0] == 110 and text[1] == 117 and text[2] == 108 and text[3] == 108 { return TokenType.Null; }   // null
+    }
+
+    // Length 5 keywords
+    if n == 5 {
+        if text[0] == 119 and text[1] == 104 and text[2] == 105 and text[3] == 108 and text[4] == 101 { return TokenType.While; }   // while
+        if text[0] == 98 and text[1] == 114 and text[2] == 101 and text[3] == 97 and text[4] == 107 { return TokenType.Break; }     // break
+        if text[0] == 99 and text[1] == 111 and text[2] == 110 and text[3] == 115 and text[4] == 116 { return TokenType.Const; }    // const
+        if text[0] == 102 and text[1] == 97 and text[2] == 108 and text[3] == 115 and text[4] == 101 { return TokenType.False; }    // false
+    }
+
+    // Length 6 keywords
+    if n == 6 {
+        if text[0] == 114 and text[1] == 101 and text[2] == 116 and text[3] == 117 and text[4] == 114 and text[5] == 110 { return TokenType.Return; }   // return
+        if text[0] == 115 and text[1] == 116 and text[2] == 114 and text[3] == 117 and text[4] == 99 and text[5] == 116 { return TokenType.Struct; }    // struct
+        if text[0] == 105 and text[1] == 109 and text[2] == 112 and text[3] == 111 and text[4] == 114 and text[5] == 116 { return TokenType.Import; }   // import
+        if text[0] == 115 and text[1] == 116 and text[2] == 114 and text[3] == 105 and text[4] == 110 and text[5] == 103 { return TokenType.String; }   // string
+    }
+
+    // Length 8 keywords
+    if n == 8 {
+        // continue
+        if text[0] == 99 and text[1] == 111 and text[2] == 110 and text[3] == 116 and
+           text[4] == 105 and text[5] == 110 and text[6] == 117 and text[7] == 101 {
+            return TokenType.Continue;
         }
     }
-    if len(text) == 3 {
-        if text[0] == 105 and text[1] == 54 and text[2] == 52 {  // "i64"
-            return TokenType.I64;
-        }
-    }
-    if len(text) == 6 {
-        // "return"
-        if text[0] == 114 and text[1] == 101 and text[2] == 116 and
-           text[3] == 117 and text[4] == 114 and text[5] == 110 {
-            return TokenType.Return;
-        }
-    }
+
     return TokenType.Ident;
 }

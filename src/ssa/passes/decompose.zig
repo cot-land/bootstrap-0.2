@@ -173,6 +173,51 @@ fn decomposeBlock(f: *Func, block: *Block, _: ?*const TypeRegistry) !bool {
             }
         }
 
+        // Rule 7: slice_len(string_make(ptr, len)) → len
+        // Same as string_len but for slice_len op (used in string comparison)
+        if (v.op == .slice_len and v.args.len >= 1) {
+            const arg = v.args[0];
+            if (arg.op == .string_make and arg.args.len >= 2) {
+                const len = arg.args[1];
+                v.op = .copy;
+                v.resetArgs();
+                v.addArg(len);
+                debug.log(.ssa, "  rewrite: slice_len(string_make) v{d} → copy(v{d})", .{ v.id, len.id });
+                changed = true;
+                continue;
+            }
+        }
+
+        // Rule 8: string_ptr(string_make(ptr, len)) → ptr
+        // Go reference: rewritedec.go rewriteValuedec_OpStringPtr
+        if (v.op == .string_ptr and v.args.len >= 1) {
+            const arg = v.args[0];
+            if (arg.op == .string_make and arg.args.len >= 2) {
+                const ptr = arg.args[0];
+                v.op = .copy;
+                v.resetArgs();
+                v.addArg(ptr);
+                debug.log(.ssa, "  rewrite: string_ptr(string_make) v{d} → copy(v{d})", .{ v.id, ptr.id });
+                changed = true;
+                continue;
+            }
+        }
+
+        // Rule 9: slice_ptr(string_make(ptr, len)) → ptr
+        // Same as string_ptr but for slice_ptr op (used in string comparison)
+        if (v.op == .slice_ptr and v.args.len >= 1) {
+            const arg = v.args[0];
+            if (arg.op == .string_make and arg.args.len >= 2) {
+                const ptr = arg.args[0];
+                v.op = .copy;
+                v.resetArgs();
+                v.addArg(ptr);
+                debug.log(.ssa, "  rewrite: slice_ptr(string_make) v{d} → copy(v{d})", .{ v.id, ptr.id });
+                changed = true;
+                continue;
+            }
+        }
+
         i += 1;
     }
 

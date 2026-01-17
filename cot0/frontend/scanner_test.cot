@@ -179,9 +179,193 @@ fn test_full_fn() i64 {
     return 0;
 }
 
+// Sprint A: Test comparison operators
+fn test_comparison_ops() i64 {
+    var s: Scanner = scanner_new("== != < <= > >=");
+
+    let t1: Token = scanner_next(&s);
+    if t1.kind != TokenType.EqEq { return 1; }
+
+    let t2: Token = scanner_next(&s);
+    if t2.kind != TokenType.NotEq { return 2; }
+
+    let t3: Token = scanner_next(&s);
+    if t3.kind != TokenType.Less { return 3; }
+
+    let t4: Token = scanner_next(&s);
+    if t4.kind != TokenType.LessEq { return 4; }
+
+    let t5: Token = scanner_next(&s);
+    if t5.kind != TokenType.Greater { return 5; }
+
+    let t6: Token = scanner_next(&s);
+    if t6.kind != TokenType.GreaterEq { return 6; }
+
+    return 0;
+}
+
+// Sprint A: Test logical operators
+fn test_logical_ops() i64 {
+    var s: Scanner = scanner_new("&& || ! and or not");
+
+    let t1: Token = scanner_next(&s);
+    if t1.kind != TokenType.AmpAmp { return 1; }
+
+    let t2: Token = scanner_next(&s);
+    if t2.kind != TokenType.PipePipe { return 2; }
+
+    let t3: Token = scanner_next(&s);
+    if t3.kind != TokenType.Bang { return 3; }
+
+    let t4: Token = scanner_next(&s);
+    if t4.kind != TokenType.And { return 4; }
+
+    let t5: Token = scanner_next(&s);
+    if t5.kind != TokenType.Or { return 5; }
+
+    let t6: Token = scanner_next(&s);
+    if t6.kind != TokenType.Not { return 6; }
+
+    return 0;
+}
+
+// Sprint A: Test new keywords
+fn test_new_keywords() i64 {
+    var s: Scanner = scanner_new("let var if else while bool true false");
+
+    let t1: Token = scanner_next(&s);
+    if t1.kind != TokenType.Let { return 1; }
+
+    let t2: Token = scanner_next(&s);
+    if t2.kind != TokenType.Var { return 2; }
+
+    let t3: Token = scanner_next(&s);
+    if t3.kind != TokenType.If { return 3; }
+
+    let t4: Token = scanner_next(&s);
+    if t4.kind != TokenType.Else { return 4; }
+
+    let t5: Token = scanner_next(&s);
+    if t5.kind != TokenType.While { return 5; }
+
+    let t6: Token = scanner_next(&s);
+    if t6.kind != TokenType.Bool { return 6; }
+
+    let t7: Token = scanner_next(&s);
+    if t7.kind != TokenType.True { return 7; }
+
+    let t8: Token = scanner_next(&s);
+    if t8.kind != TokenType.False { return 8; }
+
+    return 0;
+}
+
+// Sprint A: Test new punctuation
+fn test_new_punct() i64 {
+    var s: Scanner = scanner_new("[] . @ = += -=");
+
+    let t1: Token = scanner_next(&s);
+    if t1.kind != TokenType.LBracket { return 1; }
+
+    let t2: Token = scanner_next(&s);
+    if t2.kind != TokenType.RBracket { return 2; }
+
+    let t3: Token = scanner_next(&s);
+    if t3.kind != TokenType.Dot { return 3; }
+
+    let t4: Token = scanner_next(&s);
+    if t4.kind != TokenType.At { return 4; }
+
+    let t5: Token = scanner_next(&s);
+    if t5.kind != TokenType.Eq { return 5; }
+
+    let t6: Token = scanner_next(&s);
+    if t6.kind != TokenType.PlusEq { return 6; }
+
+    let t7: Token = scanner_next(&s);
+    if t7.kind != TokenType.MinusEq { return 7; }
+
+    return 0;
+}
+
+// Sprint A: Test string literal
+fn test_string_lit() i64 {
+    var s: Scanner = scanner_new("\"hello\"");
+
+    let t1: Token = scanner_next(&s);
+    if t1.kind != TokenType.StringLit { return 1; }
+    if t1.start != 0 { return 2; }
+    if t1.end != 7 { return 3; }  // includes quotes
+
+    return 0;
+}
+
+// Sprint A: Test variable declaration tokenization
+fn test_var_decl() i64 {
+    var s: Scanner = scanner_new("let x: i64 = 42;");
+
+    let t1: Token = scanner_next(&s);
+    if t1.kind != TokenType.Let { return 1; }
+
+    let t2: Token = scanner_next(&s);
+    if t2.kind != TokenType.Ident { return 2; }
+
+    let t3: Token = scanner_next(&s);
+    if t3.kind != TokenType.Colon { return 3; }
+
+    let t4: Token = scanner_next(&s);
+    if t4.kind != TokenType.I64 { return 4; }
+
+    let t5: Token = scanner_next(&s);
+    if t5.kind != TokenType.Eq { return 5; }
+
+    let t6: Token = scanner_next(&s);
+    if t6.kind != TokenType.Int { return 6; }
+
+    let t7: Token = scanner_next(&s);
+    if t7.kind != TokenType.Semi { return 7; }
+
+    return 0;
+}
+
+// Sprint A: Test if statement tokenization
+fn test_if_stmt() i64 {
+    var s: Scanner = scanner_new("if x == 0 { return 1; }");
+
+    let t1: Token = scanner_next(&s);
+    if t1.kind != TokenType.If { return 1; }
+
+    let t2: Token = scanner_next(&s);
+    if t2.kind != TokenType.Ident { return 2; }
+
+    let t3: Token = scanner_next(&s);
+    if t3.kind != TokenType.EqEq { return 3; }
+
+    let t4: Token = scanner_next(&s);
+    if t4.kind != TokenType.Int { return 4; }
+
+    let t5: Token = scanner_next(&s);
+    if t5.kind != TokenType.LBrace { return 5; }
+
+    let t6: Token = scanner_next(&s);
+    if t6.kind != TokenType.Return { return 6; }
+
+    let t7: Token = scanner_next(&s);
+    if t7.kind != TokenType.Int { return 7; }
+
+    let t8: Token = scanner_next(&s);
+    if t8.kind != TokenType.Semi { return 8; }
+
+    let t9: Token = scanner_next(&s);
+    if t9.kind != TokenType.RBrace { return 9; }
+
+    return 0;
+}
+
 fn main() i64 {
     var failed: i64 = 0;
 
+    // Original tests
     if test_scan_int() != 0 {
         println("FAIL: test_scan_int");
         failed = failed + 1;
@@ -227,8 +411,38 @@ fn main() i64 {
         failed = failed + 1;
     }
 
+    // Sprint A: New tests
+    if test_comparison_ops() != 0 {
+        println("FAIL: test_comparison_ops");
+        failed = failed + 1;
+    }
+    if test_logical_ops() != 0 {
+        println("FAIL: test_logical_ops");
+        failed = failed + 1;
+    }
+    if test_new_keywords() != 0 {
+        println("FAIL: test_new_keywords");
+        failed = failed + 1;
+    }
+    if test_new_punct() != 0 {
+        println("FAIL: test_new_punct");
+        failed = failed + 1;
+    }
+    if test_string_lit() != 0 {
+        println("FAIL: test_string_lit");
+        failed = failed + 1;
+    }
+    if test_var_decl() != 0 {
+        println("FAIL: test_var_decl");
+        failed = failed + 1;
+    }
+    if test_if_stmt() != 0 {
+        println("FAIL: test_if_stmt");
+        failed = failed + 1;
+    }
+
     if failed == 0 {
-        println("All 11 scanner tests passed!");
+        println("All 18 scanner tests passed!");
     }
 
     return failed;

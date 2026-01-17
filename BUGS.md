@@ -35,6 +35,247 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
+(none)
+
+---
+
+### BUG-024: String pointer becomes null in is_keyword after second scanner_next call (FIXED)
+
+**Status:** Fixed
+**Priority:** P0 (was blocking cot0 scanner tests)
+**Discovered:** 2026-01-17
+**Fixed:** 2026-01-17
+
+**Description:**
+When calling `scanner_next` twice, the second call crashes in `is_keyword` with a null pointer dereference. The string pointer (`text.ptr`) becomes 0 during execution.
+
+**Root Cause:**
+The `convertStringCompare` function in SSA builder creates `slice_len`/`slice_ptr` ops for string comparison (like `s == "if"`). However, the `decompose` pass only rewrites `string_len`/`string_ptr` ops - it didn't handle `slice_len`/`slice_ptr`.
+
+After decompose converts `const_string` to `string_make`, the `slice_len(string_make)` wasn't being rewritten to `copy(len)`. This meant the register allocator treated `slice_len` as a separate op that could reuse the register holding the pointer component, clobbering it before `slice_ptr` could use it.
+
+**The Fix:**
+Added rules 7-9 to `decompose.zig` to also rewrite:
+- `slice_len(string_make(ptr, len))` → `copy(len)`
+- `slice_ptr(string_make(ptr, len))` → `copy(ptr)`
+- `string_ptr(string_make(ptr, len))` → `copy(ptr)`
+
+This matches Go's pattern where all component extractions from decomposed aggregates become direct copies.
+
+**Go Reference:**
+Go's `rewritedec.go` has rules `rewriteValuedec_OpStringLen` and `rewriteValuedec_OpStringPtr` that perform the same rewrites.
+
+---
+
+### BUG-022: Comparison operands use same register, causing always-true comparison (FIXED)
+
+**Status:** Fixed
+**Priority:** P0 (was blocking cot0 scanner.cot)
+**Discovered:** 2026-01-17
+**Fixed:** 2026-01-17
+
+**Description:**
+When there are many consecutive if statements in a function, comparisons like `if c == 200` generated incorrect assembly that always evaluated to true. The register allocator assigned the same register to both comparison operands.
+
+**Generated Assembly (WRONG - before fix):**
+```arm64
+ldrb w1, [x0]         ; w1 = c (loaded from memory)
+mov  x1, #0xc8        ; x1 = 200 (OVERWRITES c!)
+cmp  x1, x1           ; compare 200 with 200 (ALWAYS TRUE!)
+```
+
+**Generated Assembly (CORRECT - after fix):**
+```arm64
+ldrb w1, [x0]         ; w1 = c
+mov  x0, #0xc8        ; x0 = 200 (different register!)
+cmp  x1, x0           ; compare c with 200
+```
+
+**Root Cause:**
+The regalloc was clearing `self.used = 0` BEFORE allocating the output register. This meant `allocReg()` could evict operand registers when allocating the result register.
+
+Go's pattern: `s.used` is never set to 0. Individual bits are cleared by `freeReg()` when a value's use count reaches 0. The `used` mask remains set during output allocation to prevent evicting operands.
+
+**Go Reference:**
+`~/learning/go/src/cmd/compile/internal/ssa/regalloc.go`:
+- Line 373: `s.used &^= regMask(1) << r` (individual bit clear in freeReg)
+- Line 430: `s.used |= regMask(1) << r` (set bit when register used)
+- Line 448-449: `mask &^ s.used` (allocReg excludes used registers)
+
+**Fix:**
+`src/ssa/regalloc.zig` line 572 - Removed premature clearing of `self.used = 0` before output allocation:
+```zig
+// BEFORE (bug):
+self.used = 0;  // Wrong! Clears before allocReg
+
+// AFTER (fixed):
+// NOTE: Do NOT clear 'used' here!
+// Go's pattern: 'used' remains set during output allocation so allocReg
+// won't evict operand registers. Individual bits are cleared by freeReg()
+// when arg use counts reach 0.
+```
+
+**Test:** `parser_minimal_test.cot` now returns 12 (BinaryExpr) instead of 10 (IntLit)
+
+---
+
+### BUG-023: Stack slot reuse causes value corruption in functions with many branches (FIXED)
+
+**Status:** Fixed (stack slot reuse part)
+**Priority:** P0
+**Discovered:** 2026-01-17
+**Fixed:** 2026-01-17
+
+**Description:**
+When a function has many if statements (like `is_keyword` in scanner.cot), the stack allocator incorrectly reuses the same stack slot for multiple live values. This causes values to be overwritten.
+
+**Symptoms (original):**
+- `test_scanner_single.cot` passes (single scanner_next call)
+- `test_scanner_two.cot` crashes with segfault (two scanner_next calls)
+- Crash in `is_keyword` at null pointer dereference
+
+**Generated Assembly (WRONG - before fix):**
+```arm64
+1000015cc: str x1, [sp, #0x28]
+1000015d0: str x0, [sp, #0x28]  ; OVERWRITES x1!
+1000015d8: str x0, [sp, #0x30]
+1000015dc: str x2, [sp, #0x28]  ; OVERWRITES x0!
+1000015e0: ldr x0, [sp, #0x28]  ; loads x2, not expected value!
+1000015e4: add x1, x0, x2
+1000015e8: ldrb w2, [x1]        ; CRASH - x1 is null
+```
+
+**Root Cause:**
+The stackalloc was reusing the same stack slot for different store_reg values because no interference was computed between them. Values spilled in different blocks (b57, b60, b64, etc.) all got the same slot because they weren't detected as interfering.
+
+**Fix:**
+1. `src/ssa/stackalloc.zig` - **Disabled slot reuse for store_reg values**:
+   - Store_reg values now always get unique slots
+   - This is conservative but prevents the slot corruption bug
+   - Proper interference computation (like Go's spillLive) can be added later for optimization
+
+2. `src/ssa/liveness.zig` - **Fixed cross-block liveness propagation**:
+   - After processing successor phis, update this block's live_out (matching Go's pattern)
+   - Fixed propagation to predecessors - update pred's live_out, not current block
+   - These changes improve liveness accuracy for future interference computation
+
+3. `src/ssa/regalloc.zig` - **Added spillLive infrastructure**:
+   - Added `spill_live` map to track spilled values live at block ends
+   - Added `getSpillLive()` method for stackalloc to access
+   - Currently not fully utilized due to the conservative fix, but infrastructure is in place
+
+4. `src/driver.zig` - Updated stackalloc call signature
+
+**Generated Assembly (after fix):**
+```arm64
+store_reg v1510 -> [sp+40] (new)
+store_reg v1519 -> [sp+48] (new)  ; Different slot!
+store_reg v1524 -> [sp+56] (new)  ; Different slot!
+```
+
+**Test:** All 166 e2e tests pass, `test_scanner_single.cot` passes
+
+**Note:** `test_scanner_two.cot` still crashes, but with a different issue (null pointer in string indexing). This appears to be a separate bug, possibly in code generation for string pointer arithmetic.
+
+---
+
+## Fixed Bugs
+
+### BUG-021: Chained AND operator incorrectly evaluates to true (FIXED)
+
+**Status:** Fixed
+**Priority:** P0 (was blocking cot0 parser tests)
+**Discovered:** 2026-01-17
+**Fixed:** 2026-01-17
+
+**Root Cause:**
+When regalloc evicts a rematerializeable value (const_int, const_bool) from a register to make room for another value, we were clearing its home assignment to prevent the original value from being emitted during codegen. However, this same eviction mechanism is also used when spilling caller-saved registers BEFORE a function call. In that case, clearing the home assignment is wrong because the values have already been used to set up call arguments.
+
+**Fix:**
+Modified `spillReg` in `src/ssa/regalloc.zig` to accept a `for_call: bool` parameter:
+- When `for_call=true` (spilling for a call): don't clear home assignment
+- When `for_call=false` (normal register pressure eviction): clear home assignment so the original value isn't emitted and only the rematerialized copy is
+
+Also added `clearHome()` method to `src/ssa/func.zig` and skip check in codegen (`src/codegen/arm64.zig`) for evicted rematerializeable values.
+
+**Files Changed:**
+- `src/ssa/func.zig` - Added `clearHome()` method
+- `src/ssa/regalloc.zig` - Added `for_call` parameter to `spillReg()`, clear home on non-call eviction
+- `src/codegen/arm64.zig` - Skip emitting const values that have no home assignment
+
+---
+
+### BUG-020: Calling imported functions with many if statements causes segfault (FIXED)
+
+**Status:** Fixed
+**Priority:** P0 (was blocking cot0 self-hosting)
+**Discovered:** 2026-01-17
+**Fixed:** 2026-01-17
+
+**Description:**
+Calling a function from an imported file crashed when that function had many nested if statements. The actual root cause was unrelated to imports - it was a register allocator bug that only manifested with enough code complexity.
+
+**Minimal Test:**
+```cot
+// token.cot - function with many if statements
+fn is_keyword(text: string) i64 {
+    let n: i64 = len(text);
+    if n == 3 {
+        if text[0] == 105 { return 1; }
+        if text[0] == 108 { return 2; }
+        // ... many more ifs
+    }
+    return 0;
+}
+```
+
+**Root Cause:**
+The register allocator's `allocReg` function could spill a register that was already holding an argument for the current instruction. When processing an instruction like `add_ptr v271, v277`:
+1. v271 (base pointer) gets assigned x0
+2. When allocating for v277 (offset), `allocReg` finds no free registers
+3. `allocReg` spills v271's register (x0) and reuses it for v277
+4. Both arguments now point to x0, generating `add x0, x0, x0`
+5. The resulting pointer was garbage, causing segfault on dereference
+
+**Go Reference:**
+`~/learning/go/src/cmd/compile/internal/ssa/regalloc.go` uses `s.used` mask:
+```go
+// allocReg excludes s.used from both free reg search and spill candidates
+// s.used tracks registers holding the current instruction's arguments
+```
+
+**Fix:**
+`src/ssa/regalloc.zig` - Added `used` mask following Go's pattern:
+
+1. Added `used: RegMask = 0` field to RegAllocState
+2. Modified `allocReg` to exclude `used` from available registers:
+```zig
+fn allocReg(self: *Self, mask: RegMask, block: *Block) !RegNum {
+    const available_mask = mask & ~self.used;  // Exclude 'used' registers
+    if (self.findFreeReg(available_mask)) |reg| {
+        return reg;
+    }
+    // Spill - also exclude 'used' from spill candidates
+    var m = available_mask;
+    // ...
+}
+```
+3. Modified argument processing to mark each arg's register as used:
+```zig
+self.used = 0;  // Clear at start of instruction
+for (v.args, 0..) |arg, i| {
+    // ... load arg if needed ...
+    if (self.values[v.args[i].id].firstReg()) |reg| {
+        self.used |= @as(RegMask, 1) << @intCast(reg);
+    }
+}
+self.used = 0;  // Clear after args processed
+```
+
+**Test:** All 166 e2e tests pass. Previously crashing functions now execute correctly.
+
+---
+
 ### BUG-019: Large struct (>16B) by-value arguments not passed correctly (FIXED)
 
 **Status:** Fixed

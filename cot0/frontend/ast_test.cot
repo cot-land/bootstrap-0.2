@@ -147,11 +147,158 @@ fn test_kind_helpers() i64 {
 
 // Test 7: Token to binop conversion
 fn test_token_to_binop() i64 {
+    // Arithmetic
     if token_to_binop(TokenType.Plus) != 0 { return 1; }   // Add
     if token_to_binop(TokenType.Minus) != 1 { return 2; }  // Sub
     if token_to_binop(TokenType.Star) != 2 { return 3; }   // Mul
     if token_to_binop(TokenType.Slash) != 3 { return 4; }  // Div
-    if token_to_binop(TokenType.Ident) != -1 { return 5; } // Not a binop
+    if token_to_binop(TokenType.Percent) != 4 { return 5; } // Mod
+
+    // Comparison
+    if token_to_binop(TokenType.EqEq) != 5 { return 6; }      // Equal
+    if token_to_binop(TokenType.NotEq) != 6 { return 7; }     // NotEqual
+    if token_to_binop(TokenType.Less) != 7 { return 8; }      // Less
+    if token_to_binop(TokenType.LessEq) != 8 { return 9; }    // LessEq
+    if token_to_binop(TokenType.Greater) != 9 { return 10; }   // Greater
+    if token_to_binop(TokenType.GreaterEq) != 10 { return 11; } // GreaterEq
+
+    // Logical (both forms)
+    if token_to_binop(TokenType.And) != 11 { return 12; }       // And keyword
+    if token_to_binop(TokenType.AmpAmp) != 11 { return 13; }    // And symbol
+    if token_to_binop(TokenType.Or) != 12 { return 14; }        // Or keyword
+    if token_to_binop(TokenType.PipePipe) != 12 { return 15; }  // Or symbol
+
+    // Not a binop
+    if token_to_binop(TokenType.Ident) != -1 { return 16; }
+
+    return 0;
+}
+
+// Test 8: Variable declaration node
+fn test_var_decl() i64 {
+    let pool: *NodePool = init_test_pool();
+
+    // Create initializer
+    let init_expr: i64 = node_int_lit(pool, 42, 10, 12);
+
+    // Create var decl: let x: i64 = 42
+    let var_idx: i64 = node_var_decl(pool, 1, 4, 1, 0, 0, init_expr, 0, 15);
+
+    let n: *Node = node_get(pool, var_idx);
+    if n.kind != NodeKind.VarDecl { return 1; }
+    if n.field0 != 1 { return 2; }           // is_let = true
+    if n.field1 != 4 { return 3; }           // name_start
+    if n.field2 != 1 { return 4; }           // name_len
+    if n.field3 != init_expr { return 5; }   // init expression
+
+    return 0;
+}
+
+// Test 9: If statement node
+fn test_if_stmt() i64 {
+    let pool: *NodePool = init_test_pool();
+
+    // Create condition: x > 0
+    let cond: i64 = node_int_lit(pool, 1, 0, 1);  // Placeholder for condition
+
+    // Create then block
+    let then_val: i64 = node_int_lit(pool, 10, 0, 2);
+    let then_ret: i64 = node_return(pool, then_val, 0, 10);
+    let then_start: i64 = pool.children_count;
+    node_add_child(pool, then_ret);
+    let then_block: i64 = node_block(pool, then_start, 1, 0, 15);
+
+    // Create else block
+    let else_val: i64 = node_int_lit(pool, 20, 0, 2);
+    let else_ret: i64 = node_return(pool, else_val, 0, 10);
+    let else_start: i64 = pool.children_count;
+    node_add_child(pool, else_ret);
+    let else_block: i64 = node_block(pool, else_start, 1, 0, 15);
+
+    // Create if statement
+    let if_idx: i64 = node_if_stmt(pool, cond, then_block, else_block, 0, 30);
+
+    let n: *Node = node_get(pool, if_idx);
+    if n.kind != NodeKind.IfStmt { return 1; }
+    if n.field0 != cond { return 2; }
+    if n.field1 != then_block { return 3; }
+    if n.field2 != else_block { return 4; }
+
+    return 0;
+}
+
+// Test 10: While statement node
+fn test_while_stmt() i64 {
+    let pool: *NodePool = init_test_pool();
+
+    // Create condition
+    let cond: i64 = node_int_lit(pool, 1, 0, 1);
+
+    // Create body block
+    let body_val: i64 = node_int_lit(pool, 1, 0, 1);
+    let body_stmt: i64 = node_expr_stmt(pool, body_val, 0, 5);
+    let body_start: i64 = pool.children_count;
+    node_add_child(pool, body_stmt);
+    let body: i64 = node_block(pool, body_start, 1, 0, 10);
+
+    // Create while statement
+    let while_idx: i64 = node_while_stmt(pool, cond, body, 0, 20);
+
+    let n: *Node = node_get(pool, while_idx);
+    if n.kind != NodeKind.WhileStmt { return 1; }
+    if n.field0 != cond { return 2; }
+    if n.field1 != body { return 3; }
+
+    return 0;
+}
+
+// Test 11: Unary expression node
+fn test_unary() i64 {
+    let pool: *NodePool = init_test_pool();
+
+    let operand: i64 = node_int_lit(pool, 5, 1, 2);
+    let neg_idx: i64 = node_unary(pool, UnaryOp.Neg, operand, 0, 2);
+
+    let n: *Node = node_get(pool, neg_idx);
+    if n.kind != NodeKind.UnaryExpr { return 1; }
+    if n.field0 != operand { return 2; }
+    if n.field1 != 0 { return 3; }  // Neg = 0
+
+    // Test Not operator
+    reset_pool(pool);
+    let op2: i64 = node_int_lit(pool, 1, 1, 2);
+    let not_idx: i64 = node_unary(pool, UnaryOp.Not, op2, 0, 2);
+
+    let n2: *Node = node_get(pool, not_idx);
+    if n2.field1 != 1 { return 4; }  // Not = 1
+
+    return 0;
+}
+
+// Test 12: Operator precedence
+fn test_precedence() i64 {
+    // Check precedence ordering
+    if token_precedence(TokenType.Or) != PREC_OR { return 1; }
+    if token_precedence(TokenType.PipePipe) != PREC_OR { return 2; }
+
+    if token_precedence(TokenType.And) != PREC_AND { return 3; }
+    if token_precedence(TokenType.AmpAmp) != PREC_AND { return 4; }
+
+    if token_precedence(TokenType.EqEq) != PREC_CMP { return 5; }
+    if token_precedence(TokenType.Less) != PREC_CMP { return 6; }
+
+    if token_precedence(TokenType.Plus) != PREC_ADD { return 7; }
+    if token_precedence(TokenType.Minus) != PREC_ADD { return 8; }
+
+    if token_precedence(TokenType.Star) != PREC_MUL { return 9; }
+    if token_precedence(TokenType.Slash) != PREC_MUL { return 10; }
+    if token_precedence(TokenType.Percent) != PREC_MUL { return 11; }
+
+    // Verify ordering: MUL > ADD > CMP > AND > OR
+    if PREC_MUL <= PREC_ADD { return 12; }
+    if PREC_ADD <= PREC_CMP { return 13; }
+    if PREC_CMP <= PREC_AND { return 14; }
+    if PREC_AND <= PREC_OR { return 15; }
 
     return 0;
 }
@@ -194,8 +341,33 @@ fn main() i64 {
         failed = failed + 1;
     }
 
+    if test_var_decl() != 0 {
+        println("FAIL: test_var_decl");
+        failed = failed + 1;
+    }
+
+    if test_if_stmt() != 0 {
+        println("FAIL: test_if_stmt");
+        failed = failed + 1;
+    }
+
+    if test_while_stmt() != 0 {
+        println("FAIL: test_while_stmt");
+        failed = failed + 1;
+    }
+
+    if test_unary() != 0 {
+        println("FAIL: test_unary");
+        failed = failed + 1;
+    }
+
+    if test_precedence() != 0 {
+        println("FAIL: test_precedence");
+        failed = failed + 1;
+    }
+
     if failed == 0 {
-        println("All 7 AST tests passed!");
+        println("All 12 AST tests passed!");
     }
 
     return failed;

@@ -35,12 +35,15 @@
 
 ## Recent Bug Fixes (2026-01-17)
 
+- BUG-024: String pointer null in string comparisons ✅ FIXED
+- BUG-023: Stack slot reuse causes value corruption ✅ FIXED
+- BUG-022: Comparison operands use same register ✅ FIXED
+- BUG-021: Chained AND with 4+ conditions ✅ FIXED
+- BUG-020: Many nested if statements segfault ✅ FIXED
 - BUG-019: Large struct (>16B) by-value args ✅ FIXED
 - BUG-017: Imported consts in binary expressions ✅ FIXED
 - BUG-016: Const on right side of comparison ✅ FIXED
 - BUG-015: Chained OR (3+ conditions) ✅ FIXED
-- BUG-014: Switch statements ✅ FIXED
-- BUG-013: String concatenation in loops ✅ FIXED
 
 ---
 

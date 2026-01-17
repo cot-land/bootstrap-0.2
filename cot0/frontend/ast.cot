@@ -22,26 +22,52 @@ enum NodeKind {
     Ident,          // Identifier: foo
     BinaryExpr,     // Binary operation: a + b
     CallExpr,       // Function call: add(1, 2)
+    UnaryExpr,      // Unary operation: -x, !x
 
     // Statements (perform actions)
     ReturnStmt,     // return expr;
     ExprStmt,       // expression as statement: foo();
     BlockStmt,      // { stmt; stmt; }
+    IfStmt,         // if cond { body } else { body }
+    WhileStmt,      // while cond { body }
 
     // Declarations
     FnDecl,         // fn name(params) ret { body }
     ParamDecl,      // name: type
+    VarDecl,        // let/var name: type = expr;
 
     // Special
     BadNode,        // Error placeholder
 }
 
 // Binary operators for expressions
+// Follows Go's operator precedence (precMul > precAdd > precCmp > precAnd > precOr)
 enum BinaryOp {
-    Add,    // +
-    Sub,    // -
-    Mul,    // *
-    Div,    // /
+    // Arithmetic (precMul, precAdd)
+    Add,        // +
+    Sub,        // -
+    Mul,        // *
+    Div,        // /
+    Mod,        // %
+
+    // Comparison (precCmp)
+    Equal,      // ==
+    NotEqual,   // !=
+    Less,       // <
+    LessEq,     // <=
+    Greater,    // >
+    GreaterEq,  // >=
+
+    // Logical (precAnd < precOr)
+    And,        // and, &&
+    Or,         // or, ||
+}
+
+// Unary operators
+enum UnaryOp {
+    Neg,        // - (negation)
+    Not,        // !, not (logical not)
+    BitNot,     // ~ (bitwise not)
 }
 
 // ============================================================================
@@ -150,10 +176,22 @@ fn node_binary(pool: *NodePool, op: BinaryOp, left: i64, right: i64, start: i64,
     n.field0 = left;        // Left operand (node index)
     n.field1 = right;       // Right operand (node index)
     // Store op as integer - BinaryOp enum ordinal
+    // Arithmetic
     if op == BinaryOp.Add { n.field2 = 0; }
     if op == BinaryOp.Sub { n.field2 = 1; }
     if op == BinaryOp.Mul { n.field2 = 2; }
     if op == BinaryOp.Div { n.field2 = 3; }
+    if op == BinaryOp.Mod { n.field2 = 4; }
+    // Comparison
+    if op == BinaryOp.Equal { n.field2 = 5; }
+    if op == BinaryOp.NotEqual { n.field2 = 6; }
+    if op == BinaryOp.Less { n.field2 = 7; }
+    if op == BinaryOp.LessEq { n.field2 = 8; }
+    if op == BinaryOp.Greater { n.field2 = 9; }
+    if op == BinaryOp.GreaterEq { n.field2 = 10; }
+    // Logical
+    if op == BinaryOp.And { n.field2 = 11; }
+    if op == BinaryOp.Or { n.field2 = 12; }
     n.field3 = 0;
 
     return idx;
@@ -268,6 +306,99 @@ fn node_fn_decl(pool: *NodePool, name_start: i64, name_len: i64,
     return idx;
 }
 
+// Create a variable declaration node (let or var)
+// field0: is_let (1 = let, 0 = var)
+// field1: name index in children array (stores name_start, name_len via extra node)
+// field2: type index in children array (stores type_start, type_len, -1 if inferred)
+// field3: init_expr node index (-1 if no initializer)
+fn node_var_decl(pool: *NodePool, is_let: i64, name_start: i64, name_len: i64,
+                 type_start: i64, type_len: i64, init_expr: i64,
+                 start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.VarDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = is_let;          // 1 = let, 0 = var
+    // Pack name and type info: use children array for names
+    // For simplicity, store name_start in field1, name_len in field2
+    // Store init_expr in field3
+    n.field1 = name_start;      // Name offset in source
+    n.field2 = name_len;        // Name length
+    n.field3 = init_expr;       // Init expression (-1 if none)
+
+    // Note: type info could be stored in extra slot if needed
+    // For cot0, we'll handle type separately in parser
+
+    return idx;
+}
+
+// Create an if statement node
+// field0: condition expr node index
+// field1: then body node index (block)
+// field2: else body node index (-1 if no else)
+// field3: unused
+fn node_if_stmt(pool: *NodePool, cond: i64, then_body: i64, else_body: i64,
+                start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.IfStmt;
+    n.start = start;
+    n.end = end;
+    n.field0 = cond;            // Condition expression
+    n.field1 = then_body;       // Then block
+    n.field2 = else_body;       // Else block (-1 if none)
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a while statement node
+// field0: condition expr node index
+// field1: body node index (block)
+// field2, field3: unused
+fn node_while_stmt(pool: *NodePool, cond: i64, body: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.WhileStmt;
+    n.start = start;
+    n.end = end;
+    n.field0 = cond;            // Condition expression
+    n.field1 = body;            // Body block
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a unary expression node
+// field0: operand node index
+// field1: UnaryOp (as int)
+fn node_unary(pool: *NodePool, op: UnaryOp, operand: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.UnaryExpr;
+    n.start = start;
+    n.end = end;
+    n.field0 = operand;         // Operand expression
+    // Store op as integer
+    if op == UnaryOp.Neg { n.field1 = 0; }
+    if op == UnaryOp.Not { n.field1 = 1; }
+    if op == UnaryOp.BitNot { n.field1 = 2; }
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
 // ============================================================================
 // Node Accessors
 // ============================================================================
@@ -305,18 +436,22 @@ fn is_expr(kind: NodeKind) bool {
     return kind == NodeKind.IntLit or
            kind == NodeKind.Ident or
            kind == NodeKind.BinaryExpr or
-           kind == NodeKind.CallExpr;
+           kind == NodeKind.CallExpr or
+           kind == NodeKind.UnaryExpr;
 }
 
 fn is_stmt(kind: NodeKind) bool {
     return kind == NodeKind.ReturnStmt or
            kind == NodeKind.ExprStmt or
-           kind == NodeKind.BlockStmt;
+           kind == NodeKind.BlockStmt or
+           kind == NodeKind.IfStmt or
+           kind == NodeKind.WhileStmt;
 }
 
 fn is_decl(kind: NodeKind) bool {
     return kind == NodeKind.FnDecl or
-           kind == NodeKind.ParamDecl;
+           kind == NodeKind.ParamDecl or
+           kind == NodeKind.VarDecl;
 }
 
 // ============================================================================
@@ -325,17 +460,106 @@ fn is_decl(kind: NodeKind) bool {
 
 // Convert token to binary op (returns -1 if not a binary op token)
 fn token_to_binop(tok_kind: TokenType) i64 {
-    if tok_kind == TokenType.Plus  { return 0; }  // BinaryOp.Add
-    if tok_kind == TokenType.Minus { return 1; }  // BinaryOp.Sub
-    if tok_kind == TokenType.Star  { return 2; }  // BinaryOp.Mul
-    if tok_kind == TokenType.Slash { return 3; }  // BinaryOp.Div
+    // Arithmetic
+    if tok_kind == TokenType.Plus    { return 0; }   // BinaryOp.Add
+    if tok_kind == TokenType.Minus   { return 1; }   // BinaryOp.Sub
+    if tok_kind == TokenType.Star    { return 2; }   // BinaryOp.Mul
+    if tok_kind == TokenType.Slash   { return 3; }   // BinaryOp.Div
+    if tok_kind == TokenType.Percent { return 4; }   // BinaryOp.Mod
+
+    // Comparison
+    if tok_kind == TokenType.EqEq      { return 5; }  // BinaryOp.Equal
+    if tok_kind == TokenType.NotEq     { return 6; }  // BinaryOp.NotEqual
+    if tok_kind == TokenType.Less      { return 7; }  // BinaryOp.Less
+    if tok_kind == TokenType.LessEq    { return 8; }  // BinaryOp.LessEq
+    if tok_kind == TokenType.Greater   { return 9; }  // BinaryOp.Greater
+    if tok_kind == TokenType.GreaterEq { return 10; } // BinaryOp.GreaterEq
+
+    // Logical (both word and symbol forms)
+    if tok_kind == TokenType.And      { return 11; }  // BinaryOp.And
+    if tok_kind == TokenType.AmpAmp   { return 11; }  // BinaryOp.And (symbol form)
+    if tok_kind == TokenType.Or       { return 12; }  // BinaryOp.Or
+    if tok_kind == TokenType.PipePipe { return 12; }  // BinaryOp.Or (symbol form)
+
     return -1;
 }
 
 fn binop_from_int(val: i64) BinaryOp {
+    // Arithmetic
     if val == 0 { return BinaryOp.Add; }
     if val == 1 { return BinaryOp.Sub; }
     if val == 2 { return BinaryOp.Mul; }
     if val == 3 { return BinaryOp.Div; }
+    if val == 4 { return BinaryOp.Mod; }
+
+    // Comparison
+    if val == 5  { return BinaryOp.Equal; }
+    if val == 6  { return BinaryOp.NotEqual; }
+    if val == 7  { return BinaryOp.Less; }
+    if val == 8  { return BinaryOp.LessEq; }
+    if val == 9  { return BinaryOp.Greater; }
+    if val == 10 { return BinaryOp.GreaterEq; }
+
+    // Logical
+    if val == 11 { return BinaryOp.And; }
+    if val == 12 { return BinaryOp.Or; }
+
     return BinaryOp.Add;  // Default (should not happen)
+}
+
+// Convert token to unary op (returns -1 if not a unary op token)
+fn token_to_unaryop(tok_kind: TokenType) i64 {
+    if tok_kind == TokenType.Minus { return 0; }  // UnaryOp.Neg
+    if tok_kind == TokenType.Bang  { return 1; }  // UnaryOp.Not
+    if tok_kind == TokenType.Not   { return 1; }  // UnaryOp.Not (keyword form)
+    if tok_kind == TokenType.Tilde { return 2; }  // UnaryOp.BitNot
+    return -1;
+}
+
+fn unaryop_from_int(val: i64) UnaryOp {
+    if val == 0 { return UnaryOp.Neg; }
+    if val == 1 { return UnaryOp.Not; }
+    if val == 2 { return UnaryOp.BitNot; }
+    return UnaryOp.Neg;  // Default
+}
+
+// ============================================================================
+// Operator Precedence (following Go's design)
+// ============================================================================
+
+// Precedence levels (higher = binds tighter)
+const PREC_OR: i64 = 1;      // or, ||
+const PREC_AND: i64 = 2;     // and, &&
+const PREC_CMP: i64 = 3;     // ==, !=, <, <=, >, >=
+const PREC_ADD: i64 = 4;     // +, -
+const PREC_MUL: i64 = 5;     // *, /, %
+
+// Get precedence of a binary operator token
+fn token_precedence(tok_kind: TokenType) i64 {
+    // Logical OR (lowest)
+    if tok_kind == TokenType.Or { return PREC_OR; }
+    if tok_kind == TokenType.PipePipe { return PREC_OR; }
+
+    // Logical AND
+    if tok_kind == TokenType.And { return PREC_AND; }
+    if tok_kind == TokenType.AmpAmp { return PREC_AND; }
+
+    // Comparison
+    if tok_kind == TokenType.EqEq { return PREC_CMP; }
+    if tok_kind == TokenType.NotEq { return PREC_CMP; }
+    if tok_kind == TokenType.Less { return PREC_CMP; }
+    if tok_kind == TokenType.LessEq { return PREC_CMP; }
+    if tok_kind == TokenType.Greater { return PREC_CMP; }
+    if tok_kind == TokenType.GreaterEq { return PREC_CMP; }
+
+    // Additive
+    if tok_kind == TokenType.Plus { return PREC_ADD; }
+    if tok_kind == TokenType.Minus { return PREC_ADD; }
+
+    // Multiplicative (highest)
+    if tok_kind == TokenType.Star { return PREC_MUL; }
+    if tok_kind == TokenType.Slash { return PREC_MUL; }
+    if tok_kind == TokenType.Percent { return PREC_MUL; }
+
+    return 0;  // Not a binary operator
 }

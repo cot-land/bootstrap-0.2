@@ -156,6 +156,17 @@ pub const RegAllocState = struct {
     // These accumulate when allocReg spills to free a register for a load
     pending_spills: std.ArrayListUnmanaged(*Value) = .{},
 
+    // Registers currently in use for the current instruction's arguments
+    // These must NOT be spilled while loading remaining arguments
+    // Go reference: regalloc.go 's.used' field
+    used: RegMask = 0,
+
+    // spillLive[block_id] = list of spill value IDs live at end of that block
+    // Go reference: regalloc.go line 315 "spillLive [][]ID"
+    // This tracks which store_reg values are live at each block end,
+    // needed by stackalloc to compute proper interference.
+    spill_live: std.AutoHashMapUnmanaged(ID, std.ArrayListUnmanaged(ID)) = .{},
+
     // Stats
     num_spills: u32 = 0,
 
@@ -189,6 +200,19 @@ pub const RegAllocState = struct {
         self.pending_spills.deinit(self.allocator);
         self.allocator.free(self.values);
         self.live.deinit();
+
+        // Free spillLive lists
+        var spill_it = self.spill_live.valueIterator();
+        while (spill_it.next()) |list| {
+            list.deinit(self.allocator);
+        }
+        self.spill_live.deinit(self.allocator);
+    }
+
+    /// Get spillLive for stackalloc
+    /// Returns a reference to the spillLive map (caller should not modify)
+    pub fn getSpillLive(self: *const Self) *const std.AutoHashMapUnmanaged(ID, std.ArrayListUnmanaged(ID)) {
+        return &self.spill_live;
     }
 
     // =========================================
@@ -208,19 +232,23 @@ pub const RegAllocState = struct {
     }
 
     fn allocReg(self: *Self, mask: RegMask, block: *Block) !RegNum {
-        // Try to find a free register
-        if (self.findFreeReg(mask)) |reg| {
+        // Try to find a free register (excluding 'used' registers)
+        // Go reference: regalloc.go allocReg excludes s.used
+        const available_mask = mask & ~self.used;
+        if (self.findFreeReg(available_mask)) |reg| {
             return reg;
         }
 
         // Must spill - find register with farthest next use
+        // CRITICAL: Exclude 'used' registers from spill candidates
+        // These are holding arguments for the current instruction
         var best_reg: ?RegNum = null;
         var best_dist: i32 = -1;
 
         // Get liveness info for this block
         const live_out = self.live.getLiveOut(block.id);
 
-        var m = mask;
+        var m = available_mask; // Exclude 'used' registers from spill candidates
         while (m != 0) {
             const reg: RegNum = @intCast(@ctz(m));
             m &= m - 1;
@@ -247,7 +275,7 @@ pub const RegAllocState = struct {
 
         // Spill the value in this register
         // Add to pending_spills so caller can insert it at the right position
-        if (try self.spillReg(reg, block)) |spill| {
+        if (try self.spillReg(reg, block, false)) |spill| {
             try self.pending_spills.append(self.allocator, spill);
         }
 
@@ -258,7 +286,10 @@ pub const RegAllocState = struct {
     /// Does NOT add to block.values - caller must do that at the right position.
     /// Returns the store_reg value if one was created, null otherwise.
     /// Go reference: regalloc.go spillReg() line 1420
-    fn spillReg(self: *Self, reg: RegNum, block: *Block) !?*Value {
+    /// @param for_call: true if evicting for a function call (caller-saved).
+    ///                  When true, don't clear home assignment because the value
+    ///                  has already been used to set up call arguments.
+    fn spillReg(self: *Self, reg: RegNum, block: *Block, for_call: bool) !?*Value {
         const v = self.regs[reg].v orelse return null;
         const vi = &self.values[v.id];
 
@@ -268,6 +299,14 @@ pub const RegAllocState = struct {
         // Go reference: regalloc.go line 1650
         if (vi.rematerializeable) {
             debug.log(.regalloc, "    evict v{d} from x{d} (rematerializeable, no spill)", .{ v.id, reg });
+            // BUG-021 FIX: Clear home assignment so the original value isn't emitted.
+            // When rematerialized, a NEW value is created with its own home assignment.
+            // The original should not be emitted during codegen.
+            // EXCEPTION: When evicting for a call, the value has already been used
+            // to set up call arguments, so we should NOT clear its home.
+            if (!for_call) {
+                self.f.clearHome(v.id);
+            }
         } else if (vi.spill == null) {
             // Create StoreReg if not already spilled
             const spill = try self.f.newValue(.store_reg, v.type_idx, block, v.pos);
@@ -293,6 +332,9 @@ pub const RegAllocState = struct {
         self.values[v.id].regs = types.regMaskSet(self.values[v.id].regs, reg);
         // Record in f.reg_alloc for codegen (Go's setHome pattern)
         try self.f.setHome(v, .{ .register = @intCast(reg) });
+        // Go reference: regalloc.go line 430 "s.used |= regMask(1) << r"
+        // Mark this register as used
+        self.used |= @as(RegMask, 1) << @intCast(reg);
         debug.log(.regalloc, "    assign v{d} -> x{d}", .{ v.id, reg });
     }
 
@@ -302,6 +344,9 @@ pub const RegAllocState = struct {
             self.values[v.id].regs = types.regMaskClear(self.values[v.id].regs, reg);
         }
         self.regs[reg].clear();
+        // Go reference: regalloc.go line 373 "s.used &^= regMask(1) << r"
+        // Clear this register from 'used' mask
+        self.used &= ~(@as(RegMask, 1) << @intCast(reg));
     }
 
     /// Load a spilled value back into a register, or rematerialize it.
@@ -518,7 +563,12 @@ pub const RegAllocState = struct {
 
             debug.log(.regalloc, "  v{d} = {s}", .{ v.id, @tagName(v.op) });
 
+            // Clear 'used' mask at start of each instruction
+            // Go reference: regalloc.go clears s.used per-instruction
+            self.used = 0;
+
             // Ensure arguments are in registers - insert loads BEFORE this value
+            // Mark each arg's register as 'used' to prevent spilling it for other args
             for (v.args, 0..) |arg, i| {
                 if (!self.values[arg.id].inReg()) {
                     const loaded = try self.loadValue(arg, block);
@@ -536,7 +586,17 @@ pub const RegAllocState = struct {
                         debug.log(.regalloc, "    updated arg {d} to v{d}", .{ i, loaded.id });
                     }
                 }
+                // Mark this arg's register as 'used' so we don't spill it for later args
+                // Go reference: regalloc.go line 1913 "used |= regMask(1) << r"
+                if (self.values[v.args[i].id].firstReg()) |reg| {
+                    self.used |= @as(RegMask, 1) << @intCast(reg);
+                }
             }
+
+            // NOTE: Do NOT clear 'used' here!
+            // Go's pattern: 'used' remains set during output allocation so allocReg
+            // won't evict operand registers. Individual bits are cleared by freeReg()
+            // when arg use counts reach 0.
 
             // Handle calls - spill caller-saved registers BEFORE the call
             if (v.op.info().call) {
@@ -544,7 +604,9 @@ pub const RegAllocState = struct {
                 var reg: RegNum = 0;
                 while (reg < 18) : (reg += 1) {
                     if (self.regs[reg].v != null) {
-                        if (try self.spillReg(reg, block)) |spill| {
+                        // for_call=true: don't clear home assignment for call eviction
+                        // because values have already been used to set up call args
+                        if (try self.spillReg(reg, block, true)) |spill| {
                             // Insert spill BEFORE the call
                             try new_values.append(self.allocator, spill);
                         }
@@ -568,7 +630,7 @@ pub const RegAllocState = struct {
                     const arg_reg: RegNum = @intCast(v.aux_int);
                     if (self.regs[arg_reg].v != null) {
                         // Another value is in this register - need to spill it
-                        if (try self.spillReg(arg_reg, block)) |spill| {
+                        if (try self.spillReg(arg_reg, block, false)) |spill| {
                             try new_values.append(self.allocator, spill);
                         }
                     }
@@ -640,6 +702,32 @@ pub const RegAllocState = struct {
 
         // Save end state for this block
         try self.saveEndRegs(block);
+
+        // CRITICAL: Compute spillLive for this block
+        // Go reference: regalloc.go lines 2096-2116
+        // For each value live at block end, if it has a spill (store_reg),
+        // record the spill value in spillLive. This is used by stackalloc
+        // to ensure proper interference between spilled values across blocks.
+        //
+        // IMPORTANT: We add to spillLive if the value HAS a spill, regardless
+        // Compute spillLive for this block
+        // Go reference: regalloc.go lines 2096-2116
+        const live_out = self.live.getLiveOut(block.id);
+        for (live_out) |info| {
+            const vid = info.id;
+            if (vid >= self.values.len) continue;
+            const vi = &self.values[vid];
+
+            // Skip rematerializeable values (will recompute during merge)
+            if (vi.rematerializeable) continue;
+
+            // If value has been spilled and is live at block end, add spill to spillLive
+            if (vi.spill) |spill| {
+                var list = self.spill_live.get(block.id) orelse std.ArrayListUnmanaged(ID){};
+                try list.append(self.allocator, spill.id);
+                try self.spill_live.put(self.allocator, block.id, list);
+            }
+        }
     }
 
     // =========================================

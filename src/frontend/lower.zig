@@ -2316,6 +2316,13 @@ fn parseStringLiteral(text: []const u8, out_buf: []u8) []const u8 {
     var out_idx: usize = 0;
     var i: usize = 0;
 
+    // DEBUG: Log input
+    debug.log(.strings, "[parseStringLiteral] input=\"{s}\" len={d}", .{ text, text.len });
+    debug.log(.strings, "[parseStringLiteral] inner=\"{s}\" len={d}", .{ inner, inner.len });
+    if (inner.len > 0) {
+        debug.log(.strings, "[parseStringLiteral] inner[0]={d} ('{c}')", .{ inner[0], inner[0] });
+    }
+
     while (i < inner.len and out_idx < out_buf.len) {
         if (inner[i] == '\\' and i + 1 < inner.len) {
             const escaped = switch (inner[i + 1]) {
@@ -2346,6 +2353,12 @@ fn parseStringLiteral(text: []const u8, out_buf: []u8) []const u8 {
             i += 1;
         }
     }
+
+    // DEBUG: Log output
+    if (out_idx > 0) {
+        debug.log(.strings, "[parseStringLiteral] out[0]={d} ('{c}')", .{ out_buf[0], out_buf[0] });
+    }
+    debug.log(.strings, "[parseStringLiteral] output=\"{s}\" len={d}", .{ out_buf[0..out_idx], out_idx });
 
     return out_buf[0..out_idx];
 }

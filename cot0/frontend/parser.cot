@@ -77,27 +77,97 @@ fn parser_at_end(p: *Parser) bool {
 }
 
 // ============================================================================
-// Operator Helpers
+// Operator Helpers (using precedence from ast.cot)
 // ============================================================================
 
-// Get precedence of current token (0 = none, 1 = +/-, 2 = *//)
+// Get precedence of current token using ast.cot's token_precedence
 fn parser_prec(p: *Parser) i64 {
-    let kind: TokenType = p.current.kind;
-    if kind == TokenType.Plus  { return 1; }
-    if kind == TokenType.Minus { return 1; }
-    if kind == TokenType.Star  { return 2; }
-    if kind == TokenType.Slash { return 2; }
-    return 0;
+    return token_precedence(p.current.kind);
 }
 
-// Get BinaryOp as i64 from current token
+// Get BinaryOp as i64 from current token using ast.cot's token_to_binop
 fn parser_binop_int(p: *Parser) i64 {
+    return token_to_binop(p.current.kind);
+}
+
+// ============================================================================
+// Type Parsing
+// ============================================================================
+
+// Type representation: we store type as start/length in source + a type_kind
+// For cot0 simplicity, we return a type "handle" that encodes the type kind
+// Type kinds (matching our type system):
+//   0 = i64, 1 = i32, 2 = u8, 3 = bool, 4 = void, 5 = string
+//   10+ = pointer to type (10 + base_type)
+//   20+ = user-defined type (struct/enum name at offset)
+
+const TYPE_I64: i64 = 0;
+const TYPE_I32: i64 = 1;
+const TYPE_U8: i64 = 2;
+const TYPE_BOOL: i64 = 3;
+const TYPE_VOID: i64 = 4;
+const TYPE_STRING: i64 = 5;
+const TYPE_PTR_BASE: i64 = 10;    // Pointer types start here
+const TYPE_USER_BASE: i64 = 100;  // User types start here
+
+// Parse a type: i64 | i32 | u8 | bool | void | string | *T | TypeName
+// Returns type handle (encoded as i64)
+fn parse_type(p: *Parser) i64 {
     let kind: TokenType = p.current.kind;
-    if kind == TokenType.Plus  { return 0; }  // Add
-    if kind == TokenType.Minus { return 1; }  // Sub
-    if kind == TokenType.Star  { return 2; }  // Mul
-    if kind == TokenType.Slash { return 3; }  // Div
-    return 0;  // Default
+
+    // Built-in types
+    if kind == TokenType.I64 {
+        parser_advance(p);
+        return TYPE_I64;
+    }
+    if kind == TokenType.I32 {
+        parser_advance(p);
+        return TYPE_I32;
+    }
+    if kind == TokenType.U8 {
+        parser_advance(p);
+        return TYPE_U8;
+    }
+    if kind == TokenType.Bool {
+        parser_advance(p);
+        return TYPE_BOOL;
+    }
+    if kind == TokenType.Void {
+        parser_advance(p);
+        return TYPE_VOID;
+    }
+    if kind == TokenType.String {
+        parser_advance(p);
+        return TYPE_STRING;
+    }
+
+    // Pointer type: *T
+    if kind == TokenType.Star {
+        parser_advance(p);
+        let pointee: i64 = parse_type(p);
+        return TYPE_PTR_BASE + pointee;
+    }
+
+    // User-defined type (struct/enum name) - store source offset
+    if kind == TokenType.Ident {
+        let offset: i64 = p.current.start;
+        parser_advance(p);
+        return TYPE_USER_BASE + offset;
+    }
+
+    // Error - unexpected token
+    p.had_error = true;
+    return TYPE_I64;  // Default
+}
+
+// Helper to check if type is a pointer type
+fn type_is_pointer(type_handle: i64) bool {
+    return type_handle >= TYPE_PTR_BASE and type_handle < TYPE_USER_BASE;
+}
+
+// Helper to get pointee type from pointer type
+fn type_pointee(type_handle: i64) i64 {
+    return type_handle - TYPE_PTR_BASE;
 }
 
 // ============================================================================
@@ -136,13 +206,29 @@ fn parse_ident_only(p: *Parser) i64 {
 // Primary Expression Parsing (no recursion)
 // ============================================================================
 
-// Parse atom: int_lit | ident (without call or parens)
+// Parse atom: int_lit | bool_lit | ident (without call or parens)
 fn parse_atom(p: *Parser) i64 {
     let kind: TokenType = p.current.kind;
 
     // Integer literal
     if kind == TokenType.Int {
         return parse_int_lit(p);
+    }
+
+    // Boolean literal: true
+    if kind == TokenType.True {
+        let start: i64 = p.current.start;
+        let end: i64 = p.current.start + p.current.end;
+        parser_advance(p);
+        return node_int_lit(p.pool, 1, start, end);  // true = 1
+    }
+
+    // Boolean literal: false
+    if kind == TokenType.False {
+        let start: i64 = p.current.start;
+        let end: i64 = p.current.start + p.current.end;
+        parser_advance(p);
+        return node_int_lit(p.pool, 0, start, end);  // false = 0
     }
 
     // Identifier
@@ -163,18 +249,23 @@ fn make_binary_node(p: *Parser, op_int: i64, left: i64, right: i64) i64 {
     let left_node: *Node = node_get(p.pool, left);
     let right_node: *Node = node_get(p.pool, right);
     // Use direct enum values to avoid potential compiler issues with enum variables
-    if op_int == 0 {
-        return node_binary(p.pool, BinaryOp.Add, left, right, left_node.start, right_node.end);
-    }
-    if op_int == 1 {
-        return node_binary(p.pool, BinaryOp.Sub, left, right, left_node.start, right_node.end);
-    }
-    if op_int == 2 {
-        return node_binary(p.pool, BinaryOp.Mul, left, right, left_node.start, right_node.end);
-    }
-    if op_int == 3 {
-        return node_binary(p.pool, BinaryOp.Div, left, right, left_node.start, right_node.end);
-    }
+    // Arithmetic
+    if op_int == 0 { return node_binary(p.pool, BinaryOp.Add, left, right, left_node.start, right_node.end); }
+    if op_int == 1 { return node_binary(p.pool, BinaryOp.Sub, left, right, left_node.start, right_node.end); }
+    if op_int == 2 { return node_binary(p.pool, BinaryOp.Mul, left, right, left_node.start, right_node.end); }
+    if op_int == 3 { return node_binary(p.pool, BinaryOp.Div, left, right, left_node.start, right_node.end); }
+    if op_int == 4 { return node_binary(p.pool, BinaryOp.Mod, left, right, left_node.start, right_node.end); }
+    // Comparison
+    if op_int == 5 { return node_binary(p.pool, BinaryOp.Equal, left, right, left_node.start, right_node.end); }
+    if op_int == 6 { return node_binary(p.pool, BinaryOp.NotEqual, left, right, left_node.start, right_node.end); }
+    if op_int == 7 { return node_binary(p.pool, BinaryOp.Less, left, right, left_node.start, right_node.end); }
+    if op_int == 8 { return node_binary(p.pool, BinaryOp.LessEq, left, right, left_node.start, right_node.end); }
+    if op_int == 9 { return node_binary(p.pool, BinaryOp.Greater, left, right, left_node.start, right_node.end); }
+    if op_int == 10 { return node_binary(p.pool, BinaryOp.GreaterEq, left, right, left_node.start, right_node.end); }
+    // Logical
+    if op_int == 11 { return node_binary(p.pool, BinaryOp.And, left, right, left_node.start, right_node.end); }
+    if op_int == 12 { return node_binary(p.pool, BinaryOp.Or, left, right, left_node.start, right_node.end); }
+
     return node_binary(p.pool, BinaryOp.Add, left, right, left_node.start, right_node.end);
 }
 
@@ -238,9 +329,33 @@ fn parse_arg_expr(p: *Parser) i64 {
     return arg;
 }
 
-// Parse unary/primary expression including calls and parens
+// Parse unary/primary expression including calls, parens, and unary ops
 fn parse_unary(p: *Parser) i64 {
     let kind: TokenType = p.current.kind;
+
+    // Unary negation: -expr
+    if kind == TokenType.Minus {
+        let start: i64 = p.current.start;
+        parser_advance(p);
+        let operand: i64 = parse_unary(p);  // Recursive for chained unary
+        return node_unary(p.pool, UnaryOp.Neg, operand, start, p.current.start);
+    }
+
+    // Logical NOT: !expr or not expr
+    if kind == TokenType.Bang or kind == TokenType.Not {
+        let start: i64 = p.current.start;
+        parser_advance(p);
+        let operand: i64 = parse_unary(p);
+        return node_unary(p.pool, UnaryOp.Not, operand, start, p.current.start);
+    }
+
+    // Bitwise NOT: ~expr
+    if kind == TokenType.Tilde {
+        let start: i64 = p.current.start;
+        parser_advance(p);
+        let operand: i64 = parse_unary(p);
+        return node_unary(p.pool, UnaryOp.BitNot, operand, start, p.current.start);
+    }
 
     // Parenthesized expression
     if kind == TokenType.LParen {
@@ -344,6 +459,87 @@ fn parse_return_stmt(p: *Parser) i64 {
     return node_return(p.pool, value, start, end);
 }
 
+// Parse variable declaration: let name: type = expr; OR var name: type = expr;
+fn parse_var_decl(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+
+    // Check if 'let' or 'var'
+    var is_let: i64 = 0;
+    if parser_check(p, TokenType.Let) {
+        is_let = 1;
+        parser_advance(p);
+    } else {
+        parser_want(p, TokenType.Var);
+    }
+
+    // Variable name
+    let name_start: i64 = p.current.start;
+    let name_len: i64 = p.current.end;
+    parser_want(p, TokenType.Ident);
+
+    // Type annotation (required for now)
+    var type_start: i64 = 0;
+    var type_handle: i64 = TYPE_I64;  // Default to i64
+    if parser_got(p, TokenType.Colon) {
+        type_start = p.current.start;
+        type_handle = parse_type(p);
+    }
+
+    // Optional initializer
+    var init_expr: i64 = -1;
+    if parser_got(p, TokenType.Eq) {
+        init_expr = parse_expr(p);
+    }
+
+    let end: i64 = p.current.start + p.current.end;
+    parser_want(p, TokenType.Semi);
+
+    return node_var_decl(p.pool, is_let, name_start, name_len, type_start, type_handle, init_expr, start, end);
+}
+
+// Parse if statement: if expr { body } [else { body }]
+fn parse_if_stmt(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    parser_want(p, TokenType.If);
+
+    // Condition expression (no parens required like Go/Cot)
+    let cond: i64 = parse_expr(p);
+
+    // Then body (block required)
+    let then_body: i64 = parse_block(p);
+
+    // Optional else clause
+    var else_body: i64 = -1;
+    if parser_got(p, TokenType.Else) {
+        // Check for 'else if' (chain)
+        if parser_check(p, TokenType.If) {
+            // Recursively parse if-else-if chain
+            else_body = parse_if_stmt(p);
+        } else {
+            // Plain else block
+            else_body = parse_block(p);
+        }
+    }
+
+    let end: i64 = p.current.start;
+    return node_if_stmt(p.pool, cond, then_body, else_body, start, end);
+}
+
+// Parse while statement: while expr { body }
+fn parse_while_stmt(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    parser_want(p, TokenType.While);
+
+    // Condition expression
+    let cond: i64 = parse_expr(p);
+
+    // Body block
+    let body: i64 = parse_block(p);
+
+    let end: i64 = p.current.start;
+    return node_while_stmt(p.pool, cond, body, start, end);
+}
+
 // Parse expression statement: expr;
 fn parse_expr_stmt(p: *Parser) i64 {
     let start: i64 = p.current.start;
@@ -357,8 +553,23 @@ fn parse_expr_stmt(p: *Parser) i64 {
 fn parse_stmt(p: *Parser) i64 {
     let kind: TokenType = p.current.kind;
 
+    // Return statement
     if kind == TokenType.Return {
         return parse_return_stmt(p);
+    }
+
+    // Variable declarations
+    if kind == TokenType.Let or kind == TokenType.Var {
+        return parse_var_decl(p);
+    }
+
+    // Control flow statements
+    if kind == TokenType.If {
+        return parse_if_stmt(p);
+    }
+
+    if kind == TokenType.While {
+        return parse_while_stmt(p);
     }
 
     // Default: expression statement
@@ -403,13 +614,14 @@ fn parse_param(p: *Parser) i64 {
     // Colon
     parser_want(p, TokenType.Colon);
 
-    // Type (i64 for now)
+    // Type (use parse_type for all types)
     let type_start: i64 = p.current.start;
-    let type_len: i64 = p.current.end;
-    parser_want(p, TokenType.I64);
+    let type_handle: i64 = parse_type(p);
+    let type_len: i64 = p.current.start - type_start;  // Calculate length from position
 
-    let end: i64 = type_start + type_len;
-    return node_param(p.pool, name_start, name_len, type_start, type_len, start, end);
+    let end: i64 = p.current.start;
+    // Note: we store type_handle in type_len field for now (type_start is unused for built-in types)
+    return node_param(p.pool, name_start, name_len, type_start, type_handle, start, end);
 }
 
 // Parse function declaration: fn name(params) ret_type { body }
@@ -442,10 +654,9 @@ fn parse_fn_decl(p: *Parser) i64 {
     }
     parser_want(p, TokenType.RParen);
 
-    // Return type
+    // Return type (use parse_type for all types)
     let ret_type_start: i64 = p.current.start;
-    let ret_type_len: i64 = p.current.end;
-    parser_want(p, TokenType.I64);
+    let ret_type_handle: i64 = parse_type(p);
 
     // Body
     let body: i64 = parse_block(p);
@@ -453,12 +664,13 @@ fn parse_fn_decl(p: *Parser) i64 {
     let end: i64 = p.current.start;
 
     // Create function declaration node
-    let fn_idx: i64 = node_fn_decl(p.pool, name_start, name_len, params_start, params_count, ret_type_start, ret_type_len, body, start, end);
+    // Note: we store ret_type_handle in ret_type_len field (ret_type_start for user types)
+    let fn_idx: i64 = node_fn_decl(p.pool, name_start, name_len, params_start, params_count, ret_type_start, ret_type_handle, body, start, end);
 
     // Store body and ret_type info in children array for retrieval
     node_add_child(p.pool, body);
     node_add_child(p.pool, ret_type_start);
-    node_add_child(p.pool, ret_type_len);
+    node_add_child(p.pool, ret_type_handle);
 
     return fn_idx;
 }

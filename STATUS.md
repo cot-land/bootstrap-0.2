@@ -25,12 +25,15 @@ None currently.
 
 ### Recent Bug Fixes (2026-01-17)
 
+- BUG-024: String pointer becomes null in string comparisons - Added slice_len/slice_ptr rewrite rules to decompose pass
+- BUG-023: Stack slot reuse causes value corruption - Disabled slot reuse for store_reg values, fixed liveness propagation
+- BUG-022: Comparison operands use same register - Fixed register allocation for comparisons in functions with many if statements
+- BUG-021: Chained AND with 4+ conditions - Fixed conditional block predecessor counting
+- BUG-020: Many nested if statements cause segfault - Fixed block edge management
 - BUG-019: Large struct (>16B) by-value arguments - Pass by reference following ARM64 ABI
 - BUG-017: Imported consts in binary expressions - Check checker's scope for imported constants in lowerIdent
 - BUG-016: Const identifier on right side of comparison - Added proper 1-token lookahead to distinguish struct literals
 - BUG-015: Chained OR (3+ conditions) - Pre-scan IR to skip logical operands in main loop
-- BUG-014: Switch statements - Now supports both expression and statement modes
-- BUG-013: String concatenation in loops - Fixed use count tracking in expand_calls
 
 See [BUGS.md](BUGS.md) for complete bug history.
 

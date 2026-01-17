@@ -941,6 +941,12 @@ pub const FuncBuilder = struct {
     /// Add a string literal, return its index.
     /// Deduplicates: if the same content already exists, returns existing index.
     pub fn addStringLiteral(self: *FuncBuilder, str: []const u8) !StringIdx {
+        // DEBUG: Log bytes being added
+        debug.log(.strings, "[IR] addStringLiteral: str.len={d}", .{str.len});
+        if (str.len > 0) {
+            debug.log(.strings, "[IR] addStringLiteral: str[0]={d} ('{c}')", .{ str[0], str[0] });
+        }
+
         // Check if string with same content already exists (Go's approach for deduplication)
         for (self.string_literals.items, 0..) |existing, i| {
             if (std.mem.eql(u8, existing, str)) {

@@ -1007,6 +1007,20 @@ pub const ARM64CodeGen = struct {
     fn generateValueBinary(self: *ARM64CodeGen, value: *const Value) !void {
         debug.log(.codegen, "    v{d} = {s}", .{ value.id, @tagName(value.op) });
 
+        // BUG-021 FIX: Skip values that were evicted (no home assignment).
+        // Rematerializeable values (const_int, const_bool, etc.) that were evicted
+        // have their home assignment cleared. They should not be emitted here -
+        // they'll be rematerialized as new values where they're actually needed.
+        switch (value.op) {
+            .const_int, .const_64, .const_bool => {
+                if (value.regOrNull() == null) {
+                    debug.log(.codegen, "      (skipped - evicted rematerializeable)", .{});
+                    return;
+                }
+            },
+            else => {},
+        }
+
         switch (value.op) {
             .const_int, .const_64 => {
                 // Get destination register from regalloc (or fallback to naive)
@@ -1066,6 +1080,10 @@ pub const ARM64CodeGen = struct {
                     str_data,
                     ref_idx,
                 });
+                // DEBUG: Log actual bytes
+                if (str_data.len > 0) {
+                    debug.log(.strings, "[CODEGEN] const_string: str_data[0]={d} ('{c}')", .{ str_data[0], str_data[0] });
+                }
 
                 debug.log(.codegen, "      -> x{d} = str[{d}] len={d} (pending reloc)", .{ dest_reg, string_index, str_data.len });
             },

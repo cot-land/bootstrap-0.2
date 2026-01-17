@@ -445,7 +445,8 @@ pub const Driver = struct {
             pipeline_debug.tracePhase(ssa_func, "Register Allocation");
 
             // Phase 4b.5: Stack allocation (assigns spill slot offsets)
-            const stack_result = stackalloc_mod.stackalloc(ssa_func) catch |e| {
+            // Pass spillLive from regalloc for proper cross-block interference detection
+            const stack_result = stackalloc_mod.stackalloc(ssa_func, regalloc_state.getSpillLive()) catch |e| {
                 debug.log(.regalloc, "Stackalloc failed: {}", .{e});
                 ssa_func.deinit();
                 self.allocator.destroy(ssa_func);
