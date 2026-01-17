@@ -14,7 +14,7 @@
 | cot0 frontend modules | Complete, all tests pass |
 | cot0 can parse itself | **COMPLETE** (Sprint E) |
 | cot0 SSA modules | **COMPLETE** (Sprint F) |
-| cot0 backend modules | Not started |
+| cot0 backend modules | **COMPLETE** (Sprint G) |
 | cot0 self-compiles | Not started |
 
 ---
@@ -112,23 +112,44 @@ struct initialization pattern: `var v: Value = undefined;`
 
 ---
 
-## Sprint G: Backend
+## Sprint G: Backend (COMPLETE 2026-01-17)
 
-**Goal:** Implement code generation in Cot
+**Goal:** Implement code generation modules in Cot
 
-### Files to implement
-- `arm64/asm.cot` - Instruction encoding
-- `codegen/arm64.cot` - SSA to ARM64, register allocation
-- `obj/macho.cot` - Mach-O object file emission
+### Files implemented
+- [x] `arm64/asm.cot` - ARM64 instruction encoding (697 lines)
+- [x] `arm64/regs.cot` - Register definitions and classification
+- [x] `codegen/arm64.cot` - Code generation helpers
+- [x] `obj/macho.cot` - Mach-O constants and structures
+
+Tests: asm_test.cot (7 tests), regs_test.cot (2 tests), arm64_test.cot (4 tests), macho_test.cot (3 tests)
+
+Also fixed: BUG-026 (integer literals > 2^31 not parsed correctly)
 
 ---
 
-## Sprint H: Integration
+## Sprint H: Core Transformations
+
+**Goal:** Implement the transformation passes that connect frontend to backend
+
+### Files to implement (the hard parts)
+- `lower.cot` - AST to IR conversion (~2500 lines in Zig)
+- `ssa/builder.cot` - IR to SSA conversion (~2800 lines in Zig)
+- `ssa/liveness.cot` - Live range analysis (~900 lines in Zig)
+- `ssa/regalloc.cot` - Register allocation (~1200 lines in Zig)
+
+These are the critical "glue" that connects parsing to code generation.
+
+---
+
+## Sprint I: Integration
 
 **Goal:** Complete compiler that can compile itself
 
 ### Files to implement
 - `main.cot` - Driver that runs the full pipeline
+- Full codegen loop (walk SSA, emit all ops)
+- Mach-O writer (actually write .o files)
 
 ### Verification
 ```bash
@@ -145,6 +166,21 @@ diff cot0-stage1 cot0-stage2
 ---
 
 ## Completed Sprints
+
+### Sprint G: Backend (COMPLETE 2026-01-17)
+
+Added to cot0:
+- **arm64/asm.cot**: ARM64 instruction encoding (MOVZ, ADD, SUB, LDR, STR, B, BL, RET, etc.)
+- **arm64/regs.cot**: Register definitions (X0-X30, SP, classification functions)
+- **codegen/arm64.cot**: Code generation helpers (select_load, select_store, codegen_* functions)
+- **obj/macho.cot**: Mach-O format constants and structures
+
+Fixed in bootstrap compiler:
+- **BUG-026**: Integer literals > 2^31 parsed incorrectly (changed parseInt base 10 → 0)
+
+Tests: 16 backend tests pass
+
+---
 
 ### Sprint F: IR & SSA (COMPLETE 2026-01-17)
 
