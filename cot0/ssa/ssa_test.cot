@@ -1,0 +1,55 @@
+// SSA Test - Tests for SSA modules
+// Run with: ./zig-out/bin/cot cot0/ssa/ssa_test.cot -o /tmp/ssa_test && /tmp/ssa_test
+
+import "value.cot"
+
+fn main() i64 {
+    let result: i64 = 0;
+
+    result = result + test_op_predicates();
+    result = result + test_value_creation();
+
+    return result;
+}
+
+// ============================================================================
+// Test: Op predicates
+// ============================================================================
+
+fn test_op_predicates() i64 {
+    // Test op_is_constant
+    if not op_is_constant(Op.ConstInt) { return 1; }
+    if not op_is_constant(Op.ConstBool) { return 2; }
+    if op_is_constant(Op.Add64) { return 3; }
+
+    // Test op_is_comparison
+    if not op_is_comparison(Op.Eq64) { return 10; }
+    if not op_is_comparison(Op.Lt64) { return 11; }
+    if op_is_comparison(Op.Add64) { return 12; }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: Value creation
+// ============================================================================
+
+fn test_value_creation() i64 {
+    // Create a const int value
+    var v: Value = value_new(0, Op.ConstInt, 5, 0);  // TYPE_I64 = 5
+    v.aux_int = 42;
+
+    if v.id != 0 { return 30; }
+    if v.op != Op.ConstInt { return 31; }
+    if v.aux_int != 42 { return 32; }
+    if v.uses != 0 { return 33; }
+
+    // Create another value that uses v
+    var v2: Value = value_new(1, Op.Neg64, 5, 0);
+    value_add_arg(&v2, &v);
+
+    if v2.args_count != 1 { return 34; }
+    if v.uses != 1 { return 35; }
+
+    return 0;
+}

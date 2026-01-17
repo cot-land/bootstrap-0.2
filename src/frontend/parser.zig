@@ -962,6 +962,14 @@ pub const Parser = struct {
                     .span = Span.init(start, self.pos()),
                 } });
             },
+            .kw_undefined => {
+                self.advance();
+                return try self.tree.addExpr(.{ .literal = .{
+                    .kind = .undefined_lit,
+                    .value = "undefined",
+                    .span = Span.init(start, self.pos()),
+                } });
+            },
             .lparen => {
                 self.advance();
                 const inner = try self.parseExpr() orelse return null;

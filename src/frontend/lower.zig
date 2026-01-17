@@ -1323,6 +1323,9 @@ pub const Lowerer = struct {
             .true_lit => return try fb.emitConstBool(true, lit.span),
             .false_lit => return try fb.emitConstBool(false, lit.span),
             .null_lit => return try fb.emitConstNull(TypeRegistry.UNTYPED_NULL, lit.span),
+            // undefined represents uninitialized memory - emit zero for safety.
+            // A more sophisticated implementation could skip initialization entirely.
+            .undefined_lit => return try fb.emitConstNull(TypeRegistry.UNTYPED_NULL, lit.span),
             .string => {
                 // String literals become const_slice nodes.
                 // The string data is stored in the function's string table.

@@ -1,0 +1,240 @@
+// Cot0 SSA Value Representation
+// Minimal SSA value for self-hosting.
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/ssa/value.go
+// Reference: bootstrap-0.2/src/ssa/value.zig
+
+import "op.cot"
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+const INVALID_ID: i64 = -1;
+const MAX_ARGS: i64 = 4;    // Most ops have <= 4 args
+
+// ============================================================================
+// SSA Value
+// ============================================================================
+
+// Value represents the result of an SSA operation.
+// Each Value has:
+// - An operation (Op) that defines what it computes
+// - A result type
+// - Zero or more argument Values (by index)
+// - A use count tracking how many other Values reference it
+struct Value {
+    id: i64,              // Unique identifier within function
+    op: Op,               // Operation this value performs
+    type_idx: i64,        // Result type index
+
+    // Arguments (indices into function's value array)
+    args: [4]i64,         // Up to 4 inline args
+    args_count: i64,      // Number of args used
+
+    // Use tracking (critical for DCE and regalloc)
+    uses: i64,            // How many values reference this one
+
+    // Auxiliary data (interpretation depends on op)
+    aux_int: i64,         // Integer aux: const value, offset, etc.
+    aux_ptr: i64,         // Pointer aux: symbol index, etc.
+
+    // Block and position
+    block_id: i64,        // Block this value belongs to
+    pos: i64,             // Source position
+
+    // Register allocation
+    reg: i64,             // Assigned register (-1 if none)
+    spill_slot: i64,      // Stack slot if spilled (-1 if none)
+}
+
+// ============================================================================
+// Value Constructors
+// ============================================================================
+
+fn value_new(id: i64, op: Op, type_idx: i64, block_id: i64) Value {
+    var v: Value = undefined;
+    v.id = id;
+    v.op = op;
+    v.type_idx = type_idx;
+    v.args[0] = INVALID_ID;
+    v.args[1] = INVALID_ID;
+    v.args[2] = INVALID_ID;
+    v.args[3] = INVALID_ID;
+    v.args_count = 0;
+    v.uses = 0;
+    v.aux_int = 0;
+    v.aux_ptr = 0;
+    v.block_id = block_id;
+    v.pos = 0;
+    v.reg = -1;
+    v.spill_slot = -1;
+    return v;
+}
+
+fn value_new_const_int(id: i64, value: i64, type_idx: i64, block_id: i64) Value {
+    var v: Value = value_new(id, Op.ConstInt, type_idx, block_id);
+    v.aux_int = value;
+    return v;
+}
+
+fn value_new_const_bool(id: i64, value: bool, block_id: i64) Value {
+    var v: Value = value_new(id, Op.ConstBool, 1, block_id);  // TYPE_BOOL = 1
+    if value {
+        v.aux_int = 1;
+    } else {
+        v.aux_int = 0;
+    }
+    return v;
+}
+
+// ============================================================================
+// Value Argument Management
+// ============================================================================
+
+// Add a single argument to a value
+// IMPORTANT: Always use this instead of modifying args directly!
+// This maintains use count invariants.
+fn value_add_arg(v: *Value, arg: *Value) {
+    if v.args_count >= MAX_ARGS { return; }
+
+    let idx: i64 = v.args_count;
+    v.args[idx] = arg.id;
+    v.args_count = idx + 1;
+    arg.uses = arg.uses + 1;
+}
+
+// Add two arguments (common case for binary ops)
+fn value_add_arg2(v: *Value, arg0: *Value, arg1: *Value) {
+    value_add_arg(v, arg0);
+    value_add_arg(v, arg1);
+}
+
+// Add three arguments (e.g., store: ptr, val, mem)
+fn value_add_arg3(v: *Value, arg0: *Value, arg1: *Value, arg2: *Value) {
+    value_add_arg(v, arg0);
+    value_add_arg(v, arg1);
+    value_add_arg(v, arg2);
+}
+
+// Set argument at specific index (for phi nodes and similar)
+fn value_set_arg(v: *Value, idx: i64, arg: *Value) {
+    if idx < 0 or idx >= MAX_ARGS { return; }
+
+    // Decrement old arg's use count if present
+    if v.args[idx] != INVALID_ID {
+        // Would need function context to decrement old arg's uses
+    }
+
+    v.args[idx] = arg.id;
+    if idx >= v.args_count {
+        v.args_count = idx + 1;
+    }
+    arg.uses = arg.uses + 1;
+}
+
+// Reset all arguments (for value replacement)
+fn value_reset_args(v: *Value) {
+    var i: i64 = 0;
+    while i < MAX_ARGS {
+        v.args[i] = INVALID_ID;
+        i = i + 1;
+    }
+    v.args_count = 0;
+}
+
+// ============================================================================
+// Value Queries
+// ============================================================================
+
+// Check if value is a constant (rematerializable)
+fn value_is_constant(v: *Value) bool {
+    return op_is_constant(v.op);
+}
+
+// Check if value has side effects
+fn value_has_side_effects(v: *Value) bool {
+    return op_has_side_effects(v.op);
+}
+
+// Check if value is dead (no uses and no side effects)
+fn value_is_dead(v: *Value) bool {
+    return v.uses == 0 and not value_has_side_effects(v);
+}
+
+// Check if value produces a boolean result
+fn value_is_bool(v: *Value) bool {
+    return op_is_comparison(v.op) or v.op == Op.ConstBool;
+}
+
+// Get first argument (or INVALID_ID if none)
+fn value_arg0(v: *Value) i64 {
+    if v.args_count < 1 { return INVALID_ID; }
+    return v.args[0];
+}
+
+// Get second argument (or INVALID_ID if none)
+fn value_arg1(v: *Value) i64 {
+    if v.args_count < 2 { return INVALID_ID; }
+    return v.args[1];
+}
+
+// Get third argument (or INVALID_ID if none)
+fn value_arg2(v: *Value) i64 {
+    if v.args_count < 3 { return INVALID_ID; }
+    return v.args[2];
+}
+
+// ============================================================================
+// Value Pool (arena allocation)
+// ============================================================================
+
+const MAX_VALUES: i64 = 10000;
+
+struct ValuePool {
+    values: *Value,       // Externally allocated array
+    count: i64,
+    cap: i64,
+}
+
+fn value_pool_init(pool: *ValuePool, values: *Value, cap: i64) {
+    pool.values = values;
+    pool.count = 0;
+    pool.cap = cap;
+}
+
+fn value_pool_alloc(pool: *ValuePool, op: Op, type_idx: i64, block_id: i64) *Value {
+    if pool.count >= pool.cap {
+        return pool.values;  // Return first value as error placeholder
+    }
+
+    let id: i64 = pool.count;
+    let v: *Value = pool.values + id;
+    v.* = value_new(id, op, type_idx, block_id);
+    pool.count = pool.count + 1;
+
+    return v;
+}
+
+fn value_pool_get(pool: *ValuePool, id: i64) *Value {
+    if id < 0 or id >= pool.count {
+        return pool.values;  // Return first value as error placeholder
+    }
+    return pool.values + id;
+}
+
+// ============================================================================
+// Use Count Management
+// ============================================================================
+
+// Increment use count (call when value becomes an argument)
+fn value_inc_uses(v: *Value) {
+    v.uses = v.uses + 1;
+}
+
+// Decrement use count (call when value is no longer referenced)
+fn value_dec_uses(v: *Value) {
+    if v.uses > 0 {
+        v.uses = v.uses - 1;
+    }
+}

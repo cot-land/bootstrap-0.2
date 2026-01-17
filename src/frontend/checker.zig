@@ -484,13 +484,28 @@ pub const Checker = struct {
         }
 
         if (v.value != null_node) {
-            const val_type = try self.checkExpr(v.value);
+            // Check if value is 'undefined' literal - special case that skips type check.
+            // undefined means "don't initialize" and can be assigned to any type.
+            const is_undefined = if (self.tree.getNode(v.value)) |node|
+                if (node.asExpr()) |expr|
+                    switch (expr) {
+                        .literal => |lit| lit.kind == .undefined_lit,
+                        else => false,
+                    }
+                else
+                    false
+            else
+                false;
 
-            if (var_type == invalid_type) {
-                var_type = self.materializeType(val_type);
-            } else {
-                if (!self.types.isAssignable(val_type, var_type)) {
-                    self.errTypeMismatch(v.span.start, var_type, val_type);
+            if (!is_undefined) {
+                const val_type = try self.checkExpr(v.value);
+
+                if (var_type == invalid_type) {
+                    var_type = self.materializeType(val_type);
+                } else {
+                    if (!self.types.isAssignable(val_type, var_type)) {
+                        self.errTypeMismatch(v.span.start, var_type, val_type);
+                    }
                 }
             }
         }
@@ -666,6 +681,9 @@ pub const Checker = struct {
             .char => TypeRegistry.U8,
             .true_lit, .false_lit => TypeRegistry.UNTYPED_BOOL,
             .null_lit => TypeRegistry.UNTYPED_NULL,
+            // undefined is a special "no initialization" marker that coerces to any type.
+            // The actual type is determined by context (var decl type annotation).
+            .undefined_lit => TypeRegistry.UNTYPED_NULL,
         };
     }
 
@@ -1459,11 +1477,26 @@ pub const Checker = struct {
         }
 
         if (vs.value != null_node) {
-            const val_type = try self.checkExpr(vs.value);
-            if (var_type == invalid_type) {
-                var_type = self.materializeType(val_type);
-            } else if (!self.types.isAssignable(val_type, var_type)) {
-                self.errTypeMismatch(vs.span.start, var_type, val_type);
+            // Check if value is 'undefined' literal - special case that skips type check.
+            // undefined means "don't initialize" and can be assigned to any type.
+            const is_undefined = if (self.tree.getNode(vs.value)) |node|
+                if (node.asExpr()) |expr|
+                    switch (expr) {
+                        .literal => |lit| lit.kind == .undefined_lit,
+                        else => false,
+                    }
+                else
+                    false
+            else
+                false;
+
+            if (!is_undefined) {
+                const val_type = try self.checkExpr(vs.value);
+                if (var_type == invalid_type) {
+                    var_type = self.materializeType(val_type);
+                } else if (!self.types.isAssignable(val_type, var_type)) {
+                    self.errTypeMismatch(vs.span.start, var_type, val_type);
+                }
             }
         }
 

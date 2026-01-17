@@ -198,6 +198,7 @@ pub const LiteralKind = enum {
     true_lit,
     false_lit,
     null_lit,
+    undefined_lit,
 };
 
 /// Binary operation (x op y)

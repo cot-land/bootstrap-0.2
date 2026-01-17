@@ -134,6 +134,7 @@ pub const Token = enum(u8) {
     kw_false,
     kw_null,
     kw_new,
+    kw_undefined,
 
     // Logical operators as keywords
     kw_and,
@@ -312,6 +313,7 @@ const token_strings = blk: {
     strings[@intFromEnum(Token.kw_false)] = "false";
     strings[@intFromEnum(Token.kw_null)] = "null";
     strings[@intFromEnum(Token.kw_new)] = "new";
+    strings[@intFromEnum(Token.kw_undefined)] = "undefined";
     strings[@intFromEnum(Token.kw_and)] = "and";
     strings[@intFromEnum(Token.kw_or)] = "or";
     strings[@intFromEnum(Token.kw_not)] = "not";
@@ -360,6 +362,7 @@ pub const keywords = std.StaticStringMap(Token).initComptime(.{
     .{ "false", .kw_false },
     .{ "null", .kw_null },
     .{ "new", .kw_new },
+    .{ "undefined", .kw_undefined },
     .{ "and", .kw_and },
     .{ "or", .kw_or },
     .{ "not", .kw_not },
