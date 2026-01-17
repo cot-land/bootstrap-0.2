@@ -1,0 +1,38 @@
+// Minimal test for BUG-029
+
+struct Inner {
+    value: i64,
+}
+
+struct Outer {
+    inner: *Inner,
+    count: i64,
+}
+
+fn set_inner_value(inner: *Inner, v: i64) {
+    inner.value = v;
+}
+
+fn set_through_outer(outer: *Outer, v: i64) {
+    // This pattern crashes - reading pointer field and passing to function
+    set_inner_value(outer.inner, v);
+}
+
+var g_inner: Inner;
+var g_outer: Outer;
+
+fn main() i64 {
+    g_inner.value = 0;
+    g_outer.inner = &g_inner;
+    g_outer.count = 0;
+
+    // Direct call works
+    set_inner_value(g_outer.inner, 42);
+    if g_inner.value != 42 { return 1; }
+
+    // Through function - does this work?
+    set_through_outer(&g_outer, 100);
+    if g_inner.value != 100 { return 2; }
+
+    return 0;
+}

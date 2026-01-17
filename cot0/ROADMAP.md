@@ -145,18 +145,25 @@ Also fixed: BUG-026 (integer literals > 2^31 not parsed correctly)
 
 Tests: lower_test.cot, builder_test.cot, liveness_test.cot, regalloc_test.cot all pass
 
-Note: builder_set_var has a known crash issue (BUG-029) affecting variable tracking through function parameters. Core infrastructure works.
+All core infrastructure working. BUG-027 through BUG-030 fixed on 2026-01-18.
 
 ---
 
-## Sprint I: Integration
+## Sprint I: Integration (IN PROGRESS)
 
 **Goal:** Complete compiler that can compile itself
 
-### Files to implement
-- `main.cot` - Driver that runs the full pipeline
-- Full codegen loop (walk SSA, emit all ops)
-- Mach-O writer (actually write .o files)
+### Progress (2026-01-18)
+- [x] `main.cot` - Basic driver with file I/O (compiles, reads files, runs)
+- [ ] Full codegen loop (walk SSA, emit all ops)
+- [ ] Mach-O writer (actually write .o files)
+- [ ] Module integration (resolve name collisions between imports)
+
+### Blocker: Module Name Collisions
+When importing all cot0 modules, there are name collisions (e.g., multiple `main` functions in test files, shared struct names). Need to either:
+1. Add namespace support to imports
+2. Remove test code from imported modules
+3. Use include guards / conditional compilation
 
 ### Verification
 ```bash
@@ -181,9 +188,6 @@ Added to cot0:
 - **ssa/builder.cot**: IR to SSA conversion with SSABuilder, BlockDefs, variable tracking
 - **ssa/liveness.cot**: Live range analysis with LiveMap, BlockLiveness, fixed-point iteration
 - **ssa/regalloc.cot**: Register allocation with ValState, RegState, spilling
-
-Known issues:
-- **BUG-029**: builder_set_var crashes when passing struct pointer field to function
 
 Tests: 4 new test files all pass
 

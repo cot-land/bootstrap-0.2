@@ -32,13 +32,14 @@ See [cot0/ROADMAP.md](cot0/ROADMAP.md) for detailed self-hosting progress.
 | codegen/arm64.cot | Complete | 4/4 pass |
 | obj/macho.cot | Complete | 3/3 pass |
 
-### Open Bugs (2026-01-18)
+### Recent Bug Fixes (2026-01-18)
 
-- BUG-029: Reading struct pointer field through function parameter causes crash
-- BUG-028: Taking address of local array element causes runtime crash
-- BUG-027: Direct global array field access causes compiler panic
+- BUG-030: Functions with >8 arguments fail - Implemented ARM64 AAPCS64 stack argument passing
+- BUG-029: Reading struct pointer field through function parameter causes crash - Added global struct/array handling
+- BUG-028: Taking address of local array element causes runtime crash - Skip init for undefined arrays
+- BUG-027: Direct global array field access causes compiler panic - Fixed via BUG-029
 
-### Recent Bug Fixes (2026-01-17)
+### Earlier Bug Fixes (2026-01-17)
 
 - BUG-026: Integer literals > 2^31 not parsed correctly - Fixed parseInt base from 10 to 0 for auto-detection
 - BUG-025: String pointer becomes null after many accesses - Implemented Go's per-instruction use distance tracking in regalloc
