@@ -158,8 +158,50 @@ All core infrastructure working. BUG-027 through BUG-030 fixed on 2026-01-18.
 - [x] Module integration phase 1 (parser.cot constants → PTYPE_*)
 - [x] Module integration phase 2 (SSA import chains fixed, MAX_PARAMS → FUNC_MAX_PARAMS)
 - [x] All cot0 modules can now be imported together
-- [ ] Full codegen loop (walk SSA, emit all ops)
-- [ ] Mach-O writer (actually write .o files)
+- [x] `driver_test.cot` - Scanner → Parser pipeline verified working
+- [ ] Full codegen loop (see detailed steps below)
+- [ ] Mach-O writer (see detailed steps below)
+
+### Codegen Loop Steps (following Go's genssa pattern)
+
+1. **Driver setup** - Wire together all modules in main.cot:
+   - Scanner → Parser → AST
+   - (Optional) Checker → Type checking
+   - Lowerer → IR
+   - SSABuilder → SSA
+
+2. **genssa function** - Walk SSA blocks/values:
+   ```
+   for each block in function:
+       for each value in block:
+           call ssaGenValue(value)
+       call ssaGenBlock(block)  // emit branches
+   ```
+
+3. **ssaGenValue** - Emit machine code for each SSA value:
+   - Switch on value.op
+   - Use codegen/arm64.cot functions to emit instructions
+   - Collect machine code bytes
+
+4. **Collect code** - Gather all emitted instructions into a buffer
+
+### Mach-O Writer Steps
+
+1. **MachOWriter struct** - Hold code, data, symbols, relocations
+
+2. **Header** - Write Mach-O 64-bit header (32 bytes)
+
+3. **Load commands** - Write segment and symtab commands
+
+4. **Text section** - Write assembled code
+
+5. **Data section** - Write global variables, string literals
+
+6. **Symbol table** - Write function symbols (name → offset)
+
+7. **String table** - Write symbol names
+
+8. **Relocations** - Write branch targets, data references
 
 ### Verification
 ```bash
