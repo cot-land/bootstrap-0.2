@@ -23,6 +23,10 @@ struct Lowerer {
     nodes: *Node,
     nodes_count: i64,
 
+    // Children array for lists (args, stmts, params)
+    children: *i64,
+    children_count: i64,
+
     // Source text for name extraction
     source: *u8,
     source_len: i64,
@@ -42,11 +46,14 @@ struct Lowerer {
 
 fn lowerer_init(l: *Lowerer,
                 nodes: *Node, nodes_count: i64,
+                children: *i64, children_count: i64,
                 source: *u8, source_len: i64,
                 ir_nodes: *IRNode, ir_nodes_cap: i64,
                 ir_locals: *IRLocal, ir_locals_cap: i64) {
     l.nodes = nodes;
     l.nodes_count = nodes_count;
+    l.children = children;
+    l.children_count = children_count;
     l.source = source;
     l.source_len = source_len;
     l.current_func = null;
@@ -85,6 +92,8 @@ fn lower_fn_decl(l: *Lowerer, node: *Node) {
     // field1 = name_len
     // field2 = params_start
     // field3 = params_count
+    // field4 = ret_type
+    // field5 = body (block node index)
 
     // Create function builder
     var fb: FuncBuilder = undefined;
@@ -98,9 +107,12 @@ fn lower_fn_decl(l: *Lowerer, node: *Node) {
 
     l.current_func = &fb;
 
-    // Note: For now we skip lowering the body since we need to figure out
-    // how to get the body node index from FnDecl. The body would be stored
-    // separately or in the children array.
+    // Lower the function body (field5 is the body block node index)
+    let body_idx: i64 = node.field5;
+    if body_idx >= 0 {
+        let body_node: *Node = l.nodes + body_idx;
+        lower_block(l, body_node);
+    }
 
     // Update counts from function builder
     l.ir_nodes_count = l.ir_nodes_count + fb.nodes_count;
@@ -118,7 +130,22 @@ fn lower_block(l: *Lowerer, node: *Node) {
     // field0 = stmts_start (index in children array)
     // field1 = stmts_count
 
-    // For simplicity, we don't iterate children in this minimal version
+    let stmts_start: i64 = node.field0;
+    let stmts_count: i64 = node.field1;
+
+    // Iterate over statements in the block
+    var i: i64 = 0;
+    while i < stmts_count {
+        // Get statement node index from children array
+        let child_ptr: *i64 = l.children + stmts_start + i;
+        let stmt_idx: i64 = child_ptr.*;
+        let stmt_node: *Node = l.nodes + stmt_idx;
+
+        // Lower the statement
+        lower_stmt(l, stmt_node);
+
+        i = i + 1;
+    }
 }
 
 fn lower_stmt(l: *Lowerer, node: *Node) {

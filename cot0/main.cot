@@ -87,6 +87,9 @@ var g_strings: [32768]u8;
 var g_relocs: [10000]Reloc;
 var g_output: [1048576]u8;
 
+// IR to SSA mapping (IR node index -> SSA value ID)
+var g_ir_to_ssa_id: [10000]i64;
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -182,7 +185,7 @@ fn init_node_pool() *NodePool {
 // Compilation Pipeline
 // ============================================================================
 
-fn compile(source: string) i64 {
+fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print_str("Phase 1: Scanning...\n");
 
     // Phase 1: Scan and count tokens
@@ -217,6 +220,7 @@ fn compile(source: string) i64 {
     var lowerer: Lowerer = undefined;
     lowerer_init(&lowerer,
                  &g_nodes[0], pool.count,
+                 &g_children[0], pool.children_count,
                  source.ptr, len(source),
                  &g_ir_nodes[0], MAIN_MAX_IR_NODES,
                  &g_ir_locals[0], MAIN_MAX_IR_LOCALS);
@@ -226,7 +230,7 @@ fn compile(source: string) i64 {
     print_num(ir_count);
     print_newline();
 
-    // Phase 4: Build SSA (manual for now - lowerer doesn't produce full IR yet)
+    // Phase 4: Build SSA from IR nodes
     print_str("Phase 4: Building SSA...\n");
 
     var ssa_func: Func = undefined;
@@ -235,12 +239,32 @@ fn compile(source: string) i64 {
               &g_ssa_values[0], MAIN_MAX_SSA_VALUES,
               &g_ssa_locals[0], MAIN_MAX_SSA_LOCALS);
 
-    // Create a minimal function that returns 0
-    // TODO: Wire up full AST → IR → SSA conversion
+    // Create entry block
     let entry: i64 = func_new_entry_block(&ssa_func);
-    let const_val: *Value = func_emit_const_int(&ssa_func, 0, TYPE_I64);
-    const_val.reg = X0;
-    func_emit_return(&ssa_func, const_val);
+
+    // Convert IR nodes to SSA values
+    var ir_idx: i64 = 0;
+    while ir_idx < ir_count {
+        let ir_node: *IRNode = &g_ir_nodes[ir_idx];
+
+        if ir_node.kind == IRNodeKind.ConstInt {
+            // Emit constant integer
+            let val: *Value = func_emit_const_int(&ssa_func, ir_node.value, TYPE_I64);
+            val.reg = X0;  // Pre-assign register for simple case
+            g_ir_to_ssa_id[ir_idx] = val.id;
+        } else if ir_node.kind == IRNodeKind.Return {
+            // Look up the return value from IR mapping
+            if ir_node.left >= 0 {
+                let val_id: i64 = g_ir_to_ssa_id[ir_node.left];
+                let ret_val: *Value = func_get_value(&ssa_func, val_id);
+                func_emit_return(&ssa_func, ret_val);
+            }
+        }
+
+        ir_idx = ir_idx + 1;
+    }
+
+    // Finish the function
     func_emit_return_block(&ssa_func);
 
     print_str("  Blocks: ");
@@ -300,8 +324,8 @@ fn compile(source: string) i64 {
     // Phase 7: Write to output file
     print_str("Phase 7: Writing output...\n");
 
-    if g_output_path_len > 0 {
-        let written: i64 = write_file(&g_output_path[0], &g_output[0], macho_bytes);
+    if out_path_len > 0 {
+        let written: i64 = write_file(out_path, &g_output[0], macho_bytes);
         if written < 0 {
             return 3;
         }
@@ -328,11 +352,27 @@ fn main() i64 {
 
     let test_source: string = "fn main() i64 { return 42; }";
 
+    // Set output path for testing using local array
+    var out_path: [16]u8;
+    out_path[0] = @intCast(u8, 47);   // '/'
+    out_path[1] = @intCast(u8, 116);  // 't'
+    out_path[2] = @intCast(u8, 109);  // 'm'
+    out_path[3] = @intCast(u8, 112);  // 'p'
+    out_path[4] = @intCast(u8, 47);   // '/'
+    out_path[5] = @intCast(u8, 99);   // 'c'
+    out_path[6] = @intCast(u8, 111);  // 'o'
+    out_path[7] = @intCast(u8, 116);  // 't'
+    out_path[8] = @intCast(u8, 48);   // '0'
+    out_path[9] = @intCast(u8, 46);   // '.'
+    out_path[10] = @intCast(u8, 111); // 'o'
+    out_path[11] = @intCast(u8, 0);
+    let out_path_len: i64 = 11;  // /tmp/cot0.o
+
     print_str("Compiling: ");
     print_str(test_source);
     print_str("\n\n");
 
-    let result: i64 = compile(test_source);
+    let result: i64 = compile(test_source, &out_path[0], out_path_len);
 
     if result == 0 {
         print_str("\nCompilation successful!\n");

@@ -118,6 +118,8 @@ struct Node {
     field1: i64,    // Multi-purpose field 1
     field2: i64,    // Multi-purpose field 2
     field3: i64,    // Multi-purpose field 3
+    field4: i64,    // Multi-purpose field 4 (for FnDecl: ret_type)
+    field5: i64,    // Multi-purpose field 5 (for FnDecl: body node index)
 }
 
 // ============================================================================
@@ -309,10 +311,8 @@ fn node_fn_decl(pool: *NodePool, name_start: i64, name_len: i64,
     n.field1 = name_len;        // Function name length
     n.field2 = params_start;    // Start index in children array
     n.field3 = params_count;    // Number of parameters
-
-    // Note: We need more fields for ret_type and body
-    // For now, store body in the next node slot (hacky but works for cot0)
-    // A real implementation would use a FnDecl-specific struct
+    n.field4 = ret_type_len;    // Return type (type handle from parse_type)
+    n.field5 = body;            // Body block node index
 
     return idx;
 }

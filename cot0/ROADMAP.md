@@ -169,9 +169,11 @@ All core infrastructure working. BUG-027 through BUG-030 fixed on 2026-01-18.
 - [x] `macho_writer_test.cot` - Tests for Mach-O writer (4/4 pass)
 - [x] Wire full pipeline in driver (Scanner → Parser → Lowerer → SSA → genssa → Mach-O)
 - [x] Resolve import conflicts (MAIN_ prefix for constants, avoid path conflicts)
-- [ ] Complete lowerer for function bodies (currently outputs 0 IR nodes)
-- [ ] Wire IR → SSA conversion (currently uses manual SSA construction)
-- [ ] Add file output (write Mach-O to disk)
+- [x] Complete lowerer for function bodies
+- [x] Wire IR → SSA conversion
+- [x] Add file output (write Mach-O to disk)
+- [ ] Extend lowerer for more complex functions (variables, control flow)
+- [ ] Add command line argument parsing
 
 ### Current Pipeline Output
 
@@ -187,18 +189,20 @@ Phase 1: Scanning...
 Phase 2: Parsing...
   Nodes: 5
 Phase 3: Lowering to IR...
-  IR nodes: 0       ← Lowerer incomplete, needs function body handling
+  IR nodes: 2
 Phase 4: Building SSA...
-  Blocks: 1, Values: 2  ← Currently manual SSA construction
+  Blocks: 1, Values: 2
 Phase 5: Generating machine code...
   Code bytes: 8
 Phase 6: Creating Mach-O object...
   Mach-O bytes: 319
 Phase 7: Writing output...
-  (No output path specified, skipping write)
+  Wrote 319 bytes
 
 Compilation successful!
 ```
+
+**Full pipeline working!** Output linked and run: **Exit code: 42** ✅
 
 ### What's Complete
 

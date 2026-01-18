@@ -40,14 +40,16 @@ The `main.cot` driver demonstrates the complete 7-phase compilation pipeline:
 ```
 Phase 1: Scanning...     Tokens: 10
 Phase 2: Parsing...      Nodes: 5
-Phase 3: Lowering to IR... IR nodes: 0 (incomplete)
+Phase 3: Lowering to IR... IR nodes: 2
 Phase 4: Building SSA... Blocks: 1, Values: 2
 Phase 5: Generating machine code... Code bytes: 8
 Phase 6: Creating Mach-O object... Mach-O bytes: 319
-Phase 7: Writing output... (ready)
+Phase 7: Writing output... Wrote 319 bytes
 ```
 
-**Remaining for self-hosting:** Complete lowerer for function bodies, wire IR→SSA conversion.
+**Full pipeline verified:** Compiles `fn main() i64 { return 42; }` to executable that returns 42.
+
+**Remaining for self-hosting:** Extend lowerer for more complex functions, add command line argument parsing.
 
 ### End-to-End Codegen Test
 
