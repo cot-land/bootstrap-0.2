@@ -42,6 +42,11 @@ struct Lowerer {
     ir_locals: *IRLocal,
     ir_locals_cap: i64,
     ir_locals_count: i64,
+
+    // Function metadata (externally allocated)
+    ir_funcs: *IRFunc,
+    ir_funcs_cap: i64,
+    ir_funcs_count: i64,
 }
 
 fn lowerer_init(l: *Lowerer,
@@ -49,7 +54,8 @@ fn lowerer_init(l: *Lowerer,
                 children: *i64, children_count: i64,
                 source: *u8, source_len: i64,
                 ir_nodes: *IRNode, ir_nodes_cap: i64,
-                ir_locals: *IRLocal, ir_locals_cap: i64) {
+                ir_locals: *IRLocal, ir_locals_cap: i64,
+                ir_funcs: *IRFunc, ir_funcs_cap: i64) {
     l.nodes = nodes;
     l.nodes_count = nodes_count;
     l.children = children;
@@ -63,6 +69,9 @@ fn lowerer_init(l: *Lowerer,
     l.ir_locals = ir_locals;
     l.ir_locals_cap = ir_locals_cap;
     l.ir_locals_count = 0;
+    l.ir_funcs = ir_funcs;
+    l.ir_funcs_cap = ir_funcs_cap;
+    l.ir_funcs_count = 0;
 }
 
 // ============================================================================
@@ -95,6 +104,10 @@ fn lower_fn_decl(l: *Lowerer, node: *Node) {
     // field4 = ret_type
     // field5 = body (block node index)
 
+    // Record starting positions for this function
+    let nodes_start: i64 = l.ir_nodes_count;
+    let locals_start: i64 = l.ir_locals_count;
+
     // Create function builder
     var fb: FuncBuilder = undefined;
     func_builder_init(&fb,
@@ -107,6 +120,23 @@ fn lower_fn_decl(l: *Lowerer, node: *Node) {
 
     l.current_func = &fb;
 
+    // Add function parameters as locals (before lowering body so they're available)
+    let params_start: i64 = node.field2;
+    let params_count: i64 = node.field3;
+    var param_idx: i64 = 0;
+    while param_idx < params_count {
+        // Get param node index from children array
+        let child_ptr: *i64 = l.children + params_start + param_idx;
+        let param_node_idx: i64 = child_ptr.*;
+        let param_node: *Node = l.nodes + param_node_idx;
+
+        // ParamDecl: field0=name_start, field1=name_len, field2=type_start, field3=type_len
+        func_builder_add_param(&fb,
+                               param_node.field0, param_node.field1,
+                               TYPE_I64, param_idx);
+        param_idx = param_idx + 1;
+    }
+
     // Lower the function body (field5 is the body block node index)
     let body_idx: i64 = node.field5;
     if body_idx >= 0 {
@@ -117,6 +147,20 @@ fn lower_fn_decl(l: *Lowerer, node: *Node) {
     // Update counts from function builder
     l.ir_nodes_count = l.ir_nodes_count + fb.nodes_count;
     l.ir_locals_count = l.ir_locals_count + fb.locals_count;
+
+    // Record function metadata
+    if l.ir_funcs_count < l.ir_funcs_cap {
+        let func_ptr: *IRFunc = l.ir_funcs + l.ir_funcs_count;
+        func_ptr.name_start = node.field0;
+        func_ptr.name_len = node.field1;
+        func_ptr.return_type = TYPE_I64;
+        func_ptr.nodes_start = nodes_start;
+        func_ptr.nodes_count = fb.nodes_count;
+        func_ptr.locals_start = locals_start;
+        func_ptr.locals_count = fb.locals_count;
+        func_ptr.code_offset = 0;
+        l.ir_funcs_count = l.ir_funcs_count + 1;
+    }
 
     l.current_func = null;
 }

@@ -138,6 +138,11 @@ fn encode_epilogue(frame_size: i64) i64 {
     return encode_ret(LR);
 }
 
+// Note: STP/LDP functions are in arm64/asm.cot:
+// encode_stp_pre(rt1, rt2, rn, imm7) - pre-indexed store pair
+// encode_ldp_post(rt1, rt2, rn, imm7) - post-indexed load pair
+// imm7 is the offset in 8-byte units (so -16 bytes = imm7 of -2)
+
 // ============================================================================
 // Move Generation
 // ============================================================================

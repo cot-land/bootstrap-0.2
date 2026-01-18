@@ -42,6 +42,16 @@ struct Branch {
 }
 
 // ============================================================================
+// Call Site Tracking (for inter-function calls)
+// ============================================================================
+
+struct CallSite {
+    code_offset: i64,      // Offset in code buffer where BL was emitted
+    func_name_start: i64,  // Start of function name in source
+    func_name_len: i64,    // Length of function name
+}
+
+// ============================================================================
 // Codegen State
 // Holds state during code generation for a function
 // ============================================================================
@@ -65,6 +75,11 @@ struct GenState {
     branches_count: i64,
     branches_cap: i64,
 
+    // Pending call sites to resolve (inter-function calls)
+    call_sites: *CallSite,
+    call_sites_count: i64,
+    call_sites_cap: i64,
+
     // Current block being generated
     current_block: i64,
 }
@@ -76,7 +91,8 @@ struct GenState {
 fn genstate_init(gs: *GenState, f: *Func,
                  code: *u8, code_cap: i64,
                  bstart: *i64, bstart_cap: i64,
-                 branches: *Branch, branches_cap: i64) {
+                 branches: *Branch, branches_cap: i64,
+                 call_sites: *CallSite, call_sites_cap: i64) {
     gs.func = f;
     gs.code = code;
     gs.code_count = 0;
@@ -86,6 +102,9 @@ fn genstate_init(gs: *GenState, f: *Func,
     gs.branches = branches;
     gs.branches_count = 0;
     gs.branches_cap = branches_cap;
+    gs.call_sites = call_sites;
+    gs.call_sites_count = 0;
+    gs.call_sites_cap = call_sites_cap;
     gs.current_block = INVALID_BLOCK;
 }
 
@@ -162,10 +181,15 @@ fn add_branch_cbz(gs: *GenState, target_block: i64, reg: i64, is_nonzero: bool) 
 fn genssa(gs: *GenState) i64 {
     let f: *Func = gs.func;
 
-    // Emit function prologue
+    // Emit function prologue: save X29/X30 and allocate frame
+    // Always save LR (X30) in case of calls, and FP (X29) for debugging
+    // STP X29, X30, [SP, #-16]!  (pre-indexed store pair)
+    // Note: imm7 is offset in 8-byte units, so -16 bytes = -2
+    emit_inst(gs, encode_stp_pre(X29, X30, SP, -2));
+
     let frame_size: i64 = f.frame_size;
     if frame_size > 0 {
-        emit_inst(gs, encode_prologue(frame_size));
+        emit_inst(gs, encode_sub_imm(SP, SP, frame_size));
     }
 
     // Process each block
@@ -525,10 +549,18 @@ fn genssa_call(gs: *GenState, v: *Value) {
         i = i + 1;
     }
 
-    // Emit BL instruction placeholder (offset 0, to be patched by linker)
-    // BL encodes a 26-bit signed offset
-    // For extern calls, the linker will patch this via relocation
-    // TODO: Add relocation entry to Mach-O writer
+    // Record call site for later resolution
+    // v.aux_int = function name start in source
+    // v.aux_ptr = function name length
+    if gs.call_sites_count < gs.call_sites_cap {
+        let cs: *CallSite = gs.call_sites + gs.call_sites_count;
+        cs.code_offset = gs.code_count;  // Where BL will be emitted
+        cs.func_name_start = v.aux_int;
+        cs.func_name_len = v.aux_ptr;
+        gs.call_sites_count = gs.call_sites_count + 1;
+    }
+
+    // Emit BL instruction placeholder (offset 0, to be patched later)
     emit_inst(gs, encode_bl(0));
 }
 
@@ -544,11 +576,14 @@ fn genssa_return(gs: *GenState, v: *Value) {
         }
     }
 
-    // Emit epilogue and return
+    // Emit epilogue: deallocate frame, restore X29/X30, return
     let frame_size: i64 = f.frame_size;
     if frame_size > 0 {
         emit_inst(gs, encode_add_imm(SP, SP, frame_size));
     }
+    // LDP X29, X30, [SP], #16  (post-indexed load pair)
+    // Note: imm7 is offset in 8-byte units, so 16 bytes = 2
+    emit_inst(gs, encode_ldp_post(X29, X30, SP, 2));
     emit_inst(gs, codegen_return());
 }
 

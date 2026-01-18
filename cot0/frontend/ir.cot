@@ -284,6 +284,39 @@ fn ir_local_new_param(name_start: i64, name_len: i64, type_idx: i64, param_idx: 
 }
 
 // ============================================================================
+// IR Function Metadata - Tracks function boundaries in IR
+// ============================================================================
+
+struct IRFunc {
+    name_start: i64,      // Offset into source for name
+    name_len: i64,        // Length of name
+    return_type: i64,     // Return type index
+
+    nodes_start: i64,     // Start index in IR nodes array
+    nodes_count: i64,     // Number of IR nodes
+
+    locals_start: i64,    // Start index in locals array
+    locals_count: i64,    // Number of locals
+
+    code_offset: i64,     // Offset in generated code (set during codegen)
+}
+
+fn ir_func_new(name_start: i64, name_len: i64, return_type: i64,
+               nodes_start: i64, nodes_count: i64,
+               locals_start: i64, locals_count: i64) IRFunc {
+    return IRFunc{
+        .name_start = name_start,
+        .name_len = name_len,
+        .return_type = return_type,
+        .nodes_start = nodes_start,
+        .nodes_count = nodes_count,
+        .locals_start = locals_start,
+        .locals_count = locals_count,
+        .code_offset = 0,
+    };
+}
+
+// ============================================================================
 // Function Builder - Constructs IR functions (pointer-based)
 // ============================================================================
 
@@ -443,22 +476,4 @@ fn func_builder_emit_jump(fb: *FuncBuilder, target_block: i64) i64 {
     var node: IRNode = ir_node_new(IRNodeKind.Jump, TYPE_VOID);
     node.left = target_block;
     return func_builder_emit(fb, node);
-}
-
-// ============================================================================
-// IR Function (completed function)
-// ============================================================================
-
-struct IRFunc {
-    name_start: i64,
-    name_len: i64,
-    return_type: i64,
-
-    locals: *IRLocal,
-    locals_count: i64,
-
-    nodes: *IRNode,
-    nodes_count: i64,
-
-    frame_size: i64,
 }
