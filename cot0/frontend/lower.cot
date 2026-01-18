@@ -126,12 +126,19 @@ fn lower_fn_decl(l: *Lowerer, node: *Node) {
 // ============================================================================
 
 fn lower_block(l: *Lowerer, node: *Node) {
+    lower_block_check_terminated(l, node);
+}
+
+// Lower a block and return whether it ends with a terminator (return/branch)
+fn lower_block_check_terminated(l: *Lowerer, node: *Node) bool {
     // BlockStmt fields:
     // field0 = stmts_start (index in children array)
     // field1 = stmts_count
 
     let stmts_start: i64 = node.field0;
     let stmts_count: i64 = node.field1;
+
+    var terminated: bool = false;
 
     // Iterate over statements in the block
     var i: i64 = 0;
@@ -141,11 +148,18 @@ fn lower_block(l: *Lowerer, node: *Node) {
         let stmt_idx: i64 = child_ptr.*;
         let stmt_node: *Node = l.nodes + stmt_idx;
 
+        // Check if this is a terminator
+        if stmt_node.kind == NodeKind.ReturnStmt {
+            terminated = true;
+        }
+
         // Lower the statement
         lower_stmt(l, stmt_node);
 
         i = i + 1;
     }
+
+    return terminated;
 }
 
 fn lower_stmt(l: *Lowerer, node: *Node) {
@@ -157,6 +171,17 @@ fn lower_stmt(l: *Lowerer, node: *Node) {
         lower_if(l, node);
     } else if node.kind == NodeKind.WhileStmt {
         lower_while(l, node);
+    } else if node.kind == NodeKind.ExprStmt {
+        lower_expr_stmt(l, node);
+    }
+}
+
+fn lower_expr_stmt(l: *Lowerer, node: *Node) {
+    // ExprStmt fields:
+    // field0 = expression node index
+    if node.field0 >= 0 {
+        let expr_node: *Node = l.nodes + node.field0;
+        lower_expr(l, expr_node);
     }
 }
 
@@ -208,17 +233,86 @@ fn lower_var_decl(l: *Lowerer, node: *Node) {
 
 fn lower_if(l: *Lowerer, node: *Node) {
     // IfStmt fields:
-    // field0 = condition expr
-    // field1 = then body
-    // field2 = else body (-1 if none)
-    // TODO: Implement if statement lowering with blocks
+    // field0 = condition expr node index
+    // field1 = then body node index
+    // field2 = else body node index (-1 if none)
+
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return; }
+
+    // Create blocks
+    let then_block: i64 = func_builder_new_block(fb);
+    var else_block: i64 = -1;
+    if node.field2 >= 0 {
+        else_block = func_builder_new_block(fb);
+    }
+    let merge_block: i64 = func_builder_new_block(fb);
+
+    // Lower condition
+    let cond_node: *Node = l.nodes + node.field0;
+    let cond_idx: i64 = lower_expr(l, cond_node);
+
+    // Emit branch
+    var target_else: i64 = merge_block;
+    if else_block >= 0 {
+        target_else = else_block;
+    }
+    func_builder_emit_branch(fb, cond_idx, then_block, target_else);
+
+    // Lower then body
+    func_builder_set_block(fb, then_block);
+    let then_node: *Node = l.nodes + node.field1;
+    let then_terminated: bool = lower_block_check_terminated(l, then_node);
+    if not then_terminated {
+        func_builder_emit_jump(fb, merge_block);
+    }
+
+    // Lower else body if present
+    if else_block >= 0 {
+        func_builder_set_block(fb, else_block);
+        let else_node: *Node = l.nodes + node.field2;
+        let else_terminated: bool = lower_block_check_terminated(l, else_node);
+        if not else_terminated {
+            func_builder_emit_jump(fb, merge_block);
+        }
+    }
+
+    // Continue in merge block
+    func_builder_set_block(fb, merge_block);
 }
 
 fn lower_while(l: *Lowerer, node: *Node) {
     // WhileStmt fields:
     // field0 = condition expr
     // field1 = body
-    // TODO: Implement while loop lowering with blocks
+
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return; }
+
+    // Create blocks: header (condition), body, exit
+    let header_block: i64 = func_builder_new_block(fb);
+    let body_block: i64 = func_builder_new_block(fb);
+    let exit_block: i64 = func_builder_new_block(fb);
+
+    // Jump from current block to header
+    func_builder_emit_jump(fb, header_block);
+
+    // Header block: evaluate condition, branch to body or exit
+    func_builder_set_block(fb, header_block);
+    let cond_node: *Node = l.nodes + node.field0;
+    let cond_idx: i64 = lower_expr(l, cond_node);
+    func_builder_emit_branch(fb, cond_idx, body_block, exit_block);
+
+    // Body block: execute body, jump back to header
+    func_builder_set_block(fb, body_block);
+    let body_node: *Node = l.nodes + node.field1;
+    let body_terminated: bool = lower_block_check_terminated(l, body_node);
+    if not body_terminated {
+        func_builder_emit_jump(fb, header_block);
+    }
+
+    // Continue in exit block
+    func_builder_set_block(fb, exit_block);
 }
 
 // ============================================================================
@@ -241,6 +335,8 @@ fn lower_expr(l: *Lowerer, node: *Node) i64 {
         return lower_unary(l, node);
     } else if node.kind == NodeKind.CallExpr {
         return lower_call(l, node);
+    } else if node.kind == NodeKind.AssignExpr {
+        return lower_assign(l, node);
     }
 
     return NULL_NODE;
@@ -373,6 +469,46 @@ fn lower_call(l: *Lowerer, node: *Node) i64 {
     call_node.args_start = first_arg_idx;
     call_node.args_count = args_count;
     return func_builder_emit(fb, call_node);
+}
+
+fn lower_assign(l: *Lowerer, node: *Node) i64 {
+    // AssignExpr fields:
+    // field0 = target (identifier node)
+    // field1 = value (expression)
+
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return NULL_NODE; }
+
+    // Get target - must be an identifier for now
+    let target_node: *Node = l.nodes + node.field0;
+    if target_node.kind != NodeKind.Ident {
+        return NULL_NODE;  // Only simple variable assignments supported
+    }
+
+    // Look up local variable by name
+    var local_idx: i64 = -1;
+    var i: i64 = 0;
+    while i < fb.locals_count {
+        let local: *IRLocal = fb.locals + i;
+        if names_equal(l.source, local.name_start, local.name_len, target_node.field0, target_node.field1) {
+            local_idx = i;
+        }
+        i = i + 1;
+    }
+
+    if local_idx < 0 {
+        return NULL_NODE;  // Variable not found
+    }
+
+    // Lower the value expression
+    let value_node: *Node = l.nodes + node.field1;
+    let value_idx: i64 = lower_expr(l, value_node);
+
+    // Emit store
+    func_builder_emit_store_local(fb, local_idx, value_idx);
+
+    // Return the value (assignments are expressions)
+    return value_idx;
 }
 
 // ============================================================================

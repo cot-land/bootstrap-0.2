@@ -257,6 +257,17 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print_num(ir_count);
     print_newline();
 
+    // Debug: dump IR node block_ids
+    print_str("  IR block_ids: ");
+    var debug_idx: i64 = 0;
+    while debug_idx < ir_count {
+        let debug_node: *IRNode = &g_ir_nodes[debug_idx];
+        print_num(debug_node.block_id);
+        print_str(" ");
+        debug_idx = debug_idx + 1;
+    }
+    print_newline();
+
     // Phase 4: Build SSA from IR nodes
     print_str("Phase 4: Building SSA...\n");
 
@@ -266,50 +277,96 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
               &g_ssa_values[0], MAIN_MAX_SSA_VALUES,
               &g_ssa_locals[0], MAIN_MAX_SSA_LOCALS);
 
-    // Create entry block
-    let entry: i64 = func_new_entry_block(&ssa_func);
-
-    // Convert IR nodes to SSA values
-    // Simple linear register allocation: X0 for result, X1..X9 for temps
-    var next_reg: i64 = X1;  // Start from X1, reserve X0 for return
+    // First pass: find max block_id to know how many blocks we need
+    var max_block_id: i64 = 0;
     var ir_idx: i64 = 0;
     while ir_idx < ir_count {
         let ir_node: *IRNode = &g_ir_nodes[ir_idx];
+        if ir_node.block_id > max_block_id {
+            max_block_id = ir_node.block_id;
+        }
+        ir_idx = ir_idx + 1;
+    }
+
+    // Create all SSA blocks (entry block is 0)
+    let entry: i64 = func_new_entry_block(&ssa_func);
+    var block_idx: i64 = 1;
+    while block_idx <= max_block_id {
+        func_new_block(&ssa_func, BlockKind.Plain);
+        block_idx = block_idx + 1;
+    }
+
+    // Register IR locals with SSA function (for memory-based Load/Store)
+    var local_idx: i64 = 0;
+    while local_idx < lowerer.ir_locals_count {
+        let ir_local: *IRLocal = &g_ir_locals[local_idx];
+        func_add_local(&ssa_func, ir_local.name_start, ir_local.name_len,
+                       ir_local.type_idx, ir_local.is_mutable);
+        local_idx = local_idx + 1;
+    }
+
+    // Compute stack layout: set local offsets and frame size
+    local_idx = 0;
+    while local_idx < ssa_func.locals_count {
+        let ssa_local: *Local = func_get_local(&ssa_func, local_idx);
+        ssa_local.offset = local_idx * 8;  // Each local is 8 bytes
+        local_idx = local_idx + 1;
+    }
+    // Frame size = locals * 8, aligned to 16
+    ssa_func.frame_size = ssa_func.locals_count * 8;
+    if ssa_func.frame_size % 16 != 0 {
+        ssa_func.frame_size = ssa_func.frame_size + (16 - (ssa_func.frame_size % 16));
+    }
+
+    // Second pass: convert IR nodes to SSA values
+    // Track current block and switch when block_id changes
+    var current_ir_block: i64 = 0;
+    var next_reg: i64 = X1;  // Start from X1, reserve X0 for return/compare
+    ir_idx = 0;
+    while ir_idx < ir_count {
+        let ir_node: *IRNode = &g_ir_nodes[ir_idx];
+
+        // Switch SSA block if IR block changed
+        if ir_node.block_id != current_ir_block {
+            current_ir_block = ir_node.block_id;
+            func_set_block(&ssa_func, current_ir_block);
+        }
 
         if ir_node.kind == IRNodeKind.ConstInt {
-            // Emit constant integer
             let val: *Value = func_emit_const_int(&ssa_func, ir_node.value, TYPE_I64);
-            val.reg = next_reg;  // Assign next available register
+            val.reg = next_reg;
             next_reg = next_reg + 1;
             g_ir_to_ssa_id[ir_idx] = val.id;
         } else if ir_node.kind == IRNodeKind.Binary {
-            // Binary operation: look up operands and emit SSA binary op
             let left_id: i64 = g_ir_to_ssa_id[ir_node.left];
             let right_id: i64 = g_ir_to_ssa_id[ir_node.right];
             let left_val: *Value = func_get_value(&ssa_func, left_id);
             let right_val: *Value = func_get_value(&ssa_func, right_id);
             let ssa_op: Op = ir_op_to_ssa_op(ir_node.op);
             let val: *Value = func_emit_binary(&ssa_func, ssa_op, left_val, right_val, TYPE_I64);
-            val.reg = X0;  // Binary result goes to X0 (for return)
+            // All results to X0 for simplicity
+            val.reg = X0;
             g_ir_to_ssa_id[ir_idx] = val.id;
         } else if ir_node.kind == IRNodeKind.StoreLocal {
-            // Store value to local - record the SSA value for this local
+            // Use memory-based store (LocalAddr + Store) for proper loop handling
             let local_idx: i64 = ir_node.left;
             let value_idx: i64 = ir_node.right;
-            g_local_to_ssa_id[local_idx] = g_ir_to_ssa_id[value_idx];
-            // StoreLocal doesn't produce a new SSA value
-            g_ir_to_ssa_id[ir_idx] = -1;
+            let value_ssa_id: i64 = g_ir_to_ssa_id[value_idx];
+            let value_val: *Value = func_get_value(&ssa_func, value_ssa_id);
+            let store_val: *Value = func_emit_store_local(&ssa_func, local_idx, value_val);
+            g_ir_to_ssa_id[ir_idx] = store_val.id;
         } else if ir_node.kind == IRNodeKind.LoadLocal {
-            // Load value from local - just use the stored SSA value
+            // Use memory-based load (LocalAddr + Load) for proper loop handling
             let local_idx: i64 = ir_node.left;
-            g_ir_to_ssa_id[ir_idx] = g_local_to_ssa_id[local_idx];
+            let load_val: *Value = func_emit_load_local(&ssa_func, local_idx);
+            load_val.reg = next_reg;
+            next_reg = next_reg + 1;
+            g_ir_to_ssa_id[ir_idx] = load_val.id;
         } else if ir_node.kind == IRNodeKind.Call {
-            // Function call - emit SSA Call and add arguments
             let val: *Value = func_emit_call(&ssa_func,
                                              ir_node.func_name_start,
                                              ir_node.func_name_len,
                                              TYPE_I64);
-            // Add arguments to the call value
             var arg_idx: i64 = 0;
             while arg_idx < ir_node.args_count {
                 let arg_ir_idx: i64 = ir_node.args_start + arg_idx;
@@ -318,10 +375,22 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 value_add_arg(val, arg_val);
                 arg_idx = arg_idx + 1;
             }
-            val.reg = X0;  // Return value in X0
+            val.reg = X0;
             g_ir_to_ssa_id[ir_idx] = val.id;
+        } else if ir_node.kind == IRNodeKind.Branch {
+            // Conditional branch: set up block successors
+            let cond_id: i64 = g_ir_to_ssa_id[ir_node.left];
+            let then_block: i64 = ir_node.right;
+            let else_block: i64 = ir_node.value;
+            let cond_val: *Value = func_get_value(&ssa_func, cond_id);
+            func_emit_if(&ssa_func, cond_val, then_block, else_block);
+            g_ir_to_ssa_id[ir_idx] = -1;
+        } else if ir_node.kind == IRNodeKind.Jump {
+            // Unconditional jump
+            let target_block: i64 = ir_node.left;
+            func_emit_jump(&ssa_func, target_block);
+            g_ir_to_ssa_id[ir_idx] = -1;
         } else if ir_node.kind == IRNodeKind.Return {
-            // Look up the return value from IR mapping
             if ir_node.left >= 0 {
                 let val_id: i64 = g_ir_to_ssa_id[ir_node.left];
                 let ret_val: *Value = func_get_value(&ssa_func, val_id);
@@ -418,7 +487,7 @@ fn main() i64 {
     // For now, compile a simple test string
     // TODO: Parse command line arguments (argc, argv)
 
-    let test_source: string = "fn main() i64 { let x: i64 = 5; let y: i64 = 3; return x + y; }";
+    let test_source: string = "fn main() i64 { var x: i64 = 0; while x < 5 { x = x + 1; } return x; }";
 
     // Set output path for testing using local array
     var out_path: [16]u8;

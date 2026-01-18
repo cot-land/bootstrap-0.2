@@ -26,6 +26,7 @@ enum NodeKind {
     UnaryExpr,      // Unary operation: -x, !x
     AddressOf,      // Address-of: &x
     DerefExpr,      // Dereference: ptr.*
+    AssignExpr,     // Assignment: x = expr
 
     // Statements (perform actions)
     ReturnStmt,     // return expr;
@@ -470,6 +471,25 @@ fn node_deref(pool: *NodePool, operand: i64, start: i64, end: i64) i64 {
     return idx;
 }
 
+// Create an assignment expression node: target = value
+// field0: target (identifier node index - the variable being assigned)
+// field1: value (expression node index - the value being assigned)
+fn node_assign(pool: *NodePool, target: i64, value: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.AssignExpr;
+    n.start = start;
+    n.end = end;
+    n.field0 = target;          // Target variable
+    n.field1 = value;           // Value expression
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
 // ============================================================================
 // Sprint D: Imports and Constants
 // Following Go's cmd/compile/internal/syntax/nodes.go patterns
@@ -659,7 +679,8 @@ fn is_expr(kind: NodeKind) bool {
            kind == NodeKind.UnaryExpr or
            kind == NodeKind.AddressOf or
            kind == NodeKind.DerefExpr or
-           kind == NodeKind.FieldAccess;
+           kind == NodeKind.FieldAccess or
+           kind == NodeKind.AssignExpr;
 }
 
 fn is_stmt(kind: NodeKind) bool {

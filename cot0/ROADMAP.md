@@ -172,37 +172,38 @@ All core infrastructure working. BUG-027 through BUG-030 fixed on 2026-01-18.
 - [x] Complete lowerer for function bodies
 - [x] Wire IR → SSA conversion
 - [x] Add file output (write Mach-O to disk)
-- [ ] Extend lowerer for more complex functions (variables, control flow)
+- [x] Local variables with Load/Store (memory-based for loops)
+- [x] While loops with variable updates
 - [ ] Add command line argument parsing
+- [ ] Extend lowerer for remaining constructs (if/else, function calls)
 
 ### Current Pipeline Output
 
-When running `/tmp/cot0_main`:
+**Simple return:** `fn main() i64 { return 42; }` → Exit code: 42 ✅
+
+**Local variables:** `fn main() i64 { var x: i64 = 42; return x; }` → Exit code: 42 ✅
+
+**While loops:** `fn main() i64 { var x: i64 = 0; while x < 5 { x = x + 1; } return x; }` → Exit code: 5 ✅
+
+Sample output:
 ```
 Cot0 Self-Hosting Compiler v0.2
 ================================
 
-Compiling: fn main() i64 { return 42; }
+Compiling: fn main() i64 { var x: i64 = 42; return x; }
 
-Phase 1: Scanning...
-  Tokens: 10
-Phase 2: Parsing...
-  Nodes: 5
-Phase 3: Lowering to IR...
-  IR nodes: 2
-Phase 4: Building SSA...
-  Blocks: 1, Values: 2
-Phase 5: Generating machine code...
-  Code bytes: 8
-Phase 6: Creating Mach-O object...
-  Mach-O bytes: 319
-Phase 7: Writing output...
-  Wrote 319 bytes
+Phase 1: Scanning...     Tokens: 17
+Phase 2: Parsing...      Nodes: 7
+Phase 3: Lowering to IR... IR nodes: 4
+Phase 4: Building SSA... Blocks: 1, Values: 6
+Phase 5: Generating machine code... Code bytes: 28
+Phase 6: Creating Mach-O object... Mach-O bytes: 343
+Phase 7: Writing output... Wrote 343 bytes
 
 Compilation successful!
 ```
 
-**Full pipeline working!** Output linked and run: **Exit code: 42** ✅
+**Full pipeline working!** Local variables use memory-based Load/Store for proper loop-carried dependency handling.
 
 ### What's Complete
 

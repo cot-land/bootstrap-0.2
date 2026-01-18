@@ -26,11 +26,19 @@ const MAX_CODE: i64 = 65536;
 // For collecting branches that need target resolution
 // ============================================================================
 
+// Branch kind constants
+const BRANCH_B: i64 = 0;        // Unconditional B
+const BRANCH_B_COND: i64 = 1;   // Conditional B.cond
+const BRANCH_CBZ: i64 = 2;      // Compare and Branch on Zero
+const BRANCH_CBNZ: i64 = 3;     // Compare and Branch on Non-Zero
+
 struct Branch {
     code_offset: i64,      // Offset in code buffer where branch was emitted
     target_block: i64,     // Target block ID
-    is_conditional: bool,  // True for conditional branches
-    cond: i64,             // Condition code (for conditional branches)
+    is_conditional: bool,  // True for conditional branches (legacy, kept for compatibility)
+    cond: i64,             // Condition code (for B.cond branches)
+    kind: i64,             // Branch kind (BRANCH_B, BRANCH_B_COND, BRANCH_CBZ, BRANCH_CBNZ)
+    reg: i64,              // Register for CBZ/CBNZ
 }
 
 // ============================================================================
@@ -115,6 +123,33 @@ fn add_branch(gs: *GenState, target_block: i64, is_conditional: bool, cond: i64)
     br.target_block = target_block;
     br.is_conditional = is_conditional;
     br.cond = cond;
+    // Set kind based on is_conditional (for legacy callers)
+    if is_conditional {
+        br.kind = BRANCH_B_COND;
+    } else {
+        br.kind = BRANCH_B;
+    }
+    br.reg = 0;
+    gs.branches_count = gs.branches_count + 1;
+}
+
+// Add a CBZ or CBNZ branch
+fn add_branch_cbz(gs: *GenState, target_block: i64, reg: i64, is_nonzero: bool) {
+    if gs.branches_count >= gs.branches_cap {
+        return;
+    }
+
+    let br: *Branch = gs.branches + gs.branches_count;
+    br.code_offset = gs.code_count - 4;  // Points to the branch instruction just emitted
+    br.target_block = target_block;
+    br.is_conditional = true;
+    br.cond = 0;
+    if is_nonzero {
+        br.kind = BRANCH_CBNZ;
+    } else {
+        br.kind = BRANCH_CBZ;
+    }
+    br.reg = reg;
     gs.branches_count = gs.branches_count + 1;
 }
 
@@ -148,18 +183,18 @@ fn genssa(gs: *GenState) i64 {
         // Process each value in the block
         genssa_block_values(gs, block);
 
-        // Emit control flow for block (DISABLED for now)
-        // let next_block: i64 = block_id + 1;
-        // if next_block >= f.blocks_count {
-        //     next_block = INVALID_BLOCK;
-        // }
-        // genssa_block_control(gs, block, next_block);
+        // Emit control flow for block
+        let next_block: i64 = block_id + 1;
+        if next_block >= f.blocks_count {
+            next_block = INVALID_BLOCK;
+        }
+        genssa_block_control(gs, block, next_block);
 
         block_id = block_id + 1;
     }
 
-    // Resolve branches (DISABLED for now)
-    // resolve_branches(gs);
+    // Resolve branches
+    resolve_branches(gs);
 
     return 0;
 }
@@ -436,8 +471,15 @@ fn genssa_load(gs: *GenState, v: *Value) {
     let f: *Func = gs.func;
     let addr: *Value = func_get_value(f, v.args[0]);
 
-    // Load from address in register
-    emit_inst(gs, encode_ldr(rd, addr.reg, 0));
+    // Check if address is LocalAddr - emit SP-relative load directly
+    if addr.op == Op.LocalAddr {
+        let local_idx: i64 = addr.aux_int;
+        let local: *Local = func_get_local(f, local_idx);
+        emit_inst(gs, encode_ldr(rd, SP, local.offset));
+    } else {
+        // Load from address in register
+        emit_inst(gs, encode_ldr(rd, addr.reg, 0));
+    }
 }
 
 fn genssa_store(gs: *GenState, v: *Value) {
@@ -445,8 +487,15 @@ fn genssa_store(gs: *GenState, v: *Value) {
     let addr: *Value = func_get_value(f, v.args[0]);
     let val: *Value = func_get_value(f, v.args[1]);
 
-    // Store to address in register
-    emit_inst(gs, encode_str(val.reg, addr.reg, 0));
+    // Check if address is LocalAddr - emit SP-relative store directly
+    if addr.op == Op.LocalAddr {
+        let local_idx: i64 = addr.aux_int;
+        let local: *Local = func_get_local(f, local_idx);
+        emit_inst(gs, encode_str(val.reg, SP, local.offset));
+    } else {
+        // Store to address in register
+        emit_inst(gs, encode_str(val.reg, addr.reg, 0));
+    }
 }
 
 fn genssa_local_addr(gs: *GenState, v: *Value) {
@@ -457,8 +506,8 @@ fn genssa_local_addr(gs: *GenState, v: *Value) {
     let local_idx: i64 = v.aux_int;
     let local: *Local = func_get_local(f, local_idx);
 
-    // Compute address: FP + offset
-    emit_inst(gs, encode_add_imm(rd, FP, local.offset));
+    // Compute address: SP + offset (no FP setup in simple prologue)
+    emit_inst(gs, encode_add_imm(rd, SP, local.offset));
 }
 
 fn genssa_call(gs: *GenState, v: *Value) {
@@ -540,28 +589,27 @@ fn genssa_block_control(gs: *GenState, block: *Block, next_block: i64) {
     }
 
     if block.kind == BlockKind.If {
-        // Conditional branch
+        // Conditional branch using CBZ/CBNZ
+        // The condition value is in a register (0 = false, 1 = true)
         let f: *Func = gs.func;
         let cond_val: *Value = func_get_value(f, block.control);
-
-        // Check if condition was from a comparison (flags already set)
-        // For simplicity, assume flags are set from the condition value
+        let cond_reg: i64 = cond_val.reg;
 
         let then_block: i64 = block.succs[0];
         let else_block: i64 = block.succs[1];
 
         if then_block == next_block {
-            // Fall through to then, branch to else
-            emit_inst(gs, encode_b_cond(0, COND_EQ));  // Branch if false (EQ = 0)
-            add_branch(gs, else_block, true, COND_EQ);
+            // Fall through to then, branch to else if condition is false (zero)
+            emit_inst(gs, encode_cbz(cond_reg, 0));  // CBZ - branch if zero
+            add_branch_cbz(gs, else_block, cond_reg, false);
         } else if else_block == next_block {
-            // Fall through to else, branch to then
-            emit_inst(gs, encode_b_cond(0, COND_NE));  // Branch if true (NE = 1)
-            add_branch(gs, then_block, true, COND_NE);
+            // Fall through to else, branch to then if condition is true (non-zero)
+            emit_inst(gs, encode_cbnz(cond_reg, 0));  // CBNZ - branch if non-zero
+            add_branch_cbz(gs, then_block, cond_reg, true);
         } else {
             // Neither is next, emit both branches
-            emit_inst(gs, encode_b_cond(0, COND_NE));  // Branch to then if true
-            add_branch(gs, then_block, true, COND_NE);
+            emit_inst(gs, encode_cbnz(cond_reg, 0));  // CBNZ - branch to then if true
+            add_branch_cbz(gs, then_block, cond_reg, true);
             emit_inst(gs, encode_b(0));  // Unconditional to else
             add_branch(gs, else_block, false, 0);
         }
@@ -592,13 +640,15 @@ fn resolve_branches(gs: *GenState) {
         let branch_offset: i64 = br.code_offset;
         let rel_offset: i64 = (target_offset - branch_offset) / 4;
 
-        // Patch the branch instruction
-        if br.is_conditional {
-            // Conditional branch: imm19 field
-            patch_b_cond(gs, branch_offset, rel_offset, br.cond);
-        } else {
-            // Unconditional branch: imm26 field
+        // Patch the branch instruction based on kind
+        if br.kind == BRANCH_B {
             patch_b(gs, branch_offset, rel_offset);
+        } else if br.kind == BRANCH_B_COND {
+            patch_b_cond(gs, branch_offset, rel_offset, br.cond);
+        } else if br.kind == BRANCH_CBZ {
+            patch_cbz(gs, branch_offset, rel_offset, br.reg, false);
+        } else if br.kind == BRANCH_CBNZ {
+            patch_cbz(gs, branch_offset, rel_offset, br.reg, true);
         }
 
         i = i + 1;
@@ -621,6 +671,19 @@ fn patch_b(gs: *GenState, offset: i64, rel_offset: i64) {
 fn patch_b_cond(gs: *GenState, offset: i64, rel_offset: i64, cond: i64) {
     // Re-encode B.cond instruction with correct offset
     let inst: i64 = encode_b_cond(rel_offset, cond);
+    let p: *u8 = gs.code + offset;
+    p.* = @intCast(u8, inst & 255);
+    let p1: *u8 = p + 1;
+    p1.* = @intCast(u8, (inst >> 8) & 255);
+    let p2: *u8 = p + 2;
+    p2.* = @intCast(u8, (inst >> 16) & 255);
+    let p3: *u8 = p + 3;
+    p3.* = @intCast(u8, (inst >> 24) & 255);
+}
+
+fn patch_cbz(gs: *GenState, offset: i64, rel_offset: i64, reg: i64, is_nonzero: bool) {
+    // Re-encode CBZ/CBNZ instruction with correct offset
+    let inst: i64 = encode_cbz_cbnz(reg, rel_offset, is_nonzero);
     let p: *u8 = gs.code + offset;
     p.* = @intCast(u8, inst & 255);
     let p1: *u8 = p + 1;

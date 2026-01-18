@@ -139,6 +139,7 @@ enum IRNodeKind {
 struct IRNode {
     kind: IRNodeKind,
     type_idx: i64,        // Result type
+    block_id: i64,        // Block this node belongs to
 
     // Fields used depending on kind:
     // ConstInt: value
@@ -167,6 +168,7 @@ fn ir_node_new(kind: IRNodeKind, type_idx: i64) IRNode {
     return IRNode{
         .kind = kind,
         .type_idx = type_idx,
+        .block_id = 0,
         .value = 0,
         .left = NULL_IR_NODE,
         .right = NULL_IR_NODE,
@@ -298,8 +300,9 @@ struct FuncBuilder {
     nodes_count: i64,
     nodes_cap: i64,
 
-    // Block tracking (simple: just node ranges for now)
-    current_block: i64,
+    // Block tracking
+    current_block: i64,       // Currently active block ID
+    next_block_id: i64,       // Next block ID to allocate
 }
 
 fn func_builder_init(fb: *FuncBuilder, name_start: i64, name_len: i64, return_type: i64,
@@ -315,6 +318,19 @@ fn func_builder_init(fb: *FuncBuilder, name_start: i64, name_len: i64, return_ty
     fb.nodes_count = 0;
     fb.nodes_cap = nodes_cap;
     fb.current_block = 0;
+    fb.next_block_id = 1;  // Block 0 is the entry block
+}
+
+// Create a new block and return its ID
+fn func_builder_new_block(fb: *FuncBuilder) i64 {
+    let id: i64 = fb.next_block_id;
+    fb.next_block_id = fb.next_block_id + 1;
+    return id;
+}
+
+// Set the current block for subsequent nodes
+fn func_builder_set_block(fb: *FuncBuilder, block_id: i64) {
+    fb.current_block = block_id;
 }
 
 fn func_builder_add_local(fb: *FuncBuilder, name_start: i64, name_len: i64,
@@ -348,6 +364,7 @@ fn func_builder_emit(fb: *FuncBuilder, node: IRNode) i64 {
     let idx: i64 = fb.nodes_count;
     let ptr: *IRNode = fb.nodes + idx;
     ptr.* = node;
+    ptr.block_id = fb.current_block;  // Tag node with current block
     fb.nodes_count = fb.nodes_count + 1;
     return idx;
 }
@@ -407,6 +424,24 @@ fn func_builder_emit_return(fb: *FuncBuilder, value: i64) i64 {
 fn func_builder_emit_return_void(fb: *FuncBuilder) i64 {
     var node: IRNode = ir_node_new(IRNodeKind.Return, TYPE_VOID);
     node.left = NULL_IR_NODE;
+    return func_builder_emit(fb, node);
+}
+
+// Emit a conditional branch
+// cond = condition IR node index
+// then_block, else_block = target block IDs
+fn func_builder_emit_branch(fb: *FuncBuilder, cond: i64, then_block: i64, else_block: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.Branch, TYPE_VOID);
+    node.left = cond;
+    node.right = then_block;
+    node.value = else_block;
+    return func_builder_emit(fb, node);
+}
+
+// Emit an unconditional jump
+fn func_builder_emit_jump(fb: *FuncBuilder, target_block: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.Jump, TYPE_VOID);
+    node.left = target_block;
     return func_builder_emit(fb, node);
 }
 
