@@ -2,7 +2,7 @@
 
 **Goal:** Build a Cot compiler written in Cot that can compile itself.
 
-**Last Updated:** 2026-01-18
+**Last Updated:** 2026-01-19
 
 ---
 
@@ -174,8 +174,10 @@ All core infrastructure working. BUG-027 through BUG-030 fixed on 2026-01-18.
 - [x] Add file output (write Mach-O to disk)
 - [x] Local variables with Load/Store (memory-based for loops)
 - [x] While loops with variable updates
-- [ ] Add command line argument parsing
-- [ ] Extend lowerer for remaining constructs (if/else, function calls)
+- [x] If/else statements
+- [x] Function calls with parameters
+- [x] Add command line argument parsing (argc/argv, file reading)
+- [ ] Extend lowerer for remaining constructs (pointers, structs, etc.)
 
 ### Current Pipeline Output
 
@@ -184,6 +186,8 @@ All core infrastructure working. BUG-027 through BUG-030 fixed on 2026-01-18.
 **Local variables:** `fn main() i64 { var x: i64 = 42; return x; }` → Exit code: 42 ✅
 
 **While loops:** `fn main() i64 { var x: i64 = 0; while x < 5 { x = x + 1; } return x; }` → Exit code: 5 ✅
+
+**Function calls:** `fn add1(x: i64) i64 { return x + 1; } fn main() i64 { let a: i64 = add1(40); return add1(a); }` → Exit code: 42 ✅
 
 Sample output:
 ```

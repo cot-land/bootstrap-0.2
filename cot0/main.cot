@@ -581,41 +581,122 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
 }
 
 // ============================================================================
+// Command Line Parsing
+// ============================================================================
+
+// Get string length (null-terminated)
+fn strlen(s: *u8) i64 {
+    var len: i64 = 0;
+    var ptr: *u8 = s;
+    while ptr.* != 0 {
+        len = len + 1;
+        ptr = ptr + 1;
+    }
+    return len;
+}
+
+// Compare two strings for equality
+fn streq(a: *u8, b: *u8) bool {
+    var pa: *u8 = a;
+    var pb: *u8 = b;
+    while pa.* != 0 and pb.* != 0 {
+        if pa.* != pb.* {
+            return false;
+        }
+        pa = pa + 1;
+        pb = pb + 1;
+    }
+    return pa.* == pb.*;
+}
+
+// Copy string to buffer, return length
+fn strcpy(dest: *u8, src: *u8, max_len: i64) i64 {
+    var i: i64 = 0;
+    var src_ptr: *u8 = src;
+    var dst_ptr: *u8 = dest;
+    while src_ptr.* != 0 and i < max_len - 1 {
+        dst_ptr.* = src_ptr.*;
+        src_ptr = src_ptr + 1;
+        dst_ptr = dst_ptr + 1;
+        i = i + 1;
+    }
+    dst_ptr.* = 0;  // Null terminate
+    return i;
+}
+
+fn print_usage() {
+    print_str("Usage: cot0 <source.cot> -o <output>\n");
+    print_str("\n");
+    print_str("  <source.cot>  Input Cot source file\n");
+    print_str("  -o <output>   Output object file\n");
+}
+
+// ============================================================================
 // Main Entry Point
 // ============================================================================
 
-fn main() i64 {
+fn main(argc: i64, argv: **u8) i64 {
     print_str("Cot0 Self-Hosting Compiler v0.2\n");
     print_str("================================\n\n");
 
-    // For now, compile a simple test string
-    // TODO: Parse command line arguments (argc, argv)
+    // Parse command line arguments
+    // Expected: cot0 <source.cot> -o <output>
+    if argc < 4 {
+        print_str("Error: Not enough arguments\n\n");
+        print_usage();
+        return 1;
+    }
 
-    // Test: chained function calls with parameters
-    // add1(add1(40)) should return 42
-    let test_source: string = "fn add1(x: i64) i64 { return x + 1; } fn main() i64 { let a: i64 = add1(40); return add1(a); }";
+    // Get source file path (argv[1])
+    let argv_ptr1: **u8 = argv + 1;
+    let source_path: *u8 = argv_ptr1.*;
 
-    // Set output path for testing using local array
-    var out_path: [16]u8;
-    out_path[0] = @intCast(u8, 47);   // '/'
-    out_path[1] = @intCast(u8, 116);  // 't'
-    out_path[2] = @intCast(u8, 109);  // 'm'
-    out_path[3] = @intCast(u8, 112);  // 'p'
-    out_path[4] = @intCast(u8, 47);   // '/'
-    out_path[5] = @intCast(u8, 99);   // 'c'
-    out_path[6] = @intCast(u8, 111);  // 'o'
-    out_path[7] = @intCast(u8, 116);  // 't'
-    out_path[8] = @intCast(u8, 48);   // '0'
-    out_path[9] = @intCast(u8, 46);   // '.'
-    out_path[10] = @intCast(u8, 111); // 'o'
-    out_path[11] = @intCast(u8, 0);
-    let out_path_len: i64 = 11;  // /tmp/cot0.o
+    // Check for -o flag (argv[2])
+    let argv_ptr2: **u8 = argv + 2;
+    let flag: *u8 = argv_ptr2.*;
 
-    print_str("Compiling: ");
-    print_str(test_source);
-    print_str("\n\n");
+    // Build expected flag string
+    var dash_o: [3]u8;
+    dash_o[0] = 45;  // '-'
+    dash_o[1] = 111; // 'o'
+    dash_o[2] = 0;
 
-    let result: i64 = compile(test_source, &out_path[0], out_path_len);
+    if !streq(flag, &dash_o[0]) {
+        print_str("Error: Expected -o flag\n\n");
+        print_usage();
+        return 1;
+    }
+
+    // Get output path (argv[3])
+    let argv_ptr3: **u8 = argv + 3;
+    let output_path: *u8 = argv_ptr3.*;
+    let output_len: i64 = strlen(output_path);
+
+    // Copy output path to global buffer (for null-termination)
+    g_output_path_len = strcpy(&g_output_path[0], output_path, MAIN_MAX_OUTPUT_PATH);
+
+    // Read source file
+    print_str("Reading: ");
+    var source_ptr: *u8 = source_path;
+    while source_ptr.* != 0 {
+        write(1, source_ptr, 1);
+        source_ptr = source_ptr + 1;
+    }
+    print_newline();
+
+    let bytes_read: i64 = read_file(source_path);
+    if bytes_read < 0 {
+        return 1;
+    }
+
+    print_str("  Read ");
+    print_num(bytes_read);
+    print_str(" bytes\n\n");
+
+    // Create string view of source
+    let source: string = @string(&g_source[0], g_source_len);
+
+    let result: i64 = compile(source, &g_output_path[0], g_output_path_len);
 
     if result == 0 {
         print_str("\nCompilation successful!\n");
