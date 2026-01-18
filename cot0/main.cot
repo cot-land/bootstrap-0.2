@@ -1,8 +1,25 @@
-// Cot0 Compiler - Main Driver (Minimal Version)
-// Tests that the basic structure compiles.
+// Cot0 Self-Hosting Compiler
+// Full pipeline: Source → Scanner → Parser → Lowerer → SSA → genssa → Mach-O
 //
-// Note: Full integration requires resolving name collisions
-// between imported modules. For now, this tests basic I/O.
+// Usage: cot0 <source.cot> -o <output>
+
+// ============================================================================
+// Module Imports
+// ============================================================================
+
+// Frontend modules - import in specific order (required for compatibility)
+import "frontend/token.cot"
+import "frontend/scanner.cot"
+import "frontend/types.cot"
+import "frontend/ast.cot"
+import "frontend/parser.cot"
+import "frontend/lower.cot"
+
+// Codegen - genssa.cot imports ../ssa/func.cot transitively
+import "codegen/genssa.cot"
+
+// Object file writer
+import "obj/macho.cot"
 
 // ============================================================================
 // Syscall Wrappers (libc)
@@ -18,15 +35,57 @@ const O_RDONLY: i32 = 0;
 const O_WRONLY: i32 = 1;
 const O_CREAT: i32 = 512;
 const O_TRUNC: i32 = 1024;
-const FILE_MODE: i32 = 420;
+const FILE_MODE: i32 = 420;  // 0o644
 
 // ============================================================================
-// Global Buffers
+// Global Buffers - Use MAIN_ prefix to avoid conflicts with imported modules
+// Note: MAX_NODES and MAX_CHILDREN are defined in ast.cot
 // ============================================================================
 
-const MAX_SOURCE: i64 = 1048576;
+const MAIN_MAX_SOURCE: i64 = 1048576;    // 1 MB source file
 var g_source: [1048576]u8;
 var g_source_len: i64 = 0;
+
+const MAIN_MAX_OUTPUT_PATH: i64 = 256;
+var g_output_path: [256]u8;
+var g_output_path_len: i64 = 0;
+
+// AST storage - uses MAX_NODES/MAX_CHILDREN from ast.cot
+var g_nodes: [10000]Node;
+var g_children: [50000]i64;
+var g_pool: NodePool;
+
+// IR storage
+const MAIN_MAX_IR_NODES: i64 = 10000;
+const MAIN_MAX_IR_LOCALS: i64 = 1000;
+var g_ir_nodes: [10000]IRNode;
+var g_ir_locals: [1000]IRLocal;
+
+// SSA storage
+const MAIN_MAX_SSA_BLOCKS: i64 = 1000;
+const MAIN_MAX_SSA_VALUES: i64 = 10000;
+const MAIN_MAX_SSA_LOCALS: i64 = 500;
+var g_ssa_blocks: [1000]Block;
+var g_ssa_values: [10000]Value;
+var g_ssa_locals: [500]Local;
+
+// Codegen storage
+const MAIN_MAX_CODE: i64 = 65536;
+var g_code: [65536]u8;
+var g_bstart: [1000]i64;
+var g_branches: [1000]Branch;
+
+// Mach-O storage
+const MAIN_MAX_DATA: i64 = 65536;
+const MAIN_MAX_SYMBOLS: i64 = 1000;
+const MAIN_MAX_STRINGS: i64 = 32768;
+const MAIN_MAX_RELOCS: i64 = 10000;
+const MAIN_MAX_OUTPUT: i64 = 1048576;
+var g_data: [65536]u8;
+var g_symbols: [1000]Symbol;
+var g_strings: [32768]u8;
+var g_relocs: [10000]Reloc;
+var g_output: [1048576]u8;
 
 // ============================================================================
 // Helper Functions
@@ -70,16 +129,14 @@ fn print_newline() {
 // File I/O
 // ============================================================================
 
-fn read_file(path: string) i64 {
-    let fd: i32 = open(path.ptr, O_RDONLY, 0);
+fn read_file(path: *u8) i64 {
+    let fd: i32 = open(path, O_RDONLY, 0);
     if fd < 0 {
-        print_str("Error: Cannot open file: ");
-        print_str(path);
-        print_newline();
+        print_str("Error: Cannot open file\n");
         return -1;
     }
 
-    g_source_len = read(fd, &g_source[0], MAX_SOURCE - 1);
+    g_source_len = read(fd, &g_source[0], MAIN_MAX_SOURCE - 1);
     close(fd);
 
     if g_source_len < 0 {
@@ -91,41 +148,199 @@ fn read_file(path: string) i64 {
     return g_source_len;
 }
 
+fn write_file(path: *u8, data: *u8, data_len: i64) i64 {
+    let fd: i32 = open(path, O_WRONLY | O_CREAT | O_TRUNC, FILE_MODE);
+    if fd < 0 {
+        print_str("Error: Cannot open output file\n");
+        return -1;
+    }
+
+    let written: i64 = write(fd, data, data_len);
+    close(fd);
+
+    if written != data_len {
+        print_str("Error: Failed to write output\n");
+        return -1;
+    }
+
+    return written;
+}
+
+// ============================================================================
+// Pool Initialization
+// ============================================================================
+
+fn init_node_pool() *NodePool {
+    g_pool.nodes = &g_nodes[0];
+    g_pool.count = 0;
+    g_pool.children = &g_children[0];
+    g_pool.children_count = 0;
+    return &g_pool;
+}
+
+// ============================================================================
+// Compilation Pipeline
+// ============================================================================
+
+fn compile(source: string) i64 {
+    print_str("Phase 1: Scanning...\n");
+
+    // Phase 1: Scan and count tokens
+    var scanner: Scanner = scanner_new(source);
+    var tok_count: i64 = 0;
+    var tok: Token = scanner_next(&scanner);
+    while tok.kind != TokenType.Eof {
+        tok_count = tok_count + 1;
+        tok = scanner_next(&scanner);
+    }
+    print_str("  Tokens: ");
+    print_num(tok_count);
+    print_newline();
+
+    // Phase 2: Parse
+    print_str("Phase 2: Parsing...\n");
+    let pool: *NodePool = init_node_pool();
+    var parser: Parser = parser_new(source, pool);
+    let file_node: i64 = parse_file(&parser);
+
+    if parser_had_error(&parser) {
+        print_str("  FAIL: Parser error\n");
+        return 1;
+    }
+
+    print_str("  Nodes: ");
+    print_num(pool.count);
+    print_newline();
+
+    // Phase 3: Lower to IR
+    print_str("Phase 3: Lowering to IR...\n");
+    var lowerer: Lowerer = undefined;
+    lowerer_init(&lowerer,
+                 &g_nodes[0], pool.count,
+                 source.ptr, len(source),
+                 &g_ir_nodes[0], MAIN_MAX_IR_NODES,
+                 &g_ir_locals[0], MAIN_MAX_IR_LOCALS);
+
+    let ir_count: i64 = lowerer_lower_all(&lowerer);
+    print_str("  IR nodes: ");
+    print_num(ir_count);
+    print_newline();
+
+    // Phase 4: Build SSA (manual for now - lowerer doesn't produce full IR yet)
+    print_str("Phase 4: Building SSA...\n");
+
+    var ssa_func: Func = undefined;
+    func_init(&ssa_func, 0, 0, TYPE_I64,
+              &g_ssa_blocks[0], MAIN_MAX_SSA_BLOCKS,
+              &g_ssa_values[0], MAIN_MAX_SSA_VALUES,
+              &g_ssa_locals[0], MAIN_MAX_SSA_LOCALS);
+
+    // Create a minimal function that returns 0
+    // TODO: Wire up full AST → IR → SSA conversion
+    let entry: i64 = func_new_entry_block(&ssa_func);
+    let const_val: *Value = func_emit_const_int(&ssa_func, 0, TYPE_I64);
+    const_val.reg = X0;
+    func_emit_return(&ssa_func, const_val);
+    func_emit_return_block(&ssa_func);
+
+    print_str("  Blocks: ");
+    print_num(ssa_func.blocks_count);
+    print_str(", Values: ");
+    print_num(ssa_func.values_count);
+    print_newline();
+
+    // Phase 5: Generate machine code
+    print_str("Phase 5: Generating machine code...\n");
+
+    var gs: GenState = undefined;
+    genstate_init(&gs, &ssa_func,
+                  &g_code[0], MAIN_MAX_CODE,
+                  &g_bstart[0], MAIN_MAX_SSA_BLOCKS,
+                  &g_branches[0], 1000);
+
+    let genssa_result: i64 = genssa(&gs);
+    if genssa_result != 0 {
+        print_str("  FAIL: genssa error\n");
+        return 2;
+    }
+
+    print_str("  Code bytes: ");
+    print_num(gs.code_count);
+    print_newline();
+
+    // Phase 6: Create Mach-O object
+    print_str("Phase 6: Creating Mach-O object...\n");
+
+    var writer: MachOWriter = undefined;
+    macho_writer_init(&writer,
+                      &g_code[0], gs.code_count,
+                      &g_data[0], MAIN_MAX_DATA,
+                      &g_symbols[0], MAIN_MAX_SYMBOLS,
+                      &g_strings[0], MAIN_MAX_STRINGS,
+                      &g_relocs[0], MAIN_MAX_RELOCS,
+                      &g_output[0], MAIN_MAX_OUTPUT);
+
+    // Copy code from genssa output
+    writer.code_count = gs.code_count;
+
+    // Add _main symbol
+    var main_name: [5]u8;
+    main_name[0] = 95;   // '_'
+    main_name[1] = 109;  // 'm'
+    main_name[2] = 97;   // 'a'
+    main_name[3] = 105;  // 'i'
+    main_name[4] = 110;  // 'n'
+    macho_add_symbol(&writer, &main_name[0], 5, 0, SECT_TEXT, true);
+
+    let macho_bytes: i64 = write_macho(&writer);
+    print_str("  Mach-O bytes: ");
+    print_num(macho_bytes);
+    print_newline();
+
+    // Phase 7: Write to output file
+    print_str("Phase 7: Writing output...\n");
+
+    if g_output_path_len > 0 {
+        let written: i64 = write_file(&g_output_path[0], &g_output[0], macho_bytes);
+        if written < 0 {
+            return 3;
+        }
+        print_str("  Wrote ");
+        print_num(written);
+        print_str(" bytes\n");
+    } else {
+        print_str("  (No output path specified, skipping write)\n");
+    }
+
+    return 0;
+}
+
 // ============================================================================
 // Main Entry Point
 // ============================================================================
 
 fn main() i64 {
-    print_str("Cot0 Self-Hosting Compiler v0.1\n");
+    print_str("Cot0 Self-Hosting Compiler v0.2\n");
     print_str("================================\n\n");
 
-    // Test: read a file and print its size
-    let test_path: string = "cot0/main.cot";
+    // For now, compile a simple test string
+    // TODO: Parse command line arguments (argc, argv)
 
-    print_str("Reading: ");
-    print_str(test_path);
-    print_newline();
+    let test_source: string = "fn main() i64 { return 42; }";
 
-    let bytes: i64 = read_file(test_path);
+    print_str("Compiling: ");
+    print_str(test_source);
+    print_str("\n\n");
 
-    if bytes < 0 {
-        print_str("Failed to read file\n");
-        return 1;
+    let result: i64 = compile(test_source);
+
+    if result == 0 {
+        print_str("\nCompilation successful!\n");
+    } else {
+        print_str("\nCompilation failed with code ");
+        print_num(result);
+        print_newline();
     }
 
-    print_str("Read ");
-    print_num(bytes);
-    print_str(" bytes\n");
-
-    // Print first 100 chars
-    print_str("\nFirst 100 characters:\n");
-    var i: i64 = 0;
-    while i < 100 and i < bytes {
-        write(1, &g_source[i], 1);
-        i = i + 1;
-    }
-    print_newline();
-
-    print_str("\nCompiler infrastructure test PASSED\n");
-    return 0;
+    return result;
 }

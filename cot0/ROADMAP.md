@@ -158,7 +158,7 @@ All core infrastructure working. BUG-027 through BUG-030 fixed on 2026-01-18.
 **Goal:** Complete compiler that can compile itself
 
 ### Progress (2026-01-18)
-- [x] `main.cot` - Basic driver with file I/O (compiles, reads files, runs)
+- [x] `main.cot` - Full driver with 7-phase pipeline (compiles, reads files, generates Mach-O)
 - [x] Module integration phase 1 (parser.cot constants → PTYPE_*)
 - [x] Module integration phase 2 (SSA import chains fixed, MAX_PARAMS → FUNC_MAX_PARAMS)
 - [x] All cot0 modules can now be imported together
@@ -167,8 +167,38 @@ All core infrastructure working. BUG-027 through BUG-030 fixed on 2026-01-18.
 - [x] `genssa_test.cot` - Tests for genssa (3/3 pass)
 - [x] `macho.cot` - Mach-O writer with MachOWriter struct (690 lines)
 - [x] `macho_writer_test.cot` - Tests for Mach-O writer (4/4 pass)
-- [ ] Wire full pipeline in driver (Scanner → Parser → Lowerer → SSA → genssa → Mach-O)
+- [x] Wire full pipeline in driver (Scanner → Parser → Lowerer → SSA → genssa → Mach-O)
+- [x] Resolve import conflicts (MAIN_ prefix for constants, avoid path conflicts)
+- [ ] Complete lowerer for function bodies (currently outputs 0 IR nodes)
+- [ ] Wire IR → SSA conversion (currently uses manual SSA construction)
 - [ ] Add file output (write Mach-O to disk)
+
+### Current Pipeline Output
+
+When running `/tmp/cot0_main`:
+```
+Cot0 Self-Hosting Compiler v0.2
+================================
+
+Compiling: fn main() i64 { return 42; }
+
+Phase 1: Scanning...
+  Tokens: 10
+Phase 2: Parsing...
+  Nodes: 5
+Phase 3: Lowering to IR...
+  IR nodes: 0       ← Lowerer incomplete, needs function body handling
+Phase 4: Building SSA...
+  Blocks: 1, Values: 2  ← Currently manual SSA construction
+Phase 5: Generating machine code...
+  Code bytes: 8
+Phase 6: Creating Mach-O object...
+  Mach-O bytes: 319
+Phase 7: Writing output...
+  (No output path specified, skipping write)
+
+Compilation successful!
+```
 
 ### What's Complete
 

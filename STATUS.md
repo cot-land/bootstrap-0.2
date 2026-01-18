@@ -27,11 +27,27 @@ See [cot0/ROADMAP.md](cot0/ROADMAP.md) for detailed self-hosting progress.
 | ssa/liveness.cot | Complete | passes |
 | ssa/regalloc.cot | Complete | passes |
 | frontend/lower.cot | Complete | passes |
+| **main.cot** | **Full pipeline** | **runs** |
 | arm64/asm.cot | Complete | 7/7 pass |
 | arm64/regs.cot | Complete | 2/2 pass |
 | codegen/arm64.cot | Complete | 4/4 pass |
 | codegen/genssa.cot | Complete | 3/3 pass |
 | obj/macho.cot | Complete | 4/4 pass |
+
+### Full Pipeline Test (main.cot)
+
+The `main.cot` driver demonstrates the complete 7-phase compilation pipeline:
+```
+Phase 1: Scanning...     Tokens: 10
+Phase 2: Parsing...      Nodes: 5
+Phase 3: Lowering to IR... IR nodes: 0 (incomplete)
+Phase 4: Building SSA... Blocks: 1, Values: 2
+Phase 5: Generating machine code... Code bytes: 8
+Phase 6: Creating Mach-O object... Mach-O bytes: 319
+Phase 7: Writing output... (ready)
+```
+
+**Remaining for self-hosting:** Complete lowerer for function bodies, wire IR→SSA conversion.
 
 ### End-to-End Codegen Test
 
