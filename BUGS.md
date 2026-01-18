@@ -35,55 +35,39 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
-### BUG-033: Global u8 array assignment silently fails
-
-**Status:** OPEN
-**Priority:** P2
-**Discovered:** 2026-01-18
-
-**Symptom:** Assigning integer values to elements of a global `[N]u8` array doesn't work - the values remain 0.
-
-**Reproduction:**
-```cot
-var g_path: [16]u8;
-
-fn main() i64 {
-    g_path[0] = 47;   // Should be '/'
-    g_path[1] = 116;  // Should be 't'
-    // ...
-
-    // g_path[0] reads as 0, not 47
-    return @intCast(i64, g_path[0]);  // Returns 0
-}
-```
-
-**Expected:** `g_path[0]` should be 47 after assignment.
-
-**Actual:** `g_path[0]` is 0 - assignment has no effect.
-
-**Workaround:** Use local arrays instead of global arrays:
-```cot
-fn main() i64 {
-    var path: [16]u8;  // Local array works
-    path[0] = 47;      // This works correctly
-    return @intCast(i64, path[0]);  // Returns 47
-}
-```
-
-**Notes:**
-- `@intCast(u8, 47)` doesn't help - same behavior
-- Local arrays work correctly
-- Global i64 arrays may work (not tested)
-- Issue discovered when trying to set output file path in cot0/main.cot
-
-**Investigation needed:**
-- Check if the store instruction is being generated for global array element access
-- Check if the global array address calculation is correct
-- Compare codegen for local vs global array element stores
+(None currently)
 
 ---
 
 ## Fixed Bugs
+
+### BUG-033: Global array element assignment silently fails
+
+**Status:** FIXED
+**Priority:** P2
+**Discovered:** 2026-01-18
+**Fixed:** 2026-01-18
+
+**Symptom:** Assigning values to elements of global arrays (`g_arr[i] = x`) had no effect - values remained 0.
+
+**Root cause:** In `lowerAssign` for `.index` case, after checking if the base identifier is a local variable, the code fell through to computed-base handling without checking if the base is a global variable.
+
+**Debug output revealed:** No store instruction was being generated. The value was computed and truncated but marked as `(dead)` with `uses=0`.
+
+**Fix:** Added global array check in `lowerAssign` `.index` case after local array handling:
+```zig
+// Check if base is a global array (BUG-033 fix)
+// Following Go's pattern: addr(base) for ONAME with PEXTERN class
+if (self.builder.lookupGlobal(base_expr.ident.name)) |g| {
+    const global_addr = try fb.emitAddrGlobal(g.idx, ...);
+    _ = try fb.emitStoreIndexValue(global_addr, index_node, value_node, elem_size, ...);
+    return;
+}
+```
+
+**Go reference:** `ssa.go:5266-5281` - Go's `addr()` function recursively computes addresses for `OINDEX`, using `linksymOffset` for globals (`PEXTERN` class).
+
+---
 
 ### BUG-032: open() syscall ignores mode parameter
 

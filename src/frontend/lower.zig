@@ -833,6 +833,16 @@ pub const Lowerer = struct {
                         _ = try fb.emitStoreIndexLocal(local_idx, index_node, value_node, elem_size, assign.span);
                         return;
                     }
+
+                    // Check if base is a global array (BUG-033 fix)
+                    // Following Go's pattern: addr(base) for ONAME with PEXTERN class
+                    if (self.builder.lookupGlobal(base_expr.ident.name)) |g| {
+                        const global_type = g.global.type_idx;
+                        const ptr_type = self.type_reg.makePointer(global_type) catch TypeRegistry.VOID;
+                        const global_addr = try fb.emitAddrGlobal(g.idx, base_expr.ident.name, ptr_type, assign.span);
+                        _ = try fb.emitStoreIndexValue(global_addr, index_node, value_node, elem_size, assign.span);
+                        return;
+                    }
                 }
                 // Handle computed base (index into expression like getSlice()[0] = x)
                 // Following Go's pattern: evaluate base, get address, store through it
