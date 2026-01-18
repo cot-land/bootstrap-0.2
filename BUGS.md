@@ -35,7 +35,51 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
-(None currently)
+### BUG-033: Global u8 array assignment silently fails
+
+**Status:** OPEN
+**Priority:** P2
+**Discovered:** 2026-01-18
+
+**Symptom:** Assigning integer values to elements of a global `[N]u8` array doesn't work - the values remain 0.
+
+**Reproduction:**
+```cot
+var g_path: [16]u8;
+
+fn main() i64 {
+    g_path[0] = 47;   // Should be '/'
+    g_path[1] = 116;  // Should be 't'
+    // ...
+
+    // g_path[0] reads as 0, not 47
+    return @intCast(i64, g_path[0]);  // Returns 0
+}
+```
+
+**Expected:** `g_path[0]` should be 47 after assignment.
+
+**Actual:** `g_path[0]` is 0 - assignment has no effect.
+
+**Workaround:** Use local arrays instead of global arrays:
+```cot
+fn main() i64 {
+    var path: [16]u8;  // Local array works
+    path[0] = 47;      // This works correctly
+    return @intCast(i64, path[0]);  // Returns 47
+}
+```
+
+**Notes:**
+- `@intCast(u8, 47)` doesn't help - same behavior
+- Local arrays work correctly
+- Global i64 arrays may work (not tested)
+- Issue discovered when trying to set output file path in cot0/main.cot
+
+**Investigation needed:**
+- Check if the store instruction is being generated for global array element access
+- Check if the global array address calculation is correct
+- Compare codegen for local vs global array element stores
 
 ---
 
