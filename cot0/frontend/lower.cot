@@ -254,6 +254,19 @@ fn lower_int_lit(l: *Lowerer, node: *Node) i64 {
     return func_builder_emit_const_int(fb, node.field0);
 }
 
+// Compare two strings in source by their positions
+fn names_equal(source: *u8, start1: i64, len1: i64, start2: i64, len2: i64) bool {
+    if len1 != len2 { return false; }
+    var i: i64 = 0;
+    while i < len1 {
+        let p1: *u8 = source + start1 + i;
+        let p2: *u8 = source + start2 + i;
+        if p1.* != p2.* { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
 fn lower_ident(l: *Lowerer, node: *Node) i64 {
     // Ident fields:
     // field0 = name_start
@@ -261,12 +274,11 @@ fn lower_ident(l: *Lowerer, node: *Node) i64 {
 
     let fb: *FuncBuilder = l.current_func;
 
-    // Look up local variable by name
+    // Look up local variable by name - compare actual source content
     var i: i64 = 0;
     while i < fb.locals_count {
         let local: *IRLocal = fb.locals + i;
-        // Compare name (simplified - just check start/len match)
-        if local.name_start == node.field0 and local.name_len == node.field1 {
+        if names_equal(l.source, local.name_start, local.name_len, node.field0, node.field1) {
             return func_builder_emit_load_local(fb, i);
         }
         i = i + 1;
@@ -371,28 +383,28 @@ fn ast_unary_op_to_ir_op(ast_op: i64) i64 {
     return 0;
 }
 
-// IR operator codes
-const IR_OP_ADD: i64 = 1;
-const IR_OP_SUB: i64 = 2;
-const IR_OP_MUL: i64 = 3;
-const IR_OP_DIV: i64 = 4;
-const IR_OP_MOD: i64 = 5;
-const IR_OP_EQ: i64 = 6;
-const IR_OP_NE: i64 = 7;
-const IR_OP_LT: i64 = 8;
-const IR_OP_LE: i64 = 9;
-const IR_OP_GT: i64 = 10;
-const IR_OP_GE: i64 = 11;
-const IR_OP_AND: i64 = 12;
-const IR_OP_OR: i64 = 13;
-const IR_OP_BIT_AND: i64 = 14;
-const IR_OP_BIT_OR: i64 = 15;
-const IR_OP_BIT_XOR: i64 = 16;
-const IR_OP_SHL: i64 = 17;
-const IR_OP_SHR: i64 = 18;
-const IR_OP_NEG: i64 = 19;
-const IR_OP_NOT: i64 = 20;
-const IR_OP_BIT_NOT: i64 = 21;
+// IR operator codes - must match IRBinaryOp enum in ir.cot
+const IR_OP_ADD: i64 = 0;
+const IR_OP_SUB: i64 = 1;
+const IR_OP_MUL: i64 = 2;
+const IR_OP_DIV: i64 = 3;
+const IR_OP_MOD: i64 = 4;
+const IR_OP_EQ: i64 = 5;
+const IR_OP_NE: i64 = 6;
+const IR_OP_LT: i64 = 7;
+const IR_OP_LE: i64 = 8;
+const IR_OP_GT: i64 = 9;
+const IR_OP_GE: i64 = 10;
+const IR_OP_AND: i64 = 11;
+const IR_OP_OR: i64 = 12;
+const IR_OP_BIT_AND: i64 = 13;
+const IR_OP_BIT_OR: i64 = 14;
+const IR_OP_BIT_XOR: i64 = 15;
+const IR_OP_SHL: i64 = 16;
+const IR_OP_SHR: i64 = 17;
+const IR_OP_NEG: i64 = 18;
+const IR_OP_NOT: i64 = 19;
+const IR_OP_BIT_NOT: i64 = 20;
 
 fn is_comparison_op(ast_op: i64) bool {
     // Comparison ops are 5-10 (Equal through GreaterEq)

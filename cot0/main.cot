@@ -90,9 +90,36 @@ var g_output: [1048576]u8;
 // IR to SSA mapping (IR node index -> SSA value ID)
 var g_ir_to_ssa_id: [10000]i64;
 
+// Local variable to SSA value mapping (local index -> SSA value ID)
+var g_local_to_ssa_id: [1000]i64;
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
+
+// Map IR binary operation to SSA Op
+fn ir_op_to_ssa_op(ir_op: i64) Op {
+    // Cast to IRBinaryOp conceptually - compare as i64
+    if ir_op == 0 { return Op.Add64; }     // IRBinaryOp.Add
+    if ir_op == 1 { return Op.Sub64; }     // IRBinaryOp.Sub
+    if ir_op == 2 { return Op.Mul64; }     // IRBinaryOp.Mul
+    if ir_op == 3 { return Op.Div64; }     // IRBinaryOp.Div
+    if ir_op == 4 { return Op.Mod64; }     // IRBinaryOp.Mod
+    if ir_op == 5 { return Op.Eq64; }      // IRBinaryOp.Eq
+    if ir_op == 6 { return Op.Ne64; }      // IRBinaryOp.Ne
+    if ir_op == 7 { return Op.Lt64; }      // IRBinaryOp.Lt
+    if ir_op == 8 { return Op.Le64; }      // IRBinaryOp.Le
+    if ir_op == 9 { return Op.Gt64; }      // IRBinaryOp.Gt
+    if ir_op == 10 { return Op.Ge64; }     // IRBinaryOp.Ge
+    if ir_op == 11 { return Op.And64; }    // IRBinaryOp.And (logical - use bitwise)
+    if ir_op == 12 { return Op.Or64; }     // IRBinaryOp.Or (logical - use bitwise)
+    if ir_op == 13 { return Op.And64; }    // IRBinaryOp.BitAnd
+    if ir_op == 14 { return Op.Or64; }     // IRBinaryOp.BitOr
+    if ir_op == 15 { return Op.Xor64; }    // IRBinaryOp.BitXor
+    if ir_op == 16 { return Op.Shl64; }    // IRBinaryOp.Shl
+    if ir_op == 17 { return Op.Shr64; }    // IRBinaryOp.Shr
+    return Op.Add64;  // Default fallback
+}
 
 fn print_str(s: string) {
     write(1, s.ptr, len(s));
@@ -243,6 +270,8 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
     let entry: i64 = func_new_entry_block(&ssa_func);
 
     // Convert IR nodes to SSA values
+    // Simple linear register allocation: X0 for result, X1..X9 for temps
+    var next_reg: i64 = X1;  // Start from X1, reserve X0 for return
     var ir_idx: i64 = 0;
     while ir_idx < ir_count {
         let ir_node: *IRNode = &g_ir_nodes[ir_idx];
@@ -250,8 +279,30 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
         if ir_node.kind == IRNodeKind.ConstInt {
             // Emit constant integer
             let val: *Value = func_emit_const_int(&ssa_func, ir_node.value, TYPE_I64);
-            val.reg = X0;  // Pre-assign register for simple case
+            val.reg = next_reg;  // Assign next available register
+            next_reg = next_reg + 1;
             g_ir_to_ssa_id[ir_idx] = val.id;
+        } else if ir_node.kind == IRNodeKind.Binary {
+            // Binary operation: look up operands and emit SSA binary op
+            let left_id: i64 = g_ir_to_ssa_id[ir_node.left];
+            let right_id: i64 = g_ir_to_ssa_id[ir_node.right];
+            let left_val: *Value = func_get_value(&ssa_func, left_id);
+            let right_val: *Value = func_get_value(&ssa_func, right_id);
+            let ssa_op: Op = ir_op_to_ssa_op(ir_node.op);
+            let val: *Value = func_emit_binary(&ssa_func, ssa_op, left_val, right_val, TYPE_I64);
+            val.reg = X0;  // Binary result goes to X0 (for return)
+            g_ir_to_ssa_id[ir_idx] = val.id;
+        } else if ir_node.kind == IRNodeKind.StoreLocal {
+            // Store value to local - record the SSA value for this local
+            let local_idx: i64 = ir_node.left;
+            let value_idx: i64 = ir_node.right;
+            g_local_to_ssa_id[local_idx] = g_ir_to_ssa_id[value_idx];
+            // StoreLocal doesn't produce a new SSA value
+            g_ir_to_ssa_id[ir_idx] = -1;
+        } else if ir_node.kind == IRNodeKind.LoadLocal {
+            // Load value from local - just use the stored SSA value
+            let local_idx: i64 = ir_node.left;
+            g_ir_to_ssa_id[ir_idx] = g_local_to_ssa_id[local_idx];
         } else if ir_node.kind == IRNodeKind.Return {
             // Look up the return value from IR mapping
             if ir_node.left >= 0 {
@@ -350,7 +401,7 @@ fn main() i64 {
     // For now, compile a simple test string
     // TODO: Parse command line arguments (argc, argv)
 
-    let test_source: string = "fn main() i64 { return 42; }";
+    let test_source: string = "fn main() i64 { let x: i64 = 5; let y: i64 = 3; return x + y; }";
 
     // Set output path for testing using local array
     var out_path: [16]u8;
