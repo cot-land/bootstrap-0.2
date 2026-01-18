@@ -336,8 +336,43 @@ fn lower_call(l: *Lowerer, node: *Node) i64 {
     // field0 = callee (node index)
     // field1 = args_start (index in children array)
     // field2 = args_count
-    // TODO: Implement function call lowering
-    return NULL_NODE;
+
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return NULL_NODE; }
+
+    // Get callee - must be an identifier for now
+    let callee_node: *Node = l.nodes + node.field0;
+    if callee_node.kind != NodeKind.Ident {
+        return NULL_NODE;  // Only simple function calls supported
+    }
+
+    let func_name_start: i64 = callee_node.field0;
+    let func_name_len: i64 = callee_node.field1;
+    let args_start: i64 = node.field1;
+    let args_count: i64 = node.field2;
+
+    // Lower each argument and store IR indices
+    // For simplicity, we store the first arg index and expect args to be consecutive
+    var first_arg_idx: i64 = -1;
+    var i: i64 = 0;
+    while i < args_count {
+        let arg_child_ptr: *i64 = l.children + args_start + i;
+        let arg_node_idx: i64 = arg_child_ptr.*;
+        let arg_node: *Node = l.nodes + arg_node_idx;
+        let arg_ir_idx: i64 = lower_expr(l, arg_node);
+        if i == 0 {
+            first_arg_idx = arg_ir_idx;
+        }
+        i = i + 1;
+    }
+
+    // Emit Call IR node
+    var call_node: IRNode = ir_node_new(IRNodeKind.Call, TYPE_I64);
+    call_node.func_name_start = func_name_start;
+    call_node.func_name_len = func_name_len;
+    call_node.args_start = first_arg_idx;
+    call_node.args_count = args_count;
+    return func_builder_emit(fb, call_node);
 }
 
 // ============================================================================

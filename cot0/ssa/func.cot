@@ -306,6 +306,15 @@ fn func_emit_return(f: *Func, val: *Value) *Value {
     return ret;
 }
 
+// Emit a function call
+// name_start/name_len refer to positions in source
+fn func_emit_call(f: *Func, name_start: i64, name_len: i64, type_idx: i64) *Value {
+    let v: *Value = func_new_value(f, Op.Call, type_idx);
+    v.aux_int = name_start;
+    v.aux_ptr = name_len;
+    return v;
+}
+
 // ============================================================================
 // Control Flow
 // ============================================================================

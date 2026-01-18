@@ -303,6 +303,23 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
             // Load value from local - just use the stored SSA value
             let local_idx: i64 = ir_node.left;
             g_ir_to_ssa_id[ir_idx] = g_local_to_ssa_id[local_idx];
+        } else if ir_node.kind == IRNodeKind.Call {
+            // Function call - emit SSA Call and add arguments
+            let val: *Value = func_emit_call(&ssa_func,
+                                             ir_node.func_name_start,
+                                             ir_node.func_name_len,
+                                             TYPE_I64);
+            // Add arguments to the call value
+            var arg_idx: i64 = 0;
+            while arg_idx < ir_node.args_count {
+                let arg_ir_idx: i64 = ir_node.args_start + arg_idx;
+                let arg_ssa_id: i64 = g_ir_to_ssa_id[arg_ir_idx];
+                let arg_val: *Value = func_get_value(&ssa_func, arg_ssa_id);
+                value_add_arg(val, arg_val);
+                arg_idx = arg_idx + 1;
+            }
+            val.reg = X0;  // Return value in X0
+            g_ir_to_ssa_id[ir_idx] = val.id;
         } else if ir_node.kind == IRNodeKind.Return {
             // Look up the return value from IR mapping
             if ir_node.left >= 0 {

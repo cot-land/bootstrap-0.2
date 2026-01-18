@@ -462,12 +462,25 @@ fn genssa_local_addr(gs: *GenState, v: *Value) {
 }
 
 fn genssa_call(gs: *GenState, v: *Value) {
-    // For now, emit a placeholder call instruction
-    // Full implementation would handle:
-    // - Moving arguments to registers
-    // - Computing call target
-    // - Saving/restoring caller-saved registers
-    emit_inst(gs, encode_nop());
+    let f: *Func = gs.func;
+
+    // Move arguments to X0-X7 (ARM64 calling convention)
+    var i: i64 = 0;
+    while i < v.args_count and i < 8 {
+        let arg_id: i64 = v.args[i];
+        let arg_val: *Value = func_get_value(f, arg_id);
+        let target_reg: i64 = X0 + i;
+        if arg_val.reg != target_reg and arg_val.reg >= 0 {
+            emit_inst(gs, encode_mov_reg(target_reg, arg_val.reg));
+        }
+        i = i + 1;
+    }
+
+    // Emit BL instruction placeholder (offset 0, to be patched by linker)
+    // BL encodes a 26-bit signed offset
+    // For extern calls, the linker will patch this via relocation
+    // TODO: Add relocation entry to Mach-O writer
+    emit_inst(gs, encode_bl(0));
 }
 
 fn genssa_return(gs: *GenState, v: *Value) {
