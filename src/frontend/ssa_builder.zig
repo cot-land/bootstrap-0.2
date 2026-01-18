@@ -1029,11 +1029,13 @@ pub const SSABuilder = struct {
                 off_val.aux_int = f.offset;
                 try cur.addValue(self.allocator, off_val);
 
-                // Check if result is a struct - if so, return address (no load)
+                // Check if result is a struct or array - if so, return address (no load)
+                // Both structs and arrays are inline data, not pointers, so we return
+                // the address for further field access or indexing.
                 const field_type = self.type_registry.get(node.type_idx);
-                if (field_type == .struct_type) {
-                    // Nested struct - return address for further field access
-                    debug.log(.ssa, "    field_local local={d} offset={d} -> v{} (struct addr)", .{ f.local_idx, f.offset, off_val.id });
+                if (field_type == .struct_type or field_type == .array) {
+                    // Nested struct or array - return address for further access
+                    debug.log(.ssa, "    field_local local={d} offset={d} -> v{} (composite addr)", .{ f.local_idx, f.offset, off_val.id });
                     _ = local;
                     break :blk off_val;
                 }
@@ -1103,11 +1105,13 @@ pub const SSABuilder = struct {
                 off_val.aux_int = f.offset;
                 try cur.addValue(self.allocator, off_val);
 
-                // Check if result is a struct - if so, return address (no load)
+                // Check if result is a struct or array - if so, return address (no load)
+                // Both structs and arrays are inline data, not pointers, so we return
+                // the address for further field access or indexing.
                 const field_type = self.type_registry.get(node.type_idx);
-                if (field_type == .struct_type) {
-                    // Nested struct - return address for further field access
-                    debug.log(.ssa, "    field_value base=v{} offset={d} -> v{} (struct addr)", .{ base_val.id, f.offset, off_val.id });
+                if (field_type == .struct_type or field_type == .array) {
+                    // Nested struct or array - return address for further access
+                    debug.log(.ssa, "    field_value base=v{} offset={d} -> v{} (composite addr)", .{ base_val.id, f.offset, off_val.id });
                     break :blk off_val;
                 }
 

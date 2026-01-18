@@ -30,10 +30,19 @@ See [cot0/ROADMAP.md](cot0/ROADMAP.md) for detailed self-hosting progress.
 | arm64/asm.cot | Complete | 7/7 pass |
 | arm64/regs.cot | Complete | 2/2 pass |
 | codegen/arm64.cot | Complete | 4/4 pass |
-| obj/macho.cot | Complete | 3/3 pass |
+| codegen/genssa.cot | Complete | 3/3 pass |
+| obj/macho.cot | Complete | 4/4 pass |
+
+### End-to-End Codegen Test
+
+The `e2e_codegen_test.cot` demonstrates the full backend pipeline:
+- SSA → genssa → 8 bytes machine code → MachOWriter → 319 byte .o file
+- Links and runs: **Exit code: 42** ✅
 
 ### Recent Bug Fixes (2026-01-18)
 
+- BUG-032: open() mode parameter ignored - ARM64 macOS variadic args must go on stack, not registers
+- BUG-031: Array field in struct through pointer crashes - Arrays are inline like structs, return address not load
 - BUG-030: Functions with >8 arguments fail - Implemented ARM64 AAPCS64 stack argument passing
 - BUG-029: Reading struct pointer field through function parameter causes crash - Added global struct/array handling
 - BUG-028: Taking address of local array element causes runtime crash - Skip init for undefined arrays

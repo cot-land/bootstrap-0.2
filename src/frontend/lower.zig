@@ -851,10 +851,21 @@ pub const Lowerer = struct {
                         _ = try fb.emitStoreIndexValue(base_val, index_node, value_node, elem_size, assign.span);
                         return;
                     },
-                    else => {
-                        // For array expressions returned by value, we'd need to store to temp first
+                    .array => {
+                        // For array field access like val.args[0] = 42:
+                        // The base (val.args) is an array field, so lowerExprNode returns
+                        // the ADDRESS of the array (not a loaded value).
+                        // We use that address directly for indexed store.
+                        if (base_expr == .field_access) {
+                            // Lower the field access to get the array's address
+                            const array_addr = try self.lowerExprNode(idx.base);
+                            _ = try fb.emitStoreIndexValue(array_addr, index_node, value_node, elem_size, assign.span);
+                            return;
+                        }
+                        // For other array expressions returned by value, we'd need to store to temp first
                         // This is rare - typically arrays are accessed through locals or pointers
                     },
+                    else => {},
                 }
             },
             .deref => |d| {

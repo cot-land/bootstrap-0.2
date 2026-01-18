@@ -16,7 +16,9 @@
 | cot0 SSA modules | **COMPLETE** (Sprint F) |
 | cot0 backend modules | **COMPLETE** (Sprint G) |
 | cot0 core transformations | **COMPLETE** (Sprint H) |
-| cot0 self-compiles | Not started |
+| cot0 codegen (genssa) | **COMPLETE** (Sprint I) |
+| cot0 Mach-O writer | **COMPLETE** (Sprint I) |
+| cot0 self-compiles | In progress |
 
 ---
 
@@ -36,6 +38,8 @@
 | `ssa/liveness_test.cot` | passes |
 | `ssa/regalloc_test.cot` | passes |
 | `frontend/lower_test.cot` | passes |
+| `codegen/genssa_test.cot` | 3/3 pass |
+| `obj/macho_writer_test.cot` | 4/4 pass |
 
 ---
 
@@ -159,49 +163,70 @@ All core infrastructure working. BUG-027 through BUG-030 fixed on 2026-01-18.
 - [x] Module integration phase 2 (SSA import chains fixed, MAX_PARAMS → FUNC_MAX_PARAMS)
 - [x] All cot0 modules can now be imported together
 - [x] `driver_test.cot` - Scanner → Parser pipeline verified working
-- [ ] Full codegen loop (see detailed steps below)
-- [ ] Mach-O writer (see detailed steps below)
+- [x] `genssa.cot` - SSA to machine code generator (620 lines, all ops implemented)
+- [x] `genssa_test.cot` - Tests for genssa (3/3 pass)
+- [x] `macho.cot` - Mach-O writer with MachOWriter struct (690 lines)
+- [x] `macho_writer_test.cot` - Tests for Mach-O writer (4/4 pass)
+- [ ] Wire full pipeline in driver (Scanner → Parser → Lowerer → SSA → genssa → Mach-O)
+- [ ] Add file output (write Mach-O to disk)
 
-### Codegen Loop Steps (following Go's genssa pattern)
+### What's Complete
 
-1. **Driver setup** - Wire together all modules in main.cot:
-   - Scanner → Parser → AST
-   - (Optional) Checker → Type checking
-   - Lowerer → IR
-   - SSABuilder → SSA
+**genssa.cot** - Full SSA to machine code generation:
+- GenState struct for holding codegen state
+- genssa() main function walks blocks and values
+- ssaGenValue dispatches by Op type
+- All arithmetic ops (Add, Sub, Mul, Div, Mod, And, Or, Xor, Shl, Shr, Neg, Not)
+- All comparison ops (Eq, Ne, Lt, Le, Gt, Ge)
+- Memory ops (Load, Store, LocalAddr)
+- Control flow (Return, Copy)
+- Branch resolution infrastructure
 
-2. **genssa function** - Walk SSA blocks/values:
-   ```
-   for each block in function:
-       for each value in block:
-           call ssaGenValue(value)
-       call ssaGenBlock(block)  // emit branches
-   ```
+**macho.cot** - Complete Mach-O object file writer:
+- MachOWriter struct with external buffers
+- macho_writer_init() - Initialize writer with buffers
+- macho_add_code() - Add code to text section
+- macho_add_symbol() - Add symbols with string table entries
+- macho_add_reloc() - Add relocations
+- write_macho() - Generate complete Mach-O object file
+- Output helpers (out_byte, out_u32, out_u64, out_zeros, out_bytes)
+- Section and command writers
 
-3. **ssaGenValue** - Emit machine code for each SSA value:
-   - Switch on value.op
-   - Use codegen/arm64.cot functions to emit instructions
-   - Collect machine code bytes
+### End-to-End Test Success (2026-01-18)
 
-4. **Collect code** - Gather all emitted instructions into a buffer
+The `e2e_codegen_test.cot` demonstrates the full backend pipeline working:
 
-### Mach-O Writer Steps
+```
+Phase 1: Build SSA function (return 42)
+  Created 1 block(s), 2 value(s)
+Phase 2: Generate machine code (genssa)
+  Generated 8 bytes of machine code
+Phase 3: Create Mach-O object file
+  Created 319 byte Mach-O object file
+Phase 4: Write to /tmp/return42.o
+  Wrote 319 bytes to /tmp/return42.o
+```
 
-1. **MachOWriter struct** - Hold code, data, symbols, relocations
+When linked and run: **Exit code: 42** ✅
 
-2. **Header** - Write Mach-O 64-bit header (32 bytes)
+### Remaining Steps
 
-3. **Load commands** - Write segment and symtab commands
+1. **Wire full pipeline in driver** - Connect all frontend + backend modules:
+   - Scanner → Parser → AST → Lowerer → IR → SSABuilder → SSA
+   - genssa → machine code → MachOWriter → object file
 
-4. **Text section** - Write assembled code
+2. **Test complete compilation** - Compile real Cot source to executable
 
-5. **Data section** - Write global variables, string literals
+### Bug Fixes (2026-01-18)
 
-6. **Symbol table** - Write function symbols (name → offset)
+- **BUG-032 FIXED**: `open()` mode parameter now works correctly
+  - Root cause: `open()` is variadic on macOS; variadic args must go on stack
+  - Fix: Added `getVariadicFixedArgCount()` and `setupCallArgsWithVariadic()` to ARM64 codegen
+  - Reference: Go's `runtime/sys_darwin_arm64.s` pattern
 
-7. **String table** - Write symbol names
-
-8. **Relocations** - Write branch targets, data references
+- **BUG-031 FIXED**: Array field in struct through pointer crashes
+  - Root cause: Arrays are inline like structs, should return address not load
+  - Fix: Added `.array` check in `field_value` and `field_local` handlers
 
 ### Verification
 ```bash

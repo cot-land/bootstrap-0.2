@@ -540,6 +540,22 @@ fn encode_eor_reg(rd: i64, rn: i64, rm: i64) i64 {
     return encode_logical_reg(rd, rn, rm, LOG_EOR, false);
 }
 
+// ORN: Rd = Rn OR NOT(Rm) - used for MVN (bitwise NOT)
+// MVN Xd, Xm = ORN Xd, XZR, Xm
+fn encode_orn(rd: i64, rn: i64, rm: i64) i64 {
+    let sf: i64 = 1;  // 64-bit
+    // ORN encoding: sf 01 01010 shift=00 1 Rm imm6=000000 Rn Rd
+    // The '1' before Rm is the N bit that inverts the second operand
+    return (sf << 31) |
+           (1 << 29) |           // opc = 01 (ORR family)
+           (42 << 21) |          // 0b01010 = 10, but full group is 0101010 = 42
+           (1 << 21) |           // N = 1 (invert Rm)
+           encode_rm(rm) |
+           (0 << 10) |           // imm6 = 0 (no shift)
+           encode_rn(rn) |
+           encode_rd(rd);
+}
+
 // ============================================================================
 // Shift Operations
 // ============================================================================

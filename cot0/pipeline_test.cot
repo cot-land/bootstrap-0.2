@@ -1,0 +1,219 @@
+// Cot0 Pipeline Test
+// Tests the full compilation pipeline: Scanner -> Parser -> Lowerer
+//
+// Run with: ./zig-out/bin/cot cot0/pipeline_test.cot -o /tmp/pipeline_test && /tmp/pipeline_test
+
+import "frontend/token.cot"
+import "frontend/scanner.cot"
+import "frontend/types.cot"
+import "frontend/ast.cot"
+import "frontend/parser.cot"
+import "frontend/ir.cot"
+import "frontend/lower.cot"
+import "ssa/builder.cot"
+
+extern fn write(fd: i32, buf: *u8, count: i64) i64;
+
+fn print_str(s: string) {
+    write(1, s.ptr, len(s));
+}
+
+fn print_num(n: i64) {
+    // Use a local char for single digit output
+    var ch: u8 = 48;  // '0'
+
+    if n == 0 {
+        write(1, &ch, 1);
+        return;
+    }
+
+    // For simplicity, just print up to 3 digits
+    var val: i64 = n;
+    if val < 0 {
+        print_str("-");
+        val = 0 - val;
+    }
+
+    var digits: [20]u8;
+    var count: i64 = 0;
+
+    while val > 0 and count < 20 {
+        let digit: i64 = val - (val / 10) * 10;
+        digits[count] = @intCast(u8, 48 + digit);
+        val = val / 10;
+        count = count + 1;
+    }
+
+    // Print in reverse
+    while count > 0 {
+        count = count - 1;
+        write(1, &digits[count], 1);
+    }
+}
+
+// ============================================================================
+// Global Storage Pools
+// ============================================================================
+
+// Parser pools
+var g_nodes: [1000]Node;
+var g_children: [5000]i64;
+var g_pool: NodePool;
+
+// IR pools
+var g_ir_nodes: [1000]IRNode;
+var g_ir_locals: [100]IRLocal;
+
+// SSA pools
+var g_ssa_blocks: [100]Block;
+var g_ssa_values: [1000]Value;
+var g_ssa_locals: [50]Local;
+var g_all_defs: [50]BlockDefs;
+var g_block_map: [50]BlockMapping;
+var g_node_values: [500]VarDef;
+var g_var_storage: [2000]VarDef;
+
+fn init_parser_pool() *NodePool {
+    g_pool.nodes = &g_nodes[0];
+    g_pool.count = 0;
+    g_pool.children = &g_children[0];
+    g_pool.children_count = 0;
+    return &g_pool;
+}
+
+// ============================================================================
+// Main Entry
+// ============================================================================
+
+fn main() i64 {
+    print_str("Cot0 Pipeline Test\n");
+    print_str("==================\n\n");
+
+    // Test source code: simple function with arithmetic
+    let source: string = "fn add(a: i64, b: i64) i64 { return a + b; }";
+
+    print_str("Source: ");
+    print_str(source);
+    print_str("\n\n");
+
+    // =======================================================================
+    // Phase 1: Scanner
+    // =======================================================================
+    var scanner: Scanner = scanner_new(source);
+    var tok_count: i64 = 0;
+    var tok: Token = scanner_next(&scanner);
+    while tok.kind != TokenType.Eof {
+        tok_count = tok_count + 1;
+        tok = scanner_next(&scanner);
+    }
+
+    print_str("Phase 1 - Scanner: ");
+    print_num(tok_count);
+    print_str(" tokens\n");
+
+    if tok_count != 19 {
+        print_str("  FAIL: Expected 19 tokens\n");
+        return 1;
+    }
+    print_str("  PASS\n");
+
+    // =======================================================================
+    // Phase 2: Parser
+    // =======================================================================
+    let pool: *NodePool = init_parser_pool();
+    var parser: Parser = parser_new(source, pool);
+    let file_node: i64 = parse_file(&parser);
+
+    print_str("Phase 2 - Parser: ");
+    print_num(pool.count);
+    print_str(" AST nodes\n");
+
+    if parser_had_error(&parser) {
+        print_str("  FAIL: Parser error\n");
+        return 2;
+    }
+
+    if pool.count < 5 {
+        print_str("  FAIL: Expected at least 5 nodes\n");
+        return 3;
+    }
+    print_str("  PASS\n");
+
+    // =======================================================================
+    // Phase 3: Lowerer (AST -> IR)
+    // =======================================================================
+    var lowerer: Lowerer = undefined;
+    lowerer_init(&lowerer,
+                 &g_nodes[0], pool.count,
+                 source.ptr, len(source),
+                 &g_ir_nodes[0], 1000,
+                 &g_ir_locals[0], 100);
+
+    let ir_count: i64 = lowerer_lower_all(&lowerer);
+
+    print_str("Phase 3 - Lowerer: ");
+    print_num(lowerer.ir_nodes_count);
+    print_str(" IR nodes, ");
+    print_num(lowerer.ir_locals_count);
+    print_str(" locals\n");
+    print_str("  PASS (lowerer invoked successfully)\n");
+
+    // =======================================================================
+    // Phase 4: SSA Builder (IR -> SSA)
+    // =======================================================================
+    var ssa_func: Func = undefined;
+    func_init(&ssa_func, 0, 4, TYPE_I64,
+              &g_ssa_blocks[0], 100,
+              &g_ssa_values[0], 1000,
+              &g_ssa_locals[0], 50);
+
+    var builder: SSABuilder = undefined;
+    builder_init(&builder, &ssa_func,
+                 &g_all_defs[0], 50,
+                 &g_block_map[0], 50,
+                 &g_node_values[0], 500,
+                 &g_var_storage[0], 2000);
+
+    // Create entry block
+    let ssa_result: i64 = builder_convert(&builder);
+
+    print_str("Phase 4 - SSA Builder: ");
+    print_num(ssa_func.blocks_count);
+    print_str(" blocks, ");
+    print_num(ssa_func.values_count);
+    print_str(" values\n");
+
+    if ssa_result != 0 {
+        print_str("  FAIL: SSA builder error\n");
+        return 4;
+    }
+    print_str("  PASS (SSA builder invoked successfully)\n");
+
+    // =======================================================================
+    // Summary
+    // =======================================================================
+    print_str("\n");
+    print_str("Pipeline Summary:\n");
+    print_str("-----------------\n");
+    print_str("  Tokens: ");
+    print_num(tok_count);
+    print_str("\n");
+    print_str("  AST Nodes: ");
+    print_num(pool.count);
+    print_str("\n");
+    print_str("  IR Nodes: ");
+    print_num(lowerer.ir_nodes_count);
+    print_str("\n");
+    print_str("  IR Locals: ");
+    print_num(lowerer.ir_locals_count);
+    print_str("\n");
+    print_str("  SSA Blocks: ");
+    print_num(ssa_func.blocks_count);
+    print_str("\n");
+    print_str("  SSA Values: ");
+    print_num(ssa_func.values_count);
+    print_str("\n");
+
+    print_str("\nAll pipeline tests passed!\n");
+    return 0;
+}

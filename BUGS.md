@@ -35,6 +35,76 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
+(None currently)
+
+---
+
+## Fixed Bugs
+
+### BUG-032: open() syscall ignores mode parameter
+
+**Status:** FIXED
+**Priority:** P2
+**Discovered:** 2026-01-18
+**Fixed:** 2026-01-18
+
+**Description:**
+When calling `open(path, O_CREAT | O_WRONLY | O_TRUNC, mode)`, the mode parameter was being passed in register x2 instead of on the stack. Files were created with garbage permissions.
+
+**Root Cause:**
+`open()` is a **variadic function** on macOS: `int open(const char *path, int flags, ...)`. On ARM64 macOS, the calling convention requires variadic arguments to be passed on the **stack**, not in registers.
+
+Reference: Go's `runtime/sys_darwin_arm64.s`:
+```asm
+MOVW	R2, (RSP)	// arg 3 is variadic, pass on stack
+```
+
+**Fix:**
+Added variadic function detection and handling to ARM64 codegen:
+1. `getVariadicFixedArgCount()` - Detects known variadic libc functions (open, fcntl, ioctl, openat)
+2. `setupCallArgsWithVariadic()` - Puts variadic args on stack, fixed args in registers
+
+**Files Changed:**
+- `src/codegen/arm64.zig`: Added `getVariadicFixedArgCount()`, modified `setupCallArgsWithVariadic()`, updated `static_call` handling
+
+---
+
+### BUG-031: Accessing array field inside struct through pointer causes crash
+
+**Status:** FIXED
+**Priority:** P0 (was blocking cot0 genssa.cot)
+**Discovered:** 2026-01-18
+**Fixed:** 2026-01-18
+
+**Description:**
+Accessing an array field inside a struct through a pointer (`ptr.array[idx]`) caused a runtime segfault. The array is part of the struct definition, not dynamically allocated.
+
+**Root Cause:**
+Two issues in the SSA builder:
+1. `field_value` handler only returned address (no load) for struct types, not array types
+2. `field_local` handler had the same issue
+
+For `v.args[0]` where `v` is a `*Value` and `args` is `[4]i64`:
+1. `field_value`/`field_local` computed the address of the `args` field
+2. Then it LOADED from that address (treating it like a scalar/pointer field)
+3. The loaded value (first array element) was then used as a base address for indexing
+4. This caused a segfault when trying to load from a garbage address
+
+**Fix:**
+Modified `src/frontend/ssa_builder.zig` to also return address (no load) for array types:
+
+1. Line 1036: `field_local` - added check for `.array` type alongside `.struct_type`
+2. Line 1110: `field_value` - added check for `.array` type alongside `.struct_type`
+
+Additionally, `src/frontend/lower.zig` line 854-866 was updated to handle array field access
+in index assignments (e.g., `val.args[0] = 42`).
+
+**Go Reference:**
+Go's SSA treats array fields the same as struct fields - they're inline data at fixed offsets
+from the base address, not pointers to separate allocations.
+
+---
+
 ### BUG-029: Reading struct pointer field through function parameter causes crash
 
 **Status:** FIXED

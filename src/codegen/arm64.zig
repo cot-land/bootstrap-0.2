@@ -1938,6 +1938,13 @@ pub const ARM64CodeGen = struct {
                     else => "unknown",
                 };
 
+                // BUG-032 FIX: Check if this is a known variadic function
+                // For variadic functions, args beyond fixed_count go on stack
+                const variadic_fixed_args = getVariadicFixedArgCount(raw_name);
+                if (variadic_fixed_args != null) {
+                    debug.log(.codegen, "      variadic call: {s} with {d} fixed args", .{ raw_name, variadic_fixed_args.? });
+                }
+
                 // Prepend underscore for macOS symbol naming convention
                 const target_name = try std.fmt.allocPrint(self.allocator, "_{s}", .{raw_name});
 
@@ -1961,8 +1968,8 @@ pub const ARM64CodeGen = struct {
                     // ADD x8, sp, #frame_offset
                     try self.emit(asm_mod.encodeADDImm(8, 31, frame_offset, 0));
 
-                    // 2. Setup arguments in x0-x7 (and stack for args 9+)
-                    const stack_cleanup = try self.setupCallArgs(args);
+                    // 2. Setup arguments in x0-x7 (and stack for variadic/overflow)
+                    const stack_cleanup = try self.setupCallArgsWithVariadic(args, variadic_fixed_args);
 
                     // 3. Record relocation and make the call
                     try self.relocations.append(self.allocator, .{
@@ -1992,10 +1999,10 @@ pub const ARM64CodeGen = struct {
                 }
 
                 // Normal call path (return <= 16B fits in registers)
-                // Use parallel copy to move arguments to x0-x7 (and stack for args 9+)
+                // Use parallel copy to move arguments to x0-x7 (and stack for variadic/overflow)
                 // This prevents clobbering when args are in each other's target registers
                 // E.g., if arg0 is in x1 and arg1 is in x0, naive sequential moves fail
-                const stack_cleanup = try self.setupCallArgs(args);
+                const stack_cleanup = try self.setupCallArgsWithVariadic(args, variadic_fixed_args);
 
                 // Record relocation for linker to resolve
                 try self.relocations.append(self.allocator, .{
@@ -2733,20 +2740,51 @@ pub const ARM64CodeGen = struct {
         std.debug.panic("codegen: v{d} ({s}) has no register assigned by regalloc - this is a regalloc bug", .{ value.id, @tagName(value.op) });
     }
 
+    /// BUG-032 FIX: Known variadic libc functions on ARM64 macOS.
+    /// For variadic functions, arguments after the fixed args go on the stack.
+    /// Returns (fixed_arg_count) if function is known variadic, null otherwise.
+    /// Reference: Go's runtime/sys_darwin_arm64.s open_trampoline
+    fn getVariadicFixedArgCount(func_name: []const u8) ?usize {
+        // open(path, flags, ...) - mode is variadic
+        if (std.mem.eql(u8, func_name, "open")) return 2;
+        // fcntl(fd, cmd, ...) - arg is variadic
+        if (std.mem.eql(u8, func_name, "fcntl")) return 2;
+        // ioctl(fd, request, ...) - arg is variadic
+        if (std.mem.eql(u8, func_name, "ioctl")) return 2;
+        // openat(fd, path, flags, ...) - mode is variadic
+        if (std.mem.eql(u8, func_name, "openat")) return 3;
+        return null;
+    }
+
     /// Ensure value is in x0
     /// Setup call arguments using parallel copy to avoid clobbering
     /// Uses x16 as scratch register for breaking cycles
     /// Returns the number of stack argument bytes that need cleanup after call
-    fn setupCallArgs(self: *ARM64CodeGen, args: []*Value) !u12 {
+    /// variadic_fixed_args: if non-null, args beyond this count go on stack (ARM64 macOS ABI)
+    fn setupCallArgsWithVariadic(self: *ARM64CodeGen, args: []*Value, variadic_fixed_args: ?usize) !u12 {
         if (args.len == 0) return 0;
 
-        // ARM64 AAPCS64: first 8 args in x0-x7, rest on stack
-        const max_reg_args = @min(args.len, 8);
+        // BUG-032 FIX: For variadic functions on ARM64 macOS, only fixed args go in registers.
+        // Variadic arguments (args after fixed_count) MUST go on the stack.
+        // Reference: Go's runtime/sys_darwin_arm64.s - "arg 3 is variadic, pass on stack"
+        const fixed_arg_limit: usize = if (variadic_fixed_args) |fixed| fixed else args.len;
 
-        // Handle stack arguments (args 9+) - store in reverse order
-        // ARM64 AAPCS64: stack args at [SP], [SP+8], etc.
-        // CRITICAL: SP must always be 16-byte aligned!
-        const num_stack_args = if (args.len > 8) args.len - 8 else 0;
+        // Determine how many args go in registers (up to 8, and up to fixed_arg_limit)
+        const max_reg_args = @min(@min(args.len, 8), fixed_arg_limit);
+
+        // Stack arguments include:
+        // 1. Args beyond x0-x7 (normal overflow)
+        // 2. Args beyond fixed_arg_limit (variadic args)
+        const variadic_stack_args: usize = if (variadic_fixed_args != null and args.len > fixed_arg_limit)
+            args.len - fixed_arg_limit
+        else
+            0;
+        const overflow_stack_args: usize = if (fixed_arg_limit > 8 and args.len > 8)
+            @min(fixed_arg_limit, args.len) - 8
+        else
+            0;
+        const num_stack_args = variadic_stack_args + overflow_stack_args;
+
         // Round up to 16-byte alignment
         const stack_bytes = num_stack_args * 8;
         const stack_size: u12 = @intCast(((stack_bytes + 15) / 16) * 16);
@@ -2757,21 +2795,44 @@ pub const ARM64CodeGen = struct {
             try self.emit(asm_mod.encodeSUBImm(31, 31, stack_size, 0));
             debug.log(.codegen, "      stack args: SUB SP, SP, #{d} ({d} args)", .{ stack_size, num_stack_args });
 
-            // Store stack arguments
-            // ARM64 LDR/STR unsigned offset is scaled by 8 for 64-bit ops
-            for (args[8..], 0..) |arg, i| {
-                const byte_offset = i * 8;
-                const scaled_offset: u12 = @intCast(@divExact(byte_offset, 8));
-                // Get value into a register
-                if (self.getRegForValue(arg)) |src_reg| {
-                    // STR src_reg, [SP, #offset]
-                    try self.emit(asm_mod.encodeLdrStr(src_reg, 31, scaled_offset, false)); // false = store
-                    debug.log(.codegen, "      stack arg {d}: STR x{d}, [SP, #{d}]", .{ i + 8, src_reg, byte_offset });
-                } else {
-                    // Need to regenerate value into x16 first
-                    try self.regenerateValue(16, arg);
-                    try self.emit(asm_mod.encodeLdrStr(16, 31, scaled_offset, false));
-                    debug.log(.codegen, "      stack arg {d}: regen x16, STR x16, [SP, #{d}]", .{ i + 8, byte_offset });
+            var stack_slot: usize = 0;
+
+            // First: store variadic arguments (args beyond fixed_arg_limit)
+            if (variadic_fixed_args != null and args.len > fixed_arg_limit) {
+                for (args[fixed_arg_limit..]) |arg| {
+                    const byte_offset = stack_slot * 8;
+                    const scaled_offset: u12 = @intCast(@divExact(byte_offset, 8));
+                    // Get value into a register
+                    if (self.getRegForValue(arg)) |src_reg| {
+                        // STR src_reg, [SP, #offset]
+                        try self.emit(asm_mod.encodeLdrStr(src_reg, 31, scaled_offset, false));
+                        debug.log(.codegen, "      variadic arg: STR x{d}, [SP, #{d}]", .{ src_reg, byte_offset });
+                    } else {
+                        // Need to regenerate value into x16 first
+                        try self.regenerateValue(16, arg);
+                        try self.emit(asm_mod.encodeLdrStr(16, 31, scaled_offset, false));
+                        debug.log(.codegen, "      variadic arg: regen x16, STR x16, [SP, #{d}]", .{byte_offset});
+                    }
+                    stack_slot += 1;
+                }
+            }
+
+            // Second: store overflow arguments (args 9+ up to fixed_arg_limit)
+            if (overflow_stack_args > 0) {
+                const overflow_start = 8;
+                const overflow_end = @min(fixed_arg_limit, args.len);
+                for (args[overflow_start..overflow_end]) |arg| {
+                    const byte_offset = stack_slot * 8;
+                    const scaled_offset: u12 = @intCast(@divExact(byte_offset, 8));
+                    if (self.getRegForValue(arg)) |src_reg| {
+                        try self.emit(asm_mod.encodeLdrStr(src_reg, 31, scaled_offset, false));
+                        debug.log(.codegen, "      overflow arg: STR x{d}, [SP, #{d}]", .{ src_reg, byte_offset });
+                    } else {
+                        try self.regenerateValue(16, arg);
+                        try self.emit(asm_mod.encodeLdrStr(16, 31, scaled_offset, false));
+                        debug.log(.codegen, "      overflow arg: regen x16, STR x16, [SP, #{d}]", .{byte_offset});
+                    }
+                    stack_slot += 1;
                 }
             }
         }
@@ -2907,6 +2968,11 @@ pub const ARM64CodeGen = struct {
         }
 
         return stack_size;
+    }
+
+    /// Wrapper for non-variadic calls
+    fn setupCallArgs(self: *ARM64CodeGen, args: []*Value) !u12 {
+        return self.setupCallArgsWithVariadic(args, null);
     }
 
     /// Regenerate a value into a register (for consts, etc.)
