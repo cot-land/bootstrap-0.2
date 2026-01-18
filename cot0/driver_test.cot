@@ -1,0 +1,117 @@
+// Cot0 Driver Test
+// Tests that the compilation pipeline works through parsing.
+
+import "frontend/token.cot"
+import "frontend/scanner.cot"
+import "frontend/types.cot"
+import "frontend/ast.cot"
+import "frontend/parser.cot"
+
+extern fn write(fd: i32, buf: *u8, count: i64) i64;
+
+fn print_str(s: string) {
+    write(1, s.ptr, len(s));
+}
+
+fn print_num(n: i64) {
+    var buf: [20]u8;
+    var i: i64 = 19;
+    var val: i64 = n;
+
+    if val == 0 {
+        buf[i] = 48;
+        write(1, &buf[i], 1);
+        return;
+    }
+
+    if val < 0 {
+        print_str("-");
+        val = 0 - val;
+    }
+
+    while val > 0 {
+        let digit: i64 = val - (val / 10) * 10;
+        buf[i] = @intCast(u8, 48 + digit);
+        val = val / 10;
+        i = i - 1;
+    }
+
+    write(1, &buf[i + 1], 19 - i);
+}
+
+// Global node pool for parsing
+var g_nodes: [1000]Node;
+var g_children: [5000]i64;
+var g_pool: NodePool;
+
+fn init_pool() *NodePool {
+    g_pool.nodes = &g_nodes[0];
+    g_pool.count = 0;
+    g_pool.children = &g_children[0];
+    g_pool.children_count = 0;
+    return &g_pool;
+}
+
+fn main() i64 {
+    print_str("Cot0 Driver Test\n");
+    print_str("================\n\n");
+
+    // Test source code to parse
+    let source: string = "fn add(a: i64, b: i64) i64 { return a + b; }";
+
+    print_str("Source: ");
+    print_str(source);
+    print_str("\n\n");
+
+    // Phase 1: Scanner Test
+    var scanner: Scanner = scanner_new(source);
+    var tok_count: i64 = 0;
+    var tok: Token = scanner_next(&scanner);
+    while tok.kind != TokenType.Eof {
+        tok_count = tok_count + 1;
+        tok = scanner_next(&scanner);
+    }
+
+    print_str("Phase 1 - Scanner: ");
+    print_num(tok_count);
+    print_str(" tokens\n");
+
+    if tok_count != 19 {
+        print_str("FAIL: Expected 19 tokens\n");
+        return 1;
+    }
+    print_str("  PASS\n");
+
+    // Phase 2: Parser Test
+    let pool: *NodePool = init_pool();
+    var parser: Parser = parser_new(source, pool);
+    let file_node: i64 = parse_file(&parser);
+
+    print_str("Phase 2 - Parser: ");
+    print_num(pool.count);
+    print_str(" nodes\n");
+
+    if parser_had_error(&parser) {
+        print_str("FAIL: Parser error\n");
+        return 2;
+    }
+
+    // Verify we created some nodes
+    if pool.count < 5 {
+        print_str("FAIL: Expected at least 5 nodes\n");
+        return 3;
+    }
+    print_str("  PASS\n");
+
+    // Verify file_node is valid
+    if file_node < 0 {
+        print_str("FAIL: Invalid file node\n");
+        return 4;
+    }
+    print_str("  File node: ");
+    print_num(file_node);
+    print_str("\n");
+
+    print_str("\nAll driver tests passed!\n");
+    return 0;
+}

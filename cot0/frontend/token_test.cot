@@ -157,6 +157,6 @@ fn main() i64 {
         println("All 18 token tests passed!");
     }
 
-    // Return passed count (expect 18)
-    return passed;
+    // Return 0 on success, failed count on failure
+    return failed;
 }
