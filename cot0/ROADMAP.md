@@ -52,15 +52,78 @@ These are the specific issues that must be fixed before cot0 can compile itself.
 
 ---
 
+## Current Status (2026-01-20)
+
+### cot0-stage1 Compilation: SUCCESS
+```bash
+./zig-out/bin/cot cot0/main.cot -o /tmp/cot0-stage1  # Works!
+```
+The bootstrap compiler successfully compiles cot0/main.cot to an executable.
+
+### cot0-stage1 Simple Programs: SUCCESS
+```bash
+/tmp/cot0-stage1 simple.cot -o simple_out  # Works!
+```
+cot0-stage1 can compile simple programs (return values, loops, if/else, function calls).
+
+### Self-Hosting Blockers
+
+#### Blocker 1: Parser Crashes on Large Files
+```bash
+/tmp/cot0-stage1 cot0/main.cot -o /tmp/cot0-stage2  # CRASHES at Phase 2
+/tmp/cot0-stage1 cot0/frontend/parser.cot -o /tmp/out  # CRASHES at Phase 2
+```
+
+**Symptoms:**
+- Small files (<200 lines) parse successfully
+- Large files (main.cot=1241 lines, parser.cot=~1000 lines) crash during parsing
+- No error message - process exits silently after "Phase 2: Parsing..."
+
+**Likely causes:**
+- Stack overflow in recursive descent parser
+- Buffer overflow in node pool or children array
+- Memory corruption
+
+**Investigation needed:**
+1. Add debug output to cot0/main.cot parser to find where it crashes
+2. Check MAX_NODES, MAX_CHILDREN constants are large enough
+3. Check for infinite loops in parse functions
+
+#### Blocker 2: Cross-File Function Calls Not Resolving
+```
+WARNING: Could not find target function!
+```
+
+**Symptoms:**
+- When compiling files with imports, function calls to imported functions show warnings
+- Compiled program crashes (exit 138 = SIGBUS)
+
+**Root cause:** Call target resolution in genssa.cot doesn't find functions from imported files.
+
+**Files to investigate:**
+- `cot0/codegen/genssa.cot` - function symbol lookup
+- `cot0/main.cot` - how function symbols are registered
+
+#### (RESOLVED) Import Path Resolution
+Imports from CWD work correctly when running from project directory:
+```bash
+cd /Users/johnc/cot-land/bootstrap-0.2
+/tmp/cot0-stage1 cot0/frontend/token_test.cot -o /tmp/out  # Imports work!
+```
+
+---
+
 ## Next Steps (Priority Order)
 
-Now that all blockers are resolved, the path forward is:
+### 1. Fix Parser Crash on Large Files (BLOCKER - P0)
+**Files:** `cot0/frontend/parser.cot`, `cot0/main.cot`
+**Task:** Debug why parsing crashes on files > 200 lines. Add debug output, check buffer sizes.
 
-### 1. Verify cot0 Main Pipeline
-**Command:** `./zig-out/bin/cot cot0/main.cot -o /tmp/cot0-stage1`
-**Task:** Attempt to compile cot0's main.cot. Identify and fix any missing features or bugs.
+### 2. Fix Cross-File Function Resolution (BLOCKER - P1)
+**Files:** `cot0/codegen/genssa.cot`, `cot0/main.cot`
+**Task:** Ensure function symbols from imports are visible during code generation.
 
-### 2. Complete Self-Hosting
+### 3. Complete Self-Hosting
 **Command:** `/tmp/cot0-stage1 cot0/main.cot -o /tmp/cot0-stage2`
 **Task:** Use stage1 to compile stage2. Verify they produce identical output.
 
