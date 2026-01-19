@@ -301,6 +301,8 @@ fn genssa_value(gs: *GenState, v: *Value) {
         genssa_store(gs, v);
     } else if v.op == Op.LocalAddr {
         genssa_local_addr(gs, v);
+    } else if v.op == Op.OffPtr {
+        genssa_off_ptr(gs, v);
     } else if v.op == Op.Call {
         genssa_call(gs, v);
     } else if v.op == Op.Return {
@@ -543,6 +545,41 @@ fn genssa_local_addr(gs: *GenState, v: *Value) {
 
     // Compute address: SP + offset (no FP setup in simple prologue)
     emit_inst(gs, encode_add_imm(rd, SP, local.offset));
+}
+
+fn genssa_off_ptr(gs: *GenState, v: *Value) {
+    // Add offset to base pointer: Rd = base + offset
+    // aux_int contains the offset, arg[0] is the base pointer
+    let rd: i64 = v.reg;
+    if rd < 0 { return; }
+
+    let f: *Func = gs.func;
+    let offset: i64 = v.aux_int;
+
+    if v.args_count > 0 {
+        let base_id: i64 = v.args[0];
+        let base_val: *Value = func_get_value(f, base_id);
+
+        // Special case: if base is LocalAddr, regenerate it directly
+        // This avoids issues with register clobbering
+        if base_val.op == Op.LocalAddr {
+            let local_idx: i64 = base_val.aux_int;
+            let local: *Local = func_get_local(f, local_idx);
+            // Compute address with combined offset: SP + local.offset + field_offset
+            let total_offset: i64 = local.offset + offset;
+            emit_inst(gs, encode_add_imm(rd, SP, total_offset));
+        } else {
+            // General case: base is already in a register
+            let base_reg: i64 = base_val.reg;
+            if base_reg >= 0 {
+                if offset != 0 {
+                    emit_inst(gs, encode_add_imm(rd, base_reg, offset));
+                } else if rd != base_reg {
+                    emit_inst(gs, encode_mov_reg(rd, base_reg));
+                }
+            }
+        }
+    }
 }
 
 fn genssa_call(gs: *GenState, v: *Value) {

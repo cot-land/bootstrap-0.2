@@ -66,6 +66,12 @@ The `e2e_codegen_test.cot` demonstrates the full backend pipeline:
   - Address-of operator (`&x`) via AddrLocal IR node
   - Dereference operator (`ptr.*`) via Load IR node
   - Store through pointer (`ptr.* = value`) via Store IR node
+- Added struct field access support to cot0 lowerer:
+  - FieldInfo struct for field name/type/offset storage
+  - FieldLocal/FieldValue IR nodes for field read
+  - StoreFieldLocal/StoreField IR nodes for field write
+  - OffPtr SSA operation for field offset computation
+  - TypePool extended with field management functions
 - Fixed executable permissions: added chmod(0o755) after linking in main.zig
 
 ### Bug Fixes (2026-01-18)

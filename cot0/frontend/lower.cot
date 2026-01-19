@@ -40,6 +40,9 @@ struct Lowerer {
     source: *u8,
     source_len: i64,
 
+    // Type information for field access
+    type_pool: *TypePool,
+
     // Current function being lowered
     current_func: *FuncBuilder,
 
@@ -67,6 +70,7 @@ fn lowerer_init(l: *Lowerer,
                 nodes: *Node, nodes_count: i64,
                 children: *i64, children_count: i64,
                 source: *u8, source_len: i64,
+                type_pool: *TypePool,
                 ir_nodes: *IRNode, ir_nodes_cap: i64,
                 ir_locals: *IRLocal, ir_locals_cap: i64,
                 ir_funcs: *IRFunc, ir_funcs_cap: i64,
@@ -77,6 +81,7 @@ fn lowerer_init(l: *Lowerer,
     l.children_count = children_count;
     l.source = source;
     l.source_len = source_len;
+    l.type_pool = type_pool;
     l.current_func = null;
     l.ir_nodes = ir_nodes;
     l.ir_nodes_cap = ir_nodes_cap;
@@ -477,6 +482,8 @@ fn lower_expr(l: *Lowerer, node: *Node) i64 {
         return lower_address_of(l, node);
     } else if node.kind == NodeKind.DerefExpr {
         return lower_deref(l, node);
+    } else if node.kind == NodeKind.FieldAccess {
+        return lower_field_access(l, node);
     }
 
     return NULL_NODE;
@@ -716,6 +723,96 @@ fn lower_deref(l: *Lowerer, node: *Node) i64 {
 
     // Emit load from pointer - result type is i64 for now
     return func_builder_emit_load(fb, ptr_idx, TYPE_I64);
+}
+
+fn lower_field_access(l: *Lowerer, node: *Node) i64 {
+    // FieldAccess fields:
+    // field0 = base expression (node index)
+    // field1 = field_name_start (offset in source)
+    // field2 = field_name_len
+
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return NULL_NODE; }
+
+    let base_node: *Node = l.nodes + node.field0;
+    let field_name_start: i64 = node.field1;
+    let field_name_len: i64 = node.field2;
+
+    // Case 1: Base is an identifier (local variable or parameter)
+    if base_node.kind == NodeKind.Ident {
+        // Look up the local variable
+        var local_idx: i64 = -1;
+        var local_type_idx: i64 = TYPE_I64;
+        var i: i64 = 0;
+        while i < fb.locals_count {
+            let local: *IRLocal = fb.locals + i;
+            if names_equal(l.source, local.name_start, local.name_len,
+                          base_node.field0, base_node.field1) {
+                local_idx = i;
+                local_type_idx = local.type_idx;
+            }
+            i = i + 1;
+        }
+
+        if local_idx < 0 {
+            return NULL_NODE;  // Variable not found
+        }
+
+        // Check if local is a pointer to struct (auto-dereference)
+        let local_type: *Type = type_get(l.type_pool, local_type_idx);
+        var struct_type_idx: i64 = local_type_idx;
+
+        if local_type.kind == TypeKind.Pointer {
+            // Pointer to struct - need to load the pointer first
+            struct_type_idx = local_type.elem;
+
+            // Look up field in the pointee struct
+            let field_info: *FieldInfo = type_lookup_field(l.type_pool, struct_type_idx,
+                                                           field_name_start, field_name_len);
+            if field_info == null {
+                return NULL_NODE;  // Field not found
+            }
+
+            // Load the pointer value
+            let ptr_val: i64 = func_builder_emit_load_local(fb, local_idx);
+            // Access field through the pointer
+            return func_builder_emit_field_value(fb, ptr_val, field_info.offset, field_info.type_idx);
+        }
+
+        // Direct struct access
+        let field_info: *FieldInfo = type_lookup_field(l.type_pool, struct_type_idx,
+                                                       field_name_start, field_name_len);
+        if field_info == null {
+            return NULL_NODE;  // Field not found
+        }
+
+        return func_builder_emit_field_local(fb, local_idx, field_info.offset, field_info.type_idx);
+    }
+
+    // Case 2: Base is a dereference expression (ptr.*.field)
+    if base_node.kind == NodeKind.DerefExpr {
+        // Get the pointer value without loading the struct
+        let ptr_operand: *Node = l.nodes + base_node.field0;
+        let ptr_val: i64 = lower_expr(l, ptr_operand);
+
+        // For now, assume the pointee is a struct and use default field lookup
+        // TODO: Get the actual struct type from the pointer type
+        // This is a simplified version - we need the type of the dereferenced value
+        // For now, use i64 as placeholder
+        return func_builder_emit_field_value(fb, ptr_val, 0, TYPE_I64);
+    }
+
+    // Case 3: Base is another field access (chained: a.b.c)
+    if base_node.kind == NodeKind.FieldAccess {
+        // Recursively lower the base field access
+        let base_val: i64 = lower_field_access(l, base_node);
+        // TODO: Get the type of the base field to look up the next field
+        return func_builder_emit_field_value(fb, base_val, 0, TYPE_I64);
+    }
+
+    // Case 4: Other expressions - lower them and access field
+    let base_val: i64 = lower_expr(l, base_node);
+    return func_builder_emit_field_value(fb, base_val, 0, TYPE_I64);
 }
 
 // ============================================================================

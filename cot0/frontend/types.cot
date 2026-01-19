@@ -79,11 +79,23 @@ struct Type {
 }
 
 // ============================================================================
+// Field Information (for struct fields)
+// ============================================================================
+
+struct FieldInfo {
+    name_start: i64,    // Field name offset in source
+    name_len: i64,      // Field name length
+    type_idx: i64,      // Field type index
+    offset: i64,        // Byte offset within struct
+}
+
+// ============================================================================
 // Type Pool (arena allocation for type interning)
 // ============================================================================
 
 const MAX_TYPES: i64 = 1000;
 const MAX_PARAMS: i64 = 5000;  // For function parameter lists
+const MAX_FIELDS: i64 = 5000;  // For struct field info
 
 struct TypePool {
     types: *Type,       // Array of MAX_TYPES types
@@ -92,6 +104,14 @@ struct TypePool {
     // Parameter arrays (for function types)
     params: *i64,       // Array of type indices for function params
     params_count: i64,
+
+    // Field arrays (for struct types)
+    fields: *FieldInfo, // Array of field information
+    fields_count: i64,  // Current field count
+
+    // Source text for name comparison
+    source: *u8,
+    source_len: i64,
 }
 
 // ============================================================================
@@ -130,6 +150,9 @@ const FIRST_USER_TYPE: i64 = 14;
 fn pool_init(pool: *TypePool) {
     pool.count = 0;
     pool.params_count = 0;
+    pool.fields_count = 0;
+    pool.source = null;
+    pool.source_len = 0;
 
     // Register basic types in order
     register_basic(pool, TypeKind.Invalid, 0, 0);   // 0: invalid
@@ -636,4 +659,83 @@ fn is_assignable(pool: *TypePool, from: i64, to: i64) bool {
     }
 
     return false;
+}
+
+// ============================================================================
+// Field Management (for struct types)
+// ============================================================================
+
+// Set source text for field name comparison
+fn pool_set_source(pool: *TypePool, source: *u8, source_len: i64) {
+    pool.source = source;
+    pool.source_len = source_len;
+}
+
+// Add a field to the fields array, return its index
+fn pool_add_field(pool: *TypePool, name_start: i64, name_len: i64,
+                  type_idx: i64, offset: i64) i64 {
+    let idx: i64 = pool.fields_count;
+    pool.fields_count = pool.fields_count + 1;
+
+    let f: *FieldInfo = pool.fields + idx;
+    f.name_start = name_start;
+    f.name_len = name_len;
+    f.type_idx = type_idx;
+    f.offset = offset;
+
+    return idx;
+}
+
+// Get field info at index
+fn pool_get_field(pool: *TypePool, idx: i64) *FieldInfo {
+    return pool.fields + idx;
+}
+
+// Compare two strings in source
+fn names_equal_types(source: *u8, start1: i64, len1: i64, start2: i64, len2: i64) bool {
+    if len1 != len2 { return false; }
+    var i: i64 = 0;
+    while i < len1 {
+        let p1: *u8 = source + start1 + i;
+        let p2: *u8 = source + start2 + i;
+        if p1.* != p2.* { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Look up field by name in a struct type
+// Returns field info if found, null otherwise
+// type_idx must be a struct type
+fn type_lookup_field(pool: *TypePool, type_idx: i64,
+                     field_name_start: i64, field_name_len: i64) *FieldInfo {
+    let t: *Type = type_get(pool, type_idx);
+    if t.kind != TypeKind.Struct {
+        return null;
+    }
+
+    // fields_start in params_start, fields_count in params_count
+    let fields_start: i64 = t.params_start;
+    let fields_count: i64 = t.params_count;
+
+    var i: i64 = 0;
+    while i < fields_count {
+        let f: *FieldInfo = pool.fields + fields_start + i;
+        if names_equal_types(pool.source, f.name_start, f.name_len,
+                            field_name_start, field_name_len) {
+            return f;
+        }
+        i = i + 1;
+    }
+
+    return null;
+}
+
+// Get pointee type from pointer type
+fn type_get_pointee(pool: *TypePool, ptr_type_idx: i64) i64 {
+    let t: *Type = type_get(pool, ptr_type_idx);
+    if t.kind == TypeKind.Pointer {
+        return t.elem;
+    }
+    return TYPE_INVALID;
 }
