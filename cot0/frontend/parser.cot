@@ -11,6 +11,7 @@
 import "token.cot"
 import "scanner.cot"
 import "ast.cot"
+import "types.cot"
 
 // ============================================================================
 // Parser Structure
@@ -96,23 +97,8 @@ fn parser_binop_int(p: *Parser) i64 {
 
 // Type representation: we store type as start/length in source + a type_kind
 // For cot0 simplicity, we return a type "handle" that encodes the type kind
-// Type kinds (matching our type system):
-//   0 = i64, 1 = i32, 2 = u8, 3 = bool, 4 = void, 5 = string
-//   10+ = pointer to type (10 + base_type)
-//   100+ = user-defined type (struct/enum name at offset)
-//
-// NOTE: These use PTYPE_ prefix to avoid collision with types.cot's TYPE_ constants
-
-const PTYPE_I64: i64 = 0;
-const PTYPE_I32: i64 = 1;
-const PTYPE_U8: i64 = 2;
-const PTYPE_BOOL: i64 = 3;
-const PTYPE_VOID: i64 = 4;
-const PTYPE_STRING: i64 = 5;
-const PTYPE_PTR_BASE: i64 = 10;    // Pointer types start here
-const PTYPE_USER_BASE: i64 = 100;  // User types start here
-
 // Parse a type: i64 | i32 | u8 | bool | void | string | *T | TypeName
+// Type handles (PTYPE_*) are defined in types.cot
 // Returns type handle (encoded as i64)
 fn parse_type(p: *Parser) i64 {
     let kind: TokenType = p.current.kind;

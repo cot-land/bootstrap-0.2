@@ -26,12 +26,10 @@
 
 These are the specific issues that must be fixed before cot0 can compile itself.
 
-### 1. Import Module Scoping (CRITICAL)
-**Status:** Not started
-**Symptom:** `error[E302]: redefined identifier` when compiling files that import modules with shared type definitions
-**Example:** `lower_test.cot` imports `lower.cot` which imports `types.cot` and `ir.cot`. Types like `TypeKind`, `IRNodeKind` get redefined.
-**Root Cause:** The Zig bootstrap processes all imports into a single global scope instead of maintaining separate module scopes.
-**Fix Required:** Implement proper module-level scoping for imports, or use header guards/once semantics for type definitions.
+### 1. Import Module Scoping (FIXED)
+**Status:** FIXED (2026-01-20)
+**Root Cause:** PTYPE_* constants were defined in multiple files (parser.cot, lower.cot, checker.cot). When files imported each other, these constants got added to the global scope multiple times.
+**Fix:** Centralized PTYPE_* constants in types.cot. All files now import from there.
 
 ### 2. const Declarations (WORKING)
 **Status:** Complete - parsing and type checking both work
@@ -41,29 +39,49 @@ These are the specific issues that must be fixed before cot0 can compile itself.
 **Status:** Complete - `@sizeOf` and `@alignOf` work correctly
 **Verified:** `@sizeOf(i64)` returns 8 correctly
 
-### 4. Cross-File Function Resolution (PARTIALLY DONE)
-**Status:** Basic support working
-**Remaining:** Need to verify all cross-file call patterns work, including:
-  - Functions returning struct types
-  - Functions with pointer parameters to user types
-  - Functions from nested imports
+### 4. Cross-File Function Resolution (WORKING)
+**Status:** Complete
+**Verified:** All cot0 test files with cross-file imports compile and run
 
-### 5. checker_test.cot Codegen Crash (BUG)
-**Status:** Investigating
-**Symptom:** `checker_test.cot` crashes during code generation with "integer does not fit in destination type"
-**Fix Required:** Debug codegen to find the specific instruction causing the overflow
+### 5. Large Struct Field Offsets (BUG-034)
+**Status:** FIXED (2026-01-20)
+**Symptom:** Structs with embedded arrays > 4KB caused codegen panic "integer does not fit in destination type"
+**Root Cause:** ARM64 ADD immediate only supports 12-bit offsets (max 4095)
+**Fix:** Added `emitAddImm()` function that splits large offsets into multiple ADDs (following Go's asm7.go pattern)
+**Test:** `test/bugs/bug034_large_field_offset.cot`
+
+---
+
+## Next Steps (Priority Order)
+
+Now that all blockers are resolved, the path forward is:
+
+### 1. @builtin Lowering and Codegen
+**Files:** `frontend/lower.zig`, `codegen/arm64.zig`
+**Task:** Lower @sizeOf, @alignOf to ConstInt IR nodes in the lowerer. These should already work since they're resolved at check time.
+
+### 2. Verify cot0 Main Pipeline
+**Command:** `./zig-out/bin/cot cot0/main.cot -o /tmp/cot0-stage1`
+**Task:** Attempt to compile cot0's main.cot. Identify and fix any missing features or bugs.
+
+### 3. Complete Self-Hosting
+**Command:** `/tmp/cot0-stage1 cot0/main.cot -o /tmp/cot0-stage2`
+**Task:** Use stage1 to compile stage2. Verify they produce identical output.
+
+---
 
 ### Test Matrix for Self-Hosting
 
-| cot0 Source File | Can Compile? | Blocker |
-|------------------|--------------|---------|
-| `token_test.cot` | Yes | Runs, 18 tests pass |
-| `ast_test.cot` | Yes | Runs, 12 tests pass |
-| `ir_test.cot` | Yes | Runs, passes |
-| `scanner_test.cot` | Yes | Runs, 18 tests pass |
-| `parser_test.cot` | Yes | Runs, 22 tests pass |
-| `lower_test.cot` | No | Import scoping (#1) |
-| `checker_test.cot` | No | Codegen crash (#5) |
+| cot0 Source File | Can Compile? | Result |
+|------------------|--------------|--------|
+| `token_test.cot` | Yes | 18 tests pass |
+| `ast_test.cot` | Yes | 12 tests pass |
+| `types_test.cot` | Yes | passes |
+| `ir_test.cot` | Yes | passes |
+| `scanner_test.cot` | Yes | 18 tests pass |
+| `parser_test.cot` | Yes | 22 tests pass |
+| `lower_test.cot` | Yes | passes |
+| `checker_test.cot` | Yes | passes |
 
 ---
 
@@ -71,13 +89,14 @@ These are the specific issues that must be fixed before cot0 can compile itself.
 
 | Test File | Status |
 |-----------|--------|
-| `token_test.cot` | 5/5 pass |
-| `scanner_test.cot` | 18/18 pass |
-| `ast_test.cot` | 7/7 pass |
-| `parser_test.cot` | 22/22 pass |
-| `types_test.cot` | 2/2 pass |
-| `checker_test.cot` | 4/4 pass |
+| `token_test.cot` | 18/18 pass |
+| `ast_test.cot` | 12/12 pass |
+| `types_test.cot` | passes |
 | `ir_test.cot` | passes |
+| `scanner_test.cot` | 18/18 pass |
+| `parser_test.cot` | 22/22 pass |
+| `lower_test.cot` | passes |
+| `checker_test.cot` | passes |
 | `ssa/ssa_test.cot` | passes |
 | `ssa/builder_test.cot` | passes |
 | `ssa/liveness_test.cot` | passes |
@@ -461,6 +480,7 @@ Features used by cot0 source files vs what cot0 can handle:
 
 ## Recent Bug Fixes
 
+- BUG-034: Large struct field offsets overflow ADD immediate (fixed 2026-01-20)
 - BUG-025: String pointer null after many accesses (Go's use distance tracking)
 - BUG-024: String pointer null in string comparisons
 - BUG-023: Stack slot reuse causes value corruption

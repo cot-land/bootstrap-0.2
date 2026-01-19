@@ -544,16 +544,7 @@ fn check_var_decl(chk: *Checker, node_idx: i64) {
 // ============================================================================
 // Parser Type Handle Resolution
 // ============================================================================
-
-// Parser type handle constants (must match parser.cot)
-const PTYPE_I64: i64 = 0;
-const PTYPE_I32: i64 = 1;
-const PTYPE_U8: i64 = 2;
-const PTYPE_BOOL: i64 = 3;
-const PTYPE_VOID: i64 = 4;
-const PTYPE_STRING: i64 = 5;
-const PTYPE_PTR_BASE: i64 = 10;    // Pointer types: PTYPE_PTR_BASE + pointee
-const PTYPE_USER_BASE: i64 = 100;  // User types: PTYPE_USER_BASE + source_offset
+// PTYPE_* constants are defined in types.cot
 
 // Resolve a parser type handle to a TypePool type index
 // Mirrors Zig bootstrap's resolveTypeRef

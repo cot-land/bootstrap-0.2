@@ -10,6 +10,16 @@ import "lower.cot"
 var g_nodes: [100]Node;
 var g_ir_nodes: [100]IRNode;
 var g_ir_locals: [50]IRLocal;
+var g_ir_funcs: [10]IRFunc;
+var g_children: [200]i64;
+var g_constants: [50]ConstEntry;
+var g_type_pool: TypePool;
+var g_source: [100]u8;
+
+// TypePool backing storage
+var g_types: [256]Type;
+var g_params: [1024]i64;
+var g_fields: [1024]FieldInfo;
 
 fn main() i64 {
     let result: i64 = 0;
@@ -65,13 +75,20 @@ fn test_lower_int_lit() i64 {
     node.field2 = 0;
     node.field3 = 0;
 
+    // Initialize type pool with backing storage
+    pool_init_with_storage(&g_type_pool, &g_types[0], &g_params[0], &g_fields[0]);
+
     // Create lowerer
     var l: Lowerer = undefined;
     lowerer_init(&l,
                  &g_nodes[0], 1,
-                 null, 0,
+                 &g_children[0], 0,
+                 &g_source[0], 0,
+                 &g_type_pool,
                  &g_ir_nodes[0], 100,
-                 &g_ir_locals[0], 50);
+                 &g_ir_locals[0], 50,
+                 &g_ir_funcs[0], 10,
+                 &g_constants[0], 50);
 
     // Create a function builder manually for testing
     var fb: FuncBuilder = undefined;
@@ -134,13 +151,20 @@ fn test_lower_binary() i64 {
     n2.field2 = 0;       // op = Add (0)
     n2.field3 = 0;
 
+    // Initialize type pool with backing storage
+    pool_init_with_storage(&g_type_pool, &g_types[0], &g_params[0], &g_fields[0]);
+
     // Create lowerer
     var l: Lowerer = undefined;
     lowerer_init(&l,
                  &g_nodes[0], 3,
-                 null, 0,
+                 &g_children[0], 0,
+                 &g_source[0], 0,
+                 &g_type_pool,
                  &g_ir_nodes[0], 100,
-                 &g_ir_locals[0], 50);
+                 &g_ir_locals[0], 50,
+                 &g_ir_funcs[0], 10,
+                 &g_constants[0], 50);
 
     // Create function builder
     var fb: FuncBuilder = undefined;

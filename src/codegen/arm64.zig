@@ -393,6 +393,57 @@ pub const ARM64CodeGen = struct {
         try self.code.appendSlice(self.allocator, &bytes);
     }
 
+    /// Emit ADD with potentially large immediate (>4095).
+    /// Following Go's ARM64 assembler pattern (case 48 in asm7.go):
+    /// - For imm <= 4095: single ADD with shift=0
+    /// - For imm > 4095: two ADDs - low 12 bits + high 12 bits with shift=1
+    /// BUG-034 fix: Handle large struct field offsets.
+    fn emitAddImm(self: *ARM64CodeGen, rd: u5, rn: u5, imm: i64) !void {
+        if (imm < 0) {
+            // Negative - use SUB instead (shouldn't happen for field offsets)
+            const abs_imm: u64 = @intCast(-imm);
+            if (abs_imm <= 4095) {
+                try self.emit(asm_mod.encodeSUBImm(rd, rn, @intCast(abs_imm), 0));
+            } else {
+                // Split into two SUBs
+                const low12: u12 = @intCast(abs_imm & 0xFFF);
+                const high12: u12 = @intCast((abs_imm >> 12) & 0xFFF);
+                if (low12 != 0) {
+                    try self.emit(asm_mod.encodeSUBImm(rd, rn, low12, 0));
+                    if (high12 != 0) {
+                        try self.emit(asm_mod.encodeSUBImm(rd, rd, high12, 1));
+                    }
+                } else if (high12 != 0) {
+                    try self.emit(asm_mod.encodeSUBImm(rd, rn, high12, 1));
+                }
+            }
+        } else {
+            const uimm: u64 = @intCast(imm);
+            if (uimm <= 4095) {
+                // Small immediate - single ADD
+                try self.emit(asm_mod.encodeADDImm(rd, rn, @intCast(uimm), 0));
+            } else if (uimm <= 0xFFFFFF) {
+                // Medium immediate - split into low 12 + high 12 bits
+                // Go pattern: ADD rd, rn, #(imm & 0xFFF); ADD rd, rd, #(imm >> 12), LSL #12
+                const low12: u12 = @intCast(uimm & 0xFFF);
+                const high12: u12 = @intCast((uimm >> 12) & 0xFFF);
+                if (low12 != 0) {
+                    try self.emit(asm_mod.encodeADDImm(rd, rn, low12, 0));
+                    if (high12 != 0) {
+                        try self.emit(asm_mod.encodeADDImm(rd, rd, high12, 1));
+                    }
+                } else if (high12 != 0) {
+                    try self.emit(asm_mod.encodeADDImm(rd, rn, high12, 1));
+                }
+            } else {
+                // Very large immediate (>16MB) - need to load into scratch register
+                // Use x16 (IP0) as scratch, then ADD rd, rn, x16
+                try self.emitLoadImmediate(16, @intCast(uimm));
+                try self.emit(asm_mod.encodeADDReg(rd, rn, 16));
+            }
+        }
+    }
+
     /// Current code offset
     fn offset(self: *const ARM64CodeGen) u32 {
         return @intCast(self.code.items.len);
@@ -2253,7 +2304,7 @@ pub const ARM64CodeGen = struct {
 
                     // ADD Rd, Rn, #offset (only if there's an actual offset to add)
                     if (field_off != 0) {
-                        try self.emit(asm_mod.encodeADDImm(dest_reg, base_reg, @intCast(field_off), 0));
+                        try self.emitAddImm(dest_reg, base_reg, field_off);
                         debug.log(.codegen, "      -> ADD x{d}, x{d}, #{d} (off_ptr)", .{ dest_reg, base_reg, field_off });
                     } else if (base_reg != dest_reg) {
                         try self.emit(asm_mod.encodeADDImm(dest_reg, base_reg, 0, 0));

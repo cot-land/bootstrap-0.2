@@ -93,21 +93,21 @@ struct FieldInfo {
 // Type Pool (arena allocation for type interning)
 // ============================================================================
 
-const MAX_TYPES: i64 = 1000;
-const MAX_PARAMS: i64 = 5000;  // For function parameter lists
-const MAX_FIELDS: i64 = 5000;  // For struct field info
+const MAX_TYPES: i64 = 256;
+const MAX_PARAMS: i64 = 1024;  // For function parameter lists
+const MAX_FIELDS: i64 = 1024;  // For struct field info
 
 struct TypePool {
-    types: *Type,       // Array of MAX_TYPES types
-    count: i64,         // Current type count
+    types: *Type,        // Pointer to array of types
+    count: i64,          // Current type count
 
     // Parameter arrays (for function types)
-    params: *i64,       // Array of type indices for function params
+    params: *i64,        // Pointer to array of type indices
     params_count: i64,
 
     // Field arrays (for struct types)
-    fields: *FieldInfo, // Array of field information
-    fields_count: i64,  // Current field count
+    fields: *FieldInfo,  // Pointer to array of field information
+    fields_count: i64,   // Current field count
 
     // Source text for name comparison
     source: *u8,
@@ -143,10 +143,59 @@ const TYPE_BYTE: i64 = 6;  // u8 is byte
 const FIRST_USER_TYPE: i64 = 14;
 
 // ============================================================================
+// Parser Type Handles (PTYPE_*)
+// ============================================================================
+// These are used by the parser to represent types before TypePool resolution.
+// The resolve_type_handle() function converts PTYPE_* to TYPE_* indices.
+//
+// PTYPE_* ranges:
+// - 0-9: Basic types
+// - 10-99: Pointer types (PTYPE_PTR_BASE + pointee_handle)
+// - 100+: User types (PTYPE_USER_BASE + source offset of type name)
+
+const PTYPE_I64: i64 = 0;
+const PTYPE_I32: i64 = 1;
+const PTYPE_U8: i64 = 2;
+const PTYPE_BOOL: i64 = 3;
+const PTYPE_VOID: i64 = 4;
+const PTYPE_STRING: i64 = 5;
+const PTYPE_PTR_BASE: i64 = 10;    // Pointer types start here
+const PTYPE_USER_BASE: i64 = 100;  // User types start here
+
+// ============================================================================
 // Type Pool Initialization
 // ============================================================================
 
-// Initialize type pool with pre-registered basic types
+// Initialize type pool with backing storage arrays
+// This is the preferred init function - provides explicit backing storage
+fn pool_init_with_storage(pool: *TypePool, types: *Type, params: *i64, fields: *FieldInfo) {
+    pool.types = types;
+    pool.params = params;
+    pool.fields = fields;
+    pool.count = 0;
+    pool.params_count = 0;
+    pool.fields_count = 0;
+    pool.source = null;
+    pool.source_len = 0;
+
+    // Register basic types in order
+    register_basic(pool, TypeKind.Invalid, 0, 0);   // 0: invalid
+    register_basic(pool, TypeKind.Bool, 1, 1);      // 1: bool
+    register_basic(pool, TypeKind.I8, 1, 1);        // 2: i8
+    register_basic(pool, TypeKind.I16, 2, 2);       // 3: i16
+    register_basic(pool, TypeKind.I32, 4, 4);       // 4: i32
+    register_basic(pool, TypeKind.I64, 8, 8);       // 5: i64
+    register_basic(pool, TypeKind.U8, 1, 1);        // 6: u8
+    register_basic(pool, TypeKind.U16, 2, 2);       // 7: u16
+    register_basic(pool, TypeKind.U32, 4, 4);       // 8: u32
+    register_basic(pool, TypeKind.U64, 8, 8);       // 9: u64
+    register_basic(pool, TypeKind.F32, 4, 4);       // 10: f32
+    register_basic(pool, TypeKind.F64, 8, 8);       // 11: f64
+    register_basic(pool, TypeKind.Void, 0, 0);      // 12: void
+    register_basic(pool, TypeKind.String, 16, 8);   // 13: string (ptr + len)
+}
+
+// Initialize type pool (legacy - requires pool.types/params/fields to be set first)
 fn pool_init(pool: *TypePool) {
     pool.count = 0;
     pool.params_count = 0;

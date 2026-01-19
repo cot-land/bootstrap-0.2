@@ -35,11 +35,35 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
-(None currently)
+(none)
 
 ---
 
 ## Fixed Bugs
+
+### BUG-034: Large struct field offsets overflow ADD immediate
+
+**Status:** FIXED
+**Priority:** P1
+**Discovered:** 2026-01-20
+**Fixed:** 2026-01-20
+
+**Description:**
+When accessing fields of large structs (total size > 4KB), the field offset exceeds the ARM64 ADD immediate encoding limit (12-bit unsigned, max 4095). This caused a panic during codegen.
+
+**Root Cause:**
+ARM64 `ADD Rd, Rn, #imm12` can only encode 12-bit immediates (0-4095). The `encodeADDImm` function takes `imm12: u12`. For large structs, field offsets exceed this.
+
+**Fix:**
+Added `emitAddImm()` function in `src/codegen/arm64.zig` that handles large immediates:
+- imm <= 4095: Single `ADD Rd, Rn, #imm`
+- imm <= 16MB: Split into two ADDs: `ADD Rd, Rn, #(imm & 0xFFF)` + `ADD Rd, Rd, #(imm >> 12), LSL #12`
+- imm > 16MB: Load to scratch register with `emitLoadImmediate`, then `ADD Rd, Rn, Xscratch`
+
+Based on Go's ARM64 backend pattern (`asm7.go` case 48 for C_ADDCON2).
+
+**Test:**
+`test/bugs/bug034_large_field_offset.cot` - Tests field offsets at 4096 and 8192 bytes.
 
 ### BUG-033: Global array element assignment silently fails
 

@@ -1,0 +1,36 @@
+// BUG-034: Large struct field offsets overflow ADD immediate
+// ARM64 ADD immediate only supports 12-bit offsets (max 4095)
+// This test verifies that offsets > 4095 are handled correctly
+// by splitting into multiple ADD instructions.
+//
+// Run: ./zig-out/bin/cot test/bugs/bug034_large_field_offset.cot -o /tmp/bug034 && /tmp/bug034
+// Expected exit code: 0
+
+struct LargeStruct {
+    data: [512]i64,   // 4096 bytes - exactly at the limit
+    count: i64,       // offset = 4096, exceeds 12-bit immediate
+}
+
+struct LargerStruct {
+    data: [1024]i64,  // 8192 bytes
+    value: i64,       // offset = 8192, requires split ADD (low + high)
+}
+
+var g_small: LargeStruct;
+var g_large: LargerStruct;
+
+fn main() i64 {
+    // Test offset exactly at boundary (4096)
+    g_small.count = 42;
+    if g_small.count != 42 {
+        return 1;
+    }
+
+    // Test larger offset (8192) requiring split
+    g_large.value = 123;
+    if g_large.value != 123 {
+        return 2;
+    }
+
+    return 0;
+}
