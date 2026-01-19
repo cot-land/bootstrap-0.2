@@ -542,10 +542,68 @@ fn check_var_decl(chk: *Checker, node_idx: i64) {
 }
 
 // ============================================================================
+// Parser Type Handle Resolution
+// ============================================================================
+
+// Parser type handle constants (must match parser.cot)
+const PTYPE_I64: i64 = 0;
+const PTYPE_I32: i64 = 1;
+const PTYPE_U8: i64 = 2;
+const PTYPE_BOOL: i64 = 3;
+const PTYPE_VOID: i64 = 4;
+const PTYPE_STRING: i64 = 5;
+const PTYPE_PTR_BASE: i64 = 10;    // Pointer types: PTYPE_PTR_BASE + pointee
+const PTYPE_USER_BASE: i64 = 100;  // User types: PTYPE_USER_BASE + source_offset
+
+// Resolve a parser type handle to a TypePool type index
+// Mirrors Zig bootstrap's resolveTypeRef
+fn resolve_type_handle(chk: *Checker, type_handle: i64) i64 {
+    // Basic types: direct mapping
+    if type_handle == PTYPE_I64 { return TYPE_I64; }
+    if type_handle == PTYPE_I32 { return TYPE_I32; }
+    if type_handle == PTYPE_U8 { return TYPE_U8; }
+    if type_handle == PTYPE_BOOL { return TYPE_BOOL; }
+    if type_handle == PTYPE_VOID { return TYPE_VOID; }
+    if type_handle == PTYPE_STRING { return TYPE_STRING; }
+
+    // Pointer types: PTYPE_PTR_BASE + pointee_handle
+    if type_handle >= PTYPE_PTR_BASE and type_handle < PTYPE_USER_BASE {
+        let pointee_handle: i64 = type_handle - PTYPE_PTR_BASE;
+        let pointee_type: i64 = resolve_type_handle(chk, pointee_handle);
+        return type_make_pointer(chk.type_pool, pointee_type);
+    }
+
+    // User-defined types: PTYPE_USER_BASE + source_offset
+    if type_handle >= PTYPE_USER_BASE {
+        let name_start: i64 = type_handle - PTYPE_USER_BASE;
+        // Find end of name in source (scan for non-identifier char)
+        var name_len: i64 = 0;
+        var pos: i64 = name_start;
+        while true {
+            let c: u8 = (chk.source + pos).*;
+            // Check if still identifier char: a-z, A-Z, 0-9, _
+            if (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or
+               (c >= 48 and c <= 57) or c == 95 {
+                name_len = name_len + 1;
+                pos = pos + 1;
+            } else {
+                break;
+            }
+        }
+        // Look up type by name in scope
+        return scope_lookup_type(chk.scope_pool, chk.current_scope,
+                                 chk.source, name_start, name_len);
+    }
+
+    return TYPE_INVALID;
+}
+
+// ============================================================================
 // Type Checking - Struct/Enum Declarations
 // ============================================================================
 
 // Check a struct declaration and register type
+// Mirrors Zig bootstrap's buildStructType - computes field offsets
 fn check_struct_decl(chk: *Checker, node_idx: i64) {
     if node_idx < 0 { return; }
 
@@ -554,16 +612,58 @@ fn check_struct_decl(chk: *Checker, node_idx: i64) {
 
     let name_start: i64 = node.field0;
     let name_len: i64 = node.field1;
-    let fields_start: i64 = node.field2;
+    let ast_fields_start: i64 = node.field2;  // Index into AST children array
     let fields_count: i64 = node.field3;
 
-    // Calculate struct size (simplified - assume 8 bytes per field)
-    let size: i64 = fields_count * 8;
-    let align: i64 = 8;
+    // Record start of fields in TypePool's fields array
+    let type_fields_start: i64 = chk.type_pool.fields_count;
 
-    // Create struct type
+    // Process each field and compute offsets
+    // Mirrors Zig checker.zig:1744-1759
+    var offset: i64 = 0;
+    var max_align: i64 = 1;
+    var i: i64 = 0;
+    while i < fields_count {
+        // Get FieldDecl node from AST children
+        let field_node_idx: i64 = node_child(chk.ast_pool, ast_fields_start, i);
+        let field_node: *Node = node_get(chk.ast_pool, field_node_idx);
+
+        // FieldDecl: field0=name_start, field1=name_len, field2=type_start, field3=type_handle
+        let fname_start: i64 = field_node.field0;
+        let fname_len: i64 = field_node.field1;
+        let type_handle: i64 = field_node.field3;
+
+        // Resolve field type to get size/alignment
+        let field_type: i64 = resolve_type_handle(chk, type_handle);
+        let field_size: i64 = type_size(chk.type_pool, field_type);
+        let field_align: i64 = type_align(chk.type_pool, field_type);
+
+        // Align offset to field alignment
+        if field_align > 0 {
+            offset = (offset + field_align - 1) / field_align * field_align;
+        }
+
+        // Track max alignment for struct alignment
+        if field_align > max_align {
+            max_align = field_align;
+        }
+
+        // Add field to TypePool with computed offset
+        pool_add_field(chk.type_pool, fname_start, fname_len, field_type, offset);
+
+        // Advance offset by field size
+        offset = offset + field_size;
+
+        i = i + 1;
+    }
+
+    // Align final size to struct alignment (round up to max_align)
+    let struct_size: i64 = (offset + max_align - 1) / max_align * max_align;
+
+    // Create struct type with TypePool fields_start (not AST children start)
     let struct_type: i64 = type_make_struct(chk.type_pool, name_start, name_len,
-                                             fields_start, fields_count, size, align);
+                                             type_fields_start, fields_count,
+                                             struct_size, max_align);
 
     // Register as type name in scope
     let sym: Symbol = symbol_new(name_start, name_len, SymbolKind.TypeName,
