@@ -950,6 +950,10 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                     let val_id: i64 = g_ir_to_ssa_id[abs_idx];
                     let ret_val: *Value = func_get_value(&ssa_func, val_id);
                     func_emit_return(&ssa_func, ret_val);
+                } else {
+                    // Void return - emit return with no value
+                    let void_ret: *Value = func_new_value(&ssa_func, Op.Return, TYPE_VOID);
+                    // No args for void return
                 }
             }
 

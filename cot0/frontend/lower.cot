@@ -244,9 +244,15 @@ fn lower_fn_decl(l: *Lowerer, node: *Node) {
 
     // Lower the function body (field5 is the body block node index)
     let body_idx: i64 = node.field5;
+    var body_terminated: bool = false;
     if body_idx >= 0 {
         let body_node: *Node = l.nodes + body_idx;
-        lower_block(l, body_node);
+        body_terminated = lower_block_check_terminated(l, body_node);
+    }
+
+    // If function body doesn't end with a return, emit implicit void return
+    if not body_terminated {
+        func_builder_emit_return_void(&fb);
     }
 
     // Update counts from function builder
@@ -1083,11 +1089,46 @@ fn lower_field_assign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
         // Direct struct assignment
         let field_info: *FieldInfo = type_lookup_field(l.type_pool, struct_type_idx,
                                                        field_name_start, field_name_len);
-        if field_info == null {
-            return NULL_NODE;  // Field not found
+        if field_info != null {
+            return func_builder_emit_store_field_local(fb, local_idx, field_info.offset, value_idx);
         }
 
-        return func_builder_emit_store_field_local(fb, local_idx, field_info.offset, value_idx);
+        // Fallback: check if local has struct_type_start set (for struct literals)
+        let local: *IRLocal = fb.locals + local_idx;
+        if local.struct_type_start >= 0 {
+            let field_offset: i64 = lookup_struct_field_offset(l, local.struct_type_start, local.struct_type_len,
+                                                                field_name_start, field_name_len);
+            if field_offset >= 0 {
+                return func_builder_emit_store_field_local(fb, local_idx, field_offset, value_idx);
+            }
+        }
+
+        // If local is a parameter, assume it might be a pointer to struct
+        // Load the pointer value and store through it
+        if local.is_param {
+            // Try to find struct by looking through all StructDecl nodes
+            var field_offset: i64 = -1;
+            var n: i64 = 0;
+            while n < l.nodes_count and field_offset < 0 {
+                let snode: *Node = l.nodes + n;
+                if snode.kind == NodeKind.StructDecl {
+                    let found_offset: i64 = lookup_struct_field_offset(l, snode.field0, snode.field1,
+                                                                        field_name_start, field_name_len);
+                    if found_offset >= 0 {
+                        field_offset = found_offset;
+                    }
+                }
+                n = n + 1;
+            }
+            if field_offset < 0 {
+                field_offset = 0;  // Default to offset 0 if not found
+            }
+            let ptr_val: i64 = func_builder_emit_load_local(fb, local_idx);
+            return func_builder_emit_store_field(fb, ptr_val, field_offset, value_idx);
+        }
+
+        // Last fallback: use offset 0 (for untyped cases)
+        return func_builder_emit_store_field_local(fb, local_idx, 0, value_idx);
     }
 
     // Case 2: Base is a dereference expression (ptr.*.field = value)
