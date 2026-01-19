@@ -108,6 +108,20 @@ var g_ir_to_ssa_id: [10000]i64;
 // Local variable to SSA value mapping (local index -> SSA value ID)
 var g_local_to_ssa_id: [1000]i64;
 
+// Import tracking - store imported file paths to avoid duplicates
+const MAX_IMPORT_PATHS: i64 = 100;
+const MAX_IMPORT_PATH_LEN: i64 = 256;
+var g_import_paths: [25600]u8;  // 100 * 256 = flat array for paths
+var g_import_path_lens: [100]i64;
+var g_import_count: i64 = 0;
+
+// Base directory for resolving relative imports
+var g_base_dir: [256]u8;
+var g_base_dir_len: i64 = 0;
+
+// Temporary buffer for building import paths (separate from g_output_path)
+var g_import_path_buf: [256]u8;
+
 // ============================================================================
 // Helper Functions
 // ============================================================================
@@ -224,6 +238,195 @@ fn init_node_pool() *NodePool {
 }
 
 // ============================================================================
+// Import Processing
+// ============================================================================
+
+// Check if a path has already been imported
+fn is_path_imported(path: *u8, path_len: i64) bool {
+    var i: i64 = 0;
+    while i < g_import_count {
+        let stored_len: i64 = g_import_path_lens[i];
+        if stored_len == path_len {
+            // Compare paths
+            let stored_path: *u8 = &g_import_paths[i * MAX_IMPORT_PATH_LEN];
+            var match: bool = true;
+            var j: i64 = 0;
+            while j < path_len {
+                let c1: *u8 = stored_path + j;
+                let c2: *u8 = path + j;
+                if c1.* != c2.* {
+                    match = false;
+                }
+                j = j + 1;
+            }
+            if match {
+                return true;
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Add a path to the imported list
+fn add_imported_path(path: *u8, path_len: i64) {
+    if g_import_count >= MAX_IMPORT_PATHS {
+        return;
+    }
+    let dest: *u8 = &g_import_paths[g_import_count * MAX_IMPORT_PATH_LEN];
+    var i: i64 = 0;
+    while i < path_len and i < MAX_IMPORT_PATH_LEN {
+        let src_c: *u8 = path + i;
+        let dst_c: *u8 = dest + i;
+        dst_c.* = src_c.*;
+        i = i + 1;
+    }
+    g_import_path_lens[g_import_count] = path_len;
+    g_import_count = g_import_count + 1;
+}
+
+// Extract directory from a file path (everything before last '/')
+fn extract_base_dir(path: *u8, path_len: i64) {
+    // Find last '/' in path
+    var last_slash: i64 = -1;
+    var i: i64 = 0;
+    while i < path_len {
+        let c: *u8 = path + i;
+        if c.* == 47 {  // '/'
+            last_slash = i;
+        }
+        i = i + 1;
+    }
+
+    if last_slash < 0 {
+        // No directory component
+        g_base_dir_len = 0;
+        return;
+    }
+
+    // Copy directory part including the slash
+    i = 0;
+    while i <= last_slash and i < 256 {
+        let src: *u8 = path + i;
+        g_base_dir[i] = src.*;
+        i = i + 1;
+    }
+    g_base_dir_len = last_slash + 1;
+}
+
+// Build full path: base_dir + import_path
+// Result stored in g_import_path_buf
+fn build_import_path(import_path: *u8, import_path_len: i64) i64 {
+    var result_len: i64 = 0;
+
+    // Copy base directory
+    var i: i64 = 0;
+    while i < g_base_dir_len and result_len < MAX_IMPORT_PATH_LEN {
+        g_import_path_buf[result_len] = g_base_dir[i];
+        result_len = result_len + 1;
+        i = i + 1;
+    }
+
+    // Copy import path
+    i = 0;
+    while i < import_path_len and result_len < MAX_IMPORT_PATH_LEN {
+        let c: *u8 = import_path + i;
+        g_import_path_buf[result_len] = c.*;
+        result_len = result_len + 1;
+        i = i + 1;
+    }
+
+    // Null terminate
+    g_import_path_buf[result_len] = 0;
+    return result_len;
+}
+
+// Read and parse an imported file, returns number of new nodes or -1 on error
+fn parse_import_file(import_path: *u8, import_path_len: i64, pool: *NodePool) i64 {
+    // Build full path
+    let full_path_len: i64 = build_import_path(import_path, import_path_len);
+
+    // Check if already imported
+    if is_path_imported(&g_import_path_buf[0], full_path_len) {
+        return 0;  // Already imported, skip
+    }
+
+    // Mark as imported
+    add_imported_path(&g_import_path_buf[0], full_path_len);
+
+    // Read the file - append to existing source
+    let fd: i32 = open(&g_import_path_buf[0], O_RDONLY, 0);
+    if fd < 0 {
+        print_str("  Warning: Cannot open import: ");
+        write(1, &g_import_path_buf[0], full_path_len);
+        print_newline();
+        return 0;  // Non-fatal, continue with other imports
+    }
+
+    let start_offset: i64 = g_source_len;
+    let bytes_read: i64 = read(fd, &g_source[g_source_len], MAIN_MAX_SOURCE - g_source_len - 1);
+    close(fd);
+
+    if bytes_read < 0 {
+        print_str("  Warning: Cannot read import\n");
+        return 0;
+    }
+
+    g_source_len = g_source_len + bytes_read;
+    g_source[g_source_len] = 0;
+
+    // Parse the imported file
+    // Create a string slice pointing to just the new content
+    let import_source: string = @string(&g_source[start_offset], bytes_read);
+
+    let nodes_before: i64 = pool.count;
+    var parser: Parser = parser_new(import_source, pool);
+    parse_file(&parser);
+
+    if parser_had_error(&parser) {
+        print_str("  Warning: Parse error in import\n");
+    }
+
+    return pool.count - nodes_before;
+}
+
+// Process all imports in the parsed AST
+// This scans for ImportDecl nodes and recursively parses imported files
+fn process_all_imports(pool: *NodePool) {
+    // Process imports iteratively - new nodes from imports may have their own imports
+    var last_count: i64 = 0;
+
+    while last_count < pool.count {
+        let start_idx: i64 = last_count;
+        last_count = pool.count;
+
+        var i: i64 = start_idx;
+        while i < last_count {
+            let node: *Node = pool.nodes + i;
+            if node.kind == NodeKind.ImportDecl {
+                // field0 = path_start (offset in source), field1 = path_len
+                let path_start: i64 = node.field0;
+                let path_len: i64 = node.field1;
+
+                // Get pointer to path in source
+                let import_path: *u8 = &g_source[path_start];
+
+                // Parse the imported file
+                let new_nodes: i64 = parse_import_file(import_path, path_len, pool);
+                if new_nodes > 0 {
+                    print_str("  Imported: ");
+                    write(1, import_path, path_len);
+                    print_str(" (");
+                    print_num(new_nodes);
+                    print_str(" nodes)\n");
+                }
+            }
+            i = i + 1;
+        }
+    }
+}
+
+// ============================================================================
 // Compilation Pipeline
 // ============================================================================
 
@@ -257,21 +460,29 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print_num(pool.count);
     print_newline();
 
+    // Phase 2.5: Process imports
+    print_str("Phase 2.5: Processing imports...\n");
+    process_all_imports(pool);
+    print_str("  Total nodes after imports: ");
+    print_num(pool.count);
+    print_newline();
+
     // Phase 3: Lower to IR
     print_str("Phase 3: Lowering to IR...\n");
 
     // Initialize type pool for field access
+    // Use g_source (combined source buffer) instead of original source
     g_type_pool.types = &g_types[0];
     g_type_pool.params = &g_type_params[0];
     g_type_pool.fields = &g_type_fields[0];
     pool_init(&g_type_pool);
-    pool_set_source(&g_type_pool, source.ptr, len(source));
+    pool_set_source(&g_type_pool, &g_source[0], g_source_len);
 
     var lowerer: Lowerer = undefined;
     lowerer_init(&lowerer,
                  &g_nodes[0], pool.count,
                  &g_children[0], pool.children_count,
-                 source.ptr, len(source),
+                 &g_source[0], g_source_len,
                  &g_type_pool,
                  &g_ir_nodes[0], MAIN_MAX_IR_NODES,
                  &g_ir_locals[0], MAIN_MAX_IR_LOCALS,
@@ -928,6 +1139,10 @@ fn main(argc: i64, argv: **u8) i64 {
     print_str("  Read ");
     print_num(bytes_read);
     print_str(" bytes\n\n");
+
+    // Extract base directory from source path for resolving imports
+    let source_path_len: i64 = strlen(source_path);
+    extract_base_dir(source_path, source_path_len);
 
     // Create string view of source
     let source: string = @string(&g_source[0], g_source_len);

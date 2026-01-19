@@ -84,6 +84,12 @@ The `e2e_codegen_test.cot` demonstrates the full backend pipeline:
   - Extern token type and keyword recognition
   - ExternFnDecl AST node and parser support
   - Extern functions skipped in lowerer (linker resolves)
+- Added import processing to cot0 compiler:
+  - process_all_imports scans AST for ImportDecl nodes
+  - Reads and parses imported files recursively
+  - Combines all ASTs into single node pool for lowering
+  - Tracks imported paths to avoid duplicates
+  - Note: Cross-file function calls need additional work
 - Fixed executable permissions: added chmod(0o755) after linking in main.zig
 
 ### Bug Fixes (2026-01-18)

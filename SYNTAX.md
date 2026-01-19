@@ -4,6 +4,19 @@
 
 This document defines the Cot language syntax as implemented in bootstrap-0.2.
 
+## Semicolons Are Optional
+
+**Cot uses optional semicolons.** Statements can be terminated with a newline or a semicolon. The examples in this document show both styles, but semicolons are never required.
+
+```cot
+// Both are valid:
+let x = 42
+let y = 43;
+
+// Multiple statements on one line require semicolons:
+let a = 1; let b = 2
+```
+
 ---
 
 ## Comments

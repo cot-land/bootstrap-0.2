@@ -921,9 +921,10 @@ fn parse_import(p: *Parser) i64 {
     let path_len: i64 = path_token_len - 2;
     parser_advance(p);
 
-    let end: i64 = p.current.start + p.current.end;
-    parser_want(p, TokenType.Semi);
+    // Optional semicolon
+    parser_got(p, TokenType.Semi);
 
+    let end: i64 = p.current.start;
     return node_import_decl(p.pool, path_start, path_len, start, end);
 }
 
