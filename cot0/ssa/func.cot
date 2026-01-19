@@ -261,6 +261,14 @@ fn func_emit_const_bool(f: *Func, value: bool) *Value {
     return v;
 }
 
+// Emit a constant string
+fn func_emit_const_string(f: *Func, str_start: i64, str_len: i64) *Value {
+    let v: *Value = func_new_value(f, Op.ConstString, 13);  // TYPE_STRING = 13
+    v.aux_int = str_start;  // Offset in source text
+    v.aux_ptr = str_len;    // Length of string
+    return v;
+}
+
 // Emit a binary operation
 fn func_emit_binary(f: *Func, op: Op, left: *Value, right: *Value, type_idx: i64) *Value {
     let v: *Value = func_new_value(f, op, type_idx);

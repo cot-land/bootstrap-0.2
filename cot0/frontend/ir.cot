@@ -109,11 +109,16 @@ enum IRNodeKind {
     ConstInt,
     ConstBool,
     ConstNull,
+    ConstString,  // String literal: str_start, str_len in source
 
     // Variable access
     LoadLocal,
     StoreLocal,
     AddrLocal,
+
+    // Pointer operations
+    Load,         // Load from pointer: left = ptr_expr
+    Store,        // Store to pointer: left = ptr_expr, right = value
 
     // Operations
     Binary,
@@ -143,10 +148,13 @@ struct IRNode {
 
     // Fields used depending on kind:
     // ConstInt: value
+    // ConstString: left (str_start), right (str_len)
     // Binary: op, left, right
     // Unary: op, left (operand)
     // LoadLocal/StoreLocal/AddrLocal: left (local_idx)
     // StoreLocal: right (value)
+    // Load: left (ptr_expr)
+    // Store: left (ptr_expr), right (value_expr)
     // Call: func_name_start, func_name_len, args_start, args_count
     // Return: left (value), or -1 for void
     // Jump: left (target_block)
@@ -418,6 +426,13 @@ fn func_builder_emit_const_bool(fb: *FuncBuilder, value: bool) i64 {
     return func_builder_emit(fb, node);
 }
 
+fn func_builder_emit_const_string(fb: *FuncBuilder, str_start: i64, str_len: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.ConstString, TYPE_STRING);
+    node.left = str_start;   // Offset in source text
+    node.right = str_len;    // Length of string content
+    return func_builder_emit(fb, node);
+}
+
 fn func_builder_emit_load_local(fb: *FuncBuilder, local_idx: i64) i64 {
     let local: *IRLocal = fb.locals + local_idx;
     var node: IRNode = ir_node_new(IRNodeKind.LoadLocal, local.type_idx);
@@ -475,5 +490,31 @@ fn func_builder_emit_branch(fb: *FuncBuilder, cond: i64, then_block: i64, else_b
 fn func_builder_emit_jump(fb: *FuncBuilder, target_block: i64) i64 {
     var node: IRNode = ir_node_new(IRNodeKind.Jump, TYPE_VOID);
     node.left = target_block;
+    return func_builder_emit(fb, node);
+}
+
+// Emit a load from pointer (dereference)
+// ptr_expr = IR node index of pointer expression
+// result_type = type of the pointed-to value
+fn func_builder_emit_load(fb: *FuncBuilder, ptr_expr: i64, result_type: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.Load, result_type);
+    node.left = ptr_expr;
+    return func_builder_emit(fb, node);
+}
+
+// Emit a store through pointer (dereference assignment)
+// ptr_expr = IR node index of pointer expression
+// value_expr = IR node index of value to store
+fn func_builder_emit_store(fb: *FuncBuilder, ptr_expr: i64, value_expr: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.Store, TYPE_VOID);
+    node.left = ptr_expr;
+    node.right = value_expr;
+    return func_builder_emit(fb, node);
+}
+
+// Emit address of local variable
+fn func_builder_emit_addr_local(fb: *FuncBuilder, local_idx: i64, ptr_type: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.AddrLocal, ptr_type);
+    node.left = local_idx;
     return func_builder_emit(fb, node);
 }

@@ -18,6 +18,15 @@ import "types.cot"
 // Lowerer Context
 // ============================================================================
 
+// Compile-time constant entry
+struct ConstEntry {
+    name_start: i64,
+    name_len: i64,
+    value: i64,
+}
+
+const MAX_CONSTANTS: i64 = 500;
+
 struct Lowerer {
     // AST to lower (pointer to Node array + count)
     nodes: *Node,
@@ -47,6 +56,11 @@ struct Lowerer {
     ir_funcs: *IRFunc,
     ir_funcs_cap: i64,
     ir_funcs_count: i64,
+
+    // Compile-time constants
+    constants: *ConstEntry,
+    constants_count: i64,
+    constants_cap: i64,
 }
 
 fn lowerer_init(l: *Lowerer,
@@ -55,7 +69,8 @@ fn lowerer_init(l: *Lowerer,
                 source: *u8, source_len: i64,
                 ir_nodes: *IRNode, ir_nodes_cap: i64,
                 ir_locals: *IRLocal, ir_locals_cap: i64,
-                ir_funcs: *IRFunc, ir_funcs_cap: i64) {
+                ir_funcs: *IRFunc, ir_funcs_cap: i64,
+                constants: *ConstEntry, constants_cap: i64) {
     l.nodes = nodes;
     l.nodes_count = nodes_count;
     l.children = children;
@@ -72,15 +87,90 @@ fn lowerer_init(l: *Lowerer,
     l.ir_funcs = ir_funcs;
     l.ir_funcs_cap = ir_funcs_cap;
     l.ir_funcs_count = 0;
+    l.constants = constants;
+    l.constants_count = 0;
+    l.constants_cap = constants_cap;
 }
 
 // ============================================================================
 // Main Entry Point
 // ============================================================================
 
+// Look up a constant by name, return its value or -1 if not found
+fn lowerer_lookup_const(l: *Lowerer, name_start: i64, name_len: i64) i64 {
+    var i: i64 = 0;
+    while i < l.constants_count {
+        let c: *ConstEntry = l.constants + i;
+        if names_equal(l.source, c.name_start, c.name_len, name_start, name_len) {
+            return c.value;
+        }
+        i = i + 1;
+    }
+    return -1;  // Not found (note: this limits const values to non-negative!)
+}
+
+// Check if a constant exists
+fn lowerer_has_const(l: *Lowerer, name_start: i64, name_len: i64) bool {
+    var i: i64 = 0;
+    while i < l.constants_count {
+        let c: *ConstEntry = l.constants + i;
+        if names_equal(l.source, c.name_start, c.name_len, name_start, name_len) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Add a constant to the table
+fn lowerer_add_const(l: *Lowerer, name_start: i64, name_len: i64, value: i64) {
+    if l.constants_count >= l.constants_cap {
+        return;
+    }
+    let c: *ConstEntry = l.constants + l.constants_count;
+    c.name_start = name_start;
+    c.name_len = name_len;
+    c.value = value;
+    l.constants_count = l.constants_count + 1;
+}
+
+// Process a const declaration
+fn lower_const_decl(l: *Lowerer, node: *Node) {
+    // ConstDecl fields:
+    // field0 = name_start
+    // field1 = name_len
+    // field2 = type_handle (-1 if inferred)
+    // field3 = init_expr node index
+
+    let name_start: i64 = node.field0;
+    let name_len: i64 = node.field1;
+    let init_expr_idx: i64 = node.field3;
+
+    // Evaluate the initializer (must be a constant expression)
+    if init_expr_idx >= 0 {
+        let init_node: *Node = l.nodes + init_expr_idx;
+        if init_node.kind == NodeKind.IntLit {
+            // Simple integer literal
+            lowerer_add_const(l, name_start, name_len, init_node.field0);
+        }
+        // TODO: Support more complex constant expressions
+    }
+}
+
 // Lower all declarations in the AST
 fn lowerer_lower_all(l: *Lowerer) i64 {
+    // First pass: process const declarations
     var i: i64 = 0;
+    while i < l.nodes_count {
+        let node: *Node = l.nodes + i;
+        if node.kind == NodeKind.ConstDecl {
+            lower_const_decl(l, node);
+        }
+        i = i + 1;
+    }
+
+    // Second pass: process function declarations
+    i = 0;
     while i < l.nodes_count {
         let node: *Node = l.nodes + i;
         if node.kind == NodeKind.FnDecl {
@@ -371,6 +461,8 @@ fn lower_expr(l: *Lowerer, node: *Node) i64 {
 
     if node.kind == NodeKind.IntLit {
         return lower_int_lit(l, node);
+    } else if node.kind == NodeKind.StringLit {
+        return lower_string_lit(l, node);
     } else if node.kind == NodeKind.Ident {
         return lower_ident(l, node);
     } else if node.kind == NodeKind.BinaryExpr {
@@ -381,6 +473,10 @@ fn lower_expr(l: *Lowerer, node: *Node) i64 {
         return lower_call(l, node);
     } else if node.kind == NodeKind.AssignExpr {
         return lower_assign(l, node);
+    } else if node.kind == NodeKind.AddressOf {
+        return lower_address_of(l, node);
+    } else if node.kind == NodeKind.DerefExpr {
+        return lower_deref(l, node);
     }
 
     return NULL_NODE;
@@ -392,6 +488,15 @@ fn lower_int_lit(l: *Lowerer, node: *Node) i64 {
 
     let fb: *FuncBuilder = l.current_func;
     return func_builder_emit_const_int(fb, node.field0);
+}
+
+fn lower_string_lit(l: *Lowerer, node: *Node) i64 {
+    // StringLit fields:
+    // field0 = string_start (offset in source, after opening quote)
+    // field1 = string_len (length of string content, excluding quotes)
+
+    let fb: *FuncBuilder = l.current_func;
+    return func_builder_emit_const_string(fb, node.field0, node.field1);
 }
 
 // Compare two strings in source by their positions
@@ -413,6 +518,12 @@ fn lower_ident(l: *Lowerer, node: *Node) i64 {
     // field1 = name_len
 
     let fb: *FuncBuilder = l.current_func;
+
+    // First check if this is a constant
+    if lowerer_has_const(l, node.field0, node.field1) {
+        let const_value: i64 = lowerer_lookup_const(l, node.field0, node.field1);
+        return func_builder_emit_const_int(fb, const_value);
+    }
 
     // Look up local variable by name - compare actual source content
     var i: i64 = 0;
@@ -517,42 +628,94 @@ fn lower_call(l: *Lowerer, node: *Node) i64 {
 
 fn lower_assign(l: *Lowerer, node: *Node) i64 {
     // AssignExpr fields:
-    // field0 = target (identifier node)
+    // field0 = target (identifier node or deref expr)
     // field1 = value (expression)
 
     let fb: *FuncBuilder = l.current_func;
     if fb == null { return NULL_NODE; }
 
-    // Get target - must be an identifier for now
     let target_node: *Node = l.nodes + node.field0;
-    if target_node.kind != NodeKind.Ident {
-        return NULL_NODE;  // Only simple variable assignments supported
-    }
 
-    // Look up local variable by name
-    var local_idx: i64 = -1;
-    var i: i64 = 0;
-    while i < fb.locals_count {
-        let local: *IRLocal = fb.locals + i;
-        if names_equal(l.source, local.name_start, local.name_len, target_node.field0, target_node.field1) {
-            local_idx = i;
-        }
-        i = i + 1;
-    }
-
-    if local_idx < 0 {
-        return NULL_NODE;  // Variable not found
-    }
-
-    // Lower the value expression
+    // Lower the value expression first
     let value_node: *Node = l.nodes + node.field1;
     let value_idx: i64 = lower_expr(l, value_node);
 
-    // Emit store
-    func_builder_emit_store_local(fb, local_idx, value_idx);
+    // Handle assignment to dereferenced pointer: ptr.* = value
+    if target_node.kind == NodeKind.DerefExpr {
+        // Lower the pointer expression
+        let ptr_operand: *Node = l.nodes + target_node.field0;
+        let ptr_idx: i64 = lower_expr(l, ptr_operand);
 
-    // Return the value (assignments are expressions)
-    return value_idx;
+        // Emit store through pointer
+        func_builder_emit_store(fb, ptr_idx, value_idx);
+        return value_idx;
+    }
+
+    // Handle simple variable assignment: x = value
+    if target_node.kind == NodeKind.Ident {
+        // Look up local variable by name
+        var local_idx: i64 = -1;
+        var i: i64 = 0;
+        while i < fb.locals_count {
+            let local: *IRLocal = fb.locals + i;
+            if names_equal(l.source, local.name_start, local.name_len, target_node.field0, target_node.field1) {
+                local_idx = i;
+            }
+            i = i + 1;
+        }
+
+        if local_idx < 0 {
+            return NULL_NODE;  // Variable not found
+        }
+
+        // Emit store to local
+        func_builder_emit_store_local(fb, local_idx, value_idx);
+        return value_idx;
+    }
+
+    return NULL_NODE;  // Unsupported assignment target
+}
+
+fn lower_address_of(l: *Lowerer, node: *Node) i64 {
+    // AddressOf fields:
+    // field0 = operand (the expression to take address of)
+
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return NULL_NODE; }
+
+    let operand_node: *Node = l.nodes + node.field0;
+
+    // For now, only support address of identifiers (local variables)
+    if operand_node.kind == NodeKind.Ident {
+        // Look up local variable by name
+        var i: i64 = 0;
+        while i < fb.locals_count {
+            let local: *IRLocal = fb.locals + i;
+            if names_equal(l.source, local.name_start, local.name_len,
+                          operand_node.field0, operand_node.field1) {
+                // Emit address of local - type is *i64 for now (TYPE_I64 + some offset for ptr)
+                return func_builder_emit_addr_local(fb, i, TYPE_I64);
+            }
+            i = i + 1;
+        }
+    }
+
+    return NULL_NODE;
+}
+
+fn lower_deref(l: *Lowerer, node: *Node) i64 {
+    // DerefExpr fields:
+    // field0 = operand (the pointer expression)
+
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return NULL_NODE; }
+
+    // Lower the pointer expression
+    let operand_node: *Node = l.nodes + node.field0;
+    let ptr_idx: i64 = lower_expr(l, operand_node);
+
+    // Emit load from pointer - result type is i64 for now
+    return func_builder_emit_load(fb, ptr_idx, TYPE_I64);
 }
 
 // ============================================================================

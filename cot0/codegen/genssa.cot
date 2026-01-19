@@ -257,6 +257,8 @@ fn genssa_value(gs: *GenState, v: *Value) {
         genssa_const_int(gs, v);
     } else if v.op == Op.ConstBool {
         genssa_const_bool(gs, v);
+    } else if v.op == Op.ConstString {
+        genssa_const_string(gs, v);
     } else if v.op == Op.Add64 {
         genssa_add(gs, v);
     } else if v.op == Op.Sub64 {
@@ -327,6 +329,15 @@ fn genssa_const_bool(gs: *GenState, v: *Value) {
 
     let imm: i64 = v.aux_int;
     emit_inst(gs, encode_mov_imm(rd, imm));
+}
+
+fn genssa_const_string(gs: *GenState, v: *Value) {
+    // String literal: aux_int=str_start, aux_ptr=str_len
+    // TODO: Properly emit string address from data section
+    // For now, just load 0 as a placeholder
+    let rd: i64 = v.reg;
+    if rd < 0 { return; }
+    emit_inst(gs, encode_mov_imm(rd, 0));
 }
 
 fn genssa_add(gs: *GenState, v: *Value) {

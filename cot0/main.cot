@@ -59,9 +59,11 @@ var g_pool: NodePool;
 const MAIN_MAX_IR_NODES: i64 = 10000;
 const MAIN_MAX_IR_LOCALS: i64 = 1000;
 const MAIN_MAX_IR_FUNCS: i64 = 100;
+const MAIN_MAX_CONSTANTS: i64 = 500;
 var g_ir_nodes: [10000]IRNode;
 var g_ir_locals: [1000]IRLocal;
 var g_ir_funcs: [100]IRFunc;
+var g_constants: [500]ConstEntry;
 
 // SSA storage
 const MAIN_MAX_SSA_BLOCKS: i64 = 1000;
@@ -255,7 +257,8 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                  source.ptr, len(source),
                  &g_ir_nodes[0], MAIN_MAX_IR_NODES,
                  &g_ir_locals[0], MAIN_MAX_IR_LOCALS,
-                 &g_ir_funcs[0], MAIN_MAX_IR_FUNCS);
+                 &g_ir_funcs[0], MAIN_MAX_IR_FUNCS,
+                 &g_constants[0], MAIN_MAX_CONSTANTS);
 
     let ir_count: i64 = lowerer_lower_all(&lowerer);
     print_str("  IR nodes: ");
@@ -357,6 +360,12 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 val.reg = next_reg;
                 next_reg = next_reg + 1;
                 g_ir_to_ssa_id[ir_idx] = val.id;
+            } else if ir_node.kind == IRNodeKind.ConstString {
+                // String literal: left=str_start, right=str_len in source
+                let val: *Value = func_emit_const_string(&ssa_func, ir_node.left, ir_node.right);
+                val.reg = next_reg;
+                next_reg = next_reg + 1;
+                g_ir_to_ssa_id[ir_idx] = val.id;
             } else if ir_node.kind == IRNodeKind.Binary {
                 // left and right are relative IR indices
                 let left_abs: i64 = ir_func.nodes_start + ir_node.left;
@@ -393,6 +402,35 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                     next_reg = next_reg + 1;
                     g_ir_to_ssa_id[ir_idx] = load_val.id;
                 }
+            } else if ir_node.kind == IRNodeKind.AddrLocal {
+                // Address of local variable: left = local index
+                let loc_idx: i64 = ir_node.left;
+                let addr_val: *Value = func_new_value(&ssa_func, Op.LocalAddr, TYPE_I64);
+                addr_val.aux_int = loc_idx;
+                addr_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                g_ir_to_ssa_id[ir_idx] = addr_val.id;
+            } else if ir_node.kind == IRNodeKind.Load {
+                // Load from pointer: left = ptr expr (relative IR index)
+                let ptr_abs: i64 = ir_func.nodes_start + ir_node.left;
+                let ptr_id: i64 = g_ir_to_ssa_id[ptr_abs];
+                let ptr_val: *Value = func_get_value(&ssa_func, ptr_id);
+                let load_val: *Value = func_new_value(&ssa_func, Op.Load, TYPE_I64);
+                value_add_arg(load_val, ptr_val);
+                load_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                g_ir_to_ssa_id[ir_idx] = load_val.id;
+            } else if ir_node.kind == IRNodeKind.Store {
+                // Store to pointer: left = ptr expr, right = value expr (relative)
+                let ptr_abs: i64 = ir_func.nodes_start + ir_node.left;
+                let val_abs: i64 = ir_func.nodes_start + ir_node.right;
+                let ptr_id: i64 = g_ir_to_ssa_id[ptr_abs];
+                let val_id: i64 = g_ir_to_ssa_id[val_abs];
+                let ptr_val: *Value = func_get_value(&ssa_func, ptr_id);
+                let val_val: *Value = func_get_value(&ssa_func, val_id);
+                let store_val: *Value = func_new_value(&ssa_func, Op.Store, TYPE_VOID);
+                value_add_arg2(store_val, ptr_val, val_val);
+                g_ir_to_ssa_id[ir_idx] = store_val.id;
             } else if ir_node.kind == IRNodeKind.Call {
                 let val: *Value = func_emit_call(&ssa_func,
                                                  ir_node.func_name_start,

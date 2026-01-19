@@ -332,6 +332,7 @@ fn is_rematerializable(op: Op) bool {
     if op == Op.ConstInt { return true; }
     if op == Op.ConstBool { return true; }
     if op == Op.ConstNil { return true; }
+    if op == Op.ConstString { return true; }
     return false;
 }
 

@@ -261,6 +261,16 @@ pub fn main() !void {
     };
 
     if (result.Exited == 0) {
+        // Set executable permissions (some linkers don't set this properly)
+        const out_fd = std.fs.cwd().openFile(output_name, .{}) catch |e| {
+            std.debug.print("Warning: could not open output to set permissions: {any}\n", .{e});
+            return;
+        };
+        defer out_fd.close();
+        // Set permissions to rwxr-xr-x (0o755)
+        out_fd.chmod(0o755) catch |e| {
+            std.debug.print("Warning: could not chmod output: {any}\n", .{e});
+        };
         std.debug.print("Success! Created executable: {s}\n", .{output_name});
     } else {
         std.debug.print("Linker exited with code: {d}\n", .{result.Exited});

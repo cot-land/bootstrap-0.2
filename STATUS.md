@@ -1,6 +1,6 @@
 # Bootstrap 0.2 - Project Status
 
-**Last Updated: 2026-01-18**
+**Last Updated: 2026-01-19**
 
 ## Current State
 
@@ -57,7 +57,18 @@ The `e2e_codegen_test.cot` demonstrates the full backend pipeline:
 - SSA → genssa → 8 bytes machine code → MachOWriter → 319 byte .o file
 - Links and runs: **Exit code: 42** ✅
 
-### Recent Bug Fixes (2026-01-18)
+### Recent Changes (2026-01-19)
+
+**cot0 Self-Hosting Enhancements:**
+- Added const declaration support to cot0 lowerer (two-pass lowering: consts first, then functions)
+- Added string literal support to cot0 lowerer (ConstString IR node)
+- Added pointer support to cot0 lowerer:
+  - Address-of operator (`&x`) via AddrLocal IR node
+  - Dereference operator (`ptr.*`) via Load IR node
+  - Store through pointer (`ptr.* = value`) via Store IR node
+- Fixed executable permissions: added chmod(0o755) after linking in main.zig
+
+### Bug Fixes (2026-01-18)
 
 - BUG-032: open() mode parameter ignored - ARM64 macOS variadic args must go on stack, not registers
 - BUG-031: Array field in struct through pointer crashes - Arrays are inline like structs, return address not load
