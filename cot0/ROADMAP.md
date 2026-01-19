@@ -22,6 +22,51 @@
 
 ---
 
+## Self-Hosting Blockers (Priority Order)
+
+These are the specific issues that must be fixed before cot0 can compile itself.
+
+### 1. Import Module Scoping (CRITICAL)
+**Status:** Not started
+**Symptom:** `error[E302]: redefined identifier` when compiling files that import modules with shared type definitions
+**Example:** `lower_test.cot` imports `lower.cot` which imports `types.cot` and `ir.cot`. Types like `TypeKind`, `IRNodeKind` get redefined.
+**Root Cause:** The Zig bootstrap processes all imports into a single global scope instead of maintaining separate module scopes.
+**Fix Required:** Implement proper module-level scoping for imports, or use header guards/once semantics for type definitions.
+
+### 2. const Declarations (WORKING)
+**Status:** Complete - parsing and type checking both work
+**Verified:** `const MAX: i64 = 42` compiles and runs correctly
+
+### 3. @builtin Expressions (WORKING)
+**Status:** Complete - `@sizeOf` and `@alignOf` work correctly
+**Verified:** `@sizeOf(i64)` returns 8 correctly
+
+### 4. Cross-File Function Resolution (PARTIALLY DONE)
+**Status:** Basic support working
+**Remaining:** Need to verify all cross-file call patterns work, including:
+  - Functions returning struct types
+  - Functions with pointer parameters to user types
+  - Functions from nested imports
+
+### 5. checker_test.cot Codegen Crash (BUG)
+**Status:** Investigating
+**Symptom:** `checker_test.cot` crashes during code generation with "integer does not fit in destination type"
+**Fix Required:** Debug codegen to find the specific instruction causing the overflow
+
+### Test Matrix for Self-Hosting
+
+| cot0 Source File | Can Compile? | Blocker |
+|------------------|--------------|---------|
+| `token_test.cot` | Yes | Runs, 18 tests pass |
+| `ast_test.cot` | Yes | Runs, 12 tests pass |
+| `ir_test.cot` | Yes | Runs, passes |
+| `scanner_test.cot` | Yes | Runs, 18 tests pass |
+| `parser_test.cot` | Yes | Runs, 22 tests pass |
+| `lower_test.cot` | No | Import scoping (#1) |
+| `checker_test.cot` | No | Codegen crash (#5) |
+
+---
+
 ## Test Status
 
 | Test File | Status |
@@ -408,9 +453,9 @@ Features used by cot0 source files vs what cot0 can handle:
 | Address-of `&x` | Yes | Yes (Sprint C) | Yes (Sprint E) |
 | Dereference `ptr.*` | Yes | Yes (Sprint C) | Yes (Sprint E) |
 | String literals | Yes | Yes (Sprint C) | Yes (Sprint E) |
-| `import` statements | Yes | Yes (Sprint D) | No |
-| `const` declarations | Yes | Yes (Sprint D) | No |
-| `@builtin` expressions | Yes | Yes (Sprint I) | No |
+| `import` statements | Yes | Yes (Sprint D) | Partial (no dedup) |
+| `const` declarations | Yes | Yes (Sprint D) | Yes |
+| `@builtin` expressions | Yes | Yes (Sprint I) | Yes |
 
 ---
 
