@@ -126,6 +126,12 @@ enum IRNodeKind {
     StoreFieldLocal,  // Store to field of local struct: left = local_idx, right = offset, value = stored_expr
     StoreField,   // Store to field via pointer: left = base_expr, right = offset, value = stored_expr
 
+    // Array indexing
+    IndexLocal,   // Read from local array: left = local_idx, right = index_expr, value = elem_size
+    IndexValue,   // Read from computed address: left = base_expr, right = index_expr, value = elem_size
+    StoreIndexLocal,  // Store to local array element: left = local_idx, right = index_expr, value = stored_expr, op = elem_size
+    StoreIndexValue,  // Store via computed address: left = base_expr, right = index_expr, value = stored_expr, op = elem_size
+
     // Operations
     Binary,
     Unary,
@@ -165,6 +171,10 @@ struct IRNode {
     // FieldValue: left (base_expr), right (offset)
     // StoreFieldLocal: left (local_idx), right (offset), value (stored_expr)
     // StoreField: left (base_expr), right (offset), value (stored_expr)
+    // IndexLocal: left (local_idx), right (index_expr), value (elem_size)
+    // IndexValue: left (base_expr), right (index_expr), value (elem_size)
+    // StoreIndexLocal: left (local_idx), right (index_expr), value (stored_expr), op (elem_size)
+    // StoreIndexValue: left (base_expr), right (index_expr), value (stored_expr), op (elem_size)
     // Call: func_name_start, func_name_len, args_start, args_count
     // Return: left (value), or -1 for void
     // Jump: left (target_block)
@@ -572,5 +582,67 @@ fn func_builder_emit_store_field(fb: *FuncBuilder, base_expr: i64, offset: i64, 
     node.left = base_expr;
     node.right = offset;
     node.value = value_expr;
+    return func_builder_emit(fb, node);
+}
+
+// ============================================================================
+// Array Indexing Emit Functions
+// ============================================================================
+
+// Emit index into local array: arr[i] where arr is a local variable
+// local_idx = index of the local array variable
+// index_expr = IR node index of the index expression
+// elem_size = size of each element in bytes
+// elem_type = type of the elements
+fn func_builder_emit_index_local(fb: *FuncBuilder, local_idx: i64, index_expr: i64,
+                                  elem_size: i64, elem_type: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.IndexLocal, elem_type);
+    node.left = local_idx;
+    node.right = index_expr;
+    node.value = elem_size;
+    return func_builder_emit(fb, node);
+}
+
+// Emit index into computed address: ptr[i]
+// base_expr = IR node index of base address expression
+// index_expr = IR node index of the index expression
+// elem_size = size of each element in bytes
+// elem_type = type of the elements
+fn func_builder_emit_index_value(fb: *FuncBuilder, base_expr: i64, index_expr: i64,
+                                  elem_size: i64, elem_type: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.IndexValue, elem_type);
+    node.left = base_expr;
+    node.right = index_expr;
+    node.value = elem_size;
+    return func_builder_emit(fb, node);
+}
+
+// Emit store to local array element: arr[i] = value
+// local_idx = index of the local array variable
+// index_expr = IR node index of the index expression
+// value_expr = IR node index of value to store
+// elem_size = size of each element in bytes
+fn func_builder_emit_store_index_local(fb: *FuncBuilder, local_idx: i64, index_expr: i64,
+                                        value_expr: i64, elem_size: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.StoreIndexLocal, TYPE_VOID);
+    node.left = local_idx;
+    node.right = index_expr;
+    node.value = value_expr;
+    node.op = elem_size;
+    return func_builder_emit(fb, node);
+}
+
+// Emit store to indexed address: ptr[i] = value
+// base_expr = IR node index of base address expression
+// index_expr = IR node index of the index expression
+// value_expr = IR node index of value to store
+// elem_size = size of each element in bytes
+fn func_builder_emit_store_index_value(fb: *FuncBuilder, base_expr: i64, index_expr: i64,
+                                        value_expr: i64, elem_size: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.StoreIndexValue, TYPE_VOID);
+    node.left = base_expr;
+    node.right = index_expr;
+    node.value = value_expr;
+    node.op = elem_size;
     return func_builder_emit(fb, node);
 }

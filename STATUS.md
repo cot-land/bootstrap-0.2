@@ -72,6 +72,18 @@ The `e2e_codegen_test.cot` demonstrates the full backend pipeline:
   - StoreFieldLocal/StoreField IR nodes for field write
   - OffPtr SSA operation for field offset computation
   - TypePool extended with field management functions
+- Added array indexing support to cot0:
+  - IndexExpr AST node and parser support for `expr[index]`
+  - IndexLocal/IndexValue IR nodes for array read
+  - StoreIndexLocal/StoreIndexValue IR nodes for array write
+  - AddPtr SSA operation for computed pointer offsets
+- Added struct field assignment support to cot0 lowerer:
+  - Field assignment via lower_field_assign (`s.x = value`)
+  - Array element assignment via lower_index_assign (`arr[i] = value`)
+- Added extern fn support for libc integration:
+  - Extern token type and keyword recognition
+  - ExternFnDecl AST node and parser support
+  - Extern functions skipped in lowerer (linker resolves)
 - Fixed executable permissions: added chmod(0o755) after linking in main.zig
 
 ### Bug Fixes (2026-01-18)

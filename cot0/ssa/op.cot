@@ -70,6 +70,7 @@ enum Op {
     Addr,           // Address of symbol: aux = symbol
     LocalAddr,      // Address of local: aux_int = local index
     OffPtr,         // Offset pointer: arg0 + aux_int
+    AddPtr,         // Pointer arithmetic: arg0 + arg1 (for computed offsets)
 
     // Control Flow
     Phi,            // SSA phi node: merge values from predecessors
@@ -271,6 +272,7 @@ fn op_arg_count(op: Op) i64 {
     if op == Op.Load { return 2; }
     if op == Op.SliceMake { return 2; }
     if op == Op.StringMake { return 2; }
+    if op == Op.AddPtr { return 2; }
 
     // 3-arg ops
     if op == Op.Store { return 3; }

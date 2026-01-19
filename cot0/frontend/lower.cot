@@ -175,12 +175,15 @@ fn lowerer_lower_all(l: *Lowerer) i64 {
     }
 
     // Second pass: process function declarations
+    // Note: ExternFnDecl nodes are skipped - they don't need IR,
+    // the linker will resolve external symbols
     i = 0;
     while i < l.nodes_count {
         let node: *Node = l.nodes + i;
         if node.kind == NodeKind.FnDecl {
             lower_fn_decl(l, node);
         }
+        // ExternFnDecl - skip, no IR needed (linker resolves external symbols)
         i = i + 1;
     }
     return l.ir_nodes_count;
@@ -484,6 +487,8 @@ fn lower_expr(l: *Lowerer, node: *Node) i64 {
         return lower_deref(l, node);
     } else if node.kind == NodeKind.FieldAccess {
         return lower_field_access(l, node);
+    } else if node.kind == NodeKind.IndexExpr {
+        return lower_index(l, node);
     }
 
     return NULL_NODE;
@@ -658,6 +663,16 @@ fn lower_assign(l: *Lowerer, node: *Node) i64 {
         return value_idx;
     }
 
+    // Handle field assignment: s.x = value or ptr.*.x = value
+    if target_node.kind == NodeKind.FieldAccess {
+        return lower_field_assign(l, target_node, value_idx);
+    }
+
+    // Handle array element assignment: arr[i] = value
+    if target_node.kind == NodeKind.IndexExpr {
+        return lower_index_assign(l, target_node, value_idx);
+    }
+
     // Handle simple variable assignment: x = value
     if target_node.kind == NodeKind.Ident {
         // Look up local variable by name
@@ -813,6 +828,180 @@ fn lower_field_access(l: *Lowerer, node: *Node) i64 {
     // Case 4: Other expressions - lower them and access field
     let base_val: i64 = lower_expr(l, base_node);
     return func_builder_emit_field_value(fb, base_val, 0, TYPE_I64);
+}
+
+fn lower_index(l: *Lowerer, node: *Node) i64 {
+    // IndexExpr fields:
+    // field0 = base expression (array/pointer)
+    // field1 = index expression
+
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return NULL_NODE; }
+
+    let base_node: *Node = l.nodes + node.field0;
+    let index_node_idx: i64 = node.field1;
+
+    // For cot0, assume element type is i64 (8 bytes) for simplicity
+    let elem_size: i64 = 8;
+    let elem_type: i64 = TYPE_I64;
+
+    // Lower the index expression
+    let index_node: *Node = l.nodes + index_node_idx;
+    let index_ir: i64 = lower_expr(l, index_node);
+
+    // Case 1: Base is an identifier (local array variable)
+    if base_node.kind == NodeKind.Ident {
+        // Look up the local variable
+        var local_idx: i64 = -1;
+        var i: i64 = 0;
+        while i < fb.locals_count {
+            let local: *IRLocal = fb.locals + i;
+            if names_equal(l.source, local.name_start, local.name_len,
+                          base_node.field0, base_node.field1) {
+                local_idx = i;
+            }
+            i = i + 1;
+        }
+
+        if local_idx >= 0 {
+            // Emit index into local array
+            return func_builder_emit_index_local(fb, local_idx, index_ir, elem_size, elem_type);
+        }
+    }
+
+    // Case 2: Base is any other expression - lower it and emit IndexValue
+    let base_val: i64 = lower_expr(l, base_node);
+    return func_builder_emit_index_value(fb, base_val, index_ir, elem_size, elem_type);
+}
+
+fn lower_field_assign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
+    // FieldAccess fields:
+    // field0 = base expression (node index)
+    // field1 = field_name_start
+    // field2 = field_name_len
+
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return NULL_NODE; }
+
+    let base_node: *Node = l.nodes + target.field0;
+    let field_name_start: i64 = target.field1;
+    let field_name_len: i64 = target.field2;
+
+    // Case 1: Base is an identifier (local struct variable)
+    if base_node.kind == NodeKind.Ident {
+        // Look up the local variable
+        var local_idx: i64 = -1;
+        var local_type_idx: i64 = TYPE_I64;
+        var i: i64 = 0;
+        while i < fb.locals_count {
+            let local: *IRLocal = fb.locals + i;
+            if names_equal(l.source, local.name_start, local.name_len,
+                          base_node.field0, base_node.field1) {
+                local_idx = i;
+                local_type_idx = local.type_idx;
+            }
+            i = i + 1;
+        }
+
+        if local_idx < 0 {
+            return NULL_NODE;  // Variable not found
+        }
+
+        // Check if local is a pointer to struct (auto-dereference for assignment)
+        let local_type: *Type = type_get(l.type_pool, local_type_idx);
+        var struct_type_idx: i64 = local_type_idx;
+
+        if local_type.kind == TypeKind.Pointer {
+            // Pointer to struct - need to load the pointer first
+            struct_type_idx = local_type.elem;
+
+            // Look up field in the pointee struct
+            let field_info: *FieldInfo = type_lookup_field(l.type_pool, struct_type_idx,
+                                                           field_name_start, field_name_len);
+            if field_info == null {
+                return NULL_NODE;  // Field not found
+            }
+
+            // Load the pointer value
+            let ptr_val: i64 = func_builder_emit_load_local(fb, local_idx);
+            // Store value through the pointer at field offset
+            return func_builder_emit_store_field(fb, ptr_val, field_info.offset, value_idx);
+        }
+
+        // Direct struct assignment
+        let field_info: *FieldInfo = type_lookup_field(l.type_pool, struct_type_idx,
+                                                       field_name_start, field_name_len);
+        if field_info == null {
+            return NULL_NODE;  // Field not found
+        }
+
+        return func_builder_emit_store_field_local(fb, local_idx, field_info.offset, value_idx);
+    }
+
+    // Case 2: Base is a dereference expression (ptr.*.field = value)
+    if base_node.kind == NodeKind.DerefExpr {
+        let ptr_operand: *Node = l.nodes + base_node.field0;
+        let ptr_val: i64 = lower_expr(l, ptr_operand);
+
+        // TODO: Look up field offset from type info
+        // For now, use offset 0
+        return func_builder_emit_store_field(fb, ptr_val, 0, value_idx);
+    }
+
+    // Case 3: Base is another field access (chained: a.b.c = value)
+    if base_node.kind == NodeKind.FieldAccess {
+        // Recursively lower the base field access to get address
+        let base_val: i64 = lower_field_access(l, base_node);
+        // TODO: Look up field offset
+        return func_builder_emit_store_field(fb, base_val, 0, value_idx);
+    }
+
+    // Case 4: Other expressions - lower and store
+    let base_val: i64 = lower_expr(l, base_node);
+    return func_builder_emit_store_field(fb, base_val, 0, value_idx);
+}
+
+fn lower_index_assign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
+    // IndexExpr fields:
+    // field0 = base expression (array/pointer)
+    // field1 = index expression
+
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return NULL_NODE; }
+
+    let base_node: *Node = l.nodes + target.field0;
+    let index_node_idx: i64 = target.field1;
+
+    // For cot0, assume element type is i64 (8 bytes) for simplicity
+    let elem_size: i64 = 8;
+
+    // Lower the index expression
+    let index_node: *Node = l.nodes + index_node_idx;
+    let index_ir: i64 = lower_expr(l, index_node);
+
+    // Case 1: Base is an identifier (local array variable)
+    if base_node.kind == NodeKind.Ident {
+        // Look up the local variable
+        var local_idx: i64 = -1;
+        var i: i64 = 0;
+        while i < fb.locals_count {
+            let local: *IRLocal = fb.locals + i;
+            if names_equal(l.source, local.name_start, local.name_len,
+                          base_node.field0, base_node.field1) {
+                local_idx = i;
+            }
+            i = i + 1;
+        }
+
+        if local_idx >= 0 {
+            // Emit store to local array element
+            return func_builder_emit_store_index_local(fb, local_idx, index_ir, value_idx, elem_size);
+        }
+    }
+
+    // Case 2: Base is any other expression - lower it and emit StoreIndexValue
+    let base_val: i64 = lower_expr(l, base_node);
+    return func_builder_emit_store_index_value(fb, base_val, index_ir, value_idx, elem_size);
 }
 
 // ============================================================================

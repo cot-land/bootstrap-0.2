@@ -37,6 +37,7 @@ enum NodeKind {
 
     // Declarations
     FnDecl,         // fn name(params) ret { body }
+    ExternFnDecl,   // extern fn name(params) ret;
     ParamDecl,      // name: type
     VarDecl,        // let/var name: type = expr;
     ConstDecl,      // const name = expr;
@@ -47,6 +48,7 @@ enum NodeKind {
 
     // Member access
     FieldAccess,    // expr.field
+    IndexExpr,      // expr[index]
 
     // Special
     BadNode,        // Error placeholder
@@ -314,6 +316,28 @@ fn node_fn_decl(pool: *NodePool, name_start: i64, name_len: i64,
     n.field3 = params_count;    // Number of parameters
     n.field4 = ret_type_len;    // Return type (type handle from parse_type)
     n.field5 = body;            // Body block node index
+
+    return idx;
+}
+
+// Create an extern function declaration node (no body)
+fn node_extern_fn_decl(pool: *NodePool, name_start: i64, name_len: i64,
+                       params_start: i64, params_count: i64,
+                       ret_type_start: i64, ret_type_len: i64,
+                       start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ExternFnDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;      // Function name offset
+    n.field1 = name_len;        // Function name length
+    n.field2 = params_start;    // Start index in children array
+    n.field3 = params_count;    // Number of parameters
+    n.field4 = ret_type_len;    // Return type (type handle from parse_type)
+    n.field5 = 0;               // No body (marker for extern)
 
     return idx;
 }
@@ -632,6 +656,28 @@ fn node_field_access(pool: *NodePool, base: i64,
     n.field0 = base;            // Base expression
     n.field1 = field_start;     // Field name offset
     n.field2 = field_len;       // Field name length
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create an IndexExpr node: expr[index]
+// field0: base expression
+// field1: index expression
+// field2: unused
+// field3: unused
+fn node_index(pool: *NodePool, base: i64, index: i64,
+              start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.IndexExpr;
+    n.start = start;
+    n.end = end;
+    n.field0 = base;    // Base expression (array/slice/pointer)
+    n.field1 = index;   // Index expression
+    n.field2 = 0;
     n.field3 = 0;
 
     return idx;

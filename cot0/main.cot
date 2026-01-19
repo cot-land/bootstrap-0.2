@@ -529,6 +529,106 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 let store_val: *Value = func_new_value(&ssa_func, Op.Store, TYPE_VOID);
                 value_add_arg2(store_val, off_val, val_val);
                 g_ir_to_ssa_id[ir_idx] = store_val.id;
+            } else if ir_node.kind == IRNodeKind.IndexLocal {
+                // Index into local array: left = local_idx, right = index_expr, value = elem_size
+                // SSA pattern: LocalAddr + (index * elem_size) + AddPtr + Load
+                let loc_idx: i64 = ir_node.left;
+                let idx_abs: i64 = ir_func.nodes_start + ir_node.right;
+                let elem_size: i64 = ir_node.value;
+                let idx_id: i64 = g_ir_to_ssa_id[idx_abs];
+                let idx_val: *Value = func_get_value(&ssa_func, idx_id);
+
+                // 1. Get address of local array
+                let addr_val: *Value = func_new_value(&ssa_func, Op.LocalAddr, TYPE_I64);
+                addr_val.aux_int = loc_idx;
+
+                // 2. Compute byte offset: index * elem_size
+                let size_val: *Value = func_emit_const_int(&ssa_func, elem_size, TYPE_I64);
+                let offset_val: *Value = func_emit_binary(&ssa_func, Op.Mul64, idx_val, size_val, TYPE_I64);
+
+                // 3. Add offset to base address
+                let ptr_val: *Value = func_emit_binary(&ssa_func, Op.AddPtr, addr_val, offset_val, TYPE_I64);
+
+                // 4. Load the element value
+                let load_val: *Value = func_new_value(&ssa_func, Op.Load, ir_node.type_idx);
+                value_add_arg(load_val, ptr_val);
+                load_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                g_ir_to_ssa_id[ir_idx] = load_val.id;
+            } else if ir_node.kind == IRNodeKind.IndexValue {
+                // Index via computed address: left = base_expr, right = index_expr, value = elem_size
+                // SSA pattern: base + (index * elem_size) + AddPtr + Load
+                let base_abs: i64 = ir_func.nodes_start + ir_node.left;
+                let idx_abs: i64 = ir_func.nodes_start + ir_node.right;
+                let elem_size: i64 = ir_node.value;
+                let base_id: i64 = g_ir_to_ssa_id[base_abs];
+                let idx_id: i64 = g_ir_to_ssa_id[idx_abs];
+                let base_val: *Value = func_get_value(&ssa_func, base_id);
+                let idx_val: *Value = func_get_value(&ssa_func, idx_id);
+
+                // 1. Compute byte offset: index * elem_size
+                let size_val: *Value = func_emit_const_int(&ssa_func, elem_size, TYPE_I64);
+                let offset_val: *Value = func_emit_binary(&ssa_func, Op.Mul64, idx_val, size_val, TYPE_I64);
+
+                // 2. Add offset to base address
+                let ptr_val: *Value = func_emit_binary(&ssa_func, Op.AddPtr, base_val, offset_val, TYPE_I64);
+
+                // 3. Load the element value
+                let load_val: *Value = func_new_value(&ssa_func, Op.Load, ir_node.type_idx);
+                value_add_arg(load_val, ptr_val);
+                load_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                g_ir_to_ssa_id[ir_idx] = load_val.id;
+            } else if ir_node.kind == IRNodeKind.StoreIndexLocal {
+                // Store to local array element: left = local_idx, right = index_expr, value = stored_expr, op = elem_size
+                let loc_idx: i64 = ir_node.left;
+                let idx_abs: i64 = ir_func.nodes_start + ir_node.right;
+                let val_abs: i64 = ir_func.nodes_start + ir_node.value;
+                let elem_size: i64 = ir_node.op;
+                let idx_id: i64 = g_ir_to_ssa_id[idx_abs];
+                let val_id: i64 = g_ir_to_ssa_id[val_abs];
+                let idx_val: *Value = func_get_value(&ssa_func, idx_id);
+                let val_val: *Value = func_get_value(&ssa_func, val_id);
+
+                // 1. Get address of local array
+                let addr_val: *Value = func_new_value(&ssa_func, Op.LocalAddr, TYPE_I64);
+                addr_val.aux_int = loc_idx;
+
+                // 2. Compute byte offset: index * elem_size
+                let size_val: *Value = func_emit_const_int(&ssa_func, elem_size, TYPE_I64);
+                let offset_val: *Value = func_emit_binary(&ssa_func, Op.Mul64, idx_val, size_val, TYPE_I64);
+
+                // 3. Add offset to base address
+                let ptr_val: *Value = func_emit_binary(&ssa_func, Op.AddPtr, addr_val, offset_val, TYPE_I64);
+
+                // 4. Store the value
+                let store_val: *Value = func_new_value(&ssa_func, Op.Store, TYPE_VOID);
+                value_add_arg2(store_val, ptr_val, val_val);
+                g_ir_to_ssa_id[ir_idx] = store_val.id;
+            } else if ir_node.kind == IRNodeKind.StoreIndexValue {
+                // Store via indexed address: left = base_expr, right = index_expr, value = stored_expr, op = elem_size
+                let base_abs: i64 = ir_func.nodes_start + ir_node.left;
+                let idx_abs: i64 = ir_func.nodes_start + ir_node.right;
+                let val_abs: i64 = ir_func.nodes_start + ir_node.value;
+                let elem_size: i64 = ir_node.op;
+                let base_id: i64 = g_ir_to_ssa_id[base_abs];
+                let idx_id: i64 = g_ir_to_ssa_id[idx_abs];
+                let val_id: i64 = g_ir_to_ssa_id[val_abs];
+                let base_val: *Value = func_get_value(&ssa_func, base_id);
+                let idx_val: *Value = func_get_value(&ssa_func, idx_id);
+                let val_val: *Value = func_get_value(&ssa_func, val_id);
+
+                // 1. Compute byte offset: index * elem_size
+                let size_val: *Value = func_emit_const_int(&ssa_func, elem_size, TYPE_I64);
+                let offset_val: *Value = func_emit_binary(&ssa_func, Op.Mul64, idx_val, size_val, TYPE_I64);
+
+                // 2. Add offset to base address
+                let ptr_val: *Value = func_emit_binary(&ssa_func, Op.AddPtr, base_val, offset_val, TYPE_I64);
+
+                // 3. Store the value
+                let store_val: *Value = func_new_value(&ssa_func, Op.Store, TYPE_VOID);
+                value_add_arg2(store_val, ptr_val, val_val);
+                g_ir_to_ssa_id[ir_idx] = store_val.id;
             } else if ir_node.kind == IRNodeKind.Call {
                 let val: *Value = func_emit_call(&ssa_func,
                                                  ir_node.func_name_start,

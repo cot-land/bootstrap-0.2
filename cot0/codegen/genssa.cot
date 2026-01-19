@@ -303,6 +303,9 @@ fn genssa_value(gs: *GenState, v: *Value) {
         genssa_local_addr(gs, v);
     } else if v.op == Op.OffPtr {
         genssa_off_ptr(gs, v);
+    } else if v.op == Op.AddPtr {
+        // Pointer arithmetic is the same as 64-bit addition
+        genssa_add(gs, v);
     } else if v.op == Op.Call {
         genssa_call(gs, v);
     } else if v.op == Op.Return {

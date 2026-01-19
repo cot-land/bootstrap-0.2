@@ -443,6 +443,20 @@ fn parse_unary(p: *Parser) i64 {
 
                 result = node_call(p.pool, result, args_start, args_count, call_start, end);
             }
+            // Check for array indexing: expr[index]
+            else if parser_check(p, TokenType.LBracket) {
+                let result_node: *Node = node_get(p.pool, result);
+                let start: i64 = result_node.start;
+                parser_advance(p);  // Consume '['
+
+                // Parse index expression
+                let index: i64 = parse_expr(p);
+
+                let end: i64 = p.current.start + p.current.end;
+                parser_want(p, TokenType.RBracket);
+
+                result = node_index(p.pool, result, index, start, end);
+            }
             else {
                 done = true;
             }
@@ -694,6 +708,50 @@ fn parse_param(p: *Parser) i64 {
     return node_param(p.pool, name_start, name_len, type_start, type_handle, start, end);
 }
 
+// Parse extern function declaration: extern fn name(params) ret_type;
+fn parse_extern_fn_decl(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    parser_want(p, TokenType.Extern);
+    parser_want(p, TokenType.Fn);
+
+    // Function name
+    let name_start: i64 = p.current.start;
+    let name_len: i64 = p.current.end;
+    parser_want(p, TokenType.Ident);
+
+    // Parameters
+    parser_want(p, TokenType.LParen);
+    let params_start: i64 = p.pool.children_count;
+    var params_count: i64 = 0;
+
+    if not parser_check(p, TokenType.RParen) {
+        // First parameter
+        let param: i64 = parse_param(p);
+        node_add_child(p.pool, param);
+        params_count = params_count + 1;
+
+        // Additional parameters
+        while parser_got(p, TokenType.Comma) {
+            let next_param: i64 = parse_param(p);
+            node_add_child(p.pool, next_param);
+            params_count = params_count + 1;
+        }
+    }
+    parser_want(p, TokenType.RParen);
+
+    // Return type
+    let ret_type_start: i64 = p.current.start;
+    let ret_type_handle: i64 = parse_type(p);
+
+    // Semicolon (extern fn has no body)
+    parser_want(p, TokenType.Semi);
+
+    let end: i64 = p.current.start;
+
+    // Create extern function declaration node
+    return node_extern_fn_decl(p.pool, name_start, name_len, params_start, params_count, ret_type_start, ret_type_handle, start, end);
+}
+
 // Parse function declaration: fn name(params) ret_type { body }
 fn parse_fn_decl(p: *Parser) i64 {
     let start: i64 = p.current.start;
@@ -904,6 +962,11 @@ fn parse_decl(p: *Parser) i64 {
     // Import must come first
     if parser_check(p, TokenType.Import) {
         return parse_import(p);
+    }
+
+    // Extern function declaration
+    if parser_check(p, TokenType.Extern) {
+        return parse_extern_fn_decl(p);
     }
 
     // Const declaration
