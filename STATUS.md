@@ -60,6 +60,16 @@ The `e2e_codegen_test.cot` demonstrates the full backend pipeline:
 ### Recent Changes (2026-01-19)
 
 **cot0 Self-Hosting Enhancements:**
+- Added @builtin expression parsing to cot0 parser:
+  - `@string(ptr, len)` - construct string from pointer and length
+  - `@intCast(type, val)` - cast value to specified type
+  - `@sizeOf(type)` - get size of type
+  - `@alignOf(type)` - get alignment of type
+  - Enables parsing scanner.cot which uses `@string`
+- Fixed parser for self-hosting compatibility:
+  - `parse_arg_expr` now uses `parse_unary` instead of `parse_atom`
+  - Made semicolons optional in statement terminators
+  - Made return type optional (defaults to void)
 - Added const declaration support to cot0 lowerer (two-pass lowering: consts first, then functions)
 - Added string literal support to cot0 lowerer (ConstString IR node)
 - Added pointer support to cot0 lowerer:

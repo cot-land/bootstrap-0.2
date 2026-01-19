@@ -157,7 +157,7 @@ All core infrastructure working. BUG-027 through BUG-030 fixed on 2026-01-18.
 
 **Goal:** Complete compiler that can compile itself
 
-### Progress (2026-01-18)
+### Progress (2026-01-19)
 - [x] `main.cot` - Full driver with 7-phase pipeline (compiles, reads files, generates Mach-O)
 - [x] Module integration phase 1 (parser.cot constants → PTYPE_*)
 - [x] Module integration phase 2 (SSA import chains fixed, MAX_PARAMS → FUNC_MAX_PARAMS)
@@ -177,6 +177,9 @@ All core infrastructure working. BUG-027 through BUG-030 fixed on 2026-01-18.
 - [x] If/else statements
 - [x] Function calls with parameters
 - [x] Add command line argument parsing (argc/argv, file reading)
+- [x] Parser fixes for self-hosting (parse_arg_expr, optional semicolons, optional void return)
+- [x] @builtin expression parsing (@string, @intCast, @sizeOf, @alignOf)
+- [ ] @builtin lowering and code generation
 - [ ] Extend lowerer for remaining constructs (pointers, structs, etc.)
 
 ### Current Pipeline Output
@@ -404,6 +407,7 @@ Features used by cot0 source files vs what cot0 can handle:
 | String literals | Yes | Yes (Sprint C) | Yes (Sprint E) |
 | `import` statements | Yes | Yes (Sprint D) | No |
 | `const` declarations | Yes | Yes (Sprint D) | No |
+| `@builtin` expressions | Yes | Yes (Sprint I) | No |
 
 ---
 
