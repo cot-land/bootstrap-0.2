@@ -317,21 +317,22 @@ fn parse_paren_inner(p: *Parser) i64 {
 }
 
 // Parse a single argument expression (inline)
+// NOTE: Uses parse_unary (not parse_atom) to handle field access, calls, etc.
 fn parse_arg_expr(p: *Parser) i64 {
-    var arg: i64 = parse_atom(p);
+    var arg: i64 = parse_unary(p);
     var arg_cur_prec: i64 = parser_prec(p);
 
     while arg_cur_prec > 0 {
         var arg_op_int: i64 = parser_binop_int(p);
         var arg_op_prec: i64 = arg_cur_prec;
         parser_advance(p);
-        var arg_right: i64 = parse_atom(p);
+        var arg_right: i64 = parse_unary(p);
 
         var arg_right_prec: i64 = parser_prec(p);
         while arg_right_prec > arg_op_prec {
             var arg_op2_int: i64 = parser_binop_int(p);
             parser_advance(p);
-            var arg_right2: i64 = parse_atom(p);
+            var arg_right2: i64 = parse_unary(p);
             arg_right = make_binary_node(p, arg_op2_int, arg_right, arg_right2);
             arg_right_prec = parser_prec(p);
         }
@@ -575,14 +576,21 @@ fn parse_return_stmt(p: *Parser) i64 {
     let start: i64 = p.current.start;
     parser_want(p, TokenType.Return);
 
-    // Optional return value
+    // Optional return value - check if next token looks like no value
+    // (semicolon, closing brace, or statement-starting keywords)
     var value: i64 = -1;
-    if not parser_check(p, TokenType.Semi) {
+    let k: TokenType = p.current.kind;
+    let no_value: bool = k == TokenType.Semi or k == TokenType.RBrace or
+                         k == TokenType.Return or k == TokenType.Let or
+                         k == TokenType.Var or k == TokenType.If or
+                         k == TokenType.While or k == TokenType.For or
+                         k == TokenType.Break or k == TokenType.Continue;
+    if not no_value {
         value = parse_expr(p);
     }
 
     let end: i64 = p.current.start + p.current.end;
-    parser_want(p, TokenType.Semi);
+    parser_got(p, TokenType.Semi);  // Optional semicolon
 
     return node_return(p.pool, value, start, end);
 }
@@ -620,7 +628,7 @@ fn parse_var_decl(p: *Parser) i64 {
     }
 
     let end: i64 = p.current.start + p.current.end;
-    parser_want(p, TokenType.Semi);
+    parser_got(p, TokenType.Semi);  // Optional semicolon
 
     return node_var_decl(p.pool, is_let, name_start, name_len, type_start, type_handle, init_expr, start, end);
 }
@@ -673,7 +681,7 @@ fn parse_expr_stmt(p: *Parser) i64 {
     let start: i64 = p.current.start;
     let expr: i64 = parse_expr(p);
     let end: i64 = p.current.start + p.current.end;
-    parser_want(p, TokenType.Semi);
+    parser_got(p, TokenType.Semi);  // Optional semicolon
     return node_expr_stmt(p.pool, expr, start, end);
 }
 
@@ -798,8 +806,8 @@ fn parse_extern_fn_decl(p: *Parser) i64 {
     let ret_type_start: i64 = p.current.start;
     let ret_type_handle: i64 = parse_type(p);
 
-    // Semicolon (extern fn has no body)
-    parser_want(p, TokenType.Semi);
+    // Optional semicolon (extern fn has no body)
+    parser_got(p, TokenType.Semi);
 
     let end: i64 = p.current.start;
 
@@ -837,9 +845,12 @@ fn parse_fn_decl(p: *Parser) i64 {
     }
     parser_want(p, TokenType.RParen);
 
-    // Return type (use parse_type for all types)
+    // Return type - optional, defaults to void if { follows immediately
     let ret_type_start: i64 = p.current.start;
-    let ret_type_handle: i64 = parse_type(p);
+    var ret_type_handle: i64 = PTYPE_VOID;  // Default to void
+    if not parser_check(p, TokenType.LBrace) {
+        ret_type_handle = parse_type(p);
+    }
 
     // Body
     let body: i64 = parse_block(p);
@@ -1004,7 +1015,7 @@ fn parse_const_decl(p: *Parser) i64 {
     let init_expr: i64 = parse_expr(p);
 
     let end: i64 = p.current.start + p.current.end;
-    parser_want(p, TokenType.Semi);
+    parser_got(p, TokenType.Semi);  // Optional semicolon
 
     return node_const_decl(p.pool, name_start, name_len, type_handle, init_expr, start, end);
 }
