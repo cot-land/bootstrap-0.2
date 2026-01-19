@@ -341,6 +341,59 @@ fn build_import_path(import_path: *u8, import_path_len: i64) i64 {
     return result_len;
 }
 
+// Adjust source positions in newly parsed nodes to be absolute in g_source
+// This is needed because the parser reports positions relative to the string slice
+// it was given, but we need absolute positions for the combined source buffer.
+fn adjust_node_positions(pool: *NodePool, start_idx: i64, end_idx: i64, offset: i64) {
+    var i: i64 = start_idx;
+    while i < end_idx {
+        let node: *Node = pool.nodes + i;
+
+        // Adjust source span (all nodes have these)
+        node.start = node.start + offset;
+        node.end = node.end + offset;
+
+        // Adjust kind-specific position fields
+        // These are fields that contain source positions (not indices or values)
+        if node.kind == NodeKind.Ident {
+            // field0 = name_start (source position)
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.FnDecl {
+            // field0 = name_start
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.ExternFnDecl {
+            // field0 = name_start
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.VarDecl {
+            // field0 = name_start
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.ConstDecl {
+            // field0 = name_start
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.ImportDecl {
+            // field0 = path_start
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.StructDecl {
+            // field0 = name_start
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.EnumDecl {
+            // field0 = name_start
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.FieldDecl {
+            // field0 = name_start
+            // Note: field2 is type_handle (not a source position)
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.StringLit {
+            // field0 = content_start (source position of string content)
+            node.field0 = node.field0 + offset;
+        }
+        // Other node kinds don't have source positions in their fields
+        // (they have node indices, values, or type handles instead)
+
+        i = i + 1;
+    }
+}
+
 // Read and parse an imported file, returns number of new nodes or -1 on error
 fn parse_import_file(import_path: *u8, import_path_len: i64, pool: *NodePool) i64 {
     // Build full path
@@ -387,7 +440,15 @@ fn parse_import_file(import_path: *u8, import_path_len: i64, pool: *NodePool) i6
         print_str("  Warning: Parse error in import\n");
     }
 
-    return pool.count - nodes_before;
+    // Adjust positions in new nodes to be absolute in g_source
+    // The parser reported positions relative to import_source (starting at 0)
+    // but we need them relative to g_source (starting at start_offset)
+    let new_nodes: i64 = pool.count - nodes_before;
+    if new_nodes > 0 {
+        adjust_node_positions(pool, nodes_before, pool.count, start_offset);
+    }
+
+    return new_nodes;
 }
 
 // Process all imports in the parsed AST
@@ -923,8 +984,10 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 var match: bool = true;
                 var name_i: i64 = 0;
                 while name_i < cs.func_name_len {
-                    let src_char: *u8 = source.ptr + ir_func.name_start + name_i;
-                    let call_char: *u8 = source.ptr + cs.func_name_start + name_i;
+                    // Use g_source (combined buffer) instead of original source
+                    // This allows cross-file function calls to work correctly
+                    let src_char: *u8 = &g_source[ir_func.name_start + name_i];
+                    let call_char: *u8 = &g_source[cs.func_name_start + name_i];
                     if src_char.* != call_char.* {
                         match = false;
                     }
