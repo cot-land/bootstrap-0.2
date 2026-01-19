@@ -380,6 +380,71 @@ fn parse_unary(p: *Parser) i64 {
         return node_address_of(p.pool, operand, start, p.current.start);
     }
 
+    // Builtin call: @string(ptr, len), @intCast(type, val), @sizeOf(type)
+    if kind == TokenType.At {
+        let start: i64 = p.current.start;
+        parser_advance(p);  // Consume '@'
+
+        // Parse builtin name (must be an identifier)
+        let name_start: i64 = p.current.start;
+        let name_len: i64 = p.current.end;
+        parser_want(p, TokenType.Ident);
+
+        parser_want(p, TokenType.LParen);
+
+        // Determine which builtin based on name length and characters
+        var type_arg: i64 = 0 - 1;
+        var arg1: i64 = 0 - 1;
+        var arg2: i64 = 0 - 1;
+
+        // @string(ptr, len) - two expression args
+        if name_len == 6 and p.source[name_start] == 115 and p.source[name_start + 1] == 116 and
+           p.source[name_start + 2] == 114 and p.source[name_start + 3] == 105 and
+           p.source[name_start + 4] == 110 and p.source[name_start + 5] == 103 {
+            // "string" - parse two expr args
+            arg1 = parse_expr(p);
+            parser_want(p, TokenType.Comma);
+            arg2 = parse_expr(p);
+        }
+        // @intCast(type, val) - type arg + expr arg
+        else if name_len == 7 and p.source[name_start] == 105 and p.source[name_start + 1] == 110 and
+                p.source[name_start + 2] == 116 and p.source[name_start + 3] == 67 and
+                p.source[name_start + 4] == 97 and p.source[name_start + 5] == 115 and
+                p.source[name_start + 6] == 116 {
+            // "intCast" - parse type then expr
+            type_arg = parse_type(p);
+            parser_want(p, TokenType.Comma);
+            arg1 = parse_expr(p);
+        }
+        // @sizeOf(type) - just type arg
+        else if name_len == 6 and p.source[name_start] == 115 and p.source[name_start + 1] == 105 and
+                p.source[name_start + 2] == 122 and p.source[name_start + 3] == 101 and
+                p.source[name_start + 4] == 79 and p.source[name_start + 5] == 102 {
+            // "sizeOf" - parse just type
+            type_arg = parse_type(p);
+        }
+        // @alignOf(type) - just type arg
+        else if name_len == 7 and p.source[name_start] == 97 and p.source[name_start + 1] == 108 and
+                p.source[name_start + 2] == 105 and p.source[name_start + 3] == 103 and
+                p.source[name_start + 4] == 110 and p.source[name_start + 5] == 79 and
+                p.source[name_start + 6] == 102 {
+            // "alignOf" - parse just type
+            type_arg = parse_type(p);
+        }
+        // Unknown builtin - just parse args generically (2 expressions)
+        else {
+            arg1 = parse_expr(p);
+            if parser_check(p, TokenType.Comma) {
+                parser_advance(p);
+                arg2 = parse_expr(p);
+            }
+        }
+
+        parser_want(p, TokenType.RParen);
+
+        return node_builtin_call(p.pool, name_start, name_len, type_arg, arg1, arg2, start, p.current.start);
+    }
+
     // Parenthesized expression
     if kind == TokenType.LParen {
         parser_advance(p);

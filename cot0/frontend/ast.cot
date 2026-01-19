@@ -54,6 +54,9 @@ enum NodeKind {
     StructLit,      // TypeName{ .field = value, ... }
     FieldInit,      // .field = value (inside struct literal)
 
+    // Builtins
+    BuiltinCall,    // @string(ptr, len), @intCast(type, val), @sizeOf(type)
+
     // Special
     BadNode,        // Error placeholder
 }
@@ -727,6 +730,29 @@ fn node_field_init(pool: *NodePool, field_name_start: i64, field_name_len: i64,
     return idx;
 }
 
+// Create a builtin call node: @string(ptr, len), @intCast(type, val), @sizeOf(type)
+// field0 = builtin_name_start (source position after @)
+// field1 = builtin_name_len
+// field2 = type_arg (type handle for type argument, -1 if none)
+// field3 = arg1 (first expression argument node index, -1 if none)
+// field4 = arg2 (second expression argument node index, -1 if none)
+fn node_builtin_call(pool: *NodePool, name_start: i64, name_len: i64,
+                     type_arg: i64, arg1: i64, arg2: i64,
+                     start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.BuiltinCall;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;
+    n.field1 = name_len;
+    n.field2 = type_arg;
+    n.field3 = arg1;
+    n.field4 = arg2;
+    return idx;
+}
+
 // ============================================================================
 // Node Accessors
 // ============================================================================
@@ -770,7 +796,8 @@ fn is_expr(kind: NodeKind) bool {
            kind == NodeKind.AddressOf or
            kind == NodeKind.DerefExpr or
            kind == NodeKind.FieldAccess or
-           kind == NodeKind.AssignExpr;
+           kind == NodeKind.AssignExpr or
+           kind == NodeKind.BuiltinCall;
 }
 
 fn is_stmt(kind: NodeKind) bool {
