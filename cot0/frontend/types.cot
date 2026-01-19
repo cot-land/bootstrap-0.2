@@ -208,6 +208,36 @@ fn type_valid(idx: i64) bool {
     return idx != INVALID_TYPE and idx >= 0;
 }
 
+// Find a struct type by name in the pool
+// Returns the type index, or INVALID_TYPE if not found
+fn type_find_by_name(pool: *TypePool, name_start: i64, name_len: i64) i64 {
+    var i: i64 = 0;
+    while i < pool.count {
+        let t: *Type = pool.types + i;
+        if t.kind == TypeKind.Struct {
+            // Compare names
+            if t.name_len == name_len {
+                var match: bool = true;
+                var j: i64 = 0;
+                while j < name_len {
+                    let c1: u8 = (pool.source + t.name_start + j).*;
+                    let c2: u8 = (pool.source + name_start + j).*;
+                    if c1 != c2 {
+                        match = false;
+                        break;
+                    }
+                    j = j + 1;
+                }
+                if match {
+                    return i;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return INVALID_TYPE;
+}
+
 // ============================================================================
 // Type Creation
 // ============================================================================

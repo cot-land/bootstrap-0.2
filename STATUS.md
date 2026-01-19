@@ -57,7 +57,20 @@ The `e2e_codegen_test.cot` demonstrates the full backend pipeline:
 - SSA → genssa → 8 bytes machine code → MachOWriter → 319 byte .o file
 - Links and runs: **Exit code: 42** ✅
 
-### Recent Changes (2026-01-19)
+### Recent Changes (2026-01-20)
+
+**cot0 TypeRegistry Implementation:**
+- Added `resolve_type_handle()` to checker.cot - converts parser type handles to TypePool indices
+  - Maps PTYPE_I64/I32/U8/BOOL/VOID/STRING to TYPE_* constants
+  - Handles pointer types (PTYPE_PTR_BASE + pointee)
+  - Handles user-defined types via scope lookup
+- Rewrote `check_struct_decl()` to compute field offsets properly
+  - Mirrors Zig bootstrap's buildStructType pattern
+  - Iterates FieldDecl nodes, computes offsets with alignment
+  - Adds FieldInfo entries to TypePool.fields array
+  - Struct field access now works correctly (p.x at offset 0, p.y at offset 8)
+
+### Changes (2026-01-19)
 
 **cot0 Self-Hosting Enhancements:**
 - Added @builtin expression parsing to cot0 parser:

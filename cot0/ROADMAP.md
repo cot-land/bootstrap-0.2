@@ -2,7 +2,7 @@
 
 **Goal:** Build a Cot compiler written in Cot that can compile itself.
 
-**Last Updated:** 2026-01-19
+**Last Updated:** 2026-01-20
 
 ---
 
@@ -339,7 +339,10 @@ Added to cot0:
 
 Tests: checker_test.cot tests scope define/lookup (4 total tests pass)
 
-Note: Full field-by-name lookup requires field name registry (deferred)
+**TypeRegistry (2026-01-20):**
+- Added `resolve_type_handle()` - converts parser type handles to TypePool type indices
+- Rewrote `check_struct_decl()` - computes field offsets with proper alignment
+- Field-by-name lookup now works via TypePool.fields array
 
 ---
 
@@ -400,7 +403,7 @@ Features used by cot0 source files vs what cot0 can handle:
 | Comparisons/logical ops | Yes | Yes (Sprint A) | Yes (Sprint E) |
 | `struct` declarations | Yes | Yes (Sprint B) | Yes (Sprint E) |
 | `enum` declarations | Yes | Yes (Sprint B) | Yes (Sprint E) |
-| Field access `s.field` | Yes | Yes (Sprint B) | Partial (Sprint E) |
+| Field access `s.field` | Yes | Yes (Sprint B) | Yes (TypeRegistry) |
 | Pointer types `*T` | Yes | Yes (Sprint C) | Yes (Sprint E) |
 | Address-of `&x` | Yes | Yes (Sprint C) | Yes (Sprint E) |
 | Dereference `ptr.*` | Yes | Yes (Sprint C) | Yes (Sprint E) |

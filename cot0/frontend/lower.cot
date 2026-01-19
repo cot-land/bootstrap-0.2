@@ -16,6 +16,64 @@ import "types.cot"
 import "parser.cot"  // For PTYPE_USER_BASE constant
 
 // ============================================================================
+// Parser Type Handle Constants (must match parser.cot)
+// ============================================================================
+
+const PTYPE_I64: i64 = 0;
+const PTYPE_I32: i64 = 1;
+const PTYPE_U8: i64 = 2;
+const PTYPE_BOOL: i64 = 3;
+const PTYPE_VOID: i64 = 4;
+const PTYPE_STRING: i64 = 5;
+const PTYPE_PTR_BASE: i64 = 10;    // Pointer types: PTYPE_PTR_BASE + pointee
+const PTYPE_USER_BASE: i64 = 100;  // User types: PTYPE_USER_BASE + source_offset
+
+// ============================================================================
+// Type Resolution
+// ============================================================================
+
+// Resolve parser type handle to TypePool type index
+fn resolve_type_handle(pool: *TypePool, source: *u8, type_handle: i64) i64 {
+    // Basic types
+    if type_handle == PTYPE_I64 { return TYPE_I64; }
+    if type_handle == PTYPE_I32 { return TYPE_I32; }
+    if type_handle == PTYPE_U8 { return TYPE_U8; }
+    if type_handle == PTYPE_BOOL { return TYPE_BOOL; }
+    if type_handle == PTYPE_VOID { return TYPE_VOID; }
+    if type_handle == PTYPE_STRING { return TYPE_STRING; }
+
+    // Pointer types: PTYPE_PTR_BASE + pointee_handle
+    if type_handle >= PTYPE_PTR_BASE and type_handle < PTYPE_USER_BASE {
+        let pointee_handle: i64 = type_handle - PTYPE_PTR_BASE;
+        let pointee_type: i64 = resolve_type_handle(pool, source, pointee_handle);
+        return type_make_pointer(pool, pointee_type);
+    }
+
+    // User types: PTYPE_USER_BASE + source_offset
+    if type_handle >= PTYPE_USER_BASE {
+        let name_start: i64 = type_handle - PTYPE_USER_BASE;
+        // Calculate name length by finding end of identifier
+        var name_len: i64 = 0;
+        var pos: i64 = name_start;
+        while true {
+            let c: u8 = (source + pos).*;
+            // Check if still identifier char: a-z, A-Z, 0-9, _
+            if (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or
+               (c >= 48 and c <= 57) or c == 95 {
+                name_len = name_len + 1;
+                pos = pos + 1;
+            } else {
+                break;
+            }
+        }
+        // Look up the struct type by name in the TypePool
+        return type_find_by_name(pool, name_start, name_len);
+    }
+
+    return TYPE_INVALID;
+}
+
+// ============================================================================
 // Lowerer Context
 // ============================================================================
 
@@ -235,10 +293,11 @@ fn lower_fn_decl(l: *Lowerer, node: *Node) {
         let param_node_idx: i64 = child_ptr.*;
         let param_node: *Node = l.nodes + param_node_idx;
 
-        // ParamDecl: field0=name_start, field1=name_len, field2=type_start, field3=type_len
+        // ParamDecl: field0=name_start, field1=name_len, field2=type_start, field3=type_handle
+        let param_type: i64 = resolve_type_handle(l.type_pool, l.source, param_node.field3);
         func_builder_add_param(&fb,
                                param_node.field0, param_node.field1,
-                               TYPE_I64, param_idx);
+                               param_type, param_idx);
         param_idx = param_idx + 1;
     }
 
