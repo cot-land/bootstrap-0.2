@@ -587,6 +587,8 @@ fn lower_expr(l: *Lowerer, node: *Node) i64 {
         return lower_field_access(l, node);
     } else if node.kind == NodeKind.IndexExpr {
         return lower_index(l, node);
+    } else if node.kind == NodeKind.BuiltinCall {
+        return lower_builtin_call(l, node);
     }
 
     return NULL_NODE;
@@ -1152,6 +1154,71 @@ fn lower_index_assign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
     // Case 2: Base is any other expression - lower it and emit StoreIndexValue
     let base_val: i64 = lower_expr(l, base_node);
     return func_builder_emit_store_index_value(fb, base_val, index_ir, value_idx, elem_size);
+}
+
+// ============================================================================
+// Builtin Lowering
+// ============================================================================
+
+fn lower_builtin_call(l: *Lowerer, node: *Node) i64 {
+    // BuiltinCall fields:
+    // field0 = name_start (offset in source after @)
+    // field1 = name_len
+    // field2 = type_arg (for @intCast, @sizeOf, @alignOf; -1 if none)
+    // field3 = arg1 (first value argument node index)
+    // field4 = arg2 (second value argument node index; -1 if none)
+
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return NULL_NODE; }
+
+    let name_start: i64 = node.field0;
+    let name_len: i64 = node.field1;
+    let arg1_idx: i64 = node.field3;
+    let arg2_idx: i64 = node.field4;
+
+    // Check builtin name by first character (using pointer arithmetic)
+    // @string starts with 's', @intCast/@sizeOf with 'i'/'s', @alignOf with 'a'
+    let first_char: u8 = (l.source + name_start).*;
+
+    // @string(ptr, len)
+    if first_char == 115 and name_len == 6 {  // 's' and length 6
+        // Verify it's "string" by checking second char
+        let second_char: u8 = (l.source + name_start + 1).*;
+        if second_char == 116 {  // 't'
+            // Lower both arguments
+            let ptr_node: *Node = l.nodes + arg1_idx;
+            let len_node: *Node = l.nodes + arg2_idx;
+            let ptr_ir: i64 = lower_expr(l, ptr_node);
+            let len_ir: i64 = lower_expr(l, len_node);
+            return func_builder_emit_make_string(fb, ptr_ir, len_ir);
+        }
+    }
+
+    // @intCast(type, val) - for now, just pass through the value
+    if first_char == 105 and name_len == 7 {  // 'i' and length 7
+        // Lower the value argument (arg1 is the value for @intCast)
+        if arg1_idx >= 0 {
+            let val_node: *Node = l.nodes + arg1_idx;
+            return lower_expr(l, val_node);
+        }
+    }
+
+    // @sizeOf(type) - return type size (simplified: assume 8 for now)
+    if first_char == 115 and name_len == 6 {  // 's' and length 6
+        let second_char: u8 = (l.source + name_start + 1).*;
+        if second_char == 105 {  // 'i' for "sizeOf"
+            // For now, return 8 (size of i64)
+            return func_builder_emit_const_int(fb, 8);
+        }
+    }
+
+    // @alignOf(type) - return type alignment (simplified: assume 8 for now)
+    if first_char == 97 and name_len == 7 {  // 'a' and length 7
+        // For now, return 8 (alignment of i64)
+        return func_builder_emit_const_int(fb, 8);
+    }
+
+    return NULL_NODE;
 }
 
 // ============================================================================

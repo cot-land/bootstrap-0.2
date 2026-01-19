@@ -656,6 +656,19 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 val.reg = next_reg;
                 next_reg = next_reg + 1;
                 g_ir_to_ssa_id[ir_idx] = val.id;
+            } else if ir_node.kind == IRNodeKind.MakeString {
+                // @string(ptr, len): left=ptr_expr, right=len_expr (relative IR indices)
+                let ptr_abs: i64 = ir_func.nodes_start + ir_node.left;
+                let len_abs: i64 = ir_func.nodes_start + ir_node.right;
+                let ptr_id: i64 = g_ir_to_ssa_id[ptr_abs];
+                let len_id: i64 = g_ir_to_ssa_id[len_abs];
+                let ptr_val: *Value = func_get_value(&ssa_func, ptr_id);
+                let len_val: *Value = func_get_value(&ssa_func, len_id);
+                let make_val: *Value = func_new_value(&ssa_func, Op.StringMake, TYPE_STRING);
+                value_add_arg2(make_val, ptr_val, len_val);
+                make_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                g_ir_to_ssa_id[ir_idx] = make_val.id;
             } else if ir_node.kind == IRNodeKind.Binary {
                 // left and right are relative IR indices
                 let left_abs: i64 = ir_func.nodes_start + ir_node.left;

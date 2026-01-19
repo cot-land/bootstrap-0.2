@@ -259,6 +259,8 @@ fn genssa_value(gs: *GenState, v: *Value) {
         genssa_const_bool(gs, v);
     } else if v.op == Op.ConstString {
         genssa_const_string(gs, v);
+    } else if v.op == Op.StringMake {
+        genssa_string_make(gs, v);
     } else if v.op == Op.Add64 {
         genssa_add(gs, v);
     } else if v.op == Op.Sub64 {
@@ -343,6 +345,24 @@ fn genssa_const_string(gs: *GenState, v: *Value) {
     let rd: i64 = v.reg;
     if rd < 0 { return; }
     emit_inst(gs, encode_mov_imm(rd, 0));
+}
+
+fn genssa_string_make(gs: *GenState, v: *Value) {
+    // StringMake: args[0]=ptr, args[1]=len
+    // Result is a string (ptr, len pair)
+    // For now, just move ptr to dest register
+    let rd: i64 = v.reg;
+    if rd < 0 { return; }
+
+    let f: *Func = gs.func;
+    let ptr_val: *Value = func_get_value(f, v.args[0]);
+
+    // Move ptr to destination register
+    if ptr_val.reg >= 0 and ptr_val.reg != rd {
+        emit_inst(gs, encode_mov_reg(rd, ptr_val.reg));
+    }
+    // Note: len is in args[1] but for now we just pass ptr
+    // Full string support would need to handle the len as well
 }
 
 fn genssa_add(gs: *GenState, v: *Value) {

@@ -111,6 +111,9 @@ enum IRNodeKind {
     ConstNull,
     ConstString,  // String literal: str_start, str_len in source
 
+    // Builtins
+    MakeString,   // @string(ptr, len): left = ptr_expr, right = len_expr
+
     // Variable access
     LoadLocal,
     StoreLocal,
@@ -650,5 +653,17 @@ fn func_builder_emit_store_index_value(fb: *FuncBuilder, base_expr: i64, index_e
     node.right = index_expr;
     node.value = value_expr;
     node.op = elem_size;
+    return func_builder_emit(fb, node);
+}
+
+// ============================================================================
+// Builtin Emit Functions
+// ============================================================================
+
+// Emit @string(ptr, len) builtin - construct string from pointer and length
+fn func_builder_emit_make_string(fb: *FuncBuilder, ptr_expr: i64, len_expr: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.MakeString, TYPE_STRING);
+    node.left = ptr_expr;    // Pointer expression
+    node.right = len_expr;   // Length expression
     return func_builder_emit(fb, node);
 }
