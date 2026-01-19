@@ -89,7 +89,10 @@ The `e2e_codegen_test.cot` demonstrates the full backend pipeline:
   - Reads and parses imported files recursively
   - Combines all ASTs into single node pool for lowering
   - Tracks imported paths to avoid duplicates
-  - Note: Cross-file function calls need additional work
+  - Cross-file function calls now work correctly
+- Fixed cross-file function call resolution:
+  - AST position adjustment for imported files (relative to absolute)
+  - Use combined g_source buffer for function name lookups
 - Fixed executable permissions: added chmod(0o755) after linking in main.zig
 
 ### Bug Fixes (2026-01-18)
