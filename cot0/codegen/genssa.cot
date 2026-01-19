@@ -516,6 +516,21 @@ fn genssa_load(gs: *GenState, v: *Value) {
         let local_idx: i64 = addr.aux_int;
         let local: *Local = func_get_local(f, local_idx);
         emit_inst(gs, encode_ldr(rd, SP, local.offset));
+    } else if addr.op == Op.OffPtr {
+        // OffPtr: base + offset. Check if base is LocalAddr for direct SP-relative load
+        let field_offset: i64 = addr.aux_int;
+        if addr.args_count > 0 {
+            let base_val: *Value = func_get_value(f, addr.args[0]);
+            if base_val.op == Op.LocalAddr {
+                let local_idx: i64 = base_val.aux_int;
+                let local: *Local = func_get_local(f, local_idx);
+                let total_offset: i64 = local.offset + field_offset;
+                emit_inst(gs, encode_ldr(rd, SP, total_offset));
+            } else if base_val.reg >= 0 {
+                // Base is in a register
+                emit_inst(gs, encode_ldr(rd, base_val.reg, field_offset));
+            }
+        }
     } else {
         // Load from address in register
         emit_inst(gs, encode_ldr(rd, addr.reg, 0));
@@ -532,6 +547,21 @@ fn genssa_store(gs: *GenState, v: *Value) {
         let local_idx: i64 = addr.aux_int;
         let local: *Local = func_get_local(f, local_idx);
         emit_inst(gs, encode_str(val.reg, SP, local.offset));
+    } else if addr.op == Op.OffPtr {
+        // OffPtr: base + offset. Check if base is LocalAddr for direct SP-relative store
+        let field_offset: i64 = addr.aux_int;
+        if addr.args_count > 0 {
+            let base_val: *Value = func_get_value(f, addr.args[0]);
+            if base_val.op == Op.LocalAddr {
+                let local_idx: i64 = base_val.aux_int;
+                let local: *Local = func_get_local(f, local_idx);
+                let total_offset: i64 = local.offset + field_offset;
+                emit_inst(gs, encode_str(val.reg, SP, total_offset));
+            } else if base_val.reg >= 0 {
+                // Base is in a register
+                emit_inst(gs, encode_str(val.reg, base_val.reg, field_offset));
+            }
+        }
     } else {
         // Store to address in register
         emit_inst(gs, encode_str(val.reg, addr.reg, 0));

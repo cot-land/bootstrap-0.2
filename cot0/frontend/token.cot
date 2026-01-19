@@ -111,7 +111,7 @@ enum TokenType {
 struct Token {
     kind: TokenType,
     start: i64,     // offset into source
-    end: i64,       // end offset (start + length)
+    end: i64,       // token length (NOT end offset - misleading name)
 }
 
 // Create a token

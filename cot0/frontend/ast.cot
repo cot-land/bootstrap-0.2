@@ -50,6 +50,10 @@ enum NodeKind {
     FieldAccess,    // expr.field
     IndexExpr,      // expr[index]
 
+    // Composite literals
+    StructLit,      // TypeName{ .field = value, ... }
+    FieldInit,      // .field = value (inside struct literal)
+
     // Special
     BadNode,        // Error placeholder
 }
@@ -344,11 +348,12 @@ fn node_extern_fn_decl(pool: *NodePool, name_start: i64, name_len: i64,
 
 // Create a variable declaration node (let or var)
 // field0: is_let (1 = let, 0 = var)
-// field1: name index in children array (stores name_start, name_len via extra node)
-// field2: type index in children array (stores type_start, type_len, -1 if inferred)
+// field1: name_start (offset in source)
+// field2: name_len
 // field3: init_expr node index (-1 if no initializer)
+// field4: type_handle (parser type encoding, e.g. PTYPE_USER_BASE + offset for structs)
 fn node_var_decl(pool: *NodePool, is_let: i64, name_start: i64, name_len: i64,
-                 type_start: i64, type_len: i64, init_expr: i64,
+                 type_start: i64, type_handle: i64, init_expr: i64,
                  start: i64, end: i64) i64 {
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
@@ -358,15 +363,10 @@ fn node_var_decl(pool: *NodePool, is_let: i64, name_start: i64, name_len: i64,
     n.start = start;
     n.end = end;
     n.field0 = is_let;          // 1 = let, 0 = var
-    // Pack name and type info: use children array for names
-    // For simplicity, store name_start in field1, name_len in field2
-    // Store init_expr in field3
     n.field1 = name_start;      // Name offset in source
     n.field2 = name_len;        // Name length
     n.field3 = init_expr;       // Init expression (-1 if none)
-
-    // Note: type info could be stored in extra slot if needed
-    // For cot0, we'll handle type separately in parser
+    n.field4 = type_handle;     // Type handle from parser
 
     return idx;
 }
@@ -678,6 +678,50 @@ fn node_index(pool: *NodePool, base: i64, index: i64,
     n.field0 = base;    // Base expression (array/slice/pointer)
     n.field1 = index;   // Index expression
     n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a struct literal node: TypeName{ .field = value, ... }
+// field0 = type_name_start (source position of type name)
+// field1 = type_name_len
+// field2 = fields_start (index in children array)
+// field3 = fields_count
+fn node_struct_lit(pool: *NodePool, type_name_start: i64, type_name_len: i64,
+                   fields_start: i64, fields_count: i64,
+                   start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.StructLit;
+    n.start = start;
+    n.end = end;
+    n.field0 = type_name_start;
+    n.field1 = type_name_len;
+    n.field2 = fields_start;
+    n.field3 = fields_count;
+
+    return idx;
+}
+
+// Create a field initializer node: .field = value
+// field0 = field_name_start (source position)
+// field1 = field_name_len
+// field2 = value (node index)
+fn node_field_init(pool: *NodePool, field_name_start: i64, field_name_len: i64,
+                   value: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.FieldInit;
+    n.start = start;
+    n.end = end;
+    n.field0 = field_name_start;
+    n.field1 = field_name_len;
+    n.field2 = value;
     n.field3 = 0;
 
     return idx;

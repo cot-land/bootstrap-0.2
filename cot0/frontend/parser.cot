@@ -457,6 +457,61 @@ fn parse_unary(p: *Parser) i64 {
 
                 result = node_index(p.pool, result, index, start, end);
             }
+            // Check for struct literal: TypeName{ .field = value, ... }
+            else if parser_check(p, TokenType.LBrace) {
+                // result should be an Ident node (the type name)
+                let result_node: *Node = node_get(p.pool, result);
+                if result_node.kind == NodeKind.Ident {
+                    let type_name_start: i64 = result_node.field0;
+                    let type_name_len: i64 = result_node.field1;
+                    let lit_start: i64 = result_node.start;
+
+                    parser_advance(p);  // Consume '{'
+
+                    // Record start of field initializers in children array
+                    let fields_start: i64 = p.pool.children_count;
+                    var fields_count: i64 = 0;
+
+                    // Parse field initializers: .field = value, ...
+                    while not parser_check(p, TokenType.RBrace) {
+                        let field_start: i64 = p.current.start;
+
+                        // Expect '.'
+                        parser_want(p, TokenType.Dot);
+
+                        // Field name
+                        let fname_start: i64 = p.current.start;
+                        let fname_len: i64 = p.current.end;  // Token.end is the length
+                        parser_want(p, TokenType.Ident);
+
+                        // Expect '='
+                        parser_want(p, TokenType.Eq);
+
+                        // Field value expression
+                        let fvalue: i64 = parse_expr(p);
+
+                        let field_end: i64 = p.current.start;
+                        let finit: i64 = node_field_init(p.pool, fname_start, fname_len,
+                                                         fvalue, field_start, field_end);
+                        node_add_child(p.pool, finit);
+                        fields_count = fields_count + 1;
+
+                        // Optional trailing comma
+                        if not parser_check(p, TokenType.RBrace) {
+                            parser_want(p, TokenType.Comma);
+                        }
+                    }
+
+                    let lit_end: i64 = p.current.start + p.current.end;
+                    parser_want(p, TokenType.RBrace);
+
+                    result = node_struct_lit(p.pool, type_name_start, type_name_len,
+                                            fields_start, fields_count, lit_start, lit_end);
+                } else {
+                    // Not an identifier, can't be struct literal
+                    done = true;
+                }
+            }
             else {
                 done = true;
             }
@@ -809,7 +864,7 @@ fn parse_struct_field(p: *Parser) i64 {
 
     // Field name
     let name_start: i64 = p.current.start;
-    let name_len: i64 = p.current.end;
+    let name_len: i64 = p.current.end;  // Token.end is the length
     parser_want(p, TokenType.Ident);
 
     // Colon
@@ -861,7 +916,7 @@ fn parse_struct_decl(p: *Parser) i64 {
 // Stores as an Ident node (variant_start, variant_len)
 fn parse_enum_variant(p: *Parser) i64 {
     let start: i64 = p.current.start;
-    let name_len: i64 = p.current.end;
+    let name_len: i64 = p.current.end;  // Token.end is the length
     parser_want(p, TokenType.Ident);
     return node_ident(p.pool, start, name_len, start, start + name_len);
 }

@@ -283,6 +283,8 @@ struct IRLocal {
     param_idx: i64,       // Parameter index (if is_param)
     size: i64,            // Size in bytes
     offset: i64,          // Stack frame offset
+    struct_type_start: i64,  // Struct type name offset (-1 if not struct)
+    struct_type_len: i64,    // Struct type name length
 }
 
 fn ir_local_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) IRLocal {
@@ -295,6 +297,8 @@ fn ir_local_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool)
         .param_idx = 0,
         .size = 8,
         .offset = 0,
+        .struct_type_start = -1,
+        .struct_type_len = 0,
     };
 }
 
@@ -308,6 +312,8 @@ fn ir_local_new_param(name_start: i64, name_len: i64, type_idx: i64, param_idx: 
         .param_idx = param_idx,
         .size = 8,
         .offset = 0,
+        .struct_type_start = -1,
+        .struct_type_len = 0,
     };
 }
 
