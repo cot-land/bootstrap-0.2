@@ -56,17 +56,15 @@ These are the specific issues that must be fixed before cot0 can compile itself.
 
 Now that all blockers are resolved, the path forward is:
 
-### 1. @builtin Lowering and Codegen
-**Files:** `frontend/lower.zig`, `codegen/arm64.zig`
-**Task:** Lower @sizeOf, @alignOf to ConstInt IR nodes in the lowerer. These should already work since they're resolved at check time.
-
-### 2. Verify cot0 Main Pipeline
+### 1. Verify cot0 Main Pipeline
 **Command:** `./zig-out/bin/cot cot0/main.cot -o /tmp/cot0-stage1`
 **Task:** Attempt to compile cot0's main.cot. Identify and fix any missing features or bugs.
 
-### 3. Complete Self-Hosting
+### 2. Complete Self-Hosting
 **Command:** `/tmp/cot0-stage1 cot0/main.cot -o /tmp/cot0-stage2`
 **Task:** Use stage1 to compile stage2. Verify they produce identical output.
+
+**Note:** @builtin lowering and codegen is already complete (@sizeOf, @alignOf, @string, @intCast all work).
 
 ---
 
@@ -243,7 +241,7 @@ All core infrastructure working. BUG-027 through BUG-030 fixed on 2026-01-18.
 - [x] Add command line argument parsing (argc/argv, file reading)
 - [x] Parser fixes for self-hosting (parse_arg_expr, optional semicolons, optional void return)
 - [x] @builtin expression parsing (@string, @intCast, @sizeOf, @alignOf)
-- [ ] @builtin lowering and code generation
+- [x] @builtin lowering and code generation (all working)
 - [ ] Extend lowerer for remaining constructs (pointers, structs, etc.)
 
 ### Current Pipeline Output
