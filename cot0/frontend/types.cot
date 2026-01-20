@@ -160,7 +160,37 @@ const PTYPE_BOOL: i64 = 3;
 const PTYPE_VOID: i64 = 4;
 const PTYPE_STRING: i64 = 5;
 const PTYPE_PTR_BASE: i64 = 10;    // Pointer types start here
-const PTYPE_USER_BASE: i64 = 100;  // User types start here
+const PTYPE_USER_BASE: i64 = 100;  // User types start here (up to 9999)
+const PTYPE_ARRAY_BASE: i64 = 10000;  // Array types: PTYPE_ARRAY_BASE + index into array_info table
+
+// Array type info storage - simple inline encoding
+// Since we can't easily share global pointers between files,
+// use a simpler encoding: PTYPE_ARRAY_BASE + (size * 100 + elem_type)
+// This limits array sizes to < 100000 and element types to < 100
+
+// Register an array type, returns PTYPE handle
+fn ptype_register_array(elem_ptype: i64, size: i64) i64 {
+    // Encode: size * 100 + elem_type (elem_type < 100)
+    return PTYPE_ARRAY_BASE + size * 100 + elem_ptype;
+}
+
+// Get array element type from PTYPE handle
+fn ptype_array_elem(ptype: i64) i64 {
+    if ptype < PTYPE_ARRAY_BASE {
+        return PTYPE_I64;
+    }
+    let encoded: i64 = ptype - PTYPE_ARRAY_BASE;
+    return encoded % 100;  // elem_type is the remainder
+}
+
+// Get array size from PTYPE handle
+fn ptype_array_size(ptype: i64) i64 {
+    if ptype < PTYPE_ARRAY_BASE {
+        return 0;
+    }
+    let encoded: i64 = ptype - PTYPE_ARRAY_BASE;
+    return encoded / 100;  // size is the quotient
+}
 
 // ============================================================================
 // Type Pool Initialization

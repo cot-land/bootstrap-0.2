@@ -4,6 +4,12 @@
 
 This document defines the Cot language syntax as implemented in bootstrap-0.2.
 
+---
+
+> **Note for cot0 development:** cot0 IS Cot. All cot0 code must follow this syntax exactly. cot0 uses a simplified subset of features, but what it uses must match this document precisely. Do not invent "cot0-specific" syntax or conventions.
+
+---
+
 ## Semicolons Are Optional
 
 **Cot uses optional semicolons.** Statements can be terminated with a newline or a semicolon. The examples in this document show both styles, but semicolons are never required.

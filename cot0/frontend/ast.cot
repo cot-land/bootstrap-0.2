@@ -716,6 +716,12 @@ fn node_struct_lit(pool: *NodePool, type_name_start: i64, type_name_len: i64,
 fn node_field_init(pool: *NodePool, field_name_start: i64, field_name_len: i64,
                    value: i64, start: i64, end: i64) i64 {
     let idx: i64 = pool.count;
+
+    // Bounds check - prevent overflow
+    if idx >= MAX_NODES {
+        return -1;  // Error: exceeded max nodes
+    }
+
     pool.count = pool.count + 1;
 
     let n: *Node = pool.nodes + idx;

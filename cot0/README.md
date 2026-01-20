@@ -2,6 +2,21 @@
 
 **Stage 0 of the Cot bootstrapping chain.**
 
+---
+
+## CRITICAL: COT0 IS COT
+
+**cot0 IS Cot code.** It is NOT a different language or a "bootstrap hack."
+
+- All cot0 code MUST be valid Cot that compiles with the bootstrap compiler
+- Use built-in functions (`print`, `println`) - do NOT redefine them
+- Follow SYNTAX.md exactly - no "cot0-specific" conventions
+- cot0 is a **simplified subset** of Cot, not a different language
+
+**Rule:** If it wouldn't compile as normal Cot code, it doesn't belong in cot0.
+
+---
+
 ## Goal
 
 Write a minimal Cot compiler in Cot that can compile trivial programs.

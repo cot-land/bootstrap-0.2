@@ -136,6 +136,32 @@ fn parse_type(p: *Parser) i64 {
         return PTYPE_PTR_BASE + pointee;
     }
 
+    // Array type: [size]T
+    if kind == TokenType.LBracket {
+        parser_advance(p);  // consume '['
+        // Parse array size (must be integer literal)
+        var array_size: i64 = 0;
+        if parser_check(p, TokenType.Int) {
+            // Extract value using same pattern as parse_int_lit
+            let arr_start: i64 = p.current.start;
+            let arr_end: i64 = p.current.end;
+            var arr_i: i64 = arr_start;
+            while arr_i < arr_start + arr_end {
+                let arr_c: u8 = p.source[arr_i];
+                if arr_c >= 48 and arr_c <= 57 {
+                    array_size = array_size * 10 + (arr_c - 48);
+                }
+                arr_i = arr_i + 1;
+            }
+            parser_advance(p);
+        } else {
+            p.had_error = true;
+        }
+        parser_want(p, TokenType.RBracket);  // consume ']'
+        let elem_type: i64 = parse_type(p);
+        return ptype_register_array(elem_type, array_size);
+    }
+
     // User-defined type (struct/enum name) - store source offset
     if kind == TokenType.Ident {
         let offset: i64 = p.current.start;

@@ -1,5 +1,20 @@
 # Cot0 Self-Hosting Roadmap
 
+---
+
+## CRITICAL: COT0 IS COT
+
+**cot0 IS Cot.** Not a different language. Not a "bootstrap hack."
+
+- cot0 uses a **simplified subset** of Cot features
+- Every line of cot0 MUST be valid Cot code
+- Use built-in functions (`print`, `println`) - don't redefine them
+- Follow SYNTAX.md exactly - no cot0-specific syntax
+
+**If it wouldn't compile as normal Cot code, it doesn't belong in cot0.**
+
+---
+
 **Goal:** Build a Cot compiler written in Cot that can compile itself.
 
 **Last Updated:** 2026-01-20

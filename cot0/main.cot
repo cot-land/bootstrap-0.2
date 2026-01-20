@@ -150,11 +150,9 @@ fn ir_op_to_ssa_op(ir_op: i64) Op {
     return Op.Add64;  // Default fallback
 }
 
-fn print_str(s: string) {
-    write(1, s.ptr, len(s));
-}
+// print(s) and println(s) are built-in functions - do not redefine them
 
-fn print_num(n: i64) {
+fn print_int(n: i64) {
     var buf: [20]u8;
     var i: i64 = 19;
     var val: i64 = n;
@@ -166,7 +164,7 @@ fn print_num(n: i64) {
     }
 
     if val < 0 {
-        print_str("-");
+        print("-");
         val = 0 - val;
     }
 
@@ -180,10 +178,6 @@ fn print_num(n: i64) {
     write(1, &buf[i + 1], 19 - i);
 }
 
-fn print_newline() {
-    print_str("\n");
-}
-
 // ============================================================================
 // File I/O
 // ============================================================================
@@ -191,7 +185,7 @@ fn print_newline() {
 fn read_file(path: *u8) i64 {
     let fd: i32 = open(path, O_RDONLY, 0);
     if fd < 0 {
-        print_str("Error: Cannot open file\n");
+        print("Error: Cannot open file\n");
         return -1;
     }
 
@@ -199,7 +193,7 @@ fn read_file(path: *u8) i64 {
     close(fd);
 
     if g_source_len < 0 {
-        print_str("Error: Cannot read file\n");
+        print("Error: Cannot read file\n");
         return -1;
     }
 
@@ -210,7 +204,7 @@ fn read_file(path: *u8) i64 {
 fn write_file(path: *u8, data: *u8, data_len: i64) i64 {
     let fd: i32 = open(path, O_WRONLY | O_CREAT | O_TRUNC, FILE_MODE);
     if fd < 0 {
-        print_str("Error: Cannot open output file\n");
+        print("Error: Cannot open output file\n");
         return -1;
     }
 
@@ -218,7 +212,7 @@ fn write_file(path: *u8, data: *u8, data_len: i64) i64 {
     close(fd);
 
     if written != data_len {
-        print_str("Error: Failed to write output\n");
+        print("Error: Failed to write output\n");
         return -1;
     }
 
@@ -410,9 +404,9 @@ fn parse_import_file(import_path: *u8, import_path_len: i64, pool: *NodePool) i6
     // Read the file - append to existing source
     let fd: i32 = open(&g_import_path_buf[0], O_RDONLY, 0);
     if fd < 0 {
-        print_str("  Warning: Cannot open import: ");
+        print("  Warning: Cannot open import: ");
         write(1, &g_import_path_buf[0], full_path_len);
-        print_newline();
+        print("\n");
         return 0;  // Non-fatal, continue with other imports
     }
 
@@ -421,7 +415,7 @@ fn parse_import_file(import_path: *u8, import_path_len: i64, pool: *NodePool) i6
     close(fd);
 
     if bytes_read < 0 {
-        print_str("  Warning: Cannot read import\n");
+        print("  Warning: Cannot read import\n");
         return 0;
     }
 
@@ -437,7 +431,7 @@ fn parse_import_file(import_path: *u8, import_path_len: i64, pool: *NodePool) i6
     parse_file(&parser);
 
     if parser_had_error(&parser) {
-        print_str("  Warning: Parse error in import\n");
+        print("  Warning: Parse error in import\n");
     }
 
     // Adjust positions in new nodes to be absolute in g_source
@@ -475,11 +469,11 @@ fn process_all_imports(pool: *NodePool) {
                 // Parse the imported file
                 let new_nodes: i64 = parse_import_file(import_path, path_len, pool);
                 if new_nodes > 0 {
-                    print_str("  Imported: ");
+                    print("  Imported: ");
                     write(1, import_path, path_len);
-                    print_str(" (");
-                    print_num(new_nodes);
-                    print_str(" nodes)\n");
+                    print(" (");
+                    print_int(new_nodes);
+                    print(" nodes)\n");
                 }
             }
             i = i + 1;
@@ -492,7 +486,7 @@ fn process_all_imports(pool: *NodePool) {
 // ============================================================================
 
 fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
-    print_str("Phase 1: Scanning...\n");
+    print("Phase 1: Scanning...\n");
 
     // Phase 1: Scan and count tokens
     var scanner: Scanner = scanner_new(source);
@@ -502,34 +496,34 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
         tok_count = tok_count + 1;
         tok = scanner_next(&scanner);
     }
-    print_str("  Tokens: ");
-    print_num(tok_count);
-    print_newline();
+    print("  Tokens: ");
+    print_int(tok_count);
+    print("\n");
 
     // Phase 2: Parse
-    print_str("Phase 2: Parsing...\n");
+    print("Phase 2: Parsing...\n");
     let pool: *NodePool = init_node_pool();
     var parser: Parser = parser_new(source, pool);
     let file_node: i64 = parse_file(&parser);
 
     if parser_had_error(&parser) {
-        print_str("  FAIL: Parser error\n");
+        print("  FAIL: Parser error\n");
         return 1;
     }
 
-    print_str("  Nodes: ");
-    print_num(pool.count);
-    print_newline();
+    print("  Nodes: ");
+    print_int(pool.count);
+    print("\n");
 
     // Phase 2.5: Process imports
-    print_str("Phase 2.5: Processing imports...\n");
+    print("Phase 2.5: Processing imports...\n");
     process_all_imports(pool);
-    print_str("  Total nodes after imports: ");
-    print_num(pool.count);
-    print_newline();
+    print("  Total nodes after imports: ");
+    print_int(pool.count);
+    print("\n");
 
     // Phase 3: Lower to IR
-    print_str("Phase 3: Lowering to IR...\n");
+    print("Phase 3: Lowering to IR...\n");
 
     // Initialize type pool for field access
     // Use g_source (combined source buffer) instead of original source
@@ -551,14 +545,14 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                  &g_constants[0], MAIN_MAX_CONSTANTS);
 
     let ir_count: i64 = lowerer_lower_all(&lowerer);
-    print_str("  IR nodes: ");
-    print_num(ir_count);
-    print_str(", Functions: ");
-    print_num(lowerer.ir_funcs_count);
-    print_newline();
+    print("  IR nodes: ");
+    print_int(ir_count);
+    print(", Functions: ");
+    print_int(lowerer.ir_funcs_count);
+    print("\n");
 
     // Phase 4 & 5: Build SSA and generate code for each function
-    print_str("Phase 4/5: Building SSA and generating code...\n");
+    print("Phase 4/5: Building SSA and generating code...\n");
 
     // Initialize code generator state (shared across functions)
     var gs: GenState = undefined;
@@ -969,22 +963,22 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
         gs.func = &ssa_func;
         let genssa_result: i64 = genssa(&gs);
         if genssa_result != 0 {
-            print_str("  FAIL: genssa error\n");
+            print("  FAIL: genssa error\n");
             return 2;
         }
 
         func_idx = func_idx + 1;
     }
 
-    print_str("  Total blocks: ");
-    print_num(total_blocks);
-    print_str(", Total values: ");
-    print_num(total_values);
-    print_str(", Code bytes: ");
-    print_num(gs.code_count);
-    print_str(", Call sites: ");
-    print_num(gs.call_sites_count);
-    print_newline();
+    print("  Total blocks: ");
+    print_int(total_blocks);
+    print(", Total values: ");
+    print_int(total_values);
+    print(", Code bytes: ");
+    print_int(gs.code_count);
+    print(", Call sites: ");
+    print_int(gs.call_sites_count);
+    print("\n");
 
     // Resolve call sites: patch BL instructions with correct offsets
     var call_idx: i64 = 0;
@@ -1022,13 +1016,13 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
             // BL offset = (target - call_site) / 4, encoded in bits 25:0
             let call_addr: i64 = cs.code_offset;
             let offset: i64 = (target_offset - call_addr) / 4;
-            print_str("  Patching call at ");
-            print_num(call_addr);
-            print_str(" -> target ");
-            print_num(target_offset);
-            print_str(", offset ");
-            print_num(offset);
-            print_newline();
+            print("  Patching call at ");
+            print_int(call_addr);
+            print(" -> target ");
+            print_int(target_offset);
+            print(", offset ");
+            print_int(offset);
+            print("\n");
             // Re-encode BL with correct offset
             let bl_inst: i64 = encode_bl(offset);
             // Patch the code buffer (4 bytes, little endian)
@@ -1041,14 +1035,14 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
             let code_ptr3: *u8 = &g_code[call_addr + 3];
             code_ptr3.* = @intCast(u8, (bl_inst >> 24) & 255);
         } else {
-            print_str("  WARNING: Could not find target function!\n");
+            print("  WARNING: Could not find target function!\n");
         }
 
         call_idx = call_idx + 1;
     }
 
     // Phase 6: Create Mach-O object
-    print_str("Phase 6: Creating Mach-O object...\n");
+    print("Phase 6: Creating Mach-O object...\n");
 
     var writer: MachOWriter = undefined;
     macho_writer_init(&writer,
@@ -1085,23 +1079,23 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
     }
 
     let macho_bytes: i64 = write_macho(&writer);
-    print_str("  Mach-O bytes: ");
-    print_num(macho_bytes);
-    print_newline();
+    print("  Mach-O bytes: ");
+    print_int(macho_bytes);
+    print("\n");
 
     // Phase 7: Write to output file
-    print_str("Phase 7: Writing output...\n");
+    print("Phase 7: Writing output...\n");
 
     if out_path_len > 0 {
         let written: i64 = write_file(out_path, &g_output[0], macho_bytes);
         if written < 0 {
             return 3;
         }
-        print_str("  Wrote ");
-        print_num(written);
-        print_str(" bytes\n");
+        print("  Wrote ");
+        print_int(written);
+        print(" bytes\n");
     } else {
-        print_str("  (No output path specified, skipping write)\n");
+        print("  (No output path specified, skipping write)\n");
     }
 
     return 0;
@@ -1152,10 +1146,10 @@ fn strcpy(dest: *u8, src: *u8, max_len: i64) i64 {
 }
 
 fn print_usage() {
-    print_str("Usage: cot0 <source.cot> -o <output>\n");
-    print_str("\n");
-    print_str("  <source.cot>  Input Cot source file\n");
-    print_str("  -o <output>   Output object file\n");
+    print("Usage: cot0 <source.cot> -o <output>\n");
+    print("\n");
+    print("  <source.cot>  Input Cot source file\n");
+    print("  -o <output>   Output object file\n");
 }
 
 // ============================================================================
@@ -1163,13 +1157,13 @@ fn print_usage() {
 // ============================================================================
 
 fn main(argc: i64, argv: **u8) i64 {
-    print_str("Cot0 Self-Hosting Compiler v0.2\n");
-    print_str("================================\n\n");
+    print("Cot0 Self-Hosting Compiler v0.2\n");
+    print("================================\n\n");
 
     // Parse command line arguments
     // Expected: cot0 <source.cot> -o <output>
     if argc < 4 {
-        print_str("Error: Not enough arguments\n\n");
+        print("Error: Not enough arguments\n\n");
         print_usage();
         return 1;
     }
@@ -1189,7 +1183,7 @@ fn main(argc: i64, argv: **u8) i64 {
     dash_o[2] = 0;
 
     if !streq(flag, &dash_o[0]) {
-        print_str("Error: Expected -o flag\n\n");
+        print("Error: Expected -o flag\n\n");
         print_usage();
         return 1;
     }
@@ -1203,22 +1197,22 @@ fn main(argc: i64, argv: **u8) i64 {
     g_output_path_len = strcpy(&g_output_path[0], output_path, MAIN_MAX_OUTPUT_PATH);
 
     // Read source file
-    print_str("Reading: ");
+    print("Reading: ");
     var source_ptr: *u8 = source_path;
     while source_ptr.* != 0 {
         write(1, source_ptr, 1);
         source_ptr = source_ptr + 1;
     }
-    print_newline();
+    print("\n");
 
     let bytes_read: i64 = read_file(source_path);
     if bytes_read < 0 {
         return 1;
     }
 
-    print_str("  Read ");
-    print_num(bytes_read);
-    print_str(" bytes\n\n");
+    print("  Read ");
+    print_int(bytes_read);
+    print(" bytes\n\n");
 
     // Extract base directory from source path for resolving imports
     let source_path_len: i64 = strlen(source_path);
@@ -1230,11 +1224,11 @@ fn main(argc: i64, argv: **u8) i64 {
     let result: i64 = compile(source, &g_output_path[0], g_output_path_len);
 
     if result == 0 {
-        print_str("\nCompilation successful!\n");
+        print("\nCompilation successful!\n");
     } else {
-        print_str("\nCompilation failed with code ");
-        print_num(result);
-        print_newline();
+        print("\nCompilation failed with code ");
+        print_int(result);
+        print("\n");
     }
 
     return result;

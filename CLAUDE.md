@@ -1,5 +1,30 @@
 # Bootstrap 0.2 - Development Guidelines
 
+---
+
+## CRITICAL: COT0 IS COT - READ THIS FIRST
+
+**cot0 IS Cot.** It is NOT a different language. It is NOT a "hacky bootstrap thing."
+
+cot0 is valid Cot code that happens to use a simplified subset of language features. Every line of cot0 code MUST be valid Cot that the bootstrap compiler can compile.
+
+### What this means:
+
+1. **Use built-in functions** - `print()`, `println()` are built-ins. Do NOT redefine them with syscalls.
+2. **Follow SYNTAX.md exactly** - If SYNTAX.md says the syntax is `X`, cot0 uses `X`. No variations.
+3. **No "cot0-specific" conventions** - There is no such thing. cot0 code IS Cot code.
+4. **Simplified, not different** - cot0 may not use ALL Cot features (e.g., may skip generics initially), but what it DOES use must match Cot exactly.
+
+### Before writing ANY cot0 code:
+
+1. Check SYNTAX.md - Is this valid Cot syntax?
+2. Check if a built-in exists - Don't hand-roll what the language provides
+3. Ask: "Would this compile with the bootstrap compiler as normal Cot?" If no, it's wrong.
+
+**The goal is self-hosting.** cot0 must compile itself. If cot0 diverges from Cot, self-hosting becomes impossible.
+
+---
+
 ## BUGS - ADD TO BUGS.md IMMEDIATELY
 
 **When you find a bug, IMMEDIATELY add it to [BUGS.md](BUGS.md).** Do NOT skip this step. Do NOT comment out failing tests. Fix bugs when found.
