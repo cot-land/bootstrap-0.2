@@ -1,0 +1,91 @@
+// Cot0 Dynamic List Implementation
+// Follows Zig's ArrayListUnmanaged pattern:
+// - List struct holds data, count, capacity
+// - Functions take list pointer
+// - Growth via realloc when needed
+
+// Memory allocation functions
+// Each type that needs malloc should declare its own typed version
+// e.g., extern fn malloc_irnode(size: i64) *IRNode;
+// For now, use *i64 as the "generic" pointer type for i64 lists
+extern fn malloc(size: i64) *i64;
+extern fn realloc(ptr: *i64, size: i64) *i64;
+extern fn free(ptr: *i64);
+
+// ============================================================================
+// i64 List (for node indices, children, etc.)
+// ============================================================================
+
+struct I64List {
+    items: *i64,    // Pointer to i64 array
+    count: i64,
+    capacity: i64,
+}
+
+fn i64list_init(list: *I64List) {
+    list.items = null;
+    list.count = 0;
+    list.capacity = 0;
+}
+
+fn i64list_deinit(list: *I64List) {
+    if list.items != null {
+        free(list.items);
+    }
+    list.items = null;
+    list.count = 0;
+    list.capacity = 0;
+}
+
+fn i64list_ensure_capacity(list: *I64List, needed: i64) {
+    if list.capacity >= needed {
+        return;
+    }
+
+    // Calculate new capacity (at least double, or needed)
+    var new_cap: i64 = 8;
+    if list.capacity > 0 {
+        new_cap = list.capacity * 2;
+    }
+    while new_cap < needed {
+        new_cap = new_cap * 2;
+    }
+
+    // Each i64 is 8 bytes
+    let new_size: i64 = new_cap * 8;
+
+    // Allocate or reallocate
+    if list.items == null {
+        list.items = malloc(new_size);
+    } else {
+        list.items = realloc(list.items, new_size);
+    }
+    list.capacity = new_cap;
+}
+
+fn i64list_append(list: *I64List, value: i64) {
+    i64list_ensure_capacity(list, list.count + 1);
+    let ptr: *i64 = list.items + list.count;
+    ptr.* = value;
+    list.count = list.count + 1;
+}
+
+fn i64list_get(list: *I64List, index: i64) i64 {
+    let ptr: *i64 = list.items + index;
+    return ptr.*;
+}
+
+fn i64list_set(list: *I64List, index: i64, value: i64) {
+    let ptr: *i64 = list.items + index;
+    ptr.* = value;
+}
+
+fn i64list_pop(list: *I64List) i64 {
+    list.count = list.count - 1;
+    let ptr: *i64 = list.items + list.count;
+    return ptr.*;
+}
+
+fn i64list_clear(list: *I64List) {
+    list.count = 0;
+}

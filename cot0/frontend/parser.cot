@@ -12,6 +12,7 @@ import "token.cot"
 import "scanner.cot"
 import "ast.cot"
 import "types.cot"
+import "../lib/list.cot"
 
 // ============================================================================
 // Parser Structure
@@ -1244,16 +1245,14 @@ fn parse_block(p: *Parser) i64 {
     let start: i64 = p.current.start;
     parser_want(p, TokenType.LBrace);
 
-    // Temporary storage for statement indices (parse first, add children later)
-    // 4096 statements should handle large main() functions with 250+ test calls
-    var stmt_indices: [4096]i64 = undefined;
-    var stmts_count: i64 = 0;
+    // Dynamic storage for statement indices (no fixed limit)
+    var stmt_indices: I64List = undefined;
+    i64list_init(&stmt_indices);
 
     // Parse statements until '}'
     while not parser_check(p, TokenType.RBrace) and not parser_at_end(p) {
         let stmt: i64 = parse_stmt(p);
-        stmt_indices[stmts_count] = stmt;
-        stmts_count = stmts_count + 1;
+        i64list_append(&stmt_indices, stmt);
     }
 
     let end: i64 = p.current.start + p.current.end;
@@ -1262,12 +1261,14 @@ fn parse_block(p: *Parser) i64 {
     // NOW add children - this ensures stmts_start is correct even with nested blocks
     let stmts_start: i64 = pool_children_count(p.pool);
     var i: i64 = 0;
-    while i < stmts_count {
-        node_add_child(p.pool, stmt_indices[i]);
+    while i < stmt_indices.count {
+        node_add_child(p.pool, i64list_get(&stmt_indices, i));
         i = i + 1;
     }
 
-    return node_block(p.pool, stmts_start, stmts_count, start, end);
+    let result: i64 = node_block(p.pool, stmts_start, stmt_indices.count, start, end);
+    i64list_deinit(&stmt_indices);
+    return result;
 }
 
 // ============================================================================
