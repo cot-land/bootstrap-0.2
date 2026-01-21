@@ -726,3 +726,54 @@ fn encode_nop() i64 {
     return 3573751839;  // 0xD503201F
 }
 
+// ============================================================================
+// Sign/Zero Extension (Reference: Zig's ARM64 encoder)
+// ============================================================================
+
+// SXTB: Sign-extend byte to 64-bit (SBFM Xd, Xn, #0, #7)
+fn encode_sxtb(rd: i64, rn: i64) i64 {
+    return encode_sbfm(rd, rn, 0, 7);
+}
+
+// SXTH: Sign-extend halfword to 64-bit (SBFM Xd, Xn, #0, #15)
+fn encode_sxth(rd: i64, rn: i64) i64 {
+    return encode_sbfm(rd, rn, 0, 15);
+}
+
+// SXTW: Sign-extend word to 64-bit (SBFM Xd, Xn, #0, #31)
+fn encode_sxtw(rd: i64, rn: i64) i64 {
+    return encode_sbfm(rd, rn, 0, 31);
+}
+
+// UXTB: Zero-extend byte to 64-bit (UBFM Xd, Xn, #0, #7)
+fn encode_uxtb(rd: i64, rn: i64) i64 {
+    return encode_ubfm(rd, rn, 0, 7);
+}
+
+// UXTH: Zero-extend halfword to 64-bit (UBFM Xd, Xn, #0, #15)
+fn encode_uxth(rd: i64, rn: i64) i64 {
+    return encode_ubfm(rd, rn, 0, 15);
+}
+
+// ============================================================================
+// TST (Test bits - AND with flags, discard result)
+// ============================================================================
+
+// TST Xn, Xm: ANDS XZR, Xn, Xm (result to zero register)
+fn encode_tst_reg(rn: i64, rm: i64) i64 {
+    // ANDS with Rd = XZR (31)
+    return encode_logical_reg(31, rn, rm, 0, true);
+}
+
+// ============================================================================
+// Condition Code Utilities
+// ============================================================================
+
+// Invert condition code (for negating branches)
+// Reference: Zig's invertCond()
+fn invert_cond(cond: i64) i64 {
+    // ARM64 condition codes are paired: EQ/NE, LT/GE, LE/GT, etc.
+    // Inverting is done by flipping the LSB
+    return cond ^ 1;
+}
+
