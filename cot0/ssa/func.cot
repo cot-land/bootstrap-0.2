@@ -239,6 +239,24 @@ fn Func_getLocal(f: *Func, idx: i64) *Local {
     return f.locals + idx;
 }
 
+// Get count of blocks
+// Reference: Zig's Func.numBlocks()
+fn Func_numBlocks(f: *Func) i64 {
+    return f.blocks_count;
+}
+
+// Get count of values
+// Reference: Zig's Func.numValues()
+fn Func_numValues(f: *Func) i64 {
+    return f.values_count;
+}
+
+// Get count of locals
+// Reference: Zig's Func.numLocals()
+fn Func_numLocals(f: *Func) i64 {
+    return f.locals_count;
+}
+
 // ============================================================================
 // Value Emission Helpers
 // ============================================================================

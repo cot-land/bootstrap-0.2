@@ -185,6 +185,12 @@ fn Value_arg2(v: *Value) i64 {
     return v.args[2];
 }
 
+// Get number of arguments
+// Reference: Zig's Value.numArgs()
+fn Value_numArgs(v: *Value) i64 {
+    return v.args_count;
+}
+
 // ============================================================================
 // Value Pool (arena allocation)
 // ============================================================================

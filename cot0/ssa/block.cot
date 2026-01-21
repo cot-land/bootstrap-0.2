@@ -184,6 +184,24 @@ fn Block_isPlain(b: *Block) bool {
     return b.kind == BlockKind.Plain;
 }
 
+// Get number of predecessors
+// Reference: Zig's Block.numPreds()
+fn Block_numPreds(b: *Block) i64 {
+    return b.preds_count;
+}
+
+// Get number of successors
+// Reference: Zig's Block.numSuccs()
+fn Block_numSuccs(b: *Block) i64 {
+    return b.succs_count;
+}
+
+// Get number of values in this block
+// Reference: Zig's Block.numValues()
+fn Block_numValues(b: *Block) i64 {
+    return b.values_count;
+}
+
 // ============================================================================
 // Block Pool (arena allocation)
 // ============================================================================
