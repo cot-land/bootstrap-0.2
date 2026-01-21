@@ -103,6 +103,9 @@ enum TokenType {
     PipeEq,     // |=
     CaretEq,    // ^=
 
+    // Arrow (for function types)
+    Arrow,      // ->
+
     // Special
     Eof,        // end of file
     Error,      // invalid token

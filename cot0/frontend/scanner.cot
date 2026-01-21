@@ -255,11 +255,16 @@ fn scanner_next(s: *Scanner) Token {
         return token_new(TokenType.Plus, start, 1);
     }
 
-    // - or -=
+    // - or -= or ->
     if c == 45 {  // -
-        if scanner_peek(s) == 61 {  // -=
+        let next: u8 = scanner_peek(s);
+        if next == 61 {  // -=
             scanner_advance(s);
             return token_new(TokenType.MinusEq, start, 2);
+        }
+        if next == 62 {  // -> (following Zig compiler pattern for function types)
+            scanner_advance(s);
+            return token_new(TokenType.Arrow, start, 2);
         }
         return token_new(TokenType.Minus, start, 1);
     }

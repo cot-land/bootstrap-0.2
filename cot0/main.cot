@@ -1026,7 +1026,10 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
         total_values = total_values + ssa_func.values_count;
 
         // Generate code for this function
+        // Following Zig compiler pattern (src/codegen/arm64.zig:461-462):
+        // Clear branch fixups at start of each function
         gs.func = &ssa_func;
+        gs.branches_count = 0;  // Reset branches for this function
         let genssa_result: i64 = genssa(&gs);
         if genssa_result != 0 {
             print("  FAIL: genssa error\n");

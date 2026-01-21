@@ -191,6 +191,35 @@ fn parse_type(p: *Parser) i64 {
         return PTYPE_USER_BASE + offset;
     }
 
+    // Function type: fn(params) -> ret
+    // Following Zig compiler pattern from src/frontend/parser.zig:parseType
+    if kind == TokenType.Fn {
+        parser_advance(p);  // consume 'fn'
+        parser_want(p, TokenType.LParen);  // consume '('
+
+        // Parse parameter types (comma-separated)
+        while not parser_check(p, TokenType.RParen) and not parser_check(p, TokenType.Eof) {
+            let param_type: i64 = parse_type(p);
+            // We don't store param types for now - just skip them
+            if not parser_check(p, TokenType.Comma) {
+                break;
+            }
+            parser_advance(p);  // consume ','
+        }
+
+        parser_want(p, TokenType.RParen);  // consume ')'
+
+        // Parse return type after '->'
+        if parser_check(p, TokenType.Arrow) {
+            parser_advance(p);  // consume '->'
+            let ret_type: i64 = parse_type(p);
+        }
+
+        // Return I64 as placeholder - function types not fully implemented
+        // This allows type checking to pass for function pointer declarations
+        return PTYPE_I64;
+    }
+
     // Error - unexpected token
     p.had_error = true;
     return PTYPE_I64;  // Default
@@ -301,6 +330,15 @@ fn parse_atom(p: *Parser) i64 {
         let end: i64 = p.current.start + p.current.end;
         parser_advance(p);
         return node_int_lit(p.pool, 0, start, end);  // false = 0
+    }
+
+    // Null literal: null
+    // Following Zig compiler pattern: null is a zero-valued pointer
+    if kind == TokenType.Null {
+        let start: i64 = p.current.start;
+        let end: i64 = p.current.start + p.current.end;
+        parser_advance(p);
+        return node_int_lit(p.pool, 0, start, end);  // null = 0 (null pointer)
     }
 
     // Array literal: [elem1, elem2, ...]
