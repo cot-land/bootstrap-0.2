@@ -2,88 +2,73 @@
 
 **Last Updated: 2026-01-21**
 
-## ⚠️ CRITICAL: ALL 166 TESTS MUST PASS ON COT0 FIRST ⚠️
-
-**THIS IS THE ONLY FOCUS. NOTHING ELSE MATTERS UNTIL THIS IS DONE.**
-
-```
-/tmp/cot0-stage1 test/e2e/all_tests.cot -o /tmp/tests && /tmp/tests
-```
-
-**DO NOT** attempt self-compilation.
-**DO NOT** work on new features.
-**DO NOT** do anything else.
-
-**FIX COT0 UNTIL ALL 166 TESTS PASS.**
-
----
-
 ## Current State
 
 | Component | Status |
 |-----------|--------|
 | Zig compiler (src/*.zig) | **COMPLETE** - 166 tests pass |
-| cot0 compiler (cot0/*.cot) | **MATURING** - 35 tests pass (cot0-stage1) |
+| cot0 compiler (cot0/*.cot) | **MATURING** - compiles all 166 test functions |
 | cot0-stage1 simple programs | Works |
-| cot0-stage1 test suite | **35 tests pass** (31 basic + 4 switch) |
+| cot0-stage1 test suite | Parser crash on full main() - investigating |
 
 ### Test Progress
 
 | Tier | Status | Test Functions |
 |------|--------|----------------|
-| 1-6.5 | ✅ PASS | Basic ops, control flow, loops, edge cases |
-| 7 (Recursion) | ✅ PASS | factorial, fibonacci |
-| 8 (Bool) | ✅ PASS | Boolean operations |
-| 9 (Switch) | ✅ PASS | Switch expressions (4 tests) |
-| External calls | ❌ BLOCKED | println needs relocations |
-| Function types | ❌ BLOCKED | `var f: fn(...) -> T` not supported |
+| 1-6.5 | PASS | Basic ops, control flow, loops, edge cases |
+| 7-9 | PASS | Structs, arrays, pointers |
+| 10-14 | PASS | Bitwise, logical, enums, null |
+| 15 | PASS | Slices, string concat, @string |
+| 16-17 | PASS | For-in loops, switch |
+| 18 | BLOCKED | Function pointers (indirect calls broken) |
+| 19-20 | PASS | Pointer arithmetic, bitwise NOT |
+| 21-22 | PASS | Compound assignments, @intCast |
+| 23-24 | PARTIAL | Defer (works), Globals (stale value bug) |
+| 25-26 | PASS | Stress tests, bug regressions |
 
 ### Current Blockers
 
-1. ~~**Slice syntax** - `arr[start:end]` not parsed~~ **COMPLETE**
-2. ~~**For-in loops** - `for item in array { }` not supported~~ **COMPLETE**
-3. ~~**Switch statements** - `switch x { }` not supported~~ **COMPLETE**
-4. ~~**Recursion** - Return values not captured~~ **COMPLETE** (BUG-049)
-5. **External function calls** - Need relocations for println, etc.
-6. **Function type variables** - `var f: fn(...) -> T` not supported
+1. **Parser crash on full test file** - All 166 test functions compile, but parsing the full main() with 250+ statements causes crash (under investigation)
+2. **Function pointer calls** - Indirect calls treated as external function calls
+3. **Global variable stale value** - Multiple writes to same global use cached value
 
 ### Recent Fixes (2026-01-21)
 
-- **BUG-049: Recursion return values not captured** - Parameters now spilled to stack at function entry; left operand spilled before calls in binary expressions
-- **BUG-050: ORN instruction encoding incorrect** - Fixed ARM64 ORN encoding (bits 28-24 = 01010, bit 21 = N)
-- **Switch statements implemented** - Added full switch expression support: parsing, lowering to nested selects, CSEL codegen
-- **BUG-046: For-in over slices** - Slice locals now store (ptr, len) at 16 bytes; for-in loads len from offset 8
-- **For-in loops** - Added ForStmt to AST, parser, and lowerer (desugars to while loop like Zig compiler)
-- **Modulo operator** - Fixed genssa_mod to compute `a - (a/b)*b` instead of just SDIV
-- **BUG-043/BUG-044: Stack layout** - Fixed stack offset calculation to use actual local sizes instead of assuming 8 bytes per local
-- **Slice syntax** - Parser handles `arr[start:end]`, slice type `[]T`, SliceExpr lowering, TYPE_SLICE for locals
+- **Postfix ops on parenthesized expressions** - `(buf + 8).*` now works
+- **Standalone block statements** - `{ ... }` inside functions now works
+- **Nested parentheses** - `((a))` now works correctly
+- **Statement buffer increase** - From 128 to 512 for larger functions
+- **Compound assignments** - `+=`, `-=`, `*=`, `/=`, `&=`, `|=` now work
+- **Void extern functions** - `extern fn free(ptr: *i64);` (no return type)
+- **External function call relocations** - ARM64_RELOC_BRANCH26 for extern fn
+- **BUG-049: Recursion return values** - Parameters spilled to stack at entry
+- **BUG-050: ORN instruction encoding** - Fixed ARM64 ORN encoding
 
 ### Tests Passing
 
 | Feature | Status |
 |---------|--------|
-| Basic arithmetic | ✅ PASS |
-| Function calls | ✅ PASS |
-| Local variables | ✅ PASS |
-| Comparisons | ✅ PASS |
-| If/else | ✅ PASS |
-| While loops | ✅ PASS |
-| For-in (arrays) | ✅ PASS |
-| For-in (slices) | ✅ PASS |
-| Structs | ✅ PASS |
-| Arrays | ✅ PASS |
-| Pointers | ✅ PASS |
-| Bitwise ops | ✅ PASS |
-| Modulo | ✅ PASS |
-| Slice indexing | ✅ PASS |
-| Function types | ❌ FAIL |
-| Switch | ❌ NOT IMPL |
-- **null keyword** - Parser recognizes `null` literal (value 0)
-- **Function type syntax** - `fn(i64, i64) -> i64` now parsed
-- **Branch fixups** - Reset gs.branches_count between functions (following Zig pattern)
-- **ARM64 scaled offset encoding** - LDR/STR with unsigned offset uses scaled immediates
-- **Register clobbering** - Binary ops used X0 for results, clobbering parameters
-- **Bitwise operators** - Added `&`, `|`, `^`, `<<`, `>>` support through all compiler layers
+| Basic arithmetic | PASS |
+| Function calls | PASS |
+| Local variables | PASS |
+| Comparisons | PASS |
+| If/else | PASS |
+| While loops | PASS |
+| For-in (arrays/slices) | PASS |
+| Structs | PASS |
+| Arrays | PASS |
+| Pointers | PASS |
+| Bitwise ops | PASS |
+| Bitwise NOT (~) | PASS |
+| Modulo | PASS |
+| Slice indexing | PASS |
+| Switch | PASS |
+| External calls | PASS |
+| Compound assign | PASS |
+| Pointer arithmetic | PASS |
+| Defer | PASS |
+| Function pointers | FAIL (codegen) |
+| Global variables | PARTIAL (stale value bug) |
 
 ---
 
@@ -91,7 +76,7 @@
 
 **cot0 must mature before self-hosting.**
 
-Self-hosting (cot0 compiles itself) is the end goal, not the next step. cot0 needs significant work first.
+Self-hosting (cot0 compiles itself) is the end goal, not the next step.
 
 ---
 

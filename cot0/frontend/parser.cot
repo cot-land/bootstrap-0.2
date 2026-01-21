@@ -435,7 +435,7 @@ fn make_binary_node(p: *Parser, op_int: i64, left: i64, right: i64) i64 {
 
 // Parse expression inside parens (inline to avoid recursion issues)
 fn parse_paren_inner(p: *Parser) i64 {
-    var inner: i64 = parse_atom(p);
+    var inner: i64 = parse_unary(p);  // Use parse_unary to handle nested parens, unary ops
     var cur_prec: i64 = parser_prec(p);
 
     // Continue with binary operators inside parens
@@ -443,14 +443,14 @@ fn parse_paren_inner(p: *Parser) i64 {
         var op1_int: i64 = parser_binop_int(p);
         var op1_prec: i64 = cur_prec;
         parser_advance(p);
-        var right1: i64 = parse_atom(p);
+        var right1: i64 = parse_unary(p);  // Also use parse_unary for right operands
 
         // Handle higher precedence on right
         var right_prec: i64 = parser_prec(p);
         while right_prec > op1_prec {
             var op2_int: i64 = parser_binop_int(p);
             parser_advance(p);
-            var right2: i64 = parse_atom(p);
+            var right2: i64 = parse_unary(p);  // Use parse_unary for nested parens
             right1 = make_binary_node(p, op2_int, right1, right2);
             right_prec = parser_prec(p);
         }
@@ -604,9 +604,46 @@ fn parse_unary(p: *Parser) i64 {
     // Parenthesized expression
     if kind == TokenType.LParen {
         parser_advance(p);
-        let inner: i64 = parse_paren_inner(p);
+        var result: i64 = parse_paren_inner(p);
         parser_want(p, TokenType.RParen);
-        return inner;
+
+        // Handle postfix operations on parenthesized expression: (expr).*, (expr).field, (expr)[idx]
+        var paren_done: bool = false;
+        while not paren_done {
+            if parser_check(p, TokenType.Dot) {
+                parser_advance(p);  // Consume '.'
+
+                if parser_check(p, TokenType.Star) {
+                    // Dereference: (expr).*
+                    let result_node: *Node = node_get(p.pool, result);
+                    parser_advance(p);  // Consume '*'
+                    result = node_deref(p.pool, result, result_node.start, p.current.start);
+                } else {
+                    // Field access: (expr).field
+                    let field_start: i64 = p.current.start;
+                    let field_len: i64 = p.current.end;
+                    parser_want(p, TokenType.Ident);
+
+                    let result_node: *Node = node_get(p.pool, result);
+                    result = node_field_access(p.pool, result, field_start, field_len,
+                                              result_node.start, p.current.start);
+                }
+            }
+            else if parser_check(p, TokenType.LBracket) {
+                // Index: (expr)[index]
+                let result_node: *Node = node_get(p.pool, result);
+                let idx_start: i64 = result_node.start;
+                parser_advance(p);  // Consume '['
+                let idx_expr: i64 = parse_expr(p);
+                let end: i64 = p.current.start + p.current.end;
+                parser_want(p, TokenType.RBracket);
+                result = node_index(p.pool, result, idx_expr, idx_start, end);
+            }
+            else {
+                paren_done = true;
+            }
+        }
+        return result;
     }
 
     // Identifier - check for call or field access
@@ -837,6 +874,40 @@ fn parse_expr(p: *Parser) i64 {
         let value: i64 = parse_expr(p);  // Right-associative
         let end: i64 = p.current.start;
         return node_assign(p.pool, expr, value, start, end);
+    }
+
+    // Check for compound assignments: +=, -=, *=, /=, &=, |=
+    // Desugar: x op= y => x = x op y
+    var op: BinaryOp = BinaryOp.Add;  // Default, will be set below
+    var is_compound: bool = false;
+
+    if parser_got(p, TokenType.PlusEq) {
+        op = BinaryOp.Add;
+        is_compound = true;
+    } else if parser_got(p, TokenType.MinusEq) {
+        op = BinaryOp.Sub;
+        is_compound = true;
+    } else if parser_got(p, TokenType.StarEq) {
+        op = BinaryOp.Mul;
+        is_compound = true;
+    } else if parser_got(p, TokenType.SlashEq) {
+        op = BinaryOp.Div;
+        is_compound = true;
+    } else if parser_got(p, TokenType.AmpEq) {
+        op = BinaryOp.BitAnd;
+        is_compound = true;
+    } else if parser_got(p, TokenType.PipeEq) {
+        op = BinaryOp.BitOr;
+        is_compound = true;
+    }
+
+    if is_compound {
+        let rhs: i64 = parse_expr(p);
+        let end: i64 = p.current.start;
+        // Create binary expression: expr op rhs
+        let binary: i64 = node_binary(p.pool, op, expr, rhs, start, end);
+        // Create assignment: expr = binary
+        return node_assign(p.pool, expr, binary, start, end);
     }
 
     return expr;
@@ -1156,6 +1227,11 @@ fn parse_stmt(p: *Parser) i64 {
         return node_continue_stmt(p.pool, start, p.current.start);
     }
 
+    // Standalone block: { stmt* }
+    if kind == TokenType.LBrace {
+        return parse_block(p);
+    }
+
     // Default: expression statement
     return parse_expr_stmt(p);
 }
@@ -1169,7 +1245,8 @@ fn parse_block(p: *Parser) i64 {
     parser_want(p, TokenType.LBrace);
 
     // Temporary storage for statement indices (parse first, add children later)
-    var stmt_indices: [128]i64 = undefined;
+    // 512 statements should handle main() with 166+ test calls
+    var stmt_indices: [512]i64 = undefined;
     var stmts_count: i64 = 0;
 
     // Parse statements until '}'
@@ -1250,9 +1327,13 @@ fn parse_extern_fn_decl(p: *Parser) i64 {
     }
     parser_want(p, TokenType.RParen);
 
-    // Return type
-    let ret_type_start: i64 = p.current.start;
-    let ret_type_handle: i64 = parse_type(p);
+    // Optional return type (void if omitted)
+    var ret_type_start: i64 = p.current.start;
+    var ret_type_handle: i64 = PTYPE_VOID;  // Default to void
+    // Check if there's a return type (not semicolon or EOF)
+    if not parser_check(p, TokenType.Semi) and not parser_check(p, TokenType.Eof) {
+        ret_type_handle = parse_type(p);
+    }
 
     // Optional semicolon (extern fn has no body)
     parser_got(p, TokenType.Semi);

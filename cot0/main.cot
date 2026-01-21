@@ -1195,7 +1195,12 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
             let code_ptr3: *u8 = &g_code[call_addr + 3];
             code_ptr3.* = @intCast(u8, (bl_inst >> 24) & 255);
         } else {
-            print("  WARNING: Could not find target function!\n");
+            // External function call - will be resolved by linker via relocation
+            print("  External call at offset ");
+            print_int(cs.code_offset);
+            print(" (len ");
+            print_int(cs.func_name_len);
+            print(")\n");
         }
 
         call_idx = call_idx + 1;
@@ -1236,6 +1241,63 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
         macho_add_symbol(&writer, &sym_name[0], sym_len, ir_func.code_offset, SECT_TEXT, true);
 
         func_idx = func_idx + 1;
+    }
+
+    // Add external call relocations
+    // Second pass through call sites to find external calls and add relocations
+    call_idx = 0;
+    while call_idx < gs.call_sites_count {
+        let cs2: *CallSite = &g_call_sites[call_idx];
+
+        // Check if this is an internal function (already found in ir_funcs)
+        var is_internal: bool = false;
+        var target_idx2: i64 = 0;
+        while target_idx2 < lowerer.ir_funcs_count {
+            let ir_func2: *IRFunc = &g_ir_funcs[target_idx2];
+            if ir_func2.name_len == cs2.func_name_len {
+                var match2: bool = true;
+                var name_i3: i64 = 0;
+                while name_i3 < cs2.func_name_len {
+                    let src_char2: *u8 = &g_source[ir_func2.name_start + name_i3];
+                    let call_char2: *u8 = &g_source[cs2.func_name_start + name_i3];
+                    if src_char2.* != call_char2.* {
+                        match2 = false;
+                    }
+                    name_i3 = name_i3 + 1;
+                }
+                if match2 {
+                    is_internal = true;
+                }
+            }
+            target_idx2 = target_idx2 + 1;
+        }
+
+        // If not internal, add as external symbol and relocation
+        if not is_internal {
+            // Build external symbol name: "_" + function name
+            sym_name[0] = 95;  // '_'
+            var ext_name_idx: i64 = 0;
+            while ext_name_idx < cs2.func_name_len and ext_name_idx < 126 {
+                let src_ptr2: *u8 = &g_source[cs2.func_name_start + ext_name_idx];
+                sym_name[1 + ext_name_idx] = src_ptr2.*;
+                ext_name_idx = ext_name_idx + 1;
+            }
+            let ext_sym_len: i64 = 1 + cs2.func_name_len;
+
+            // Add undefined external symbol (section = 0)
+            let sym_idx: i64 = macho_add_symbol(&writer, &sym_name[0], ext_sym_len, 0, 0, true);
+
+            // Add relocation for the BL instruction
+            macho_add_reloc(&writer, cs2.code_offset, sym_idx, ARM64_RELOC_BRANCH26, true);
+
+            print("  Added external reloc at offset ");
+            print_int(cs2.code_offset);
+            print(" (sym_idx ");
+            print_int(sym_idx);
+            print(")\n");
+        }
+
+        call_idx = call_idx + 1;
     }
 
     let macho_bytes: i64 = write_macho(&writer);
