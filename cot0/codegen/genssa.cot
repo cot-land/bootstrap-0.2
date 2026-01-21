@@ -12,6 +12,9 @@
 // 5. Post-pass: resolve branches to actual offsets
 
 import "../ssa/func.cot"
+import "../ssa/dom.cot"
+import "../ssa/abi.cot"
+import "../ssa/stackalloc.cot"
 import "arm64.cot"
 
 // ============================================================================
@@ -173,6 +176,46 @@ fn add_branch_cbz(gs: *GenState, target_block: i64, reg: i64, is_nonzero: bool) 
 }
 
 // ============================================================================
+// Spill/Reload Helpers
+// ============================================================================
+
+// Emit reload: load a spilled value from stack into its assigned register
+// Called before using a spilled argument
+// Note: spill_slot already contains the actual stack offset (set by stackalloc)
+fn emit_reload(gs: *GenState, v: *Value) {
+    if v.spill_slot < 0 { return; }  // Not spilled
+    if v.reg < 0 { return; }  // No register assigned
+
+    // spill_slot is the actual SP offset (stackalloc converted slot number to offset)
+    GenState_emitInst(gs, encode_ldr(v.reg, SP, v.spill_slot));
+}
+
+// Emit spill: store a value to its spill slot after computing it
+// Called after computing a value that needs to be spilled
+// Note: spill_slot already contains the actual stack offset (set by stackalloc)
+fn emit_spill(gs: *GenState, v: *Value) {
+    if v.spill_slot < 0 { return; }  // Not spilled
+    if v.reg < 0 { return; }  // No register assigned
+
+    // spill_slot is the actual SP offset (stackalloc converted slot number to offset)
+    GenState_emitInst(gs, encode_str(v.reg, SP, v.spill_slot));
+}
+
+// Reload all spilled arguments of a value before processing it
+fn reload_spilled_args(gs: *GenState, v: *Value) {
+    let f: *Func = gs.func;
+    var i: i64 = 0;
+    while i < v.args_count {
+        let arg_id: i64 = v.args[i];
+        if arg_id >= 0 and arg_id < f.values_count {
+            let arg: *Value = Func_getValue(f, arg_id);
+            emit_reload(gs, arg);
+        }
+        i = i + 1;
+    }
+}
+
+// ============================================================================
 // Main genssa Function
 // ============================================================================
 
@@ -234,7 +277,16 @@ fn GenState_blockValues(gs: *GenState, block: *Block) {
     while i < block.values_count {
         let value_id: i64 = block.values_start + i;
         let v: *Value = Func_getValue(f, value_id);
+
+        // Reload any spilled arguments before using them
+        reload_spilled_args(gs, v);
+
+        // Generate code for the value
         GenState_value(gs, v);
+
+        // Spill the result if it was marked for spilling
+        emit_spill(gs, v);
+
         i = i + 1;
     }
 }
@@ -751,16 +803,50 @@ fn GenState_offPtr(gs: *GenState, v: *Value) {
 fn GenState_call(gs: *GenState, v: *Value) {
     let f: *Func = gs.func;
 
-    // Move arguments to X0-X7 (ARM64 calling convention)
+    // Use ABI module for proper parameter assignment
+    // Build array of parameter type indices
+    var param_types: [32]i64;  // Max 32 params
     var i: i64 = 0;
-    while i < v.args_count and i < 8 {
+    while i < v.args_count and i < 32 {
         let arg_id: i64 = v.args[i];
         let arg_val: *Value = Func_getValue(f, arg_id);
-        let target_reg: i64 = X0 + i;
-        if arg_val.reg != target_reg and arg_val.reg >= 0 {
-            GenState_emitInst(gs, encode_mov_reg(target_reg, arg_val.reg));
-        }
+        param_types[i] = arg_val.type_idx;
         i = i + 1;
+    }
+
+    // Analyze call ABI
+    var abi_info: ABIParamResultInfo = undefined;
+    ABI_analyzeFunc(&abi_info, &param_types[0], v.args_count, v.type_idx);
+
+    // Pass arguments according to ABI assignment
+    i = 0;
+    while i < v.args_count and i < abi_info.in_params_count {
+        let arg_id: i64 = v.args[i];
+        let arg_val: *Value = Func_getValue(f, arg_id);
+
+        var assignment: ABIParamAssignment = undefined;
+        ABIParamResultInfo_getInParam(&abi_info, i, &assignment);
+
+        if assignment.location == ParamLocation.Register {
+            // Move to assigned register
+            let target_reg: i64 = assignment.reg0;
+            if target_reg >= 0 and arg_val.reg != target_reg and arg_val.reg >= 0 {
+                GenState_emitInst(gs, encode_mov_reg(target_reg, arg_val.reg));
+            }
+        } else if assignment.location == ParamLocation.Stack {
+            // Store to stack at assigned offset
+            // Stack args go at SP + offset (caller pushes before call)
+            if arg_val.reg >= 0 {
+                GenState_emitInst(gs, encode_str(arg_val.reg, SP, assignment.offset));
+            }
+        }
+
+        i = i + 1;
+    }
+
+    // Allocate stack space for stack-passed arguments
+    if abi_info.arg_stack_size > 0 {
+        GenState_emitInst(gs, encode_sub_imm(SP, SP, abi_info.arg_stack_size));
     }
 
     // Record call site for later resolution
@@ -777,12 +863,20 @@ fn GenState_call(gs: *GenState, v: *Value) {
     // Emit BL instruction placeholder (offset 0, to be patched later)
     GenState_emitInst(gs, encode_bl(0));
 
+    // Restore stack if we allocated for args
+    if abi_info.arg_stack_size > 0 {
+        GenState_emitInst(gs, encode_add_imm(SP, SP, abi_info.arg_stack_size));
+    }
+
     // Move call result from X0 to the assigned register
     // This preserves call results across nested calls
     let dest_reg: i64 = v.reg;
     if dest_reg >= 0 and dest_reg != X0 {
         GenState_emitInst(gs, encode_mov_reg(dest_reg, X0));
     }
+
+    // Clean up ABI info
+    ABIParamResultInfo_deinit(&abi_info);
 }
 
 fn GenState_return(gs: *GenState, v: *Value) {

@@ -260,7 +260,11 @@ fn spill_reg(ra: *RegAllocState, reg: i64) {
     }
     vs.spill_used = true;
 
-    // Clear register
+    // CRITICAL: Set the Value's spill_slot so genssa knows to emit store/load
+    let v: *Value = Func_getValue(ra.func, value_id);
+    v.spill_slot = vs.spill;
+
+    // Clear register - value is now only on stack
     reg_state_clear(rs);
     vs.regs = vs.regs & (~(1 << reg));
 }
@@ -276,6 +280,10 @@ fn assign_reg(ra: *RegAllocState, value_id: i64, reg: i64) {
 
     let vs: *ValState = ra.val_states + value_id;
     vs.regs = vs.regs | (1 << reg);
+
+    // CRITICAL: Also set the Value's reg field so genssa can use it
+    let v: *Value = Func_getValue(ra.func, value_id);
+    v.reg = reg;
 
     // Mark register as used for current instruction
     ra.used = ra.used | (1 << reg);
