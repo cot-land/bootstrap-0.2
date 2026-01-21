@@ -45,30 +45,65 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ### BUG-040: `null` keyword not supported in cot0 parser
 
-**Status:** Open
-**Priority:** P0 (blocking Tier 14+ tests)
+**Status:** FIXED
+**Priority:** P0 (was blocking Tier 14+ tests)
 **Discovered:** 2026-01-21
+**Fixed:** 2026-01-21
 
 **Description:**
-The cot0 parser doesn't recognize the `null` keyword. Code like `let p: *i64 = null` fails to parse.
+The cot0 parser didn't recognize the `null` keyword. Code like `let p: *i64 = null` failed to parse.
 
-**Blockers:**
-- `test_ptr_null` and other Tier 14+ tests
-- 85 remaining test functions
-
-**Fix Required:**
-Add `null` keyword to scanner and parser, following Zig compiler pattern in `src/frontend/scanner.zig` and `src/frontend/parser.zig`.
+**Fix:**
+Added `null` handling in parser.cot, following the same pattern as `true`/`false`:
+```cot
+if kind == TokenType.Null {
+    parser_advance(p);
+    return node_int_lit(p.pool, 0, start, end);  // null = 0
+}
+```
 
 ---
 
 ### BUG-041: Function type syntax not supported in cot0 parser
 
-**Status:** Open
-**Priority:** P1 (blocking one test)
+**Status:** FIXED
+**Priority:** P1 (was blocking test_fn_type)
 **Discovered:** 2026-01-21
+**Fixed:** 2026-01-21
 
 **Description:**
-The cot0 parser doesn't support function type syntax like `fn(i64, i64) -> i64`. This blocks tests that use function pointers.
+The cot0 parser didn't support function type syntax like `fn(i64, i64) -> i64`.
+
+**Fix:**
+1. Added `Arrow` token type for `->` in token.cot
+2. Scanner recognizes `->` in scanner.cot
+3. Parser handles `fn(params) -> ret` in parse_type()
+
+---
+
+### BUG-042: Branch fixups not reset between functions (cot0)
+
+**Status:** FIXED
+**Priority:** P0 (was causing segfaults in multi-function programs)
+**Discovered:** 2026-01-21
+**Fixed:** 2026-01-21
+
+**Description:**
+Programs with multiple functions using `!= 0` comparisons would segfault. The `cbz` instructions were branching to addresses in other functions.
+
+**Root Cause:**
+`gs.branches_count` was not reset between functions. When generating test_b after test_a, old branch entries from test_a were still in the array.
+
+**Zig Reference:**
+`src/codegen/arm64.zig:461-462`:
+```zig
+self.block_offsets.clearRetainingCapacity();
+self.branch_fixups.clearRetainingCapacity();
+```
+Zig clears branch fixups at the start of each function.
+
+**Fix:**
+In `cot0/main.cot`, reset `gs.branches_count = 0` before calling `genssa()` for each function.
 
 ---
 

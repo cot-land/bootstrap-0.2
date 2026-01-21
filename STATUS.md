@@ -31,16 +31,20 @@
 
 | Tier | Status | Test Functions |
 |------|--------|----------------|
-| 1-13 | ✅ PASS | 83 functions (basic ops, control flow, structs, arrays, pointers, bitwise) |
-| 14+ | ❌ BLOCKED | Needs `null` keyword support |
+| 1-14 | ✅ PASS | 88 functions (basic ops, control flow, structs, arrays, pointers, bitwise, null) |
+| 15+ | ❌ BLOCKED | Needs slice syntax, for-in loops, switch statements |
 
 ### Current Blockers
 
-1. **`null` keyword not supported** - Parser doesn't recognize `null` literal
-2. **Function type syntax** - `fn(i64, i64) -> i64` not parsed
+1. **Slice syntax** - `arr[start:end]` not parsed
+2. **For-in loops** - `for item in array { }` not supported
+3. **Switch statements** - `switch x { }` not supported
 
 ### Recent Fixes (2026-01-21)
 
+- **null keyword** - Parser recognizes `null` literal (value 0)
+- **Function type syntax** - `fn(i64, i64) -> i64` now parsed
+- **Branch fixups** - Reset gs.branches_count between functions (following Zig pattern)
 - **ARM64 scaled offset encoding** - LDR/STR with unsigned offset uses scaled immediates
 - **Register clobbering** - Binary ops used X0 for results, clobbering parameters
 - **Bitwise operators** - Added `&`, `|`, `^`, `<<`, `>>` support through all compiler layers
