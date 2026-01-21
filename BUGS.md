@@ -253,6 +253,83 @@ for (f.local_sizes, 0..) |size, idx| {
 
 ## Recently Fixed Bugs
 
+### BUG-053: Struct locals not allocated enough stack space (cot0)
+
+**Status:** FIXED
+**Priority:** P0 (was breaking pointer field access)
+**Discovered:** 2026-01-21
+**Fixed:** 2026-01-21
+
+**Description:**
+When declaring `var pt: Point` where Point is a struct with multiple fields, the local variable only got 8 bytes of stack space (default i64 size). For a 16-byte struct (two i64 fields), the second local variable would overlap with the second field.
+
+**Symptoms:**
+- `ptr.*.y` returned garbage values
+- Disassembly showed `str x7, [sp, #0x8]` for both `pt.y = 222` and `var ptr = &pt`
+- The pointer variable overlapped with the struct's second field
+
+**Root Cause:**
+In `cot0/frontend/lower.cot`, `lower_var_decl` added locals with default 8-byte size. For struct types, the size wasn't being computed and set using `func_builder_set_local_size`.
+
+**Fix:**
+Added code in `lower_var_decl` to compute struct size and allocate proper stack space:
+```cot
+if not is_pointer_to_struct {
+    let struct_size: i64 = get_type_size_from_ast(l, struct_name_start, type_name_len);
+    if struct_size > 8 {
+        func_builder_set_local_size(fb, local_idx, struct_size);
+    }
+}
+```
+
+**Location:** cot0/frontend/lower.cot lines 527-532
+
+---
+
+### BUG-052: Direct struct types incorrectly detected as pointer-to-struct (cot0)
+
+**Status:** FIXED
+**Priority:** P0 (was breaking direct struct field access)
+**Discovered:** 2026-01-21
+**Fixed:** 2026-01-21
+
+**Description:**
+When declaring `var pt: Point` (direct struct), the PTYPE encoding check incorrectly identified it as a pointer-to-struct type for large source offsets. This caused wrong `struct_type_start` values to be stored, breaking field offset lookups.
+
+**Root Cause:**
+The PTYPE encoding has overlapping ranges:
+- Direct struct: `type_handle = PTYPE_USER_BASE + offset = 100 + offset`
+- Pointer to struct: `type_handle = PTYPE_PTR_BASE + PTYPE_USER_BASE + offset = 110 + offset`
+
+For a struct at offset 60: type_handle = 160
+For a pointer to struct at offset 50: type_handle = 160 (same!)
+
+The original check `type_handle >= PTYPE_PTR_BASE` was too broad and matched direct structs.
+
+**Fix:**
+Added disambiguation by checking for `*` character before the potential struct name position:
+```cot
+var found_star: bool = false;
+if ptr_offset > 0 {
+    var scan_pos: i64 = ptr_offset - 1;
+    while scan_pos >= 0 {
+        let c: u8 = (l.source + scan_pos).*;
+        if c == 32 or c == 9 or c == 10 or c == 13 {
+            scan_pos = scan_pos - 1;
+        } else if c == 42 {  // '*'
+            found_star = true;
+            break;
+        } else {
+            break;
+        }
+    }
+}
+```
+
+**Location:** cot0/frontend/lower.cot lines 474-498
+
+---
+
 ### BUG-050: ORN instruction encoding incorrect (cot0)
 
 **Status:** FIXED

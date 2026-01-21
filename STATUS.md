@@ -34,6 +34,9 @@
 
 ### Recent Fixes (2026-01-21)
 
+- **BUG-053: Struct local stack allocation** - Struct locals now get proper size (16 bytes for Point, etc.)
+- **BUG-052: Pointer-to-struct detection** - Disambiguates `Point` vs `*Point` by checking for `*` character
+- **Pointer field access** - `ptr.*.x` and `ptr.*.y` now work correctly with proper offsets
 - **Postfix ops on parenthesized expressions** - `(buf + 8).*` now works
 - **Standalone block statements** - `{ ... }` inside functions now works
 - **Nested parentheses** - `((a))` now works correctly
@@ -58,6 +61,7 @@
 | Structs | PASS |
 | Arrays | PASS |
 | Pointers | PASS |
+| Pointer field access (ptr.*.field) | PASS |
 | Bitwise ops | PASS |
 | Bitwise NOT (~) | PASS |
 | Modulo | PASS |

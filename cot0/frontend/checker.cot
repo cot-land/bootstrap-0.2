@@ -9,9 +9,7 @@
 // Reference: ~/learning/go/src/cmd/compile/internal/types2/
 // Reference: bootstrap-0.2/src/frontend/checker.zig
 
-import "token.cot"
-import "types.cot"
-import "ast.cot"
+// Note: Dependencies (token.cot, types.cot, ast.cot) are imported by main.cot
 
 // ============================================================================
 // Symbol Kinds
@@ -727,4 +725,21 @@ fn checker_ok(chk: *Checker) bool {
 // Get error count
 fn checker_errors(chk: *Checker) i64 {
     return chk.error_count;
+}
+
+// Check all declarations in the file
+// Following Zig checker.zig:checkFile pattern
+fn check_file(chk: *Checker) {
+    // Phase 1: Process all struct and enum declarations first
+    // This registers types with correct field offsets in the type pool
+    var i: i64 = 0;
+    while i < chk.ast_pool.count {
+        let node: *Node = node_get(chk.ast_pool, i);
+        if node.kind == NodeKind.StructDecl {
+            check_struct_decl(chk, i);
+        } else if node.kind == NodeKind.EnumDecl {
+            check_enum_decl(chk, i);
+        }
+        i = i + 1;
+    }
 }

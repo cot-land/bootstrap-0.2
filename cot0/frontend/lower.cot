@@ -462,13 +462,49 @@ fn lower_var_decl(l: *Lowerer, node: *Node) {
     }
 
     // Check for type annotation indicating a struct type
-    if type_handle >= PTYPE_USER_BASE and type_handle < PTYPE_ARRAY_BASE {
-        // Extract struct type name from type annotation
-        let type_name_start: i64 = type_handle - PTYPE_USER_BASE;
+    // Handles both direct struct (Point) and pointer-to-struct (*Point)
+    // PTYPE encoding: direct = 100+offset, pointer = 110+offset (overlaps at high offsets)
+    // Disambiguate by checking if there's a '*' before the struct name position
+    var struct_name_start: i64 = -1;
+    var is_pointer_to_struct: bool = false;
 
+    if type_handle >= PTYPE_USER_BASE and type_handle < PTYPE_ARRAY_BASE {
+        let direct_offset: i64 = type_handle - PTYPE_USER_BASE;
+        let ptr_offset: i64 = type_handle - PTYPE_PTR_BASE - PTYPE_USER_BASE;
+
+        // Check for pointer-to-struct: look for '*' before ptr_offset position
+        var found_star: bool = false;
+        if ptr_offset > 0 {
+            var scan_pos: i64 = ptr_offset - 1;
+            while scan_pos >= 0 {
+                let c: u8 = (l.source + scan_pos).*;
+                // Skip whitespace (space=32, tab=9, newline=10, cr=13)
+                if c == 32 or c == 9 or c == 10 or c == 13 {
+                    scan_pos = scan_pos - 1;
+                } else if c == 42 {  // '*'
+                    found_star = true;
+                    break;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        if found_star and ptr_offset >= 0 {
+            // Pointer-to-struct: store the pointee struct's position
+            struct_name_start = ptr_offset;
+            is_pointer_to_struct = true;
+        } else {
+            // Direct struct type
+            struct_name_start = direct_offset;
+        }
+    }
+
+    // If we found a struct type, scan for its name and store
+    if struct_name_start >= 0 {
         // Scan for identifier length
-        let type_name_len: i64 = 0;
-        let pos: i64 = type_name_start;
+        var type_name_len: i64 = 0;
+        var pos: i64 = struct_name_start;
         while pos < l.source_len {
             let c: u8 = (l.source + pos).*;
             // Check if alphanumeric or underscore (a-z: 97-122, A-Z: 65-90, 0-9: 48-57, _: 95)
@@ -479,12 +515,21 @@ fn lower_var_decl(l: *Lowerer, node: *Node) {
             }
             pos = pos + 1;
         }
-        type_name_len = pos - type_name_start;
+        type_name_len = pos - struct_name_start;
 
-        // Set struct type info on the local
+        // Set struct type info on the local (for both struct and ptr-to-struct)
         let local: *IRLocal = fb.locals + local_idx;
-        local.struct_type_start = type_name_start;
+        local.struct_type_start = struct_name_start;
         local.struct_type_len = type_name_len;
+
+        // For direct struct types (not pointers), compute and set the struct size
+        // so that the local gets enough stack space allocated
+        if not is_pointer_to_struct {
+            let struct_size: i64 = get_type_size_from_ast(l, struct_name_start, type_name_len);
+            if struct_size > 8 {
+                func_builder_set_local_size(fb, local_idx, struct_size);
+            }
+        }
     }
 
     // If there's an initializer, emit store
@@ -1053,10 +1098,88 @@ fn find_write_in_source(source: *u8, source_len: i64) i64 {
     return -1;  // Not found
 }
 
-// Look up field offset by searching struct declarations in the AST
-// Returns field offset (field_index * 8), or -1 if not found
-fn lookup_struct_field_offset(l: *Lowerer, struct_name_start: i64, struct_name_len: i64,
-                               field_name_start: i64, field_name_len: i64) i64 {
+// Get size of a type by name from AST
+// Returns 8 for primitives (i64, bool, etc), or struct size for struct types
+fn get_type_size_from_ast(l: *Lowerer, type_start: i64, type_len: i64) i64 {
+    // Check for primitive types
+    // i64, i32, u64, u32, bool, *T (pointers)
+    if type_len <= 0 { return 8; }
+
+    let c0: u8 = (l.source + type_start).*;
+
+    // Check for pointer type (starts with *)
+    if c0 == 42 { return 8; }  // '*'
+
+    // Check for i64, i32 (start with 'i')
+    if c0 == 105 { return 8; }  // 'i'
+
+    // Check for u64, u32 (start with 'u')
+    if c0 == 117 { return 8; }  // 'u'
+
+    // Check for bool (starts with 'b')
+    if c0 == 98 { return 8; }  // 'b' - treat bool as 8 bytes for alignment
+
+    // Otherwise, look up struct by name and compute its size
+    var n: i64 = 0;
+    while n < l.nodes_count {
+        let node: *Node = l.nodes + n;
+        if node.kind == NodeKind.StructDecl {
+            if names_equal(l.source, node.field0, node.field1, type_start, type_len) {
+                // Found the struct - compute its size by summing field sizes
+                let fields_start: i64 = node.field2;
+                let fields_count: i64 = node.field3;
+                var size: i64 = 0;
+
+                var f: i64 = 0;
+                while f < fields_count {
+                    let child_ptr: *i64 = l.children + fields_start + f;
+                    let field_idx: i64 = child_ptr.*;
+                    let field_node: *Node = l.nodes + field_idx;
+
+                    if field_node.kind == NodeKind.FieldDecl {
+                        // Get field type and its size
+                        let ftype_start: i64 = field_node.field2;
+                        // Scan for type name length
+                        var pos: i64 = ftype_start;
+                        while pos < l.source_len {
+                            let c: u8 = (l.source + pos).*;
+                            let is_ident: bool = (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or
+                                                 (c >= 48 and c <= 57) or c == 95;
+                            if not is_ident { break; }
+                            pos = pos + 1;
+                        }
+                        let ftype_len: i64 = pos - ftype_start;
+                        size = size + get_type_size_from_ast(l, ftype_start, ftype_len);
+                    }
+                    f = f + 1;
+                }
+                return size;
+            }
+        }
+        n = n + 1;
+    }
+
+    // Unknown type, assume 8 bytes
+    return 8;
+}
+
+// FieldLookupResult stores both offset and type info for a field lookup
+struct FieldLookupResult {
+    offset: i64,           // Field offset in bytes (-1 if not found)
+    type_start: i64,       // Start of field's type name in source (-1 if not found)
+    type_len: i64,         // Length of field's type name
+}
+
+// Look up field info by searching struct declarations in the AST
+// Returns FieldLookupResult with offset and type info
+// Computes proper offset by summing sizes of preceding fields (following Zig pattern)
+fn lookup_struct_field_info(l: *Lowerer, struct_name_start: i64, struct_name_len: i64,
+                             field_name_start: i64, field_name_len: i64) FieldLookupResult {
+    var result: FieldLookupResult = undefined;
+    result.offset = -1;
+    result.type_start = -1;
+    result.type_len = 0;
+
     // Search through all AST nodes for StructDecl with matching name
     var n: i64 = 0;
     while n < l.nodes_count {
@@ -1068,30 +1191,61 @@ fn lookup_struct_field_offset(l: *Lowerer, struct_name_start: i64, struct_name_l
                 let fields_start: i64 = node.field2;
                 let fields_count: i64 = node.field3;
 
+                // Compute offset by summing sizes of preceding fields
+                var offset: i64 = 0;
                 var f: i64 = 0;
                 while f < fields_count {
                     let child_ptr: *i64 = l.children + fields_start + f;
                     let field_idx: i64 = child_ptr.*;
                     let field_node: *Node = l.nodes + field_idx;
 
-                    // FieldDecl: field0=name_start, field1=name_len
+                    // FieldDecl: field0=name_start, field1=name_len, field2=type_start, field3=type_handle
                     if field_node.kind == NodeKind.FieldDecl {
+                        // Get this field's type info
+                        let ftype_start: i64 = field_node.field2;
+                        var pos: i64 = ftype_start;
+                        while pos < l.source_len {
+                            let c: u8 = (l.source + pos).*;
+                            let is_ident: bool = (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or
+                                                 (c >= 48 and c <= 57) or c == 95;
+                            if not is_ident { break; }
+                            pos = pos + 1;
+                        }
+                        let ftype_len: i64 = pos - ftype_start;
+
                         if names_equal(l.source, field_node.field0, field_node.field1,
                                        field_name_start, field_name_len) {
-                            // Found the field, return offset
-                            return f * 8;
+                            // Found the field - use accumulated offset
+                            result.offset = offset;
+                            result.type_start = ftype_start;
+                            result.type_len = ftype_len;
+                            return result;
                         }
+
+                        // Accumulate size for next field's offset
+                        let field_size: i64 = get_type_size_from_ast(l, ftype_start, ftype_len);
+                        offset = offset + field_size;
                     }
                     f = f + 1;
                 }
                 // Struct found but field not found
-                return -1;
+                return result;
             }
         }
         n = n + 1;
     }
     // Struct not found
-    return -1;
+    return result;
+}
+
+// Look up field offset by searching struct declarations in the AST
+// Returns field offset by summing sizes of preceding fields, or -1 if not found
+fn lookup_struct_field_offset(l: *Lowerer, struct_name_start: i64, struct_name_len: i64,
+                               field_name_start: i64, field_name_len: i64) i64 {
+    // Use lookup_struct_field_info which computes proper offsets
+    let info: FieldLookupResult = lookup_struct_field_info(l, struct_name_start, struct_name_len,
+                                                            field_name_start, field_name_len);
+    return info.offset;
 }
 
 fn lower_ident(l: *Lowerer, node: *Node) i64 {
@@ -1652,23 +1806,97 @@ fn lower_field_access(l: *Lowerer, node: *Node) i64 {
     }
 
     // Case 2: Base is a dereference expression (ptr.*.field)
+    // Following Go's ODOTPTR and Zig's lower.zig pattern:
+    // Get pointer value, look up field offset in pointee struct, emit FieldValue
     if base_node.kind == NodeKind.DerefExpr {
         // Get the pointer value without loading the struct
         let ptr_operand: *Node = l.nodes + base_node.field0;
         let ptr_val: i64 = lower_expr(l, ptr_operand);
 
-        // For now, assume the pointee is a struct and use default field lookup
-        // TODO: Get the actual struct type from the pointer type
-        // This is a simplified version - we need the type of the dereferenced value
-        // For now, use i64 as placeholder
-        return func_builder_emit_field_value(fb, ptr_val, 0, TYPE_I64);
+        // Try to find struct type from the pointer local's info
+        var field_offset: i64 = 0;
+        if ptr_operand.kind == NodeKind.Ident {
+            // Look up the pointer local to get its struct type info
+            var i: i64 = 0;
+            while i < fb.locals_count {
+                let local: *IRLocal = fb.locals + i;
+                if names_equal(l.source, local.name_start, local.name_len,
+                              ptr_operand.field0, ptr_operand.field1) {
+                    // Found the pointer local - check if it has struct type info
+                    if local.struct_type_start >= 0 {
+                        // Use AST-based lookup to find field offset
+                        let info: FieldLookupResult = lookup_struct_field_info(l,
+                            local.struct_type_start, local.struct_type_len,
+                            field_name_start, field_name_len);
+                        if info.offset >= 0 {
+                            field_offset = info.offset;
+                        }
+                    }
+                    break;
+                }
+                i = i + 1;
+            }
+        }
+
+        return func_builder_emit_field_value(fb, ptr_val, field_offset, TYPE_I64);
     }
 
     // Case 3: Base is another field access (chained: a.b.c)
+    // BUG-051 FIX: Use AST-based lookup (no checker/type pool dependency)
+    // For o.inner.a: base_node is o.inner, field_name is "a"
     if base_node.kind == NodeKind.FieldAccess {
-        // Recursively lower the base field access
+        var total_offset: i64 = 0;
+        var root_local_idx: i64 = -1;
+
+        // Walk up the field access chain to find root local
+        var walk_node: *Node = base_node;
+        var depth: i64 = 0;
+        while walk_node.kind == NodeKind.FieldAccess and depth < 10 {
+            walk_node = l.nodes + walk_node.field0;
+            depth = depth + 1;
+        }
+
+        // Check if root is a local variable identifier
+        if walk_node.kind == NodeKind.Ident {
+            var i: i64 = 0;
+            while i < fb.locals_count {
+                let local: *IRLocal = fb.locals + i;
+                if names_equal(l.source, local.name_start, local.name_len,
+                              walk_node.field0, walk_node.field1) {
+                    root_local_idx = i;
+
+                    // Use AST-based lookup with struct_type_start/len
+                    if local.struct_type_start >= 0 {
+                        // Get base field info (e.g., "inner" in o.inner)
+                        let base_field_name_start: i64 = base_node.field1;
+                        let base_field_name_len: i64 = base_node.field2;
+
+                        // Look up base field in root's struct type (AST-based)
+                        let base_info: FieldLookupResult = lookup_struct_field_info(l,
+                            local.struct_type_start, local.struct_type_len,
+                            base_field_name_start, base_field_name_len);
+
+                        if base_info.offset >= 0 and base_info.type_start >= 0 {
+                            total_offset = base_info.offset;
+
+                            // Look up final field in nested struct type (AST-based)
+                            let final_info: FieldLookupResult = lookup_struct_field_info(l,
+                                base_info.type_start, base_info.type_len,
+                                field_name_start, field_name_len);
+
+                            if final_info.offset >= 0 {
+                                total_offset = total_offset + final_info.offset;
+                                return func_builder_emit_field_local(fb, root_local_idx, total_offset, TYPE_I64);
+                            }
+                        }
+                    }
+                }
+                i = i + 1;
+            }
+        }
+
+        // Fallback: lower base and use offset 0 (original behavior)
         let base_val: i64 = lower_field_access(l, base_node);
-        // TODO: Get the type of the base field to look up the next field
         return func_builder_emit_field_value(fb, base_val, 0, TYPE_I64);
     }
 
@@ -1906,20 +2134,96 @@ fn lower_field_assign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
     }
 
     // Case 2: Base is a dereference expression (ptr.*.field = value)
+    // Following Go's ODOTPTR and Zig's lower.zig pattern:
+    // Get pointer value, look up field offset in pointee struct, emit StoreField
     if base_node.kind == NodeKind.DerefExpr {
         let ptr_operand: *Node = l.nodes + base_node.field0;
         let ptr_val: i64 = lower_expr(l, ptr_operand);
 
-        // TODO: Look up field offset from type info
-        // For now, use offset 0
-        return func_builder_emit_store_field(fb, ptr_val, 0, value_idx);
+        // Try to find struct type from the pointer local's info
+        var field_offset: i64 = 0;
+        if ptr_operand.kind == NodeKind.Ident {
+            // Look up the pointer local to get its struct type info
+            var i: i64 = 0;
+            while i < fb.locals_count {
+                let local: *IRLocal = fb.locals + i;
+                if names_equal(l.source, local.name_start, local.name_len,
+                              ptr_operand.field0, ptr_operand.field1) {
+                    // Found the pointer local - check if it has struct type info
+                    if local.struct_type_start >= 0 {
+                        // Use AST-based lookup to find field offset
+                        let info: FieldLookupResult = lookup_struct_field_info(l,
+                            local.struct_type_start, local.struct_type_len,
+                            field_name_start, field_name_len);
+                        if info.offset >= 0 {
+                            field_offset = info.offset;
+                        }
+                    }
+                    break;
+                }
+                i = i + 1;
+            }
+        }
+
+        return func_builder_emit_store_field(fb, ptr_val, field_offset, value_idx);
     }
 
     // Case 3: Base is another field access (chained: a.b.c = value)
+    // BUG-051 FIX: Use AST-based lookup (no checker/type pool dependency)
+    // For o.inner.a: base_node is o.inner, field_name is "a"
     if base_node.kind == NodeKind.FieldAccess {
-        // Recursively lower the base field access to get address
+        var total_offset: i64 = 0;
+        var root_local_idx: i64 = -1;
+
+        // Walk up the field access chain to find root local
+        var walk_node: *Node = base_node;
+        var depth: i64 = 0;
+        while walk_node.kind == NodeKind.FieldAccess and depth < 10 {
+            walk_node = l.nodes + walk_node.field0;
+            depth = depth + 1;
+        }
+
+        // Check if root is a local variable identifier
+        if walk_node.kind == NodeKind.Ident {
+            var i: i64 = 0;
+            while i < fb.locals_count {
+                let local: *IRLocal = fb.locals + i;
+                if names_equal(l.source, local.name_start, local.name_len,
+                              walk_node.field0, walk_node.field1) {
+                    root_local_idx = i;
+
+                    // Use AST-based lookup with struct_type_start/len
+                    if local.struct_type_start >= 0 {
+                        // Get base field info (e.g., "inner" in o.inner)
+                        let base_field_name_start: i64 = base_node.field1;
+                        let base_field_name_len: i64 = base_node.field2;
+
+                        // Look up base field in root's struct type (AST-based)
+                        let base_info: FieldLookupResult = lookup_struct_field_info(l,
+                            local.struct_type_start, local.struct_type_len,
+                            base_field_name_start, base_field_name_len);
+
+                        if base_info.offset >= 0 and base_info.type_start >= 0 {
+                            total_offset = base_info.offset;
+
+                            // Look up final field in nested struct type (AST-based)
+                            let final_info: FieldLookupResult = lookup_struct_field_info(l,
+                                base_info.type_start, base_info.type_len,
+                                field_name_start, field_name_len);
+
+                            if final_info.offset >= 0 {
+                                total_offset = total_offset + final_info.offset;
+                                return func_builder_emit_store_field_local(fb, root_local_idx, total_offset, value_idx);
+                            }
+                        }
+                    }
+                }
+                i = i + 1;
+            }
+        }
+
+        // Fallback: lower base and store at offset 0 (original behavior)
         let base_val: i64 = lower_field_access(l, base_node);
-        // TODO: Look up field offset
         return func_builder_emit_store_field(fb, base_val, 0, value_idx);
     }
 
