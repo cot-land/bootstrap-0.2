@@ -270,3 +270,67 @@ fn Token_lookup(text: string) TokenType {
 
     return TokenType.Ident;
 }
+
+// Get string representation of token type
+// Reference: Zig's Token.string()
+fn Token_string(t: TokenType) string {
+    if t == TokenType.Eof { return "EOF"; }
+    if t == TokenType.Error { return "ERROR"; }
+    if t == TokenType.Ident { return "IDENT"; }
+    if t == TokenType.Int { return "INT"; }
+    if t == TokenType.StringLit { return "STRING"; }
+    if t == TokenType.CharLit { return "CHAR"; }
+    if t == TokenType.Plus { return "+"; }
+    if t == TokenType.Minus { return "-"; }
+    if t == TokenType.Star { return "*"; }
+    if t == TokenType.Slash { return "/"; }
+    if t == TokenType.Percent { return "%"; }
+    if t == TokenType.Amp { return "&"; }
+    if t == TokenType.Pipe { return "|"; }
+    if t == TokenType.Caret { return "^"; }
+    if t == TokenType.Tilde { return "~"; }
+    if t == TokenType.LessLess { return "<<"; }
+    if t == TokenType.GreaterGreater { return ">>"; }
+    if t == TokenType.Eq { return "="; }
+    if t == TokenType.EqEq { return "=="; }
+    if t == TokenType.NotEq { return "!="; }
+    if t == TokenType.Less { return "<"; }
+    if t == TokenType.LessEq { return "<="; }
+    if t == TokenType.Greater { return ">"; }
+    if t == TokenType.GreaterEq { return ">="; }
+    if t == TokenType.Bang { return "!"; }
+    if t == TokenType.And { return "and"; }
+    if t == TokenType.Or { return "or"; }
+    if t == TokenType.LParen { return "("; }
+    if t == TokenType.RParen { return ")"; }
+    if t == TokenType.LBrace { return "{"; }
+    if t == TokenType.RBrace { return "}"; }
+    if t == TokenType.LBracket { return "["; }
+    if t == TokenType.RBracket { return "]"; }
+    if t == TokenType.Comma { return ","; }
+    if t == TokenType.Dot { return "."; }
+    if t == TokenType.Colon { return ":"; }
+    if t == TokenType.Semi { return ";"; }
+    if t == TokenType.Arrow { return "->"; }
+    if t == TokenType.At { return "@"; }
+    if t == TokenType.Fn { return "fn"; }
+    if t == TokenType.Let { return "let"; }
+    if t == TokenType.Var { return "var"; }
+    if t == TokenType.Const { return "const"; }
+    if t == TokenType.If { return "if"; }
+    if t == TokenType.Else { return "else"; }
+    if t == TokenType.While { return "while"; }
+    if t == TokenType.For { return "for"; }
+    if t == TokenType.Return { return "return"; }
+    if t == TokenType.Struct { return "struct"; }
+    if t == TokenType.Enum { return "enum"; }
+    if t == TokenType.Import { return "import"; }
+    if t == TokenType.Extern { return "extern"; }
+    if t == TokenType.True { return "true"; }
+    if t == TokenType.False { return "false"; }
+    if t == TokenType.Null { return "null"; }
+    if t == TokenType.Break { return "break"; }
+    if t == TokenType.Continue { return "continue"; }
+    if t == TokenType.Switch { return "switch"; }
+    return "UNKNOWN";
+}
