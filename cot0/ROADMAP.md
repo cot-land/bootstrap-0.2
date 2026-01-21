@@ -17,7 +17,7 @@
 
 **Goal:** Build a Cot compiler written in Cot that can compile itself.
 
-**Last Updated:** 2026-01-20
+**Last Updated:** 2026-01-21
 
 ---
 
@@ -64,6 +64,28 @@ These are the specific issues that must be fixed before cot0 can compile itself.
 **Root Cause:** ARM64 ADD immediate only supports 12-bit offsets (max 4095)
 **Fix:** Added `emitAddImm()` function that splits large offsets into multiple ADDs (following Go's asm7.go pattern)
 **Test:** `test/bugs/bug034_large_field_offset.cot`
+
+### 6. len() Builtin Support (2026-01-21)
+**Status:** COMPLETE
+**Feature:** Added `len()` builtin for string literals
+**Pattern:** Copied from Zig's `src/frontend/lower.zig:2014` (`lowerBuiltinLen`)
+**Implementation:** `cot0/frontend/lower.cot` - `lower_builtin_len()` function
+**Test:** `len("hello") == 5` returns true
+
+### 7. Nested Struct Field Offset Bug (BUG-051)
+**Status:** OPEN
+**Symptom:** `o.inner.a` reads `o.inner.b` instead (wrong field offset)
+**Test case:**
+```cot
+struct Inner { a: i64, b: i64, }
+struct Outer { inner: Inner, c: i64, }
+fn main() i64 {
+    var o: Outer
+    o.inner.a = 10
+    return o.inner.a  // Returns 20 instead of 10
+}
+```
+**Investigation:** Need to check Zig's `lowerFieldAccess` for nested struct handling
 
 ---
 

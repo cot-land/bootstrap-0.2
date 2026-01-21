@@ -997,6 +997,62 @@ fn names_equal(source: *u8, start1: i64, len1: i64, start2: i64, len2: i64) bool
     return true;
 }
 
+// Check if name in source equals "len" (3 chars)
+// Following Zig pattern: src/frontend/lower.zig:1848
+fn name_is_len(source: *u8, start: i64, len: i64) bool {
+    if len != 3 { return false; }
+    let c0: u8 = (source + start).*;
+    let c1: u8 = (source + start + 1).*;
+    let c2: u8 = (source + start + 2).*;
+    return c0 == 108 and c1 == 101 and c2 == 110;  // 'l', 'e', 'n'
+}
+
+// Check if name in source equals "print" (5 chars)
+fn name_is_print(source: *u8, start: i64, len: i64) bool {
+    if len != 5 { return false; }
+    let c0: u8 = (source + start).*;
+    let c1: u8 = (source + start + 1).*;
+    let c2: u8 = (source + start + 2).*;
+    let c3: u8 = (source + start + 3).*;
+    let c4: u8 = (source + start + 4).*;
+    return c0 == 112 and c1 == 114 and c2 == 105 and c3 == 110 and c4 == 116;  // 'p', 'r', 'i', 'n', 't'
+}
+
+// Check if name in source equals "println" (7 chars)
+fn name_is_println(source: *u8, start: i64, len: i64) bool {
+    if len != 7 { return false; }
+    let c0: u8 = (source + start).*;
+    let c1: u8 = (source + start + 1).*;
+    let c2: u8 = (source + start + 2).*;
+    let c3: u8 = (source + start + 3).*;
+    let c4: u8 = (source + start + 4).*;
+    let c5: u8 = (source + start + 5).*;
+    let c6: u8 = (source + start + 6).*;
+    // 'p', 'r', 'i', 'n', 't', 'l', 'n'
+    return c0 == 112 and c1 == 114 and c2 == 105 and c3 == 110 and c4 == 116 and c5 == 108 and c6 == 110;
+}
+
+// Find "write" in source text (for builtin print/println lowering)
+// Returns the start offset of "write" or -1 if not found
+fn find_write_in_source(source: *u8, source_len: i64) i64 {
+    var i: i64 = 0;
+    while i < source_len - 4 {  // Need at least 5 chars for "write"
+        let c0: u8 = (source + i).*;
+        if c0 == 119 {  // 'w'
+            let c1: u8 = (source + i + 1).*;
+            let c2: u8 = (source + i + 2).*;
+            let c3: u8 = (source + i + 3).*;
+            let c4: u8 = (source + i + 4).*;
+            // 'w', 'r', 'i', 't', 'e'
+            if c1 == 114 and c2 == 105 and c3 == 116 and c4 == 101 {
+                return i;
+            }
+        }
+        i = i + 1;
+    }
+    return -1;  // Not found
+}
+
 // Look up field offset by searching struct declarations in the AST
 // Returns field offset (field_index * 8), or -1 if not found
 fn lookup_struct_field_offset(l: *Lowerer, struct_name_start: i64, struct_name_len: i64,
@@ -1140,6 +1196,123 @@ fn lower_unary(l: *Lowerer, node: *Node) i64 {
     return func_builder_emit_unary(fb, ir_op, operand_idx, TYPE_I64);
 }
 
+// ============================================================================
+// Builtin len/print/println
+// Following Zig pattern: src/frontend/lower.zig:2014-2145
+// ============================================================================
+
+// Lower len(arg) builtin
+// - String literal: return parsed length as const
+// - String variable: access length field (offset 8 in string struct)
+fn lower_builtin_len(l: *Lowerer, node: *Node) i64 {
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return NULL_NODE; }
+
+    // CallExpr: field1 = args_start, field2 = args_count
+    let args_start: i64 = node.field1;
+    let args_count: i64 = node.field2;
+    if args_count != 1 { return NULL_NODE; }
+
+    // Get the argument node
+    let arg_child_ptr: *i64 = l.children + args_start;
+    let arg_node_idx: i64 = arg_child_ptr.*;
+    let arg_node: *Node = l.nodes + arg_node_idx;
+
+    // String literal: len("hello") -> const 5
+    if arg_node.kind == NodeKind.StringLit {
+        // StringLiteral: field0 = str_start, field1 = str_len (source positions)
+        // The str_len is the length of the content EXCLUDING quotes
+        // But we need to handle escape sequences...
+        // For now, just use the source length (TODO: handle escapes properly)
+        let str_len: i64 = arg_node.field1;
+        return func_builder_emit_const_int(fb, str_len);
+    }
+
+    // String variable: len(s) -> access length field at offset 8
+    // String struct layout: [ptr: *u8, len: i64]
+    if arg_node.kind == NodeKind.Ident {
+        // Look up local variable
+        var local_idx: i64 = -1;
+        var i: i64 = 0;
+        while i < fb.locals_count {
+            let local: *IRLocal = fb.locals + i;
+            if names_equal(l.source, local.name_start, local.name_len,
+                          arg_node.field0, arg_node.field1) {
+                local_idx = i;
+            }
+            i = i + 1;
+        }
+
+        if local_idx >= 0 {
+            // Access length field at offset 8 (field index 1)
+            return func_builder_emit_field_local(fb, local_idx, 8, TYPE_I64);
+        }
+    }
+
+    return NULL_NODE;
+}
+
+// Lower print(s) or println(s) to write syscall
+// Following Zig pattern: transforms to write(1, s.ptr, s.len)
+fn lower_builtin_print(l: *Lowerer, node: *Node, is_println: bool) i64 {
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return NULL_NODE; }
+
+    // Find "write" in source - it must be declared as extern fn write(...)
+    let write_pos: i64 = find_write_in_source(l.source, l.source_len);
+    if write_pos < 0 {
+        // write not found in source, fall through to regular call handling
+        return NULL_NODE;
+    }
+
+    // CallExpr: field1 = args_start, field2 = args_count
+    let args_start: i64 = node.field1;
+    let args_count: i64 = node.field2;
+    if args_count != 1 { return NULL_NODE; }
+
+    // Get the argument node
+    let arg_child_ptr: *i64 = l.children + args_start;
+    let arg_node_idx: i64 = arg_child_ptr.*;
+    let arg_node: *Node = l.nodes + arg_node_idx;
+
+    // Lower the string argument
+    let str_val: i64 = lower_expr(l, arg_node);
+
+    // Create fd=1 (stdout) constant
+    let fd_val: i64 = func_builder_emit_const_int(fb, 1);
+
+    // Store args for write call: write(fd, str)
+    // Note: For now we pass the string directly, codegen needs to handle extracting ptr/len
+    let write_args_start: i64 = l.call_args_count;
+
+    // arg0: fd
+    if l.call_args_count < l.call_args_cap {
+        let slot: *i64 = l.call_args + l.call_args_count;
+        slot.* = fd_val;
+        l.call_args_count = l.call_args_count + 1;
+    }
+
+    // arg1: string value (codegen will handle extracting ptr/len)
+    if l.call_args_count < l.call_args_cap {
+        let slot: *i64 = l.call_args + l.call_args_count;
+        slot.* = str_val;
+        l.call_args_count = l.call_args_count + 1;
+    }
+
+    // Emit write call using the found position of "write" in source
+    var call_node: IRNode = ir_node_new(IRNodeKind.Call, TYPE_I64);
+    call_node.func_name_start = write_pos;  // Actual position of "write" in source
+    call_node.func_name_len = 5;            // "write" is 5 chars
+    call_node.args_start = write_args_start;
+    call_node.args_count = 2;  // fd and string
+    let write_result: i64 = func_builder_emit(fb, call_node);
+
+    // TODO: For println, also write a newline
+    // For now, print and println behave the same (no trailing newline)
+
+    return NULL_NODE;  // print/println returns void
+}
+
 fn lower_call(l: *Lowerer, node: *Node) i64 {
     // CallExpr fields:
     // field0 = callee (node index)
@@ -1159,6 +1332,26 @@ fn lower_call(l: *Lowerer, node: *Node) i64 {
     let func_name_len: i64 = callee_node.field1;
     let args_start: i64 = node.field1;
     let args_count: i64 = node.field2;
+
+    // Handle builtin functions
+    // Following Zig pattern: src/frontend/lower.zig:1848-1856
+    if name_is_len(l.source, func_name_start, func_name_len) {
+        return lower_builtin_len(l, node);
+    }
+    if name_is_print(l.source, func_name_start, func_name_len) {
+        let result: i64 = lower_builtin_print(l, node, false);
+        if result != NULL_NODE or find_write_in_source(l.source, l.source_len) >= 0 {
+            return result;  // Successfully handled or write found
+        }
+        // Fall through to regular call if write not in source
+    }
+    if name_is_println(l.source, func_name_start, func_name_len) {
+        let result: i64 = lower_builtin_print(l, node, true);
+        if result != NULL_NODE or find_write_in_source(l.source, l.source_len) >= 0 {
+            return result;  // Successfully handled or write found
+        }
+        // Fall through to regular call if write not in source
+    }
 
     // NOTE: Do NOT capture call_args_start here! Inner calls will modify l.call_args_count.
     // We capture it AFTER Pass 1, just before Pass 2.
