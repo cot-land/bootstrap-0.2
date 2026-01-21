@@ -144,7 +144,7 @@ struct RegAllocState {
     liveness: *LivenessResult,
 }
 
-fn regalloc_init(ra: *RegAllocState, f: *Func,
+fn RegAlloc_init(ra: *RegAllocState, f: *Func,
                   val_states: *ValState, val_states_cap: i64,
                   reg_states: *RegState,
                   lr: *LivenessResult) {
@@ -199,7 +199,7 @@ fn alloc_reg(ra: *RegAllocState, mask: i64, block_id: i64) i64 {
     }
 
     // Must spill - find register with farthest next use
-    let bl: *BlockLiveness = liveness_get_block(ra.liveness, block_id);
+    let bl: *BlockLiveness = LivenessResult_getBlock(ra.liveness, block_id);
 
     var best_reg: i64 = -1;
     var best_dist: i64 = -1;
@@ -211,7 +211,7 @@ fn alloc_reg(ra: *RegAllocState, mask: i64, block_id: i64) i64 {
             let rs: *RegState = ra.reg_states + reg;
             if not reg_state_is_free(rs) {
                 // Get distance to next use
-                let dist: i64 = block_liveness_get(bl, rs.value_id);
+                let dist: i64 = BlockLiveness_get(bl, rs.value_id);
                 if dist > best_dist {
                     best_dist = dist;
                     best_reg = reg;
@@ -337,7 +337,7 @@ fn is_rematerializable(op: Op) bool {
 }
 
 // Check if a value needs a register
-fn value_needs_reg(op: Op) bool {
+fn Value_needsReg(op: Op) bool {
     // Memory/control operations don't need registers
     if op == Op.Store { return false; }
     if op == Op.Return { return false; }
@@ -364,7 +364,7 @@ fn process_value(ra: *RegAllocState, f: *Func, v: *Value, block_id: i64) {
     }
 
     // Check if needs register
-    if not value_needs_reg(v.op) {
+    if not Value_needsReg(v.op) {
         vs.needs_reg = false;
         return;
     }
@@ -406,7 +406,7 @@ fn process_block(ra: *RegAllocState, f: *Func, block: *Block) {
     // Process values in order
     var vi: i64 = 0;
     while vi < block.values_count {
-        let v: *Value = func_get_value(f, block.values_start + vi);
+        let v: *Value = Func_getValue(f, block.values_start + vi);
         process_value(ra, f, v, block.id);
         vi = vi + 1;
     }
@@ -418,7 +418,7 @@ fn regalloc(ra: *RegAllocState, f: *Func) i64 {
     // Process blocks in order
     var b: i64 = 0;
     while b < f.blocks_count {
-        let block: *Block = func_get_block(f, b);
+        let block: *Block = Func_getBlock(f, b);
         process_block(ra, f, block);
         b = b + 1;
     }
@@ -434,7 +434,7 @@ fn regalloc(ra: *RegAllocState, f: *Func) i64 {
 // ============================================================================
 
 // Get the register assigned to a value
-fn regalloc_get_reg(ra: *RegAllocState, value_id: i64) i64 {
+fn RegAlloc_getReg(ra: *RegAllocState, value_id: i64) i64 {
     if value_id < 0 or value_id >= ra.val_states_count {
         return -1;
     }
@@ -443,7 +443,7 @@ fn regalloc_get_reg(ra: *RegAllocState, value_id: i64) i64 {
 }
 
 // Get the spill slot for a value (or -1)
-fn regalloc_get_spill(ra: *RegAllocState, value_id: i64) i64 {
+fn RegAlloc_getSpill(ra: *RegAllocState, value_id: i64) i64 {
     if value_id < 0 or value_id >= ra.val_states_count {
         return -1;
     }
@@ -452,7 +452,7 @@ fn regalloc_get_spill(ra: *RegAllocState, value_id: i64) i64 {
 }
 
 // Check if a value is in a register
-fn regalloc_in_reg(ra: *RegAllocState, value_id: i64) bool {
+fn RegAlloc_inReg(ra: *RegAllocState, value_id: i64) bool {
     if value_id < 0 or value_id >= ra.val_states_count {
         return false;
     }

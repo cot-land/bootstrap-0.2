@@ -1,0 +1,541 @@
+// Cot0 Debug Logging Module
+//
+// Usage: Set COT_DEBUG environment variable to enable debug output
+//   COT_DEBUG=all       - All components
+//   COT_DEBUG=scanner   - Token stream
+//   COT_DEBUG=parser    - AST construction
+//   COT_DEBUG=types     - Type resolution
+//   COT_DEBUG=lower     - IR generation
+//   COT_DEBUG=ir        - IR dump
+//   COT_DEBUG=ssa       - SSA construction
+//   COT_DEBUG=codegen   - Instruction selection
+//
+// Multiple components can be enabled: COT_DEBUG=scanner,parser,lower
+
+// ============================================================================
+// External Functions
+// Note: write() must be declared by the importing module (e.g., main.cot)
+// ============================================================================
+
+extern fn getenv(name: *u8) *u8;
+
+// ============================================================================
+// Debug Flags
+// ============================================================================
+
+// Debug component flags (set by debug_init)
+var g_debug_scanner: bool = false;
+var g_debug_parser: bool = false;
+var g_debug_types: bool = false;
+var g_debug_lower: bool = false;
+var g_debug_ir: bool = false;
+var g_debug_ssa: bool = false;
+var g_debug_codegen: bool = false;
+var g_debug_all: bool = false;
+var g_debug_initialized: bool = false;
+
+// ============================================================================
+// String Helpers
+// ============================================================================
+
+fn debug_strlen(s: *u8) i64 {
+    if s == null {
+        return 0;
+    }
+    var len: i64 = 0;
+    var ptr: *u8 = s;
+    while ptr.* != 0 {
+        len = len + 1;
+        ptr = ptr + 1;
+    }
+    return len;
+}
+
+// Check if haystack contains needle (case-sensitive)
+fn debug_strcontains(haystack: *u8, needle: *u8, needle_len: i64) bool {
+    if haystack == null {
+        return false;
+    }
+    var h: *u8 = haystack;
+    while h.* != 0 {
+        // Try to match needle starting at h
+        var match: bool = true;
+        var i: i64 = 0;
+        var hp: *u8 = h;
+        while i < needle_len {
+            if hp.* == 0 {
+                match = false;
+                break;
+            }
+            let np: *u8 = needle + i;
+            if hp.* != np.* {
+                match = false;
+                break;
+            }
+            hp = hp + 1;
+            i = i + 1;
+        }
+        if match {
+            return true;
+        }
+        h = h + 1;
+    }
+    return false;
+}
+
+// ============================================================================
+// Debug Initialization
+// ============================================================================
+
+fn debug_init() {
+    if g_debug_initialized {
+        return;
+    }
+    g_debug_initialized = true;
+
+    // Get COT_DEBUG environment variable
+    var env_name: [10]u8;
+    env_name[0] = 67;   // C
+    env_name[1] = 79;   // O
+    env_name[2] = 84;   // T
+    env_name[3] = 95;   // _
+    env_name[4] = 68;   // D
+    env_name[5] = 69;   // E
+    env_name[6] = 66;   // B
+    env_name[7] = 85;   // U
+    env_name[8] = 71;   // G
+    env_name[9] = 0;    // null terminator
+
+    let debug_val: *u8 = getenv(&env_name[0]);
+    if debug_val == null {
+        return;
+    }
+
+    // Check for "all"
+    var all_str: [4]u8;
+    all_str[0] = 97;  // a
+    all_str[1] = 108; // l
+    all_str[2] = 108; // l
+    all_str[3] = 0;
+    if debug_strcontains(debug_val, &all_str[0], 3) {
+        g_debug_all = true;
+        g_debug_scanner = true;
+        g_debug_parser = true;
+        g_debug_types = true;
+        g_debug_lower = true;
+        g_debug_ir = true;
+        g_debug_ssa = true;
+        g_debug_codegen = true;
+        return;
+    }
+
+    // Check for individual components
+    var scanner_str: [8]u8;
+    scanner_str[0] = 115; // s
+    scanner_str[1] = 99;  // c
+    scanner_str[2] = 97;  // a
+    scanner_str[3] = 110; // n
+    scanner_str[4] = 110; // n
+    scanner_str[5] = 101; // e
+    scanner_str[6] = 114; // r
+    scanner_str[7] = 0;
+    if debug_strcontains(debug_val, &scanner_str[0], 7) {
+        g_debug_scanner = true;
+    }
+
+    var parser_str: [7]u8;
+    parser_str[0] = 112; // p
+    parser_str[1] = 97;  // a
+    parser_str[2] = 114; // r
+    parser_str[3] = 115; // s
+    parser_str[4] = 101; // e
+    parser_str[5] = 114; // r
+    parser_str[6] = 0;
+    if debug_strcontains(debug_val, &parser_str[0], 6) {
+        g_debug_parser = true;
+    }
+
+    var types_str: [6]u8;
+    types_str[0] = 116; // t
+    types_str[1] = 121; // y
+    types_str[2] = 112; // p
+    types_str[3] = 101; // e
+    types_str[4] = 115; // s
+    types_str[5] = 0;
+    if debug_strcontains(debug_val, &types_str[0], 5) {
+        g_debug_types = true;
+    }
+
+    var lower_str: [6]u8;
+    lower_str[0] = 108; // l
+    lower_str[1] = 111; // o
+    lower_str[2] = 119; // w
+    lower_str[3] = 101; // e
+    lower_str[4] = 114; // r
+    lower_str[5] = 0;
+    if debug_strcontains(debug_val, &lower_str[0], 5) {
+        g_debug_lower = true;
+    }
+
+    var ir_str: [3]u8;
+    ir_str[0] = 105; // i
+    ir_str[1] = 114; // r
+    ir_str[2] = 0;
+    if debug_strcontains(debug_val, &ir_str[0], 2) {
+        g_debug_ir = true;
+    }
+
+    var ssa_str: [4]u8;
+    ssa_str[0] = 115; // s
+    ssa_str[1] = 115; // s
+    ssa_str[2] = 97;  // a
+    ssa_str[3] = 0;
+    if debug_strcontains(debug_val, &ssa_str[0], 3) {
+        g_debug_ssa = true;
+    }
+
+    var codegen_str: [8]u8;
+    codegen_str[0] = 99;  // c
+    codegen_str[1] = 111; // o
+    codegen_str[2] = 100; // d
+    codegen_str[3] = 101; // e
+    codegen_str[4] = 103; // g
+    codegen_str[5] = 101; // e
+    codegen_str[6] = 110; // n
+    codegen_str[7] = 0;
+    if debug_strcontains(debug_val, &codegen_str[0], 7) {
+        g_debug_codegen = true;
+    }
+}
+
+// ============================================================================
+// Debug Check Functions
+// ============================================================================
+
+fn debug_scanner_enabled() bool {
+    debug_init();
+    return g_debug_scanner;
+}
+
+fn debug_parser_enabled() bool {
+    debug_init();
+    return g_debug_parser;
+}
+
+fn debug_types_enabled() bool {
+    debug_init();
+    return g_debug_types;
+}
+
+fn debug_lower_enabled() bool {
+    debug_init();
+    return g_debug_lower;
+}
+
+fn debug_ir_enabled() bool {
+    debug_init();
+    return g_debug_ir;
+}
+
+fn debug_ssa_enabled() bool {
+    debug_init();
+    return g_debug_ssa;
+}
+
+fn debug_codegen_enabled() bool {
+    debug_init();
+    return g_debug_codegen;
+}
+
+// ============================================================================
+// Debug Output Functions
+// ============================================================================
+
+fn debug_print_ptr(msg: *u8) {
+    let len: i64 = debug_strlen(msg);
+    write(2, msg, len);  // Write to stderr
+}
+
+fn debug_print(msg: string) {
+    write(2, msg.ptr, msg.len);  // Write to stderr
+}
+
+fn debug_print_len(msg: *u8, len: i64) {
+    write(2, msg, len);
+}
+
+fn debug_print_int(n: i64) {
+    var buf: [20]u8;
+    var i: i64 = 19;
+    var val: i64 = n;
+
+    if val == 0 {
+        buf[i] = 48;  // '0'
+        write(2, &buf[i], 1);
+        return;
+    }
+
+    var negative: bool = false;
+    if val < 0 {
+        negative = true;
+        val = 0 - val;
+    }
+
+    while val > 0 {
+        let digit: i64 = val - (val / 10) * 10;
+        buf[i] = @intCast(u8, 48 + digit);
+        val = val / 10;
+        i = i - 1;
+    }
+
+    if negative {
+        buf[i] = 45;  // '-'
+        i = i - 1;
+    }
+
+    write(2, &buf[i + 1], 19 - i);
+}
+
+fn debug_print_hex(n: i64) {
+    var buf: [18]u8;
+    buf[0] = 48;  // '0'
+    buf[1] = 120; // 'x'
+
+    var i: i64 = 17;
+    var val: i64 = n;
+
+    if val == 0 {
+        buf[2] = 48;  // '0'
+        write(2, &buf[0], 3);
+        return;
+    }
+
+    while val > 0 and i >= 2 {
+        let digit: i64 = val & 15;
+        if digit < 10 {
+            buf[i] = @intCast(u8, 48 + digit);
+        } else {
+            buf[i] = @intCast(u8, 97 + digit - 10);  // 'a'-'f'
+        }
+        val = val >> 4;
+        i = i - 1;
+    }
+
+    write(2, &buf[0], 2);  // "0x"
+    write(2, &buf[i + 1], 17 - i);
+}
+
+fn debug_newline() {
+    var nl: [1]u8;
+    nl[0] = 10;
+    write(2, &nl[0], 1);
+}
+
+// ============================================================================
+// Component-Specific Debug Functions
+// ============================================================================
+
+// Scanner debug: [SCAN] Token(Kind, "text", start:end)
+fn debug_scanner_token(kind_name: *u8, text: *u8, text_len: i64, start: i64, end: i64) {
+    if not debug_scanner_enabled() {
+        return;
+    }
+    debug_print("[SCAN] Token(");
+    debug_print_ptr(kind_name);
+    debug_print(", \"");
+    debug_print_len(text, text_len);
+    debug_print("\", ");
+    debug_print_int(start);
+    debug_print(":");
+    debug_print_int(end);
+    debug_print(")");
+    debug_newline();
+}
+
+// Parser debug: [PARSE] NodeKind at depth
+fn debug_parser_enter(node_kind: string, depth: i64) {
+    if not debug_parser_enabled() {
+        return;
+    }
+    debug_print("[PARSE] ");
+    var i: i64 = 0;
+    while i < depth {
+        debug_print("  ");
+        i = i + 1;
+    }
+    debug_print("-> ");
+    debug_print(node_kind);
+    debug_newline();
+}
+
+fn debug_parser_exit(node_kind: string, depth: i64, node_id: i64) {
+    if not debug_parser_enabled() {
+        return;
+    }
+    debug_print("[PARSE] ");
+    var i: i64 = 0;
+    while i < depth {
+        debug_print("  ");
+        i = i + 1;
+    }
+    debug_print("<- ");
+    debug_print(node_kind);
+    debug_print(" = node#");
+    debug_print_int(node_id);
+    debug_newline();
+}
+
+// Types debug: [TYPES] message
+fn debug_types_msg(msg: string) {
+    if not debug_types_enabled() {
+        return;
+    }
+    debug_print("[TYPES] ");
+    debug_print(msg);
+    debug_newline();
+}
+
+fn debug_types_resolve(name: *u8, name_len: i64, type_idx: i64) {
+    if not debug_types_enabled() {
+        return;
+    }
+    debug_print("[TYPES] Resolve \"");
+    debug_print_len(name, name_len);
+    debug_print("\" -> type#");
+    debug_print_int(type_idx);
+    debug_newline();
+}
+
+// Lower debug: [LOWER] message
+fn debug_lower_msg(msg: string) {
+    if not debug_lower_enabled() {
+        return;
+    }
+    debug_print("[LOWER] ");
+    debug_print(msg);
+    debug_newline();
+}
+
+fn debug_lower_node(kind: string, node_id: i64, ir_id: i64) {
+    if not debug_lower_enabled() {
+        return;
+    }
+    debug_print("[LOWER] ");
+    debug_print(kind);
+    debug_print(" node#");
+    debug_print_int(node_id);
+    debug_print(" -> ir#");
+    debug_print_int(ir_id);
+    debug_newline();
+}
+
+fn debug_lower_func(name: *u8, name_len: i64) {
+    if not debug_lower_enabled() {
+        return;
+    }
+    debug_print("[LOWER] fn ");
+    debug_print_len(name, name_len);
+    debug_newline();
+}
+
+// IR debug: [IR] instruction details
+fn debug_ir_node(id: i64, kind: string, type_idx: i64) {
+    if not debug_ir_enabled() {
+        return;
+    }
+    debug_print("[IR] v");
+    debug_print_int(id);
+    debug_print(" = ");
+    debug_print(kind);
+    debug_print(" : type#");
+    debug_print_int(type_idx);
+    debug_newline();
+}
+
+fn debug_ir_binary(id: i64, op: string, left: i64, right: i64, type_idx: i64) {
+    if not debug_ir_enabled() {
+        return;
+    }
+    debug_print("[IR] v");
+    debug_print_int(id);
+    debug_print(" = ");
+    debug_print(op);
+    debug_print(" v");
+    debug_print_int(left);
+    debug_print(", v");
+    debug_print_int(right);
+    debug_print(" : type#");
+    debug_print_int(type_idx);
+    debug_newline();
+}
+
+// SSA debug: [SSA] value details
+fn debug_ssa_value(id: i64, op: string, type_idx: i64) {
+    if not debug_ssa_enabled() {
+        return;
+    }
+    debug_print("[SSA] v");
+    debug_print_int(id);
+    debug_print(" = ");
+    debug_print(op);
+    debug_print(" : type#");
+    debug_print_int(type_idx);
+    debug_newline();
+}
+
+fn debug_ssa_block(block_id: i64) {
+    if not debug_ssa_enabled() {
+        return;
+    }
+    debug_print("[SSA] block ");
+    debug_print_int(block_id);
+    debug_print(":");
+    debug_newline();
+}
+
+// Codegen debug: [CODEGEN] instruction details
+fn debug_codegen_msg(msg: string) {
+    if not debug_codegen_enabled() {
+        return;
+    }
+    debug_print("[CODEGEN] ");
+    debug_print(msg);
+    debug_newline();
+}
+
+fn debug_codegen_inst(op: string, offset: i64) {
+    if not debug_codegen_enabled() {
+        return;
+    }
+    debug_print("[CODEGEN] ");
+    debug_print_hex(offset);
+    debug_print(": ");
+    debug_print(op);
+    debug_newline();
+}
+
+fn debug_codegen_reg(op: string, rd: i64, rn: i64) {
+    if not debug_codegen_enabled() {
+        return;
+    }
+    debug_print("[CODEGEN] ");
+    debug_print(op);
+    debug_print(" x");
+    debug_print_int(rd);
+    debug_print(", x");
+    debug_print_int(rn);
+    debug_newline();
+}
+
+fn debug_codegen_imm(op: string, rd: i64, imm: i64) {
+    if not debug_codegen_enabled() {
+        return;
+    }
+    debug_print("[CODEGEN] ");
+    debug_print(op);
+    debug_print(" x");
+    debug_print_int(rd);
+    debug_print(", #");
+    debug_print_int(imm);
+    debug_newline();
+}

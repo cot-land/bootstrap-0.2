@@ -118,7 +118,7 @@ struct TypePool {
 // Pre-defined Type Indices
 // ============================================================================
 
-// These match the order in which types are registered in pool_init
+// These match the order in which types are registered in TypePool_init
 const TYPE_INVALID: i64 = 0;
 const TYPE_BOOL: i64 = 1;
 const TYPE_I8: i64 = 2;
@@ -171,13 +171,13 @@ const PTYPE_SLICE_BASE: i64 = 100000; // Slice types: PTYPE_SLICE_BASE + elem_ty
 // This limits array sizes to < 100000 and element types to < 100
 
 // Register an array type, returns PTYPE handle
-fn ptype_register_array(elem_ptype: i64, size: i64) i64 {
+fn PType_registerArray(elem_ptype: i64, size: i64) i64 {
     // Encode: size * 100 + elem_type (elem_type < 100)
     return PTYPE_ARRAY_BASE + size * 100 + elem_ptype;
 }
 
 // Get array element type from PTYPE handle
-fn ptype_array_elem(ptype: i64) i64 {
+fn PType_arrayElem(ptype: i64) i64 {
     if ptype < PTYPE_ARRAY_BASE {
         return PTYPE_I64;
     }
@@ -186,7 +186,7 @@ fn ptype_array_elem(ptype: i64) i64 {
 }
 
 // Get array size from PTYPE handle
-fn ptype_array_size(ptype: i64) i64 {
+fn PType_arraySize(ptype: i64) i64 {
     if ptype < PTYPE_ARRAY_BASE {
         return 0;
     }
@@ -195,12 +195,12 @@ fn ptype_array_size(ptype: i64) i64 {
 }
 
 // Register a slice type []T, returns PTYPE handle
-fn ptype_register_slice(elem_ptype: i64) i64 {
+fn PType_registerSlice(elem_ptype: i64) i64 {
     return PTYPE_SLICE_BASE + elem_ptype;
 }
 
 // Get slice element type from PTYPE handle
-fn ptype_slice_elem(ptype: i64) i64 {
+fn PType_sliceElem(ptype: i64) i64 {
     if ptype < PTYPE_SLICE_BASE {
         return PTYPE_I64;
     }
@@ -208,7 +208,7 @@ fn ptype_slice_elem(ptype: i64) i64 {
 }
 
 // Check if PTYPE is a slice type
-fn ptype_is_slice(ptype: i64) bool {
+fn ptype_TypeInfo_isSlice(ptype: i64) bool {
     return ptype >= PTYPE_SLICE_BASE;
 }
 
@@ -218,7 +218,7 @@ fn ptype_is_slice(ptype: i64) bool {
 
 // Initialize type pool with backing storage arrays
 // This is the preferred init function - provides explicit backing storage
-fn pool_init_with_storage(pool: *TypePool, types: *Type, params: *i64, fields: *FieldInfo) {
+fn TypePool_initWithStorage(pool: *TypePool, types: *Type, params: *i64, fields: *FieldInfo) {
     pool.types = types;
     pool.params = params;
     pool.fields = fields;
@@ -229,24 +229,24 @@ fn pool_init_with_storage(pool: *TypePool, types: *Type, params: *i64, fields: *
     pool.source_len = 0;
 
     // Register basic types in order
-    register_basic(pool, TypeKind.Invalid, 0, 0);   // 0: invalid
-    register_basic(pool, TypeKind.Bool, 1, 1);      // 1: bool
-    register_basic(pool, TypeKind.I8, 1, 1);        // 2: i8
-    register_basic(pool, TypeKind.I16, 2, 2);       // 3: i16
-    register_basic(pool, TypeKind.I32, 4, 4);       // 4: i32
-    register_basic(pool, TypeKind.I64, 8, 8);       // 5: i64
-    register_basic(pool, TypeKind.U8, 1, 1);        // 6: u8
-    register_basic(pool, TypeKind.U16, 2, 2);       // 7: u16
-    register_basic(pool, TypeKind.U32, 4, 4);       // 8: u32
-    register_basic(pool, TypeKind.U64, 8, 8);       // 9: u64
-    register_basic(pool, TypeKind.F32, 4, 4);       // 10: f32
-    register_basic(pool, TypeKind.F64, 8, 8);       // 11: f64
-    register_basic(pool, TypeKind.Void, 0, 0);      // 12: void
-    register_basic(pool, TypeKind.String, 16, 8);   // 13: string (ptr + len)
+    TypePool_registerBasic(pool, TypeKind.Invalid, 0, 0);   // 0: invalid
+    TypePool_registerBasic(pool, TypeKind.Bool, 1, 1);      // 1: bool
+    TypePool_registerBasic(pool, TypeKind.I8, 1, 1);        // 2: i8
+    TypePool_registerBasic(pool, TypeKind.I16, 2, 2);       // 3: i16
+    TypePool_registerBasic(pool, TypeKind.I32, 4, 4);       // 4: i32
+    TypePool_registerBasic(pool, TypeKind.I64, 8, 8);       // 5: i64
+    TypePool_registerBasic(pool, TypeKind.U8, 1, 1);        // 6: u8
+    TypePool_registerBasic(pool, TypeKind.U16, 2, 2);       // 7: u16
+    TypePool_registerBasic(pool, TypeKind.U32, 4, 4);       // 8: u32
+    TypePool_registerBasic(pool, TypeKind.U64, 8, 8);       // 9: u64
+    TypePool_registerBasic(pool, TypeKind.F32, 4, 4);       // 10: f32
+    TypePool_registerBasic(pool, TypeKind.F64, 8, 8);       // 11: f64
+    TypePool_registerBasic(pool, TypeKind.Void, 0, 0);      // 12: void
+    TypePool_registerBasic(pool, TypeKind.String, 16, 8);   // 13: string (ptr + len)
 }
 
 // Initialize type pool (legacy - requires pool.types/params/fields to be set first)
-fn pool_init(pool: *TypePool) {
+fn TypePool_init(pool: *TypePool) {
     pool.count = 0;
     pool.params_count = 0;
     pool.fields_count = 0;
@@ -254,24 +254,24 @@ fn pool_init(pool: *TypePool) {
     pool.source_len = 0;
 
     // Register basic types in order
-    register_basic(pool, TypeKind.Invalid, 0, 0);   // 0: invalid
-    register_basic(pool, TypeKind.Bool, 1, 1);      // 1: bool
-    register_basic(pool, TypeKind.I8, 1, 1);        // 2: i8
-    register_basic(pool, TypeKind.I16, 2, 2);       // 3: i16
-    register_basic(pool, TypeKind.I32, 4, 4);       // 4: i32
-    register_basic(pool, TypeKind.I64, 8, 8);       // 5: i64
-    register_basic(pool, TypeKind.U8, 1, 1);        // 6: u8
-    register_basic(pool, TypeKind.U16, 2, 2);       // 7: u16
-    register_basic(pool, TypeKind.U32, 4, 4);       // 8: u32
-    register_basic(pool, TypeKind.U64, 8, 8);       // 9: u64
-    register_basic(pool, TypeKind.F32, 4, 4);       // 10: f32
-    register_basic(pool, TypeKind.F64, 8, 8);       // 11: f64
-    register_basic(pool, TypeKind.Void, 0, 0);      // 12: void
-    register_basic(pool, TypeKind.String, 16, 8);   // 13: string (ptr + len)
+    TypePool_registerBasic(pool, TypeKind.Invalid, 0, 0);   // 0: invalid
+    TypePool_registerBasic(pool, TypeKind.Bool, 1, 1);      // 1: bool
+    TypePool_registerBasic(pool, TypeKind.I8, 1, 1);        // 2: i8
+    TypePool_registerBasic(pool, TypeKind.I16, 2, 2);       // 3: i16
+    TypePool_registerBasic(pool, TypeKind.I32, 4, 4);       // 4: i32
+    TypePool_registerBasic(pool, TypeKind.I64, 8, 8);       // 5: i64
+    TypePool_registerBasic(pool, TypeKind.U8, 1, 1);        // 6: u8
+    TypePool_registerBasic(pool, TypeKind.U16, 2, 2);       // 7: u16
+    TypePool_registerBasic(pool, TypeKind.U32, 4, 4);       // 8: u32
+    TypePool_registerBasic(pool, TypeKind.U64, 8, 8);       // 9: u64
+    TypePool_registerBasic(pool, TypeKind.F32, 4, 4);       // 10: f32
+    TypePool_registerBasic(pool, TypeKind.F64, 8, 8);       // 11: f64
+    TypePool_registerBasic(pool, TypeKind.Void, 0, 0);      // 12: void
+    TypePool_registerBasic(pool, TypeKind.String, 16, 8);   // 13: string (ptr + len)
 }
 
 // Helper to register a basic type
-fn register_basic(pool: *TypePool, kind: TypeKind, size: i64, align: i64) i64 {
+fn TypePool_registerBasic(pool: *TypePool, kind: TypeKind, size: i64, align: i64) i64 {
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
 
@@ -295,7 +295,7 @@ fn register_basic(pool: *TypePool, kind: TypeKind, size: i64, align: i64) i64 {
 // ============================================================================
 
 // Get type at index
-fn type_get(pool: *TypePool, idx: i64) *Type {
+fn TypePool_get(pool: *TypePool, idx: i64) *Type {
     if idx < 0 or idx >= pool.count {
         return pool.types + 0;  // Return invalid type
     }
@@ -303,13 +303,13 @@ fn type_get(pool: *TypePool, idx: i64) *Type {
 }
 
 // Check if type index is valid
-fn type_valid(idx: i64) bool {
+fn TypeInfo_valid(idx: i64) bool {
     return idx != INVALID_TYPE and idx >= 0;
 }
 
 // Find a struct type by name in the pool
 // Returns the type index, or INVALID_TYPE if not found
-fn type_find_by_name(pool: *TypePool, name_start: i64, name_len: i64) i64 {
+fn TypePool_findByName(pool: *TypePool, name_start: i64, name_len: i64) i64 {
     var i: i64 = 0;
     while i < pool.count {
         let t: *Type = pool.types + i;
@@ -342,7 +342,7 @@ fn type_find_by_name(pool: *TypePool, name_start: i64, name_len: i64) i64 {
 // ============================================================================
 
 // Create a pointer type: *elem
-fn type_make_pointer(pool: *TypePool, elem: i64) i64 {
+fn TypePool_makePointer(pool: *TypePool, elem: i64) i64 {
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
 
@@ -362,7 +362,7 @@ fn type_make_pointer(pool: *TypePool, elem: i64) i64 {
 }
 
 // Create a slice type: []elem
-fn type_make_slice(pool: *TypePool, elem: i64) i64 {
+fn TypePool_makeSlice(pool: *TypePool, elem: i64) i64 {
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
 
@@ -382,11 +382,11 @@ fn type_make_slice(pool: *TypePool, elem: i64) i64 {
 }
 
 // Create an array type: [len]elem
-fn type_make_array(pool: *TypePool, elem: i64, array_len: i64) i64 {
+fn TypePool_makeArray(pool: *TypePool, elem: i64, array_len: i64) i64 {
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
 
-    let elem_type: *Type = type_get(pool, elem);
+    let elem_type: *Type = TypePool_get(pool, elem);
     let elem_size: i64 = elem_type.size;
 
     let t: *Type = pool.types + idx;
@@ -405,7 +405,7 @@ fn type_make_array(pool: *TypePool, elem: i64, array_len: i64) i64 {
 }
 
 // Create a function type: fn(params) ret
-fn type_make_func(pool: *TypePool, params_start: i64, params_count: i64, ret_type: i64) i64 {
+fn TypePool_makeFunc(pool: *TypePool, params_start: i64, params_count: i64, ret_type: i64) i64 {
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
 
@@ -425,7 +425,7 @@ fn type_make_func(pool: *TypePool, params_start: i64, params_count: i64, ret_typ
 }
 
 // Add a parameter type to the params array
-fn type_add_param(pool: *TypePool, param_type: i64) i64 {
+fn TypePool_addParam(pool: *TypePool, param_type: i64) i64 {
     let idx: i64 = pool.params_count;
     let ptr: *i64 = pool.params + idx;
     ptr.* = param_type;
@@ -435,7 +435,7 @@ fn type_add_param(pool: *TypePool, param_type: i64) i64 {
 
 // Create a struct type: struct { fields }
 // fields_start and fields_count index into params array (used for field types)
-fn type_make_struct(pool: *TypePool, name_start: i64, name_len: i64,
+fn TypePool_makeStruct(pool: *TypePool, name_start: i64, name_len: i64,
                     fields_start: i64, fields_count: i64, size: i64, align: i64) i64 {
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
@@ -457,7 +457,7 @@ fn type_make_struct(pool: *TypePool, name_start: i64, name_len: i64,
 
 // Create an enum type: enum { variants }
 // Enums are i32-sized by default (like Go)
-fn type_make_enum(pool: *TypePool, name_start: i64, name_len: i64,
+fn TypePool_makeEnum(pool: *TypePool, name_start: i64, name_len: i64,
                   variants_count: i64) i64 {
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
@@ -478,7 +478,7 @@ fn type_make_enum(pool: *TypePool, name_start: i64, name_len: i64,
 }
 
 // Get parameter type at index
-fn type_get_param(pool: *TypePool, params_start: i64, offset: i64) i64 {
+fn TypePool_getParam(pool: *TypePool, params_start: i64, offset: i64) i64 {
     let ptr: *i64 = pool.params + params_start + offset;
     return ptr.*;
 }
@@ -488,8 +488,8 @@ fn type_get_param(pool: *TypePool, params_start: i64, offset: i64) i64 {
 // ============================================================================
 
 // Check if type is integer (signed or unsigned)
-fn is_integer(pool: *TypePool, idx: i64) bool {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_isInteger(pool: *TypePool, idx: i64) bool {
+    let t: *Type = TypePool_get(pool, idx);
     return t.kind == TypeKind.I8 or t.kind == TypeKind.I16 or
            t.kind == TypeKind.I32 or t.kind == TypeKind.I64 or
            t.kind == TypeKind.U8 or t.kind == TypeKind.U16 or
@@ -497,81 +497,81 @@ fn is_integer(pool: *TypePool, idx: i64) bool {
 }
 
 // Check if type is signed integer
-fn is_signed(pool: *TypePool, idx: i64) bool {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_isSigned(pool: *TypePool, idx: i64) bool {
+    let t: *Type = TypePool_get(pool, idx);
     return t.kind == TypeKind.I8 or t.kind == TypeKind.I16 or
            t.kind == TypeKind.I32 or t.kind == TypeKind.I64;
 }
 
 // Check if type is unsigned integer
-fn is_unsigned(pool: *TypePool, idx: i64) bool {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_isUnsigned(pool: *TypePool, idx: i64) bool {
+    let t: *Type = TypePool_get(pool, idx);
     return t.kind == TypeKind.U8 or t.kind == TypeKind.U16 or
            t.kind == TypeKind.U32 or t.kind == TypeKind.U64;
 }
 
 // Check if type is floating point
-fn is_float(pool: *TypePool, idx: i64) bool {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_isFloat(pool: *TypePool, idx: i64) bool {
+    let t: *Type = TypePool_get(pool, idx);
     return t.kind == TypeKind.F32 or t.kind == TypeKind.F64;
 }
 
 // Check if type is numeric (integer or float)
-fn is_numeric(pool: *TypePool, idx: i64) bool {
-    return is_integer(pool, idx) or is_float(pool, idx);
+fn TypeInfo_isNumeric(pool: *TypePool, idx: i64) bool {
+    return TypeInfo_isInteger(pool, idx) or TypeInfo_isFloat(pool, idx);
 }
 
 // Check if type is boolean
-fn is_bool(pool: *TypePool, idx: i64) bool {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_isBool(pool: *TypePool, idx: i64) bool {
+    let t: *Type = TypePool_get(pool, idx);
     return t.kind == TypeKind.Bool;
 }
 
 // Check if type is void
-fn is_void(pool: *TypePool, idx: i64) bool {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_isVoid(pool: *TypePool, idx: i64) bool {
+    let t: *Type = TypePool_get(pool, idx);
     return t.kind == TypeKind.Void;
 }
 
 // Check if type is a pointer
-fn is_pointer(pool: *TypePool, idx: i64) bool {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_isPointer(pool: *TypePool, idx: i64) bool {
+    let t: *Type = TypePool_get(pool, idx);
     return t.kind == TypeKind.Pointer;
 }
 
 // Check if type is a slice
-fn is_slice(pool: *TypePool, idx: i64) bool {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_isSlice(pool: *TypePool, idx: i64) bool {
+    let t: *Type = TypePool_get(pool, idx);
     return t.kind == TypeKind.Slice;
 }
 
 // Check if type is an array
-fn is_array(pool: *TypePool, idx: i64) bool {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_isArray(pool: *TypePool, idx: i64) bool {
+    let t: *Type = TypePool_get(pool, idx);
     return t.kind == TypeKind.Array;
 }
 
 // Check if type is a function
-fn is_func(pool: *TypePool, idx: i64) bool {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_isFunc(pool: *TypePool, idx: i64) bool {
+    let t: *Type = TypePool_get(pool, idx);
     return t.kind == TypeKind.Func;
 }
 
 // Check if type is a string
-fn is_string(pool: *TypePool, idx: i64) bool {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_isString(pool: *TypePool, idx: i64) bool {
+    let t: *Type = TypePool_get(pool, idx);
     return t.kind == TypeKind.String;
 }
 
 // Check if type is a struct
-fn is_struct(pool: *TypePool, idx: i64) bool {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_isStruct(pool: *TypePool, idx: i64) bool {
+    let t: *Type = TypePool_get(pool, idx);
     return t.kind == TypeKind.Struct;
 }
 
 // Check if type is an enum
-fn is_enum(pool: *TypePool, idx: i64) bool {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_isEnum(pool: *TypePool, idx: i64) bool {
+    let t: *Type = TypePool_get(pool, idx);
     return t.kind == TypeKind.Enum;
 }
 
@@ -580,38 +580,38 @@ fn is_enum(pool: *TypePool, idx: i64) bool {
 // ============================================================================
 
 // Get element type of pointer/slice/array
-fn type_elem(pool: *TypePool, idx: i64) i64 {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_elem(pool: *TypePool, idx: i64) i64 {
+    let t: *Type = TypePool_get(pool, idx);
     return t.elem;
 }
 
 // Get array length
-fn type_array_len(pool: *TypePool, idx: i64) i64 {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_arrayLen(pool: *TypePool, idx: i64) i64 {
+    let t: *Type = TypePool_get(pool, idx);
     return t.len;
 }
 
 // Get function return type
-fn type_ret(pool: *TypePool, idx: i64) i64 {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_ret(pool: *TypePool, idx: i64) i64 {
+    let t: *Type = TypePool_get(pool, idx);
     return t.ret_type;
 }
 
 // Get function parameter count
-fn type_param_count(pool: *TypePool, idx: i64) i64 {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_paramCount(pool: *TypePool, idx: i64) i64 {
+    let t: *Type = TypePool_get(pool, idx);
     return t.params_count;
 }
 
 // Get type size in bytes
-fn type_size(pool: *TypePool, idx: i64) i64 {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_size(pool: *TypePool, idx: i64) i64 {
+    let t: *Type = TypePool_get(pool, idx);
     return t.size;
 }
 
 // Get type alignment
-fn type_align(pool: *TypePool, idx: i64) i64 {
-    let t: *Type = type_get(pool, idx);
+fn TypeInfo_alignment(pool: *TypePool, idx: i64) i64 {
+    let t: *Type = TypePool_get(pool, idx);
     return t.align;
 }
 
@@ -620,12 +620,12 @@ fn type_align(pool: *TypePool, idx: i64) i64 {
 // ============================================================================
 
 // Check if two types are equal
-fn types_equal(pool: *TypePool, a: i64, b: i64) bool {
+fn TypeInfo_equal(pool: *TypePool, a: i64, b: i64) bool {
     if a == b { return true; }
     if a < 0 or b < 0 { return false; }
 
-    let ta: *Type = type_get(pool, a);
-    let tb: *Type = type_get(pool, b);
+    let ta: *Type = TypePool_get(pool, a);
+    let tb: *Type = TypePool_get(pool, b);
 
     // Different kinds are never equal
     if ta.kind != tb.kind { return false; }
@@ -643,24 +643,24 @@ fn types_equal(pool: *TypePool, a: i64, b: i64) bool {
 
     // For Pointer, Slice: compare element types
     if ta.kind == TypeKind.Pointer or ta.kind == TypeKind.Slice {
-        return types_equal(pool, ta.elem, tb.elem);
+        return TypeInfo_equal(pool, ta.elem, tb.elem);
     }
 
     // For Array: compare element types and lengths
     if ta.kind == TypeKind.Array {
-        return ta.len == tb.len and types_equal(pool, ta.elem, tb.elem);
+        return ta.len == tb.len and TypeInfo_equal(pool, ta.elem, tb.elem);
     }
 
     // For Func: compare params and return type
     if ta.kind == TypeKind.Func {
         if ta.params_count != tb.params_count { return false; }
-        if not types_equal(pool, ta.ret_type, tb.ret_type) { return false; }
+        if not TypeInfo_equal(pool, ta.ret_type, tb.ret_type) { return false; }
 
         var i: i64 = 0;
         while i < ta.params_count {
-            let pa: i64 = type_get_param(pool, ta.params_start, i);
-            let pb: i64 = type_get_param(pool, tb.params_start, i);
-            if not types_equal(pool, pa, pb) { return false; }
+            let pa: i64 = TypePool_getParam(pool, ta.params_start, i);
+            let pb: i64 = TypePool_getParam(pool, tb.params_start, i);
+            if not TypeInfo_equal(pool, pa, pb) { return false; }
             i = i + 1;
         }
         return true;
@@ -675,7 +675,7 @@ fn types_equal(pool: *TypePool, a: i64, b: i64) bool {
 
 // Look up basic type by name
 // Returns type index or INVALID_TYPE if not found
-fn lookup_basic_type(source: *u8, name_start: i64, name_len: i64) i64 {
+fn TypeInfo_lookupBasic(source: *u8, name_start: i64, name_len: i64) i64 {
     // Single character type names
     if name_len == 2 {
         let c0: u8 = (source + name_start).*;
@@ -744,15 +744,15 @@ fn lookup_basic_type(source: *u8, name_start: i64, name_len: i64) i64 {
 // ============================================================================
 
 // Check if a value of type `from` can be assigned to a variable of type `to`
-fn is_assignable(pool: *TypePool, from: i64, to: i64) bool {
+fn TypeInfo_isAssignable(pool: *TypePool, from: i64, to: i64) bool {
     // Same type is always assignable
     if from == to { return true; }
 
     // Error types are assignable (for error recovery)
     if from < 0 or to < 0 { return true; }
 
-    let from_t: *Type = type_get(pool, from);
-    let to_t: *Type = type_get(pool, to);
+    let from_t: *Type = TypePool_get(pool, from);
+    let to_t: *Type = TypePool_get(pool, to);
 
     // Same basic types are assignable
     if from_t.kind == to_t.kind {
@@ -769,22 +769,22 @@ fn is_assignable(pool: *TypePool, from: i64, to: i64) bool {
 
     // Pointer types with same element
     if from_t.kind == TypeKind.Pointer and to_t.kind == TypeKind.Pointer {
-        return types_equal(pool, from_t.elem, to_t.elem);
+        return TypeInfo_equal(pool, from_t.elem, to_t.elem);
     }
 
     // Slice types with same element
     if from_t.kind == TypeKind.Slice and to_t.kind == TypeKind.Slice {
-        return types_equal(pool, from_t.elem, to_t.elem);
+        return TypeInfo_equal(pool, from_t.elem, to_t.elem);
     }
 
     // Array to slice with same element type
     if from_t.kind == TypeKind.Array and to_t.kind == TypeKind.Slice {
-        return types_equal(pool, from_t.elem, to_t.elem);
+        return TypeInfo_equal(pool, from_t.elem, to_t.elem);
     }
 
     // Array types with same element and length
     if from_t.kind == TypeKind.Array and to_t.kind == TypeKind.Array {
-        return from_t.len == to_t.len and types_equal(pool, from_t.elem, to_t.elem);
+        return from_t.len == to_t.len and TypeInfo_equal(pool, from_t.elem, to_t.elem);
     }
 
     return false;
@@ -795,13 +795,13 @@ fn is_assignable(pool: *TypePool, from: i64, to: i64) bool {
 // ============================================================================
 
 // Set source text for field name comparison
-fn pool_set_source(pool: *TypePool, source: *u8, source_len: i64) {
+fn TypePool_setSource(pool: *TypePool, source: *u8, source_len: i64) {
     pool.source = source;
     pool.source_len = source_len;
 }
 
 // Add a field to the fields array, return its index
-fn pool_add_field(pool: *TypePool, name_start: i64, name_len: i64,
+fn TypePool_addField(pool: *TypePool, name_start: i64, name_len: i64,
                   type_idx: i64, offset: i64) i64 {
     let idx: i64 = pool.fields_count;
     pool.fields_count = pool.fields_count + 1;
@@ -816,7 +816,7 @@ fn pool_add_field(pool: *TypePool, name_start: i64, name_len: i64,
 }
 
 // Get field info at index
-fn pool_get_field(pool: *TypePool, idx: i64) *FieldInfo {
+fn TypePool_getField(pool: *TypePool, idx: i64) *FieldInfo {
     return pool.fields + idx;
 }
 
@@ -836,9 +836,9 @@ fn names_equal_types(source: *u8, start1: i64, len1: i64, start2: i64, len2: i64
 // Look up field by name in a struct type
 // Returns field info if found, null otherwise
 // type_idx must be a struct type
-fn type_lookup_field(pool: *TypePool, type_idx: i64,
+fn TypePool_lookupField(pool: *TypePool, type_idx: i64,
                      field_name_start: i64, field_name_len: i64) *FieldInfo {
-    let t: *Type = type_get(pool, type_idx);
+    let t: *Type = TypePool_get(pool, type_idx);
     if t.kind != TypeKind.Struct {
         return null;
     }
@@ -861,8 +861,8 @@ fn type_lookup_field(pool: *TypePool, type_idx: i64,
 }
 
 // Get pointee type from pointer type
-fn type_get_pointee(pool: *TypePool, ptr_type_idx: i64) i64 {
-    let t: *Type = type_get(pool, ptr_type_idx);
+fn TypeInfo_getPointee(pool: *TypePool, ptr_type_idx: i64) i64 {
+    let t: *Type = TypePool_get(pool, ptr_type_idx);
     if t.kind == TypeKind.Pointer {
         return t.elem;
     }

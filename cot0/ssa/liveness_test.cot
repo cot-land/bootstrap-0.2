@@ -25,7 +25,7 @@ fn main() i64 {
 // ============================================================================
 
 fn test_live_info() i64 {
-    let info: LiveInfo = live_info_new(42, 10, 100);
+    let info: LiveInfo = LiveInfo_new(42, 10, 100);
     if info.id != 42 { return 1; }
     if info.dist != 10 { return 2; }
     if info.pos != 100 { return 3; }
@@ -38,37 +38,37 @@ fn test_live_info() i64 {
 
 fn test_live_map() i64 {
     var lm: LiveMap = undefined;
-    live_map_init(&lm, &g_lm_entries[0], 256);
+    LiveMap_init(&lm, &g_lm_entries[0], 256);
 
     // Initially empty
     if lm.count != 0 { return 10; }
-    if live_map_contains(&lm, 1) { return 11; }
+    if LiveMap_contains(&lm, 1) { return 11; }
 
     // Add a value
-    live_map_set(&lm, 1, 10, 0);
+    LiveMap_set(&lm, 1, 10, 0);
     if lm.count != 1 { return 12; }
-    if not live_map_contains(&lm, 1) { return 13; }
-    if live_map_get(&lm, 1) != 10 { return 14; }
+    if not LiveMap_contains(&lm, 1) { return 13; }
+    if LiveMap_get(&lm, 1) != 10 { return 14; }
 
     // Add another value
-    live_map_set(&lm, 2, 20, 0);
+    LiveMap_set(&lm, 2, 20, 0);
     if lm.count != 2 { return 15; }
 
     // Update with closer distance (should update)
-    live_map_set(&lm, 1, 5, 0);
-    if live_map_get(&lm, 1) != 5 { return 16; }
+    LiveMap_set(&lm, 1, 5, 0);
+    if LiveMap_get(&lm, 1) != 5 { return 16; }
 
     // Update with farther distance (should NOT update)
-    live_map_set(&lm, 1, 15, 0);
-    if live_map_get(&lm, 1) != 5 { return 17; }
+    LiveMap_set(&lm, 1, 15, 0);
+    if LiveMap_get(&lm, 1) != 5 { return 17; }
 
     // Remove
-    live_map_remove(&lm, 1);
-    if live_map_contains(&lm, 1) { return 18; }
+    LiveMap_remove(&lm, 1);
+    if LiveMap_contains(&lm, 1) { return 18; }
     if lm.count != 1 { return 19; }
 
     // Clear
-    live_map_clear(&lm);
+    LiveMap_clear(&lm);
     if lm.count != 0 { return 20; }
 
     return 0;
@@ -95,7 +95,7 @@ var g_next_call: [1000]i64;
 
 fn test_block_liveness() i64 {
     var bl: BlockLiveness = undefined;
-    block_liveness_init(&bl, 0, &g_live_out[0], 128, &g_next_call[0], 1000);
+    BlockLiveness_init(&bl, 0, &g_live_out[0], 128, &g_next_call[0], 1000);
 
     if bl.block_id != 0 { return 40; }
     if bl.live_out_count != 0 { return 41; }

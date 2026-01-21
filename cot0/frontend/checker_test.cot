@@ -8,7 +8,7 @@ fn main() i64 {
 
     result = result + test_names_equal();
     result = result + test_type_valid_fn();
-    result = result + test_scope_define_lookup();
+    result = result + test_ScopePool_define_lookup();
     result = result + test_scope_parent_lookup();
 
     return result;
@@ -62,7 +62,7 @@ fn test_type_valid_fn() i64 {
 // Test: scope define and lookup
 // ============================================================================
 
-fn test_scope_define_lookup() i64 {
+fn test_ScopePool_define_lookup() i64 {
     // Allocate scope pool storage
     var scopes: [100]Scope = undefined;
     var symbols: [1000]Symbol = undefined;
@@ -75,20 +75,20 @@ fn test_scope_define_lookup() i64 {
     };
 
     // Create global scope
-    let global: i64 = scope_new(&pool, -1);
+    let global: i64 = ScopePool_new(&pool, -1);
 
     // Define a variable "x" with type i64 (TYPE_I64 = 5)
     let source: string = "x";
-    let sym: Symbol = symbol_new(0, 1, SymbolKind.Variable, 5, 0, true);
-    scope_define(&pool, global, sym);
+    let sym: Symbol = Symbol_new(0, 1, SymbolKind.Variable, 5, 0, true);
+    ScopePool_define(&pool, global, sym);
 
     // Lookup "x" - should find it
-    let found_type: i64 = scope_lookup_type(&pool, global, source.ptr, 0, 1);
+    let found_type: i64 = ScopePool_lookupType(&pool, global, source.ptr, 0, 1);
     if found_type != 5 { return 20; }
 
     // Lookup "y" - should NOT find it
     let source_y: string = "y";
-    let not_found: i64 = scope_lookup_type(&pool, global, source_y.ptr, 0, 1);
+    let not_found: i64 = ScopePool_lookupType(&pool, global, source_y.ptr, 0, 1);
     if not_found != -1 { return 21; }
 
     return 0;
@@ -111,26 +111,26 @@ fn test_scope_parent_lookup() i64 {
     };
 
     // Create global scope with "x"
-    let global: i64 = scope_new(&pool, -1);
+    let global: i64 = ScopePool_new(&pool, -1);
     let source: string = "xy";
-    let sym_x: Symbol = symbol_new(0, 1, SymbolKind.Variable, 5, 0, true);  // "x" at offset 0
-    scope_define(&pool, global, sym_x);
+    let sym_x: Symbol = Symbol_new(0, 1, SymbolKind.Variable, 5, 0, true);  // "x" at offset 0
+    ScopePool_define(&pool, global, sym_x);
 
     // Create child scope with "y"
-    let child: i64 = scope_new(&pool, global);
-    let sym_y: Symbol = symbol_new(1, 1, SymbolKind.Variable, 1, 0, false);  // "y" at offset 1, bool type
-    scope_define(&pool, child, sym_y);
+    let child: i64 = ScopePool_new(&pool, global);
+    let sym_y: Symbol = Symbol_new(1, 1, SymbolKind.Variable, 1, 0, false);  // "y" at offset 1, bool type
+    ScopePool_define(&pool, child, sym_y);
 
     // From child, lookup "x" - should find in parent
-    let found_x: i64 = scope_lookup_type(&pool, child, source.ptr, 0, 1);
+    let found_x: i64 = ScopePool_lookupType(&pool, child, source.ptr, 0, 1);
     if found_x != 5 { return 30; }
 
     // From child, lookup "y" - should find in child
-    let found_y: i64 = scope_lookup_type(&pool, child, source.ptr, 1, 1);
+    let found_y: i64 = ScopePool_lookupType(&pool, child, source.ptr, 1, 1);
     if found_y != 1 { return 31; }
 
     // From global, lookup "y" - should NOT find (child scope only)
-    let not_found_y: i64 = scope_lookup_type(&pool, global, source.ptr, 1, 1);
+    let not_found_y: i64 = ScopePool_lookupType(&pool, global, source.ptr, 1, 1);
     if not_found_y != -1 { return 32; }
 
     return 0;

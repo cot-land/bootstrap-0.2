@@ -25,9 +25,9 @@ fn reset_pool(pool: *NodePool) {
 // Test 1: Parse integer literal
 fn test_parse_int() i64 {
     let pool: *NodePool = init_test_pool();
-    var p: Parser = parser_new("42", pool);
+    var p: Parser = Parser_init("42", pool);
 
-    let expr: i64 = parse_expr(&p);
+    let expr: i64 = Parser_parseExpr(&p);
 
     let n: *Node = node_get(pool, expr);
     if n.kind != NodeKind.IntLit { return 1; }
@@ -40,9 +40,9 @@ fn test_parse_int() i64 {
 fn test_parse_ident() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("foo", pool);
+    var p: Parser = Parser_init("foo", pool);
 
-    let expr: i64 = parse_expr(&p);
+    let expr: i64 = Parser_parseExpr(&p);
 
     let n: *Node = node_get(pool, expr);
     if n.kind != NodeKind.Ident { return 1; }
@@ -56,9 +56,9 @@ fn test_parse_ident() i64 {
 fn test_parse_add() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("1 + 2", pool);
+    var p: Parser = Parser_init("1 + 2", pool);
 
-    let expr: i64 = parse_expr(&p);
+    let expr: i64 = Parser_parseExpr(&p);
 
     let n: *Node = node_get(pool, expr);
     if n.kind != NodeKind.BinaryExpr { return 1; }
@@ -83,9 +83,9 @@ fn test_parse_add() i64 {
 fn test_parse_precedence() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("1 + 2 * 3", pool);
+    var p: Parser = Parser_init("1 + 2 * 3", pool);
 
-    let expr: i64 = parse_expr(&p);
+    let expr: i64 = Parser_parseExpr(&p);
 
     // Should parse as: 1 + (2 * 3)
     let add: *Node = node_get(pool, expr);
@@ -115,9 +115,9 @@ fn test_parse_precedence() i64 {
 fn test_parse_call() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("add(1, 2)", pool);
+    var p: Parser = Parser_init("add(1, 2)", pool);
 
-    let expr: i64 = parse_expr(&p);
+    let expr: i64 = Parser_parseExpr(&p);
 
     let call: *Node = node_get(pool, expr);
     if call.kind != NodeKind.CallExpr { return 1; }
@@ -146,9 +146,9 @@ fn test_parse_call() i64 {
 fn test_parse_return() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("return 42;", pool);
+    var p: Parser = Parser_init("return 42;", pool);
 
-    let stmt: i64 = parse_stmt(&p);
+    let stmt: i64 = Parser_parseStmt(&p);
 
     let ret: *Node = node_get(pool, stmt);
     if ret.kind != NodeKind.ReturnStmt { return 1; }
@@ -162,12 +162,12 @@ fn test_parse_return() i64 {
 }
 
 // Test 7: Parse block
-fn test_parse_block() i64 {
+fn test_Parser_parseBlock() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("{ return 1; return 2; }", pool);
+    var p: Parser = Parser_init("{ return 1; return 2; }", pool);
 
-    let block: i64 = parse_block(&p);
+    let block: i64 = Parser_parseBlock(&p);
 
     let blk: *Node = node_get(pool, block);
     if blk.kind != NodeKind.BlockStmt { return 1; }
@@ -180,9 +180,9 @@ fn test_parse_block() i64 {
 fn test_parse_fn_decl() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("fn main() i64 { return 42; }", pool);
+    var p: Parser = Parser_init("fn main() i64 { return 42; }", pool);
 
-    let decl: i64 = parse_decl(&p);
+    let decl: i64 = Parser_parseDecl(&p);
 
     let fn_node: *Node = node_get(pool, decl);
     if fn_node.kind != NodeKind.FnDecl { return 1; }
@@ -201,9 +201,9 @@ fn test_parse_fn_decl() i64 {
 fn test_parse_fn_params() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("fn add(a: i64, b: i64) i64 { return 42; }", pool);
+    var p: Parser = Parser_init("fn add(a: i64, b: i64) i64 { return 42; }", pool);
 
-    let decl: i64 = parse_decl(&p);
+    let decl: i64 = Parser_parseDecl(&p);
 
     let fn_node: *Node = node_get(pool, decl);
     if fn_node.kind != NodeKind.FnDecl { return 1; }
@@ -224,9 +224,9 @@ fn test_parse_fn_params() i64 {
 fn test_parse_return_expr() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("return 1 + 2;", pool);
+    var p: Parser = Parser_init("return 1 + 2;", pool);
 
-    let stmt: i64 = parse_stmt(&p);
+    let stmt: i64 = Parser_parseStmt(&p);
 
     let ret: *Node = node_get(pool, stmt);
     if ret.kind != NodeKind.ReturnStmt { return 1; }
@@ -246,9 +246,9 @@ fn test_parse_return_expr() i64 {
 fn test_parse_struct() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("struct Point { x: i64, y: i64 }", pool);
+    var p: Parser = Parser_init("struct Point { x: i64, y: i64 }", pool);
 
-    let decl: i64 = parse_decl(&p);
+    let decl: i64 = Parser_parseDecl(&p);
 
     let s: *Node = node_get(pool, decl);
     if s.kind != NodeKind.StructDecl { return 1; }
@@ -274,9 +274,9 @@ fn test_parse_struct() i64 {
 fn test_parse_enum() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("enum Color { Red, Green, Blue }", pool);
+    var p: Parser = Parser_init("enum Color { Red, Green, Blue }", pool);
 
-    let decl: i64 = parse_decl(&p);
+    let decl: i64 = Parser_parseDecl(&p);
 
     let e: *Node = node_get(pool, decl);
     if e.kind != NodeKind.EnumDecl { return 1; }
@@ -302,9 +302,9 @@ fn test_parse_enum() i64 {
 fn test_parse_field_access() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("point.x", pool);
+    var p: Parser = Parser_init("point.x", pool);
 
-    let expr: i64 = parse_expr(&p);
+    let expr: i64 = Parser_parseExpr(&p);
 
     let fa: *Node = node_get(pool, expr);
     if fa.kind != NodeKind.FieldAccess { return 1; }
@@ -324,9 +324,9 @@ fn test_parse_field_access() i64 {
 fn test_parse_chained_access() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("TokenType.Ident", pool);
+    var p: Parser = Parser_init("TokenType.Ident", pool);
 
-    let expr: i64 = parse_expr(&p);
+    let expr: i64 = Parser_parseExpr(&p);
 
     let fa: *Node = node_get(pool, expr);
     if fa.kind != NodeKind.FieldAccess { return 1; }
@@ -346,9 +346,9 @@ fn test_parse_chained_access() i64 {
 fn test_parse_string_lit() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("\"hello\"", pool);
+    var p: Parser = Parser_init("\"hello\"", pool);
 
-    let expr: i64 = parse_expr(&p);
+    let expr: i64 = Parser_parseExpr(&p);
 
     let s: *Node = node_get(pool, expr);
     if s.kind != NodeKind.StringLit { return 1; }
@@ -364,9 +364,9 @@ fn test_parse_string_lit() i64 {
 fn test_parse_address_of() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("&x", pool);
+    var p: Parser = Parser_init("&x", pool);
 
-    let expr: i64 = parse_expr(&p);
+    let expr: i64 = Parser_parseExpr(&p);
 
     let addr: *Node = node_get(pool, expr);
     if addr.kind != NodeKind.AddressOf { return 1; }
@@ -382,9 +382,9 @@ fn test_parse_address_of() i64 {
 fn test_parse_deref() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("ptr.*", pool);
+    var p: Parser = Parser_init("ptr.*", pool);
 
-    let expr: i64 = parse_expr(&p);
+    let expr: i64 = Parser_parseExpr(&p);
 
     let deref: *Node = node_get(pool, expr);
     if deref.kind != NodeKind.DerefExpr { return 1; }
@@ -400,9 +400,9 @@ fn test_parse_deref() i64 {
 fn test_parse_ptr_type() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("fn foo(p: *i64) i64 { return 0; }", pool);
+    var p: Parser = Parser_init("fn foo(p: *i64) i64 { return 0; }", pool);
 
-    let decl: i64 = parse_decl(&p);
+    let decl: i64 = Parser_parseDecl(&p);
 
     let fn_node: *Node = node_get(pool, decl);
     if fn_node.kind != NodeKind.FnDecl { return 1; }
@@ -431,9 +431,9 @@ fn test_parse_ptr_type() i64 {
 fn test_parse_import() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("import \"foo.cot\";", pool);
+    var p: Parser = Parser_init("import \"foo.cot\";", pool);
 
-    let decl: i64 = parse_decl(&p);
+    let decl: i64 = Parser_parseDecl(&p);
 
     let imp: *Node = node_get(pool, decl);
     if imp.kind != NodeKind.ImportDecl { return 1; }
@@ -449,9 +449,9 @@ fn test_parse_import() i64 {
 fn test_parse_const() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("const MAX = 100;", pool);
+    var p: Parser = Parser_init("const MAX = 100;", pool);
 
-    let decl: i64 = parse_decl(&p);
+    let decl: i64 = Parser_parseDecl(&p);
 
     let c: *Node = node_get(pool, decl);
     if c.kind != NodeKind.ConstDecl { return 1; }
@@ -475,9 +475,9 @@ fn test_parse_const() i64 {
 fn test_parse_const_typed() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    var p: Parser = parser_new("const SIZE: i64 = 256;", pool);
+    var p: Parser = Parser_init("const SIZE: i64 = 256;", pool);
 
-    let decl: i64 = parse_decl(&p);
+    let decl: i64 = Parser_parseDecl(&p);
 
     let c: *Node = node_get(pool, decl);
     if c.kind != NodeKind.ConstDecl { return 1; }
@@ -488,14 +488,14 @@ fn test_parse_const_typed() i64 {
     return 0;
 }
 
-// Test 22: Parse file with const - verify parse_file works with const decl
-fn test_parse_file_with_import() i64 {
+// Test 22: Parse file with const - verify Parser_parseFile works with const decl
+fn test_Parser_parseFile_with_import() i64 {
     let pool: *NodePool = init_test_pool();
     reset_pool(pool);
-    // Test parse_file with a const (simpler, no nested children issues)
-    var p: Parser = parser_new("const X = 42;", pool);
+    // Test Parser_parseFile with a const (simpler, no nested children issues)
+    var p: Parser = Parser_init("const X = 42;", pool);
 
-    let file: i64 = parse_file(&p);
+    let file: i64 = Parser_parseFile(&p);
 
     // File should be a block with 1 declaration
     let blk: *Node = node_get(pool, file);
@@ -544,8 +544,8 @@ fn main() i64 {
         failed = failed + 1;
     }
 
-    if test_parse_block() != 0 {
-        println("FAIL: test_parse_block");
+    if test_Parser_parseBlock() != 0 {
+        println("FAIL: test_Parser_parseBlock");
         failed = failed + 1;
     }
 
@@ -622,8 +622,8 @@ fn main() i64 {
         failed = failed + 1;
     }
 
-    if test_parse_file_with_import() != 0 {
-        println("FAIL: test_parse_file_with_import");
+    if test_Parser_parseFile_with_import() != 0 {
+        println("FAIL: test_Parser_parseFile_with_import");
         failed = failed + 1;
     }
 

@@ -84,21 +84,21 @@ fn main() i64 {
     print_str("Phase 1: Build SSA function (return 42)\n");
 
     var f: Func = undefined;
-    func_init(&f, 0, 0, TYPE_I64,
+    Func_init(&f, 0, 0, TYPE_I64,
               &g_ssa_blocks[0], 10,
               &g_ssa_values[0], 100,
               &g_ssa_locals[0], 10);
 
     // Create entry block
-    let entry: i64 = func_new_entry_block(&f);
+    let entry: i64 = Func_newEntryBlock(&f);
 
     // Create constant 42
-    let const_val: *Value = func_emit_const_int(&f, 42, TYPE_I64);
+    let const_val: *Value = Func_emitConstInt(&f, 42, TYPE_I64);
     const_val.reg = X0;  // Assign result to X0
 
     // Create return
-    let ret_val: *Value = func_emit_return(&f, const_val);
-    func_emit_return_block(&f);
+    let ret_val: *Value = Func_emitReturn(&f, const_val);
+    Func_emitReturnBlock(&f);
 
     print_str("  Created ");
     print_num(f.blocks_count);
@@ -110,12 +110,12 @@ fn main() i64 {
     print_str("Phase 2: Generate machine code (genssa)\n");
 
     var gs: GenState = undefined;
-    genstate_init(&gs, &f,
+    GenState_init(&gs, &f,
                   &g_code[0], 4096,
                   &g_bstart[0], 10,
                   &g_branches[0], 10);
 
-    let genssa_result: i64 = genssa(&gs);
+    let genssa_result: i64 = GenState_generate(&gs);
 
     if genssa_result != 0 {
         print_str("  FAIL: genssa returned error\n");

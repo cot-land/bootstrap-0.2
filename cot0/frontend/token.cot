@@ -120,8 +120,8 @@ struct Token {
     end: i64,       // token length (NOT end offset - misleading name)
 }
 
-// Create a token
-fn token_new(k: TokenType, s: i64, e: i64) Token {
+// Create a token (matches Token struct initialization in Zig)
+fn Token_new(k: TokenType, s: i64, e: i64) Token {
     var t: Token;
     t.kind = k;
     t.start = s;
@@ -129,9 +129,86 @@ fn token_new(k: TokenType, s: i64, e: i64) Token {
     return t;
 }
 
-// Check if token is a keyword
+// Returns operator precedence (0 = non-operator)
+// Higher values bind tighter (matches Token.precedence() in Zig)
+fn Token_precedence(t: TokenType) i64 {
+    // Lowest: ?? coalesce (not in cot0 yet)
+    if t == TokenType.Or or t == TokenType.PipePipe { return 2; }
+    if t == TokenType.And or t == TokenType.AmpAmp { return 3; }
+    if t == TokenType.EqEq or t == TokenType.NotEq or t == TokenType.Less or
+       t == TokenType.LessEq or t == TokenType.Greater or t == TokenType.GreaterEq { return 4; }
+    if t == TokenType.Plus or t == TokenType.Minus or t == TokenType.Pipe or t == TokenType.Caret { return 5; }
+    if t == TokenType.Star or t == TokenType.Slash or t == TokenType.Percent or
+       t == TokenType.Amp or t == TokenType.LessLess or t == TokenType.GreaterGreater { return 6; }
+    return 0;
+}
+
+// Returns true for literal tokens (matches Token.isLiteral() in Zig)
+fn Token_isLiteral(t: TokenType) bool {
+    return t == TokenType.Int or t == TokenType.StringLit or t == TokenType.CharLit or t == TokenType.Ident;
+}
+
+// Returns true for operator/delimiter tokens (matches Token.isOperator() in Zig)
+fn Token_isOperator(t: TokenType) bool {
+    // Arithmetic
+    if t == TokenType.Plus or t == TokenType.Minus or t == TokenType.Star or
+       t == TokenType.Slash or t == TokenType.Percent { return true; }
+    // Comparison
+    if t == TokenType.EqEq or t == TokenType.NotEq or t == TokenType.Less or
+       t == TokenType.LessEq or t == TokenType.Greater or t == TokenType.GreaterEq { return true; }
+    // Logical
+    if t == TokenType.AmpAmp or t == TokenType.PipePipe or t == TokenType.Bang { return true; }
+    // Bitwise
+    if t == TokenType.Amp or t == TokenType.Pipe or t == TokenType.Caret or
+       t == TokenType.Tilde or t == TokenType.LessLess or t == TokenType.GreaterGreater { return true; }
+    // Assignment
+    if t == TokenType.Eq or t == TokenType.PlusEq or t == TokenType.MinusEq or
+       t == TokenType.StarEq or t == TokenType.SlashEq or t == TokenType.PercentEq or
+       t == TokenType.AmpEq or t == TokenType.PipeEq or t == TokenType.CaretEq { return true; }
+    // Punctuation
+    if t == TokenType.LParen or t == TokenType.RParen or t == TokenType.LBrace or
+       t == TokenType.RBrace or t == TokenType.LBracket or t == TokenType.RBracket or
+       t == TokenType.Comma or t == TokenType.Colon or t == TokenType.Semi or
+       t == TokenType.Dot or t == TokenType.At or t == TokenType.Arrow or t == TokenType.FatArrow { return true; }
+    return false;
+}
+
+// Returns true for keyword tokens (matches Token.isKeyword() in Zig)
+fn Token_isKeyword(t: TokenType) bool {
+    // Declaration keywords
+    if t == TokenType.Fn or t == TokenType.Let or t == TokenType.Var or
+       t == TokenType.Const or t == TokenType.Struct or t == TokenType.Enum or
+       t == TokenType.Import or t == TokenType.Extern { return true; }
+    // Control flow keywords
+    if t == TokenType.Return or t == TokenType.If or t == TokenType.Else or
+       t == TokenType.While or t == TokenType.For or t == TokenType.In or
+       t == TokenType.Break or t == TokenType.Continue or t == TokenType.Switch { return true; }
+    // Type keywords
+    if t == TokenType.I64 or t == TokenType.I32 or t == TokenType.U8 or
+       t == TokenType.Bool or t == TokenType.Void or t == TokenType.String { return true; }
+    // Literal keywords
+    if t == TokenType.True or t == TokenType.False or t == TokenType.Null { return true; }
+    // Logical keywords
+    if t == TokenType.And or t == TokenType.Or or t == TokenType.Not { return true; }
+    return false;
+}
+
+// Returns true for type keywords (matches Token.isTypeKeyword() in Zig)
+fn Token_isTypeKeyword(t: TokenType) bool {
+    return t == TokenType.I64 or t == TokenType.I32 or t == TokenType.U8 or
+           t == TokenType.Bool or t == TokenType.Void or t == TokenType.String;
+}
+
+// Returns true for assignment operators (matches Token.isAssignment() in Zig)
+fn Token_isAssignment(t: TokenType) bool {
+    return t == TokenType.Eq or t == TokenType.PlusEq or t == TokenType.MinusEq or
+           t == TokenType.StarEq or t == TokenType.SlashEq or t == TokenType.PercentEq or
+           t == TokenType.AmpEq or t == TokenType.PipeEq or t == TokenType.CaretEq;
+}
+
+// Lookup maps an identifier to its keyword token or Ident (matches lookup() in Zig)
 // Following Go's pattern from syntax/scanner.go keyword lookup
-fn is_keyword(text: string) TokenType {
+fn Token_lookup(text: string) TokenType {
     let n: i64 = len(text);
 
     // Length 2 keywords

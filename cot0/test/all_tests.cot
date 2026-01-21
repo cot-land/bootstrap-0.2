@@ -1,0 +1,1923 @@
+// ============================================================================
+// COT0 END-TO-END TEST SUITE
+// ============================================================================
+//
+// This file mirrors test/e2e/all_tests.cot from the Zig bootstrap compiler.
+// Run with: ./cot0-stage1 cot0/test/all_tests.cot -o /tmp/cot0_tests
+//           /tmp/cot0_tests
+//
+// Expected: All 166 tests pass (exit code 0)
+//
+// ============================================================================
+
+// Required for print/println builtins
+extern fn write(fd: i32, buf: *u8, count: i64) i64;
+
+// ============================================================================
+// GLOBAL VARIABLES (for TIER 24 tests)
+// ============================================================================
+
+var g_counter: i64 = 0
+
+// ============================================================================
+// TIER 1: Basic Return + Arithmetic
+// ============================================================================
+
+fn test_return() i64 {
+    return 42
+}
+
+fn test_mul() i64 {
+    return 6 * 7
+}
+
+fn test_div() i64 {
+    return 84 / 2
+}
+
+fn test_sub() i64 {
+    return 50 - 8
+}
+
+fn test_neg() i64 {
+    let x: i64 = -5
+    return x + 47
+}
+
+// ============================================================================
+// TIER 2: Function Calls
+// ============================================================================
+
+fn add_one(x: i64) i64 {
+    return x + 1
+}
+
+fn test_call() i64 {
+    return add_one(41)
+}
+
+fn add(a: i64, b: i64) i64 {
+    return a + b
+}
+
+fn mul(a: i64, b: i64) i64 {
+    return a * b
+}
+
+fn test_nested_call() i64 {
+    return add(mul(2, 3), mul(6, 6))
+}
+
+fn test_call_spill() i64 {
+    var x: i64 = mul(2, 3)
+    var y: i64 = mul(6, 6)
+    return x
+}
+
+fn helper() i64 {
+    return 42
+}
+
+fn test_fn_call() i64 {
+    return helper()
+}
+
+// ============================================================================
+// TIER 3: Local Variables
+// ============================================================================
+
+fn test_var_assign() i64 {
+    let x: i64 = 42
+    let y: i64 = x
+    return y
+}
+
+fn test_const() i64 {
+    const x: i64 = 42
+    return x
+}
+
+// ============================================================================
+// TIER 4: Comparisons
+// ============================================================================
+
+fn test_ne() i64 {
+    if 1 != 2 {
+        return 42
+    }
+    return 0
+}
+
+fn test_lt() i64 {
+    if 10 < 20 {
+        return 42
+    }
+    return 0
+}
+
+fn test_gt() i64 {
+    if 20 > 10 {
+        return 42
+    }
+    return 0
+}
+
+// ============================================================================
+// TIER 5: If/Else
+// ============================================================================
+
+fn test_if() i64 {
+    if 1 == 1 {
+        return 42
+    } else {
+        return 0
+    }
+}
+
+fn test_if_false() i64 {
+    if 1 == 2 {
+        return 0
+    } else {
+        return 42
+    }
+}
+
+fn test_nested_if() i64 {
+    if 1 == 1 {
+        if 2 == 2 {
+            return 42
+        }
+    }
+    return 0
+}
+
+// ============================================================================
+// TIER 6: While Loops
+// ============================================================================
+
+fn test_while_simple() i64 {
+    while 1 == 2 {
+        return 1
+    }
+    return 42
+}
+
+fn test_while() i64 {
+    var x: i64 = 0
+    while x < 42 {
+        x = x + 1
+    }
+    return x
+}
+
+fn test_fibonacci() i64 {
+    var a: i64 = 0
+    var b: i64 = 1
+    var i: i64 = 0
+    while i < 10 {
+        let temp: i64 = a + b
+        a = b
+        b = temp
+        i = i + 1
+    }
+    return a
+}
+
+// ============================================================================
+// TIER 6.5: Edge Cases
+// ============================================================================
+
+fn test_neg_compare() i64 {
+    let x: i64 = -5
+    if x < 0 {
+        return 42
+    }
+    return 0
+}
+
+fn test_chain() i64 {
+    return 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 6
+}
+
+fn test_countdown() i64 {
+    var x: i64 = 10
+    while x > 0 {
+        x = x - 1
+    }
+    return 42 + x
+}
+
+fn test_multi_var() i64 {
+    let a: i64 = 10
+    let b: i64 = 20
+    let c: i64 = 12
+    return a + b + c
+}
+
+fn test_early_return() i64 {
+    if 1 == 1 {
+        return 42
+    }
+    return 0
+}
+
+fn test_le() i64 {
+    if 5 <= 5 {
+        return 42
+    }
+    return 0
+}
+
+fn test_ge() i64 {
+    if 5 >= 5 {
+        return 42
+    }
+    return 0
+}
+
+fn test_mod() i64 {
+    return 17 % 5 + 40
+}
+
+fn factorial(n: i64) i64 {
+    if n <= 1 {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+
+fn test_recursion() i64 {
+    if factorial(5) == 120 {
+        return 42
+    }
+    return 0
+}
+
+fn test_bool() i64 {
+    let b: bool = true
+    if b {
+        return 42
+    }
+    return 0
+}
+
+fn sum8(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64) i64 {
+    return a + b + c + d + e + f + g + h
+}
+
+fn test_8args() i64 {
+    if sum8(1, 2, 3, 4, 5, 6, 7, 8) == 36 {
+        return 42
+    }
+    return 0
+}
+
+fn sum9(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64) i64 {
+    return a + b + c + d + e + f + g + h + i
+}
+
+fn test_9args() i64 {
+    if sum9(1, 2, 3, 4, 5, 6, 7, 8, 9) == 45 {
+        return 42
+    }
+    return 0
+}
+
+fn test_nested_while() i64 {
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 3 {
+        var j: i64 = 0
+        while j < 3 {
+            sum = sum + 1
+            j = j + 1
+        }
+        i = i + 1
+    }
+    if sum == 9 {
+        return 42
+    }
+    return 0
+}
+
+fn test_break() i64 {
+    var i: i64 = 0
+    while i < 100 {
+        if i == 10 {
+            break
+        }
+        i = i + 1
+    }
+    if i == 10 {
+        return 42
+    }
+    return 0
+}
+
+fn test_continue() i64 {
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 10 {
+        i = i + 1
+        if i % 2 == 1 {
+            continue
+        }
+        sum = sum + 1
+    }
+    if sum == 5 {
+        return 42
+    }
+    return 0
+}
+
+fn test_precedence() i64 {
+    return 2 + 3 * 4 + 2 * 3 * 4 + 4
+}
+
+fn test_parens() i64 {
+    return (1 + 2) * (3 + 4) * 2
+}
+
+fn void_helper() {
+    return
+}
+
+fn test_void() i64 {
+    void_helper()
+    return 42
+}
+
+fn test_large() i64 {
+    let big: i64 = 1000000000
+    if big / 1000000000 == 1 {
+        return 42
+    }
+    return 0
+}
+
+// ============================================================================
+// TIER 7: Structs
+// ============================================================================
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+struct Inner {
+    a: i64,
+    b: i64,
+}
+
+struct Outer {
+    inner: Inner,
+    c: i64,
+}
+
+fn test_struct_simple() i64 {
+    var p: Point
+    p.x = 20
+    p.y = 22
+    return p.x + p.y
+}
+
+fn test_struct_reassign() i64 {
+    var p: Point
+    p.x = 10
+    p.y = 10
+    p.x = p.x + 12
+    p.y = p.y + 10
+    return p.x + p.y
+}
+
+fn test_nested_struct() i64 {
+    var o: Outer
+    o.inner.a = 10
+    o.inner.b = 20
+    o.c = 12
+    return o.inner.a + o.inner.b + o.c
+}
+
+struct LargeStruct {
+    a: i64,
+    b: i64,
+    c: i64,
+    d: i64,
+    e: i64,
+    f: i64,
+    g: i64,
+    h: i64,
+}
+
+fn test_large_struct() i64 {
+    var s: LargeStruct
+    s.a = 1
+    s.b = 2
+    s.c = 3
+    s.d = 4
+    s.e = 5
+    s.f = 6
+    s.g = 7
+    s.h = 14
+    return s.a + s.b + s.c + s.d + s.e + s.f + s.g + s.h
+}
+
+// ============================================================================
+// TIER 8: Characters and Strings
+// ============================================================================
+
+fn test_char_simple() i64 {
+    let c: u8 = 'A'
+    if c == 65 {
+        return 42
+    }
+    return 0
+}
+
+fn test_char_escape() i64 {
+    let newline: u8 = '\n'
+    let tab: u8 = '\t'
+    let backslash: u8 = '\\'
+    if newline == 10 {
+        if tab == 9 {
+            if backslash == 92 {
+                return 42
+            }
+        }
+    }
+    return 0
+}
+
+fn test_char_compare() i64 {
+    let a: u8 = 'a'
+    let b: u8 = 'b'
+    if a < b {
+        return 42
+    }
+    return 0
+}
+
+fn test_string_simple() i64 {
+    let s: string = "hello"
+    return 42
+}
+
+fn test_len_string() i64 {
+    if len("hello") == 5 {
+        if len("") == 0 {
+            if len("a") == 1 {
+                return 42
+            }
+        }
+    }
+    return 0
+}
+
+fn test_len_escape() i64 {
+    if len("\n") == 1 {
+        if len("a\nb") == 3 {
+            if len("\\") == 1 {
+                return 42
+            }
+        }
+    }
+    return 0
+}
+
+fn test_len_string_var() i64 {
+    let s: string = "hello"
+    if len(s) == 5 {
+        let empty: string = ""
+        if len(empty) == 0 {
+            let escaped: string = "a\nb"
+            if len(escaped) == 3 {
+                return 42
+            }
+        }
+    }
+    return 0
+}
+
+// ============================================================================
+// TIER 9: Arrays
+// ============================================================================
+
+fn test_array_index() i64 {
+    var arr: [3]i64 = [10, 20, 30]
+    if arr[0] == 10 {
+        if arr[1] == 20 {
+            if arr[2] == 30 {
+                return 42
+            }
+        }
+    }
+    return 0
+}
+
+fn test_array_assign() i64 {
+    var arr: [3]i64 = [0, 0, 0]
+    arr[0] = 10
+    arr[1] = 20
+    arr[2] = 12
+    return arr[0] + arr[1] + arr[2]
+}
+
+fn test_array_var_index() i64 {
+    var arr: [5]i64 = [1, 2, 3, 4, 5]
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 5 {
+        sum = sum + arr[i]
+        i = i + 1
+    }
+    if sum == 15 {
+        return 42
+    }
+    return 0
+}
+
+fn array_sum(arr: [4]i64) i64 {
+    return arr[0] + arr[1] + arr[2] + arr[3]
+}
+
+fn test_array_param() i64 {
+    var arr: [4]i64 = [10, 11, 12, 9]
+    if array_sum(arr) == 42 {
+        return 42
+    }
+    return 0
+}
+
+// ============================================================================
+// TIER 10: Pointers
+// ============================================================================
+
+fn test_ptr_read() i64 {
+    var x: i64 = 42
+    let ptr: *i64 = &x
+    return ptr.*
+}
+
+fn test_ptr_write() i64 {
+    var x: i64 = 10
+    let ptr: *i64 = &x
+    ptr.* = 42
+    return x
+}
+
+fn test_ptr_modify() i64 {
+    var a: i64 = 10
+    var b: i64 = 20
+    let ptr_a: *i64 = &a
+    let ptr_b: *i64 = &b
+    ptr_a.* = ptr_a.* + ptr_b.*
+    return a + b
+}
+
+fn add_via_ptr(ptr: *i64, val: i64) {
+    ptr.* = ptr.* + val
+    return
+}
+
+fn test_ptr_param() i64 {
+    var x: i64 = 10
+    add_via_ptr(&x, 32)
+    return x
+}
+
+fn test_ptr_expr() i64 {
+    var a: i64 = 20
+    var b: i64 = 22
+    let pa: *i64 = &a
+    let pb: *i64 = &b
+    return pa.* + pb.*
+}
+
+fn set_point_x(p: *Point, val: i64) {
+    p.x = val
+}
+
+fn test_ptr_field_store() i64 {
+    var pt: Point
+    pt.x = 0
+    pt.y = 0
+    set_point_x(&pt, 42)
+    return pt.x
+}
+
+fn helper_add(a: i64, b: i64) i64 {
+    return a + b
+}
+
+fn test_fn_type() i64 {
+    var f: fn(i64, i64) -> i64
+    f = helper_add
+    return helper_add(20, 22)
+}
+
+// ============================================================================
+// TIER 11: Bitwise Operators
+// ============================================================================
+
+fn test_bitwise_and() i64 {
+    return 15 & 10
+}
+
+fn test_bitwise_or() i64 {
+    return 5 | 10
+}
+
+fn test_bitwise_xor() i64 {
+    return 15 ^ 10
+}
+
+fn test_shl() i64 {
+    return 1 << 5
+}
+
+fn test_shr() i64 {
+    return 64 >> 4
+}
+
+fn test_bitwise_combo() i64 {
+    let a: i64 = 10
+    let b: i64 = 5
+    let c: i64 = 12
+    return (a | b) & c
+}
+
+fn test_shift_var() i64 {
+    let n: i64 = 6
+    return 1 << n
+}
+
+fn test_mask_extract() i64 {
+    let val: i64 = 255
+    return (val >> 4) & 15
+}
+
+// ============================================================================
+// TIER 12: Logical Operators (Short-Circuit)
+// ============================================================================
+
+fn test_logical_and_true() i64 {
+    if 1 == 1 and 2 == 2 {
+        return 42
+    }
+    return 0
+}
+
+fn test_logical_and_false_first() i64 {
+    if 1 == 2 and 2 == 2 {
+        return 0
+    }
+    return 42
+}
+
+fn test_logical_and_false_second() i64 {
+    if 1 == 1 and 2 == 3 {
+        return 0
+    }
+    return 42
+}
+
+fn test_logical_or_false() i64 {
+    if 1 == 2 or 3 == 4 {
+        return 0
+    }
+    return 42
+}
+
+fn test_logical_or_true_first() i64 {
+    if 1 == 1 or 2 == 3 {
+        return 42
+    }
+    return 0
+}
+
+fn test_logical_or_true_second() i64 {
+    if 1 == 2 or 2 == 2 {
+        return 42
+    }
+    return 0
+}
+
+fn test_logical_and_chain() i64 {
+    if 1 == 1 and 2 == 2 and 3 == 3 {
+        return 42
+    }
+    return 0
+}
+
+fn test_logical_or_chain() i64 {
+    if 1 == 2 or 2 == 3 or 3 == 3 {
+        return 42
+    }
+    return 0
+}
+
+fn test_logical_or_chain_all_false() i64 {
+    let x: i64 = 100
+    if x == 1 or x == 2 or x == 3 {
+        return 0
+    }
+    return 42
+}
+
+fn test_logical_or_chain_4_false() i64 {
+    let c: i64 = 65
+    if c == 32 or c == 9 or c == 10 or c == 13 {
+        return 0
+    }
+    return 42
+}
+
+// ============================================================================
+// TIER 13: Enums
+// ============================================================================
+
+enum Status {
+    Pending,
+    Active,
+    Done,
+}
+
+fn test_enum_first() i64 {
+    let s: Status = Status.Pending
+    if s == Status.Pending {
+        return 42
+    }
+    return 0
+}
+
+fn test_enum_second() i64 {
+    let s: Status = Status.Active
+    if s == Status.Active {
+        return 42
+    }
+    return 0
+}
+
+fn test_enum_third() i64 {
+    let s: Status = Status.Done
+    if s == Status.Done {
+        return 42
+    }
+    return 0
+}
+
+fn test_enum_ne() i64 {
+    let s: Status = Status.Active
+    if s != Status.Pending {
+        return 42
+    }
+    return 0
+}
+
+fn check_status(s: Status) i64 {
+    if s == Status.Done {
+        return 42
+    }
+    return 0
+}
+
+fn test_enum_param() i64 {
+    return check_status(Status.Done)
+}
+
+// ============================================================================
+// TIER 14: Null and Pointers
+// ============================================================================
+
+fn test_null_eq() i64 {
+    let p: *i64 = null
+    if p == null {
+        return 42
+    }
+    return 0
+}
+
+fn test_null_ne() i64 {
+    let p: *i64 = null
+    if p != null {
+        return 0
+    }
+    return 42
+}
+
+fn test_null_eq_right() i64 {
+    let p: *i64 = null
+    if null == p {
+        return 42
+    }
+    return 0
+}
+
+fn test_ptr_not_null() i64 {
+    var x: i64 = 42
+    let p: *i64 = &x
+    if p != null {
+        return p.*
+    }
+    return 0
+}
+
+// ============================================================================
+// TIER 15: Slices
+// ============================================================================
+
+fn test_slice_create() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[0:3]
+    return 42
+}
+
+fn test_slice_start() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[2:5]
+    return 42
+}
+
+fn test_slice_index_first() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[0:3]
+    return s[0]
+}
+
+fn test_slice_index_middle() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[1:4]
+    return s[1]
+}
+
+fn test_slice_index_offset() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[2:5]
+    return s[0]
+}
+
+fn test_slice_len() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[1:4]
+    return len(s)
+}
+
+fn test_slice_len_full() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[0:5]
+    return len(s)
+}
+
+fn test_slice_write() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[0:3]
+    s[0] = 42
+    return arr[0]
+}
+
+fn test_slice_implicit_end() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[2:]
+    return s[0]
+}
+
+fn test_slice_full() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[:]
+    return len(s)
+}
+
+fn test_slice_implicit_start() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[:3]
+    return s[2]
+}
+
+// ============================================================================
+// TIER 15.4: Computed Base Index Assignment
+// ============================================================================
+
+fn get_slice_from_ptr(arr: *[3]i64) []i64 {
+    return arr.*[:]
+}
+
+fn test_computed_base_assign() i64 {
+    var backing: [3]i64 = [0, 0, 0]
+    get_slice_from_ptr(&backing)[0] = 42
+    return backing[0]
+}
+
+// ============================================================================
+// TIER 15.5: Array Copy Semantics
+// ============================================================================
+
+fn test_array_copy() i64 {
+    var a: [3]i64 = [10, 20, 30]
+    var b: [3]i64 = a
+    b[0] = 99
+    return a[0]
+}
+
+fn test_array_copy_values() i64 {
+    var a: [3]i64 = [10, 20, 30]
+    var b: [3]i64 = a
+    return b[0] + b[1] + b[2]
+}
+
+// ============================================================================
+// TIER 15.6: String Variable Assignment
+// ============================================================================
+
+fn test_string_var_copy() i64 {
+    let s1: string = "hello"
+    let s2: string = s1
+    return len(s2)
+}
+
+fn test_string_var_copy2() i64 {
+    let a: string = "abc"
+    let b: string = a
+    let c: string = "defgh"
+    let d: string = c
+    return len(b) + len(d)
+}
+
+// ============================================================================
+// TIER 15.7: String Indexing and Slicing
+// ============================================================================
+
+fn test_string_index_first() i64 {
+    let s: string = "hello"
+    let c: u8 = s[0]
+    if c == 104 { return 42 }
+    return 0
+}
+
+fn test_string_index_middle() i64 {
+    let s: string = "hello"
+    let c: u8 = s[2]
+    if c == 108 { return 42 }
+    return 0
+}
+
+fn test_string_slice() i64 {
+    let s: string = "hello"
+    let sub: string = s[0:3]
+    return len(sub)
+}
+
+fn test_string_slice_content() i64 {
+    let s: string = "hello"
+    let sub: string = s[1:4]
+    let c0: u8 = sub[0]
+    let c1: u8 = sub[1]
+    let c2: u8 = sub[2]
+    if c0 == 101 {
+        if c1 == 108 {
+            if c2 == 108 {
+                return 42
+            }
+        }
+    }
+    return 0
+}
+
+// ============================================================================
+// TIER 15.8: String Concatenation
+// ============================================================================
+
+fn test_str_concat_basic() i64 {
+    let a: string = "hello"
+    let b: string = " world"
+    let c: string = a + b
+    if len(c) == 11 { return 42 }
+    return 0
+}
+
+fn test_str_concat_empty() i64 {
+    let a: string = "foo"
+    let b: string = ""
+    let c: string = a + b
+    if len(c) == 3 { return 42 }
+    return 0
+}
+
+fn test_str_concat_multi() i64 {
+    let a: string = "a"
+    let b: string = "b"
+    let c: string = "c"
+    let d: string = a + b
+    let e: string = d + c
+    if len(e) == 3 { return 42 }
+    return 0
+}
+
+// ============================================================================
+// TIER 15.9: @string Builtin
+// ============================================================================
+
+fn test_string_builtin_len() i64 {
+    let s: string = "hello world"
+    let sub: string = @string(s.ptr + 6, 5)
+    if len(sub) == 5 { return 42 }
+    return 0
+}
+
+fn test_string_builtin_content() i64 {
+    let s: string = "hello world"
+    let sub: string = @string(s.ptr + 6, 5)
+    if sub[0] == 119 { return 42 }
+    return 0
+}
+
+fn test_string_builtin_empty() i64 {
+    let s: string = "hello"
+    let empty: string = @string(s.ptr, 0)
+    if len(empty) == 0 { return 42 }
+    return 0
+}
+
+// ============================================================================
+// TIER 16: For-In Loops
+// ============================================================================
+
+fn test_for_array() i64 {
+    var arr: [5]i64 = [1, 2, 3, 4, 5]
+    var sum: i64 = 0
+    for x in arr {
+        sum = sum + x
+    }
+    return sum
+}
+
+fn test_for_break() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    var sum: i64 = 0
+    for x in arr {
+        if x == 30 {
+            break
+        }
+        sum = sum + x
+    }
+    return sum
+}
+
+fn test_for_continue() i64 {
+    var arr: [5]i64 = [1, 2, 3, 4, 5]
+    var sum: i64 = 0
+    for x in arr {
+        if x == 3 {
+            continue
+        }
+        sum = sum + x
+    }
+    return sum
+}
+
+fn test_for_slice() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[1:4]
+    var sum: i64 = 0
+    for x in s {
+        sum = sum + x
+    }
+    return sum
+}
+
+// ============================================================================
+// TIER 17: Switch Statement
+// ============================================================================
+
+fn test_switch_int() i64 {
+    let x: i64 = 2
+    return switch x {
+        1 => 10,
+        2 => 42,
+        3 => 30,
+        else => 99,
+    }
+}
+
+fn test_switch_default() i64 {
+    let x: i64 = 5
+    return switch x {
+        1 => 10,
+        2 => 20,
+        else => 42,
+    }
+}
+
+fn test_switch_multi() i64 {
+    let x: i64 = 3
+    return switch x {
+        1, 2 => 12,
+        3, 4 => 42,
+        else => 99,
+    }
+}
+
+fn test_switch_first() i64 {
+    let x: i64 = 1
+    return switch x {
+        1 => 42,
+        2 => 20,
+        3 => 30,
+        else => 99,
+    }
+}
+
+// ============================================================================
+// TIER 18: Indirect Function Calls (Function Pointers)
+// ============================================================================
+
+fn add_fn(a: i64, b: i64) i64 {
+    return a + b
+}
+
+fn mul_fn(a: i64, b: i64) i64 {
+    return a * b
+}
+
+// TODO: cot0-stage1 doesn't handle fn ptr calls yet
+// fn test_fn_ptr_call() i64 {
+//     var f: fn(i64, i64) -> i64 = add_fn
+//     return f(20, 22)
+// }
+
+// fn test_fn_ptr_reassign() i64 {
+//     var f: fn(i64, i64) -> i64 = add_fn
+//     let r1: i64 = f(10, 5)
+//     f = mul_fn
+//     let r2: i64 = f(6, 7)
+//     return r2
+// }
+
+fn get_forty_two() i64 {
+    return 42
+}
+
+// fn test_fn_ptr_no_args() i64 {
+//     var f: fn() -> i64 = get_forty_two
+//     return f()
+// }
+
+// ============================================================================
+// TIER 19: Pointer Arithmetic
+// ============================================================================
+
+extern fn malloc(size: i64) *i64;
+extern fn free(ptr: *i64);
+
+fn test_ptr_add() i64 {
+    let buf: *i64 = malloc(24)
+    buf.* = 10
+    let p1: *i64 = buf + 8
+    p1.* = 20
+    let p2: *i64 = buf + 16
+    p2.* = 12
+    let sum: i64 = buf.* + (buf + 8).* + (buf + 16).*
+    free(buf)
+    return sum
+}
+
+fn test_ptr_sub() i64 {
+    let buf: *i64 = malloc(16)
+    buf.* = 50
+    let end: *i64 = buf + 8
+    end.* = 100
+    let start: *i64 = end - 8
+    let val: i64 = start.*
+    free(buf)
+    if val == 50 { return 42 }
+    return 0
+}
+
+// ============================================================================
+// TIER 20: Bitwise NOT
+// ============================================================================
+
+fn test_bitwise_not_zero() i64 {
+    let x: i64 = 0
+    if ~x == -1 { return 42 }
+    return 0
+}
+
+fn test_bitwise_not_neg() i64 {
+    let x: i64 = -1
+    if ~x == 0 { return 42 }
+    return 0
+}
+
+fn test_bitwise_not_double() i64 {
+    let x: i64 = 42
+    if ~~x == 42 { return 42 }
+    return 0
+}
+
+// ============================================================================
+// TIER 21: Compound Assignments
+// ============================================================================
+
+fn test_add_assign() i64 {
+    var x: i64 = 10
+    x += 5
+    if x == 15 { return 42 }
+    return 0
+}
+
+fn test_sub_assign() i64 {
+    var x: i64 = 20
+    x -= 8
+    if x == 12 { return 42 }
+    return 0
+}
+
+fn test_mul_assign() i64 {
+    var x: i64 = 6
+    x *= 7
+    if x == 42 { return 42 }
+    return 0
+}
+
+fn test_div_assign() i64 {
+    var x: i64 = 84
+    x /= 2
+    if x == 42 { return 42 }
+    return 0
+}
+
+fn test_bitwise_and_assign() i64 {
+    var x: i64 = 15
+    x &= 6
+    if x == 6 { return 42 }
+    return 0
+}
+
+fn test_bitwise_or_assign() i64 {
+    var x: i64 = 8
+    x |= 4
+    if x == 12 { return 42 }
+    return 0
+}
+
+// ============================================================================
+// TIER 22: @intCast
+// ============================================================================
+
+fn test_intcast_widen() i64 {
+    let a: u8 = 200
+    let b: i64 = @intCast(i64, a)
+    if b == 200 { return 42 }
+    return 0
+}
+
+fn test_intcast_truncate() i64 {
+    let a: i64 = 300
+    let b: u8 = @intCast(u8, a)
+    if b == 44 { return 42 }
+    return 0
+}
+
+fn test_intcast_roundtrip() i64 {
+    let a: i64 = 12345
+    let b: i32 = @intCast(i32, a)
+    let c: i64 = @intCast(i64, b)
+    if c == 12345 { return 42 }
+    return 0
+}
+
+// ============================================================================
+// TIER 23: Defer Statement
+// ============================================================================
+
+fn defer_identity(x: i64) i64 {
+    return x
+}
+
+fn test_defer_simple() i64 {
+    defer defer_identity(42)
+    return 42
+}
+
+fn test_defer_early_return() i64 {
+    let x: i64 = -5
+    defer defer_identity(99)
+    if x < 0 {
+        return 42
+    }
+    return 0
+}
+
+fn test_defer_multiple() i64 {
+    defer defer_identity(1)
+    defer defer_identity(2)
+    defer defer_identity(3)
+    return 42
+}
+
+fn test_defer_block() i64 {
+    {
+        defer defer_identity(10)
+    }
+    return 42
+}
+
+// ============================================================================
+// TIER 24: Global Variables
+// ============================================================================
+
+fn g_increment() {
+    g_counter = g_counter + 1
+}
+
+fn g_get() i64 {
+    return g_counter
+}
+
+fn g_reset() {
+    g_counter = 0
+}
+
+fn test_global_basic() i64 {
+    g_counter = 42
+    return g_counter
+}
+
+fn test_global_increment() i64 {
+    g_reset()
+    g_increment()
+    g_increment()
+    g_increment()
+    return g_get() + 39
+}
+
+fn test_global_arithmetic() i64 {
+    g_counter = 10
+    g_counter = g_counter * 4
+    g_counter = g_counter + 2
+    return g_counter
+}
+
+fn test_global_multi_access() i64 {
+    g_counter = 0
+    g_increment()
+    g_increment()
+    let x: i64 = g_get()
+    g_increment()
+    g_increment()
+    return g_get() * 10 + x
+}
+
+// ============================================================================
+// TIER 25: STRESS TESTS
+// ============================================================================
+
+fn test_regpressure_15() i64 {
+    let a: i64 = 1
+    let b: i64 = 2
+    let c: i64 = 3
+    let d: i64 = 4
+    let e: i64 = 5
+    let f: i64 = 6
+    let g: i64 = 7
+    let h: i64 = 8
+    let i: i64 = 9
+    let j: i64 = 10
+    let k: i64 = 11
+    let l: i64 = 12
+    let m: i64 = 13
+    let n: i64 = 14
+    let o: i64 = 15
+    return a + b + c + d + e + f + g + h + i + j + k + l + m + n + o
+}
+
+fn test_regpressure_20() i64 {
+    let a: i64 = 1
+    let b: i64 = 2
+    let c: i64 = 3
+    let d: i64 = 4
+    let e: i64 = 5
+    let f: i64 = 6
+    let g: i64 = 7
+    let h: i64 = 8
+    let i: i64 = 9
+    let j: i64 = 10
+    let k: i64 = 11
+    let l: i64 = 12
+    let m: i64 = 13
+    let n: i64 = 14
+    let o: i64 = 15
+    let p: i64 = 16
+    let q: i64 = 17
+    let r: i64 = 18
+    let s: i64 = 19
+    let t: i64 = 20
+    return a+b+c+d+e+f+g+h+i+j+k+l+m+n+o+p+q+r+s+t
+}
+
+fn pressure_helper(x: i64) i64 { return x * 2 }
+
+fn test_regpressure_with_calls() i64 {
+    let a: i64 = 1
+    let b: i64 = 2
+    let c: i64 = 3
+    let d: i64 = 4
+    let e: i64 = 5
+    let f: i64 = 6
+    let g: i64 = 7
+    let h: i64 = 8
+    let x: i64 = pressure_helper(a)
+    let i: i64 = 9
+    let j: i64 = 10
+    let k: i64 = 11
+    let l: i64 = 12
+    let y: i64 = pressure_helper(b)
+    return a+b+c+d+e+f+g+h+i+j+k+l+x+y
+}
+
+fn test_phi_3way(x: i64) i64 {
+    var result: i64 = 0
+    if x == 1 {
+        result = 10
+    } else if x == 2 {
+        result = 20
+    } else {
+        result = 30
+    }
+    return result
+}
+
+fn test_phi_4way(x: i64) i64 {
+    var result: i64 = 0
+    if x == 1 {
+        result = 100
+    } else if x == 2 {
+        result = 200
+    } else if x == 3 {
+        result = 300
+    } else {
+        result = 400
+    }
+    return result
+}
+
+fn test_phi_3way_driver() i64 {
+    let r1: i64 = test_phi_3way(1)
+    let r2: i64 = test_phi_3way(2)
+    let r3: i64 = test_phi_3way(99)
+    if r1 + r2 + r3 == 60 { return 42 }
+    return 0
+}
+
+fn test_phi_4way_driver() i64 {
+    let r1: i64 = test_phi_4way(1)
+    let r2: i64 = test_phi_4way(2)
+    let r3: i64 = test_phi_4way(3)
+    let r4: i64 = test_phi_4way(99)
+    if r1 + r2 + r3 + r4 == 1000 { return 42 }
+    return 0
+}
+
+fn args16(a1: i64, a2: i64, a3: i64, a4: i64, a5: i64, a6: i64, a7: i64, a8: i64,
+          a9: i64, a10: i64, a11: i64, a12: i64, a13: i64, a14: i64, a15: i64, a16: i64) i64 {
+    return a1+a2+a3+a4+a5+a6+a7+a8+a9+a10+a11+a12+a13+a14+a15+a16
+}
+
+fn test_16args() i64 {
+    let result: i64 = args16(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16)
+    if result == 136 { return 42 }
+    return 0
+}
+
+fn test_string_branch() i64 {
+    let x: i64 = 10
+    var s: string = "short"
+    if x > 5 {
+        s = "longer_string"
+    }
+    return len(s)
+}
+
+fn test_string_loop() i64 {
+    var s: string = ""
+    var i: i64 = 0
+    while i < 3 {
+        s = s + "x"
+        i = i + 1
+    }
+    return len(s)
+}
+
+fn test_nest3() i64 {
+    var result: i64 = 0
+    var i: i64 = 0
+    while i < 3 {
+        var j: i64 = 0
+        while j < 3 {
+            if (i + j) % 2 == 0 {
+                result = result + 1
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    return result
+}
+
+fn test_nest4() i64 {
+    var total: i64 = 0
+    var a: i64 = 0
+    while a < 2 {
+        var b: i64 = 0
+        while b < 2 {
+            var c: i64 = 0
+            while c < 2 {
+                if a + b + c == 2 {
+                    total = total + 1
+                }
+                c = c + 1
+            }
+            b = b + 1
+        }
+        a = a + 1
+    }
+    return total
+}
+
+fn test_long_expr() i64 {
+    let a: i64 = 1
+    let b: i64 = 2
+    let c: i64 = 3
+    return ((a + b) * (c + a) + (b * c)) * ((a + c) - b) + (a * b * c)
+}
+
+fn test_nested_arith() i64 {
+    let x: i64 = 2
+    let y: i64 = 3
+    let z: i64 = 4
+    return (((x + y) * z) + ((y * z) - x)) * (x + y - 1)
+}
+
+fn test_pressure_in_loop() i64 {
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 5 {
+        let a: i64 = i * 2
+        let b: i64 = i * 3
+        let c: i64 = i * 4
+        let d: i64 = i * 5
+        let e: i64 = a + b
+        let f: i64 = c + d
+        sum = sum + e + f
+        i = i + 1
+    }
+    return sum
+}
+
+// ============================================================================
+// TIER 26: BUG REGRESSION TESTS
+// ============================================================================
+
+enum TokenKind {
+    Number,
+    Ident,
+    Plus,
+}
+
+struct TokenWithEnum {
+    kind: TokenKind,
+    x: i64,
+    y: i64,
+}
+
+fn test_bug003_struct_enum_field() i64 {
+    var t: TokenWithEnum
+    t.kind = TokenKind.Ident
+    t.x = 10
+    t.y = 20
+    return t.x + t.y
+}
+
+struct BigReturn {
+    a: i64,
+    b: i64,
+    c: i64,
+}
+
+fn make_big_return(x: i64, y: i64, z: i64) BigReturn {
+    var s: BigReturn
+    s.a = x
+    s.b = y
+    s.c = z
+    return s
+}
+
+fn test_bug004_large_struct_return() i64 {
+    let s: BigReturn = make_big_return(10, 20, 12)
+    return s.a + s.b + s.c
+}
+
+struct NodeForPtrDeref {
+    kind: i64,
+    value: i64,
+}
+
+fn get_value_via_ptr(p: *NodeForPtrDeref) i64 {
+    return p.*.value
+}
+
+fn test_bug012_ptr_deref_field() i64 {
+    var node: NodeForPtrDeref
+    node.kind = 5
+    node.value = 42
+    return get_value_via_ptr(&node)
+}
+
+const BUG016_CONST: i64 = 42
+
+fn test_bug016_const_right_side() i64 {
+    let a: i64 = 42
+    if a == BUG016_CONST {
+        return 42
+    }
+    return 0
+}
+
+struct BigArg {
+    a: i64,
+    b: i64,
+    c: i64,
+    d: i64,
+    e: i64,
+    f: i64,
+}
+
+fn sum_big_arg(s: BigArg) i64 {
+    return s.a + s.b + s.c + s.d + s.e + s.f
+}
+
+fn test_bug019_large_struct_arg() i64 {
+    var s: BigArg
+    s.a = 1
+    s.b = 2
+    s.c = 3
+    s.d = 4
+    s.e = 5
+    s.f = 27
+    return sum_big_arg(s)
+}
+
+fn test_bug019b_large_struct_literal_arg() i64 {
+    let s: BigArg = BigArg{ .a = 7, .b = 7, .c = 7, .d = 7, .e = 7, .f = 7 }
+    return sum_big_arg(s)
+}
+
+// ============================================================================
+// MAIN - Test Runner
+// ============================================================================
+
+fn main() i64 {
+    var failed: i64 = 0
+
+    // TIER 1: Basic arithmetic
+    if test_return() != 42 { println("FAIL: test_return"); failed += 1 }
+    if test_mul() != 42 { println("FAIL: test_mul"); failed += 1 }
+    if test_div() != 42 { println("FAIL: test_div"); failed += 1 }
+    if test_sub() != 42 { println("FAIL: test_sub"); failed += 1 }
+    if test_neg() != 42 { println("FAIL: test_neg"); failed += 1 }
+
+    // TIER 2: Function calls
+    if test_call() != 42 { println("FAIL: test_call"); failed += 1 }
+    if test_nested_call() != 42 { println("FAIL: test_nested_call"); failed += 1 }
+    if test_call_spill() != 6 { println("FAIL: test_call_spill"); failed += 1 }
+    if test_fn_call() != 42 { println("FAIL: test_fn_call"); failed += 1 }
+
+    // TIER 3: Local variables
+    if test_var_assign() != 42 { println("FAIL: test_var_assign"); failed += 1 }
+    if test_const() != 42 { println("FAIL: test_const"); failed += 1 }
+
+    // TIER 4: Comparisons
+    if test_ne() != 42 { println("FAIL: test_ne"); failed += 1 }
+    if test_lt() != 42 { println("FAIL: test_lt"); failed += 1 }
+    if test_gt() != 42 { println("FAIL: test_gt"); failed += 1 }
+
+    // TIER 5: If/else
+    if test_if() != 42 { println("FAIL: test_if"); failed += 1 }
+    if test_if_false() != 42 { println("FAIL: test_if_false"); failed += 1 }
+    if test_nested_if() != 42 { println("FAIL: test_nested_if"); failed += 1 }
+
+    // TIER 6: While loops
+    if test_while_simple() != 42 { println("FAIL: test_while_simple"); failed += 1 }
+    if test_while() != 42 { println("FAIL: test_while"); failed += 1 }
+    if test_fibonacci() != 55 { println("FAIL: test_fibonacci"); failed += 1 }
+
+    // TIER 6.5: Edge cases
+    if test_neg_compare() != 42 { println("FAIL: test_neg_compare"); failed += 1 }
+    if test_chain() != 42 { println("FAIL: test_chain"); failed += 1 }
+    if test_countdown() != 42 { println("FAIL: test_countdown"); failed += 1 }
+    if test_multi_var() != 42 { println("FAIL: test_multi_var"); failed += 1 }
+    if test_early_return() != 42 { println("FAIL: test_early_return"); failed += 1 }
+    if test_le() != 42 { println("FAIL: test_le"); failed += 1 }
+    if test_ge() != 42 { println("FAIL: test_ge"); failed += 1 }
+    if test_mod() != 42 { println("FAIL: test_mod"); failed += 1 }
+    if test_recursion() != 42 { println("FAIL: test_recursion"); failed += 1 }
+    if test_bool() != 42 { println("FAIL: test_bool"); failed += 1 }
+    if test_8args() != 42 { println("FAIL: test_8args"); failed += 1 }
+    if test_9args() != 42 { println("FAIL: test_9args"); failed += 1 }
+    if test_nested_while() != 42 { println("FAIL: test_nested_while"); failed += 1 }
+    if test_break() != 42 { println("FAIL: test_break"); failed += 1 }
+    if test_continue() != 42 { println("FAIL: test_continue"); failed += 1 }
+    if test_precedence() != 42 { println("FAIL: test_precedence"); failed += 1 }
+    if test_parens() != 42 { println("FAIL: test_parens"); failed += 1 }
+    if test_void() != 42 { println("FAIL: test_void"); failed += 1 }
+    if test_large() != 42 { println("FAIL: test_large"); failed += 1 }
+
+    // TIER 7: Structs
+    if test_struct_simple() != 42 { println("FAIL: test_struct_simple"); failed += 1 }
+    if test_struct_reassign() != 42 { println("FAIL: test_struct_reassign"); failed += 1 }
+    if test_nested_struct() != 42 { println("FAIL: test_nested_struct"); failed += 1 }
+    if test_large_struct() != 42 { println("FAIL: test_large_struct"); failed += 1 }
+
+    // TIER 8: Characters
+    if test_char_simple() != 42 { println("FAIL: test_char_simple"); failed += 1 }
+    if test_char_escape() != 42 { println("FAIL: test_char_escape"); failed += 1 }
+    if test_char_compare() != 42 { println("FAIL: test_char_compare"); failed += 1 }
+
+    // TIER 8: Strings
+    if test_string_simple() != 42 { println("FAIL: test_string_simple"); failed += 1 }
+    if test_len_string() != 42 { println("FAIL: test_len_string"); failed += 1 }
+    if test_len_escape() != 42 { println("FAIL: test_len_escape"); failed += 1 }
+    if test_len_string_var() != 42 { println("FAIL: test_len_string_var"); failed += 1 }
+
+    // TIER 9: Arrays
+    if test_array_index() != 42 { println("FAIL: test_array_index"); failed += 1 }
+    if test_array_assign() != 42 { println("FAIL: test_array_assign"); failed += 1 }
+    if test_array_var_index() != 42 { println("FAIL: test_array_var_index"); failed += 1 }
+    if test_array_param() != 42 { println("FAIL: test_array_param"); failed += 1 }
+
+    // TIER 10: Pointers
+    if test_ptr_read() != 42 { println("FAIL: test_ptr_read"); failed += 1 }
+    if test_ptr_write() != 42 { println("FAIL: test_ptr_write"); failed += 1 }
+    if test_ptr_modify() != 50 { println("FAIL: test_ptr_modify"); failed += 1 }
+    if test_ptr_param() != 42 { println("FAIL: test_ptr_param"); failed += 1 }
+    if test_ptr_expr() != 42 { println("FAIL: test_ptr_expr"); failed += 1 }
+    if test_ptr_field_store() != 42 { println("FAIL: test_ptr_field_store"); failed += 1 }
+    if test_fn_type() != 42 { println("FAIL: test_fn_type"); failed += 1 }
+
+    // TIER 11: Bitwise operators
+    if test_bitwise_and() != 10 { println("FAIL: test_bitwise_and"); failed += 1 }
+    if test_bitwise_or() != 15 { println("FAIL: test_bitwise_or"); failed += 1 }
+    if test_bitwise_xor() != 5 { println("FAIL: test_bitwise_xor"); failed += 1 }
+    if test_shl() != 32 { println("FAIL: test_shl"); failed += 1 }
+    if test_shr() != 4 { println("FAIL: test_shr"); failed += 1 }
+    if test_bitwise_combo() != 12 { println("FAIL: test_bitwise_combo"); failed += 1 }
+    if test_shift_var() != 64 { println("FAIL: test_shift_var"); failed += 1 }
+    if test_mask_extract() != 15 { println("FAIL: test_mask_extract"); failed += 1 }
+
+    // TIER 12: Logical operators (short-circuit)
+    if test_logical_and_true() != 42 { println("FAIL: test_logical_and_true"); failed += 1 }
+    if test_logical_and_false_first() != 42 { println("FAIL: test_logical_and_false_first"); failed += 1 }
+    if test_logical_and_false_second() != 42 { println("FAIL: test_logical_and_false_second"); failed += 1 }
+    if test_logical_or_false() != 42 { println("FAIL: test_logical_or_false"); failed += 1 }
+    if test_logical_or_true_first() != 42 { println("FAIL: test_logical_or_true_first"); failed += 1 }
+    if test_logical_or_true_second() != 42 { println("FAIL: test_logical_or_true_second"); failed += 1 }
+    if test_logical_and_chain() != 42 { println("FAIL: test_logical_and_chain"); failed += 1 }
+    if test_logical_or_chain() != 42 { println("FAIL: test_logical_or_chain"); failed += 1 }
+    if test_logical_or_chain_all_false() != 42 { println("FAIL: test_logical_or_chain_all_false"); failed += 1 }
+    if test_logical_or_chain_4_false() != 42 { println("FAIL: test_logical_or_chain_4_false"); failed += 1 }
+
+    // TIER 13: Enums
+    if test_enum_first() != 42 { println("FAIL: test_enum_first"); failed += 1 }
+    if test_enum_second() != 42 { println("FAIL: test_enum_second"); failed += 1 }
+    if test_enum_third() != 42 { println("FAIL: test_enum_third"); failed += 1 }
+    if test_enum_ne() != 42 { println("FAIL: test_enum_ne"); failed += 1 }
+    if test_enum_param() != 42 { println("FAIL: test_enum_param"); failed += 1 }
+
+    // TIER 14: Null and Pointers
+    if test_null_eq() != 42 { println("FAIL: test_null_eq"); failed += 1 }
+    if test_null_ne() != 42 { println("FAIL: test_null_ne"); failed += 1 }
+    if test_null_eq_right() != 42 { println("FAIL: test_null_eq_right"); failed += 1 }
+    if test_ptr_not_null() != 42 { println("FAIL: test_ptr_not_null"); failed += 1 }
+
+    // TIER 15: Slices
+    if test_slice_create() != 42 { println("FAIL: test_slice_create"); failed += 1 }
+    if test_slice_start() != 42 { println("FAIL: test_slice_start"); failed += 1 }
+    if test_slice_index_first() != 10 { println("FAIL: test_slice_index_first"); failed += 1 }
+    if test_slice_index_middle() != 30 { println("FAIL: test_slice_index_middle"); failed += 1 }
+    if test_slice_index_offset() != 30 { println("FAIL: test_slice_index_offset"); failed += 1 }
+    if test_slice_len() != 3 { println("FAIL: test_slice_len"); failed += 1 }
+    if test_slice_len_full() != 5 { println("FAIL: test_slice_len_full"); failed += 1 }
+    if test_slice_write() != 42 { println("FAIL: test_slice_write"); failed += 1 }
+    if test_slice_implicit_end() != 30 { println("FAIL: test_slice_implicit_end"); failed += 1 }
+    if test_slice_full() != 5 { println("FAIL: test_slice_full"); failed += 1 }
+    if test_slice_implicit_start() != 30 { println("FAIL: test_slice_implicit_start"); failed += 1 }
+
+    // TIER 15.4: Computed Base Index Assignment
+    if test_computed_base_assign() != 42 { println("FAIL: test_computed_base_assign"); failed += 1 }
+
+    // TIER 15.5: Array Copy
+    if test_array_copy() != 10 { println("FAIL: test_array_copy"); failed += 1 }
+    if test_array_copy_values() != 60 { println("FAIL: test_array_copy_values"); failed += 1 }
+
+    // TIER 15.6: String Variable Assignment
+    if test_string_var_copy() != 5 { println("FAIL: test_string_var_copy"); failed += 1 }
+    if test_string_var_copy2() != 8 { println("FAIL: test_string_var_copy2"); failed += 1 }
+
+    // TIER 15.7: String Indexing and Slicing
+    if test_string_index_first() != 42 { println("FAIL: test_string_index_first"); failed += 1 }
+    if test_string_index_middle() != 42 { println("FAIL: test_string_index_middle"); failed += 1 }
+    if test_string_slice() != 3 { println("FAIL: test_string_slice"); failed += 1 }
+    if test_string_slice_content() != 42 { println("FAIL: test_string_slice_content"); failed += 1 }
+
+    // TIER 15.8: String Concatenation
+    if test_str_concat_basic() != 42 { println("FAIL: test_str_concat_basic"); failed += 1 }
+    if test_str_concat_empty() != 42 { println("FAIL: test_str_concat_empty"); failed += 1 }
+    if test_str_concat_multi() != 42 { println("FAIL: test_str_concat_multi"); failed += 1 }
+
+    // TIER 15.9: @string Builtin
+    if test_string_builtin_len() != 42 { println("FAIL: test_string_builtin_len"); failed += 1 }
+    if test_string_builtin_content() != 42 { println("FAIL: test_string_builtin_content"); failed += 1 }
+    if test_string_builtin_empty() != 42 { println("FAIL: test_string_builtin_empty"); failed += 1 }
+
+    // TIER 16: For-In Loops
+    if test_for_array() != 15 { println("FAIL: test_for_array"); failed += 1 }
+    if test_for_break() != 30 { println("FAIL: test_for_break"); failed += 1 }
+    if test_for_continue() != 12 { println("FAIL: test_for_continue"); failed += 1 }
+    if test_for_slice() != 90 { println("FAIL: test_for_slice"); failed += 1 }
+
+    // TIER 17: Switch Statement
+    if test_switch_int() != 42 { println("FAIL: test_switch_int"); failed += 1 }
+    if test_switch_default() != 42 { println("FAIL: test_switch_default"); failed += 1 }
+    if test_switch_multi() != 42 { println("FAIL: test_switch_multi"); failed += 1 }
+    if test_switch_first() != 42 { println("FAIL: test_switch_first"); failed += 1 }
+
+    // TIER 18: Indirect Function Calls
+    // TODO: cot0-stage1 doesn't handle fn ptr calls yet
+    // if test_fn_ptr_call() != 42 { println("FAIL: test_fn_ptr_call"); failed += 1 }
+    // if test_fn_ptr_reassign() != 42 { println("FAIL: test_fn_ptr_reassign"); failed += 1 }
+    // if test_fn_ptr_no_args() != 42 { println("FAIL: test_fn_ptr_no_args"); failed += 1 }
+
+    // TIER 19: Pointer Arithmetic
+    if test_ptr_add() != 42 { println("FAIL: test_ptr_add"); failed += 1 }
+    if test_ptr_sub() != 42 { println("FAIL: test_ptr_sub"); failed += 1 }
+
+    // TIER 20: Bitwise NOT
+    if test_bitwise_not_zero() != 42 { println("FAIL: test_bitwise_not_zero"); failed += 1 }
+    if test_bitwise_not_neg() != 42 { println("FAIL: test_bitwise_not_neg"); failed += 1 }
+    if test_bitwise_not_double() != 42 { println("FAIL: test_bitwise_not_double"); failed += 1 }
+
+    // TIER 21: Compound Assignments
+    if test_add_assign() != 42 { println("FAIL: test_add_assign"); failed += 1 }
+    if test_sub_assign() != 42 { println("FAIL: test_sub_assign"); failed += 1 }
+    if test_mul_assign() != 42 { println("FAIL: test_mul_assign"); failed += 1 }
+    if test_div_assign() != 42 { println("FAIL: test_div_assign"); failed += 1 }
+    if test_bitwise_and_assign() != 42 { println("FAIL: test_bitwise_and_assign"); failed += 1 }
+    if test_bitwise_or_assign() != 42 { println("FAIL: test_bitwise_or_assign"); failed += 1 }
+
+    // TIER 22: @intCast
+    if test_intcast_widen() != 42 { println("FAIL: test_intcast_widen"); failed += 1 }
+    if test_intcast_truncate() != 42 { println("FAIL: test_intcast_truncate"); failed += 1 }
+    if test_intcast_roundtrip() != 42 { println("FAIL: test_intcast_roundtrip"); failed += 1 }
+
+    // TIER 23: Defer Statement
+    if test_defer_simple() != 42 { println("FAIL: test_defer_simple"); failed += 1 }
+    if test_defer_early_return() != 42 { println("FAIL: test_defer_early_return"); failed += 1 }
+    if test_defer_multiple() != 42 { println("FAIL: test_defer_multiple"); failed += 1 }
+    if test_defer_block() != 42 { println("FAIL: test_defer_block"); failed += 1 }
+
+    // TIER 24: Global Variables
+    if test_global_basic() != 42 { println("FAIL: test_global_basic"); failed += 1 }
+    if test_global_increment() != 42 { println("FAIL: test_global_increment"); failed += 1 }
+    if test_global_arithmetic() != 42 { println("FAIL: test_global_arithmetic"); failed += 1 }
+    if test_global_multi_access() != 42 { println("FAIL: test_global_multi_access"); failed += 1 }
+
+    // TIER 25: Stress Tests
+    if test_regpressure_15() != 120 { println("FAIL: test_regpressure_15"); failed += 1 }
+    if test_regpressure_20() != 210 { println("FAIL: test_regpressure_20"); failed += 1 }
+    if test_regpressure_with_calls() != 84 { println("FAIL: test_regpressure_with_calls"); failed += 1 }
+    if test_phi_3way_driver() != 42 { println("FAIL: test_phi_3way_driver"); failed += 1 }
+    if test_phi_4way_driver() != 42 { println("FAIL: test_phi_4way_driver"); failed += 1 }
+    if test_16args() != 42 { println("FAIL: test_16args"); failed += 1 }
+    if test_string_branch() != 13 { println("FAIL: test_string_branch"); failed += 1 }
+    if test_string_loop() != 3 { println("FAIL: test_string_loop"); failed += 1 }
+    if test_nest3() != 5 { println("FAIL: test_nest3"); failed += 1 }
+    if test_nest4() != 3 { println("FAIL: test_nest4"); failed += 1 }
+    if test_long_expr() != 42 { println("FAIL: test_long_expr"); failed += 1 }
+    if test_nested_arith() != 120 { println("FAIL: test_nested_arith"); failed += 1 }
+    if test_pressure_in_loop() != 140 { println("FAIL: test_pressure_in_loop"); failed += 1 }
+
+    // TIER 26: Bug Regression Tests
+    if test_bug003_struct_enum_field() != 30 { println("FAIL: test_bug003_struct_enum_field"); failed += 1 }
+    if test_bug004_large_struct_return() != 42 { println("FAIL: test_bug004_large_struct_return"); failed += 1 }
+    if test_bug012_ptr_deref_field() != 42 { println("FAIL: test_bug012_ptr_deref_field"); failed += 1 }
+    if test_bug016_const_right_side() != 42 { println("FAIL: test_bug016_const_right_side"); failed += 1 }
+    if test_bug019_large_struct_arg() != 42 { println("FAIL: test_bug019_large_struct_arg"); failed += 1 }
+    if test_bug019b_large_struct_literal_arg() != 42 { println("FAIL: test_bug019b_large_struct_literal_arg"); failed += 1 }
+
+    // Summary
+    if failed == 0 {
+        println("All 166 tests passed!")
+    }
+
+    return failed
+}

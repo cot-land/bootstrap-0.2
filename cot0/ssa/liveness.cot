@@ -30,7 +30,7 @@ struct LiveInfo {
     pos: i64,          // Source position of next use
 }
 
-fn live_info_new(id: i64, dist: i64, pos: i64) LiveInfo {
+fn LiveInfo_new(id: i64, dist: i64, pos: i64) LiveInfo {
     return LiveInfo{
         .id = id,
         .dist = dist,
@@ -52,18 +52,18 @@ struct LiveMap {
     // For simplicity, we do linear search (O(n) but n is small).
 }
 
-fn live_map_init(lm: *LiveMap, entries: *LiveInfo, cap: i64) {
+fn LiveMap_init(lm: *LiveMap, entries: *LiveInfo, cap: i64) {
     lm.entries = entries;
     lm.count = 0;
     lm.cap = cap;
 }
 
-fn live_map_clear(lm: *LiveMap) {
+fn LiveMap_clear(lm: *LiveMap) {
     lm.count = 0;
 }
 
 // Find entry by ID (returns index or -1)
-fn live_map_find(lm: *LiveMap, id: i64) i64 {
+fn LiveMap_find(lm: *LiveMap, id: i64) i64 {
     var i: i64 = 0;
     while i < lm.count {
         let entry: *LiveInfo = lm.entries + i;
@@ -76,8 +76,8 @@ fn live_map_find(lm: *LiveMap, id: i64) i64 {
 }
 
 // Set value with distance. Updates if new distance is SMALLER (closer use).
-fn live_map_set(lm: *LiveMap, id: i64, dist: i64, pos: i64) {
-    let idx: i64 = live_map_find(lm, id);
+fn LiveMap_set(lm: *LiveMap, id: i64, dist: i64, pos: i64) {
+    let idx: i64 = LiveMap_find(lm, id);
     if idx >= 0 {
         // Already present - update if closer use
         let entry: *LiveInfo = lm.entries + idx;
@@ -98,8 +98,8 @@ fn live_map_set(lm: *LiveMap, id: i64, dist: i64, pos: i64) {
 }
 
 // Set value unconditionally (always overwrites)
-fn live_map_set_force(lm: *LiveMap, id: i64, dist: i64, pos: i64) {
-    let idx: i64 = live_map_find(lm, id);
+fn LiveMap_setForce(lm: *LiveMap, id: i64, dist: i64, pos: i64) {
+    let idx: i64 = LiveMap_find(lm, id);
     if idx >= 0 {
         let entry: *LiveInfo = lm.entries + idx;
         entry.dist = dist;
@@ -117,8 +117,8 @@ fn live_map_set_force(lm: *LiveMap, id: i64, dist: i64, pos: i64) {
 }
 
 // Get distance for a value (returns INVALID_ID if not present)
-fn live_map_get(lm: *LiveMap, id: i64) i64 {
-    let idx: i64 = live_map_find(lm, id);
+fn LiveMap_get(lm: *LiveMap, id: i64) i64 {
+    let idx: i64 = LiveMap_find(lm, id);
     if idx >= 0 {
         let entry: *LiveInfo = lm.entries + idx;
         return entry.dist;
@@ -127,13 +127,13 @@ fn live_map_get(lm: *LiveMap, id: i64) i64 {
 }
 
 // Check if value is in the live set
-fn live_map_contains(lm: *LiveMap, id: i64) bool {
-    return live_map_find(lm, id) >= 0;
+fn LiveMap_contains(lm: *LiveMap, id: i64) bool {
+    return LiveMap_find(lm, id) >= 0;
 }
 
 // Remove a value from the live set (swap-remove)
-fn live_map_remove(lm: *LiveMap, id: i64) {
-    let idx: i64 = live_map_find(lm, id);
+fn LiveMap_remove(lm: *LiveMap, id: i64) {
+    let idx: i64 = LiveMap_find(lm, id);
     if idx < 0 { return; }
 
     // Swap with last element
@@ -148,7 +148,7 @@ fn live_map_remove(lm: *LiveMap, id: i64) {
 }
 
 // Add distance delta to all entries
-fn live_map_add_distance_all(lm: *LiveMap, delta: i64) {
+fn LiveMap_addDistanceAll(lm: *LiveMap, delta: i64) {
     var i: i64 = 0;
     while i < lm.count {
         let entry: *LiveInfo = lm.entries + i;
@@ -174,7 +174,7 @@ struct BlockLiveness {
     next_call_count: i64,
 }
 
-fn block_liveness_init(bl: *BlockLiveness, block_id: i64,
+fn BlockLiveness_init(bl: *BlockLiveness, block_id: i64,
                         live_out: *LiveInfo, live_out_cap: i64,
                         next_call: *i64, next_call_cap: i64) {
     bl.block_id = block_id;
@@ -186,7 +186,7 @@ fn block_liveness_init(bl: *BlockLiveness, block_id: i64,
 }
 
 // Update live_out from a LiveMap
-fn block_liveness_update(bl: *BlockLiveness, lm: *LiveMap) {
+fn BlockLiveness_update(bl: *BlockLiveness, lm: *LiveMap) {
     // Copy entries (up to capacity)
     var i: i64 = 0;
     while i < lm.count and i < bl.live_out_cap {
@@ -201,7 +201,7 @@ fn block_liveness_update(bl: *BlockLiveness, lm: *LiveMap) {
 }
 
 // Check if a value is in live_out
-fn block_liveness_contains(bl: *BlockLiveness, id: i64) bool {
+fn BlockLiveness_contains(bl: *BlockLiveness, id: i64) bool {
     var i: i64 = 0;
     while i < bl.live_out_count {
         let entry: *LiveInfo = bl.live_out + i;
@@ -214,7 +214,7 @@ fn block_liveness_contains(bl: *BlockLiveness, id: i64) bool {
 }
 
 // Get distance for a value in live_out (or INVALID_ID)
-fn block_liveness_get(bl: *BlockLiveness, id: i64) i64 {
+fn BlockLiveness_get(bl: *BlockLiveness, id: i64) i64 {
     var i: i64 = 0;
     while i < bl.live_out_count {
         let entry: *LiveInfo = bl.live_out + i;
@@ -236,14 +236,14 @@ struct LivenessResult {
     blocks_cap: i64,
 }
 
-fn liveness_result_init(lr: *LivenessResult, blocks: *BlockLiveness, cap: i64) {
+fn LivenessResult_init(lr: *LivenessResult, blocks: *BlockLiveness, cap: i64) {
     lr.blocks = blocks;
     lr.blocks_count = 0;
     lr.blocks_cap = cap;
 }
 
 // Get BlockLiveness for a block ID
-fn liveness_get_block(lr: *LivenessResult, block_id: i64) *BlockLiveness {
+fn LivenessResult_getBlock(lr: *LivenessResult, block_id: i64) *BlockLiveness {
     var i: i64 = 0;
     while i < lr.blocks_count {
         let bl: *BlockLiveness = lr.blocks + i;
@@ -257,8 +257,8 @@ fn liveness_get_block(lr: *LivenessResult, block_id: i64) *BlockLiveness {
 }
 
 // Get live_out for a block
-fn liveness_get_live_out(lr: *LivenessResult, block_id: i64) *BlockLiveness {
-    return liveness_get_block(lr, block_id);
+fn LivenessResult_getLiveOut(lr: *LivenessResult, block_id: i64) *BlockLiveness {
+    return LivenessResult_getBlock(lr, block_id);
 }
 
 // ============================================================================
@@ -352,7 +352,7 @@ fn process_successor_phis(lm: *LiveMap, f: *Func, block: *Block) {
                 if arg_id != INVALID_ID {
                     let arg: *Value = func_get_value(f, arg_id);
                     if needs_register(arg) {
-                        live_map_set(lm, arg_id, delta, 0);
+                        LiveMap_set(lm, arg_id, delta, 0);
                     }
                 }
             }
@@ -365,14 +365,14 @@ fn process_successor_phis(lm: *LiveMap, f: *Func, block: *Block) {
 // Process a single block in the liveness algorithm
 fn process_block_liveness(lr: *LivenessResult, f: *Func, block: *Block,
                            lm: *LiveMap, work: *LiveInfo) i64 {
-    let bl: *BlockLiveness = liveness_get_block(lr, block.id);
+    let bl: *BlockLiveness = LivenessResult_getBlock(lr, block.id);
 
     // Initialize live set from known live_out
-    live_map_clear(lm);
+    LiveMap_clear(lm);
     var i: i64 = 0;
     while i < bl.live_out_count {
         let entry: *LiveInfo = bl.live_out + i;
-        live_map_set_force(lm, entry.id, entry.dist, entry.pos);
+        LiveMap_setForce(lm, entry.id, entry.dist, entry.pos);
         i = i + 1;
     }
 
@@ -384,19 +384,19 @@ fn process_block_liveness(lr: *LivenessResult, f: *Func, block: *Block,
     // If phi args were added, update live_out
     var changed: i64 = 0;
     if lm.count > old_count {
-        block_liveness_update(bl, lm);
+        BlockLiveness_update(bl, lm);
         changed = 1;
     }
 
     // Adjust distances for block length
     let block_len: i64 = block.values_count;
-    live_map_add_distance_all(lm, block_len);
+    LiveMap_addDistanceAll(lm, block_len);
 
     // Add control value to live set
     if block.control != INVALID_ID {
         let ctrl: *Value = func_get_value(f, block.control);
         if needs_register(ctrl) {
-            live_map_set(lm, block.control, block_len, 0);
+            LiveMap_set(lm, block.control, block_len, 0);
         }
     }
 
@@ -406,14 +406,14 @@ fn process_block_liveness(lr: *LivenessResult, f: *Func, block: *Block,
         let v: *Value = func_get_value(f, block.values_start + i);
 
         // Value is defined here - remove from live set
-        live_map_remove(lm, v.id);
+        LiveMap_remove(lm, v.id);
 
         // Skip phi nodes (handled separately)
         if v.op == Op.Phi { i = i - 1; continue; }
 
         // Handle calls: add unlikely_distance penalty
         if is_call_op(v.op) {
-            live_map_add_distance_all(lm, UNLIKELY_DISTANCE);
+            LiveMap_addDistanceAll(lm, UNLIKELY_DISTANCE);
         }
 
         // Add arguments to live set
@@ -423,7 +423,7 @@ fn process_block_liveness(lr: *LivenessResult, f: *Func, block: *Block,
             if arg_id != INVALID_ID {
                 let arg: *Value = func_get_value(f, arg_id);
                 if needs_register(arg) {
-                    live_map_set(lm, arg_id, i, 0);
+                    LiveMap_set(lm, arg_id, i, 0);
                 }
             }
             a = a + 1;
@@ -438,7 +438,7 @@ fn process_block_liveness(lr: *LivenessResult, f: *Func, block: *Block,
         if pred_id == INVALID_BLOCK { p = p + 1; continue; }
 
         let pred: *Block = func_get_block(f, pred_id);
-        let pred_bl: *BlockLiveness = liveness_get_block(lr, pred_id);
+        let pred_bl: *BlockLiveness = LivenessResult_getBlock(lr, pred_id);
         let delta: i64 = branch_distance(pred, block.id);
 
         // Build temporary map from predecessor's current live_out
@@ -521,7 +521,7 @@ fn compute_liveness(lr: *LivenessResult, f: *Func,
         let live_offset: i64 = b * MAX_LIVE_PER_BLOCK;
         let next_offset: i64 = b * MAX_VALUES_PER_BLOCK;
 
-        block_liveness_init(bl, b,
+        BlockLiveness_init(bl, b,
                             live_storage + live_offset, MAX_LIVE_PER_BLOCK,
                             next_call_storage + next_offset, MAX_VALUES_PER_BLOCK);
 
@@ -563,20 +563,20 @@ fn compute_liveness(lr: *LivenessResult, f: *Func,
 // ============================================================================
 
 // Get distance to next use for a value in a block's live_out
-fn liveness_get_distance(lr: *LivenessResult, block_id: i64, value_id: i64) i64 {
-    let bl: *BlockLiveness = liveness_get_block(lr, block_id);
-    return block_liveness_get(bl, value_id);
+fn LivenessResult_getDistance(lr: *LivenessResult, block_id: i64, value_id: i64) i64 {
+    let bl: *BlockLiveness = LivenessResult_getBlock(lr, block_id);
+    return BlockLiveness_get(bl, value_id);
 }
 
 // Check if a value is live at the end of a block
-fn liveness_is_live_out(lr: *LivenessResult, block_id: i64, value_id: i64) bool {
-    let bl: *BlockLiveness = liveness_get_block(lr, block_id);
-    return block_liveness_contains(bl, value_id);
+fn LivenessResult_isLiveOut(lr: *LivenessResult, block_id: i64, value_id: i64) bool {
+    let bl: *BlockLiveness = LivenessResult_getBlock(lr, block_id);
+    return BlockLiveness_contains(bl, value_id);
 }
 
 // Get next call index for an instruction (or -1 if no call follows)
-fn liveness_get_next_call(lr: *LivenessResult, block_id: i64, inst_idx: i64) i64 {
-    let bl: *BlockLiveness = liveness_get_block(lr, block_id);
+fn LivenessResult_getNextCall(lr: *LivenessResult, block_id: i64, inst_idx: i64) i64 {
+    let bl: *BlockLiveness = LivenessResult_getBlock(lr, block_id);
     if inst_idx < 0 or inst_idx >= bl.next_call_count {
         return -1;
     }
@@ -585,6 +585,6 @@ fn liveness_get_next_call(lr: *LivenessResult, block_id: i64, inst_idx: i64) i64
 }
 
 // Check if instruction has a call at or after it
-fn liveness_has_call_after(lr: *LivenessResult, block_id: i64, inst_idx: i64) bool {
-    return liveness_get_next_call(lr, block_id, inst_idx) >= 0;
+fn LivenessResult_hasCallAfter(lr: *LivenessResult, block_id: i64, inst_idx: i64) bool {
+    return LivenessResult_getNextCall(lr, block_id, inst_idx) >= 0;
 }

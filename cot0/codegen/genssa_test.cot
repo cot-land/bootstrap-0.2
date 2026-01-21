@@ -51,10 +51,10 @@ fn main() i64 {
     print_str("genssa Test\n");
     print_str("===========\n\n");
 
-    let r1: i64 = test_genstate_init();
+    let r1: i64 = test_GenState_init();
     if r1 != 0 { return r1; }
 
-    let r2: i64 = test_emit_inst();
+    let r2: i64 = test_GenState_emitInst();
     if r2 != 0 { return r2; }
 
     let r3: i64 = test_genssa_basic();
@@ -64,17 +64,17 @@ fn main() i64 {
     return 0;
 }
 
-fn test_genstate_init() i64 {
-    print_str("Test: genstate_init - ");
+fn test_GenState_init() i64 {
+    print_str("Test: GenState_init - ");
 
     var f: Func = undefined;
-    func_init(&f, 0, 4, TYPE_I64,
+    Func_init(&f, 0, 4, TYPE_I64,
               &g_ssa_blocks[0], 100,
               &g_ssa_values[0], 1000,
               &g_ssa_locals[0], 50);
 
     var gs: GenState = undefined;
-    genstate_init(&gs, &f,
+    GenState_init(&gs, &f,
                   &g_code[0], 65536,
                   &g_bstart[0], 100,
                   &g_branches[0], 100);
@@ -87,23 +87,23 @@ fn test_genstate_init() i64 {
     return 0;
 }
 
-fn test_emit_inst() i64 {
-    print_str("Test: emit_inst - ");
+fn test_GenState_emitInst() i64 {
+    print_str("Test: GenState_emitInst - ");
 
     var f: Func = undefined;
-    func_init(&f, 0, 4, TYPE_I64,
+    Func_init(&f, 0, 4, TYPE_I64,
               &g_ssa_blocks[0], 100,
               &g_ssa_values[0], 1000,
               &g_ssa_locals[0], 50);
 
     var gs: GenState = undefined;
-    genstate_init(&gs, &f,
+    GenState_init(&gs, &f,
                   &g_code[0], 65536,
                   &g_bstart[0], 100,
                   &g_branches[0], 100);
 
     // Emit a NOP instruction (0xd503201f)
-    emit_inst(&gs, encode_nop());
+    GenState_emitInst(&gs, encode_nop());
 
     if gs.code_count != 4 { print_str("FAIL (code_count)\n"); return 10; }
 
@@ -129,27 +129,27 @@ fn test_genssa_basic() i64 {
 
     // Create a simple function that returns 42
     var f: Func = undefined;
-    func_init(&f, 0, 4, TYPE_I64,
+    Func_init(&f, 0, 4, TYPE_I64,
               &g_ssa_blocks[0], 100,
               &g_ssa_values[0], 1000,
               &g_ssa_locals[0], 50);
 
-    let entry: i64 = func_new_entry_block(&f);
+    let entry: i64 = Func_newEntryBlock(&f);
 
     // Emit: return 42
-    let const_val: *Value = func_emit_const_int(&f, 42, TYPE_I64);
+    let const_val: *Value = Func_emitConstInt(&f, 42, TYPE_I64);
     const_val.reg = X0;
-    let ret_val: *Value = func_emit_return(&f, const_val);
-    func_emit_return_block(&f);
+    let ret_val: *Value = Func_emitReturn(&f, const_val);
+    Func_emitReturnBlock(&f);
 
     // Generate machine code
     var gs: GenState = undefined;
-    genstate_init(&gs, &f,
+    GenState_init(&gs, &f,
                   &g_code[0], 65536,
                   &g_bstart[0], 100,
                   &g_branches[0], 100);
 
-    let result: i64 = genssa(&gs);
+    let result: i64 = GenState_generate(&gs);
 
     if result != 0 { print_str("FAIL (genssa error)\n"); return 20; }
     if gs.code_count == 0 { print_str("FAIL (no code emitted)\n"); return 21; }

@@ -17,15 +17,15 @@ fn main() i64 {
 // ============================================================================
 
 fn test_op_predicates() i64 {
-    // Test op_is_constant
-    if not op_is_constant(Op.ConstInt) { return 1; }
-    if not op_is_constant(Op.ConstBool) { return 2; }
-    if op_is_constant(Op.Add64) { return 3; }
+    // Test Op_isConstant
+    if not Op_isConstant(Op.ConstInt) { return 1; }
+    if not Op_isConstant(Op.ConstBool) { return 2; }
+    if Op_isConstant(Op.Add64) { return 3; }
 
-    // Test op_is_comparison
-    if not op_is_comparison(Op.Eq64) { return 10; }
-    if not op_is_comparison(Op.Lt64) { return 11; }
-    if op_is_comparison(Op.Add64) { return 12; }
+    // Test Op_isComparison
+    if not Op_isComparison(Op.Eq64) { return 10; }
+    if not Op_isComparison(Op.Lt64) { return 11; }
+    if Op_isComparison(Op.Add64) { return 12; }
 
     return 0;
 }
@@ -36,7 +36,7 @@ fn test_op_predicates() i64 {
 
 fn test_value_creation() i64 {
     // Create a const int value
-    var v: Value = value_new(0, Op.ConstInt, 5, 0);  // TYPE_I64 = 5
+    var v: Value = Value_new(0, Op.ConstInt, 5, 0);  // TYPE_I64 = 5
     v.aux_int = 42;
 
     if v.id != 0 { return 30; }
@@ -45,8 +45,8 @@ fn test_value_creation() i64 {
     if v.uses != 0 { return 33; }
 
     // Create another value that uses v
-    var v2: Value = value_new(1, Op.Neg64, 5, 0);
-    value_add_arg(&v2, &v);
+    var v2: Value = Value_new(1, Op.Neg64, 5, 0);
+    Value_addArg(&v2, &v);
 
     if v2.args_count != 1 { return 34; }
     if v.uses != 1 { return 35; }

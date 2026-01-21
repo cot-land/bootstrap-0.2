@@ -64,12 +64,12 @@ fn main() i64 {
     print_str("\n\n");
 
     // Phase 1: Scanner Test
-    var scanner: Scanner = scanner_new(source);
+    var scanner: Scanner = Scanner_init(source);
     var tok_count: i64 = 0;
-    var tok: Token = scanner_next(&scanner);
+    var tok: Token = Scanner_next(&scanner);
     while tok.kind != TokenType.Eof {
         tok_count = tok_count + 1;
-        tok = scanner_next(&scanner);
+        tok = Scanner_next(&scanner);
     }
 
     print_str("Phase 1 - Scanner: ");
@@ -84,14 +84,14 @@ fn main() i64 {
 
     // Phase 2: Parser Test
     let pool: *NodePool = init_pool();
-    var parser: Parser = parser_new(source, pool);
-    let file_node: i64 = parse_file(&parser);
+    var parser: Parser = Parser_init(source, pool);
+    let file_node: i64 = Parser_parseFile(&parser);
 
     print_str("Phase 2 - Parser: ");
     print_num(pool.count);
     print_str(" nodes\n");
 
-    if parser_had_error(&parser) {
+    if Parser_hadError(&parser) {
         print_str("FAIL: Parser error\n");
         return 2;
     }

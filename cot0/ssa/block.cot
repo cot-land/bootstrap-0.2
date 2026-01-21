@@ -67,7 +67,7 @@ struct Block {
 // Block Constructors
 // ============================================================================
 
-fn block_new(id: i64, kind: BlockKind) Block {
+fn Block_new(id: i64, kind: BlockKind) Block {
     var b: Block = undefined;
     b.id = id;
     b.kind = kind;
@@ -90,16 +90,16 @@ fn block_new(id: i64, kind: BlockKind) Block {
     return b;
 }
 
-fn block_new_plain(id: i64) Block {
-    return block_new(id, BlockKind.Plain);
+fn Block_newPlain(id: i64) Block {
+    return Block_new(id, BlockKind.Plain);
 }
 
-fn block_new_if(id: i64) Block {
-    return block_new(id, BlockKind.If);
+fn Block_newIf(id: i64) Block {
+    return Block_new(id, BlockKind.If);
 }
 
-fn block_new_return(id: i64) Block {
-    return block_new(id, BlockKind.Return);
+fn Block_newReturn(id: i64) Block {
+    return Block_new(id, BlockKind.Return);
 }
 
 // ============================================================================
@@ -107,14 +107,14 @@ fn block_new_return(id: i64) Block {
 // ============================================================================
 
 // Add a successor to this block
-fn block_add_succ(b: *Block, succ_id: i64) {
+fn Block_addSucc(b: *Block, succ_id: i64) {
     if b.succs_count >= MAX_SUCCS { return; }
     b.succs[b.succs_count] = succ_id;
     b.succs_count = b.succs_count + 1;
 }
 
 // Set successor at index (for branch: 0=then, 1=else)
-fn block_set_succ(b: *Block, idx: i64, succ_id: i64) {
+fn Block_setSucc(b: *Block, idx: i64, succ_id: i64) {
     if idx < 0 or idx >= MAX_SUCCS { return; }
     b.succs[idx] = succ_id;
     if idx >= b.succs_count {
@@ -123,13 +123,13 @@ fn block_set_succ(b: *Block, idx: i64, succ_id: i64) {
 }
 
 // Get first successor (or INVALID_BLOCK)
-fn block_succ0(b: *Block) i64 {
+fn Block_succ0(b: *Block) i64 {
     if b.succs_count < 1 { return INVALID_BLOCK; }
     return b.succs[0];
 }
 
 // Get second successor (or INVALID_BLOCK)
-fn block_succ1(b: *Block) i64 {
+fn Block_succ1(b: *Block) i64 {
     if b.succs_count < 2 { return INVALID_BLOCK; }
     return b.succs[1];
 }
@@ -139,14 +139,14 @@ fn block_succ1(b: *Block) i64 {
 // ============================================================================
 
 // Add a predecessor to this block
-fn block_add_pred(b: *Block, pred_id: i64) {
+fn Block_addPred(b: *Block, pred_id: i64) {
     if b.preds_count >= MAX_PREDS { return; }
     b.preds[b.preds_count] = pred_id;
     b.preds_count = b.preds_count + 1;
 }
 
 // Check if block has predecessor
-fn block_has_pred(b: *Block, pred_id: i64) bool {
+fn Block_hasPred(b: *Block, pred_id: i64) bool {
     var i: i64 = 0;
     while i < b.preds_count {
         if b.preds[i] == pred_id { return true; }
@@ -160,27 +160,27 @@ fn block_has_pred(b: *Block, pred_id: i64) bool {
 // ============================================================================
 
 // Check if block is entry block (no predecessors)
-fn block_is_entry(b: *Block) bool {
+fn Block_isEntry(b: *Block) bool {
     return b.preds_count == 0;
 }
 
 // Check if block is exit block (no successors)
-fn block_is_exit(b: *Block) bool {
+fn Block_isExit(b: *Block) bool {
     return b.succs_count == 0;
 }
 
 // Check if block ends with conditional branch
-fn block_is_if(b: *Block) bool {
+fn Block_isIf(b: *Block) bool {
     return b.kind == BlockKind.If;
 }
 
 // Check if block ends with return
-fn block_is_return(b: *Block) bool {
+fn Block_isReturn(b: *Block) bool {
     return b.kind == BlockKind.Return;
 }
 
 // Check if block is plain (unconditional jump or fallthrough)
-fn block_is_plain(b: *Block) bool {
+fn Block_isPlain(b: *Block) bool {
     return b.kind == BlockKind.Plain;
 }
 
@@ -196,26 +196,26 @@ struct BlockPool {
     cap: i64,
 }
 
-fn block_pool_init(pool: *BlockPool, blocks: *Block, cap: i64) {
+fn BlockPool_init(pool: *BlockPool, blocks: *Block, cap: i64) {
     pool.blocks = blocks;
     pool.count = 0;
     pool.cap = cap;
 }
 
-fn block_pool_alloc(pool: *BlockPool, kind: BlockKind) *Block {
+fn BlockPool_alloc(pool: *BlockPool, kind: BlockKind) *Block {
     if pool.count >= pool.cap {
         return pool.blocks;  // Return first block as error placeholder
     }
 
     let id: i64 = pool.count;
     let b: *Block = pool.blocks + id;
-    b.* = block_new(id, kind);
+    b.* = Block_new(id, kind);
     pool.count = pool.count + 1;
 
     return b;
 }
 
-fn block_pool_get(pool: *BlockPool, id: i64) *Block {
+fn BlockPool_get(pool: *BlockPool, id: i64) *Block {
     if id < 0 or id >= pool.count {
         return pool.blocks;  // Return first block as error placeholder
     }
@@ -227,25 +227,25 @@ fn block_pool_get(pool: *BlockPool, id: i64) *Block {
 // ============================================================================
 
 // Connect two blocks: from -> to (adds successor and predecessor)
-fn block_connect(pool: *BlockPool, from_id: i64, to_id: i64) {
-    let from: *Block = block_pool_get(pool, from_id);
-    let to: *Block = block_pool_get(pool, to_id);
+fn BlockPool_connect(pool: *BlockPool, from_id: i64, to_id: i64) {
+    let from: *Block = BlockPool_get(pool, from_id);
+    let to: *Block = BlockPool_get(pool, to_id);
 
-    block_add_succ(from, to_id);
-    block_add_pred(to, from_id);
+    Block_addSucc(from, to_id);
+    Block_addPred(to, from_id);
 }
 
 // Set up conditional branch: from -> then_id (if true), else_id (if false)
-fn block_set_if(pool: *BlockPool, from_id: i64, control: i64, then_id: i64, else_id: i64) {
-    let from: *Block = block_pool_get(pool, from_id);
+fn BlockPool_setIf(pool: *BlockPool, from_id: i64, control: i64, then_id: i64, else_id: i64) {
+    let from: *Block = BlockPool_get(pool, from_id);
     from.kind = BlockKind.If;
     from.control = control;
 
-    block_set_succ(from, 0, then_id);
-    block_set_succ(from, 1, else_id);
+    Block_setSucc(from, 0, then_id);
+    Block_setSucc(from, 1, else_id);
 
-    let then_b: *Block = block_pool_get(pool, then_id);
-    let else_b: *Block = block_pool_get(pool, else_id);
-    block_add_pred(then_b, from_id);
-    block_add_pred(else_b, from_id);
+    let then_b: *Block = BlockPool_get(pool, then_id);
+    let else_b: *Block = BlockPool_get(pool, else_id);
+    Block_addPred(then_b, from_id);
+    Block_addPred(else_b, from_id);
 }

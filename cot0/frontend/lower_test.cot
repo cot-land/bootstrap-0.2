@@ -76,11 +76,11 @@ fn test_lower_int_lit() i64 {
     node.field3 = 0;
 
     // Initialize type pool with backing storage
-    pool_init_with_storage(&g_type_pool, &g_types[0], &g_params[0], &g_fields[0]);
+    TypePool_initWithStorage(&g_type_pool, &g_types[0], &g_params[0], &g_fields[0]);
 
     // Create lowerer
     var l: Lowerer = undefined;
-    lowerer_init(&l,
+    Lowerer_init(&l,
                  &g_nodes[0], 1,
                  &g_children[0], 0,
                  &g_source[0], 0,
@@ -152,11 +152,11 @@ fn test_lower_binary() i64 {
     n2.field3 = 0;
 
     // Initialize type pool with backing storage
-    pool_init_with_storage(&g_type_pool, &g_types[0], &g_params[0], &g_fields[0]);
+    TypePool_initWithStorage(&g_type_pool, &g_types[0], &g_params[0], &g_fields[0]);
 
     // Create lowerer
     var l: Lowerer = undefined;
-    lowerer_init(&l,
+    Lowerer_init(&l,
                  &g_nodes[0], 3,
                  &g_children[0], 0,
                  &g_source[0], 0,

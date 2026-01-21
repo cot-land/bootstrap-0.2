@@ -1,589 +1,249 @@
-# Cot0 Self-Hosting Roadmap
+# cot0 Roadmap: Function Parity with Zig
+
+**Last Updated: 2026-01-21**
+
+## Goal
+
+Make EVERY function in cot0 have the SAME name and SAME logic as its Zig counterpart.
+
+Work through COMPARISON.md systematically, top to bottom, until all rows show "Same".
 
 ---
 
-## CRITICAL: COT0 IS COT
+## Master Checklist
 
-**cot0 IS Cot.** Not a different language. Not a "bootstrap hack."
+Reference: [COMPARISON.md](COMPARISON.md)
 
-- cot0 uses a **simplified subset** of Cot features
-- Every line of cot0 MUST be valid Cot code
-- Use built-in functions (`print`, `println`) - don't redefine them
-- Follow SYNTAX.md exactly - no cot0-specific syntax
-
-**If it wouldn't compile as normal Cot code, it doesn't belong in cot0.**
-
----
-
-**Goal:** Build a Cot compiler written in Cot that can compile itself.
-
-**Last Updated:** 2026-01-21
-
----
-
-## Current Status
-
-| Milestone | Status |
-|-----------|--------|
-| Bootstrap compiler (Zig) | 166 e2e tests pass |
-| cot0 frontend modules | Complete, all tests pass |
-| cot0 can parse itself | **COMPLETE** (Sprint E) |
-| cot0 SSA modules | **COMPLETE** (Sprint F) |
-| cot0 backend modules | **COMPLETE** (Sprint G) |
-| cot0 core transformations | **COMPLETE** (Sprint H) |
-| cot0 codegen (genssa) | **COMPLETE** (Sprint I) |
-| cot0 Mach-O writer | **COMPLETE** (Sprint I) |
-| cot0 self-compiles | In progress |
+| Section | Status | Priority |
+|---------|--------|----------|
+| 1. main.cot | **IN PROGRESS** | Current |
+| 2.1 frontend/token.cot | Pending | Next |
+| 2.2 frontend/scanner.cot | Pending | |
+| 2.3 frontend/ast.cot | Pending | |
+| 2.4 frontend/parser.cot | Pending | |
+| 2.5 frontend/types.cot | Pending | |
+| 2.6 frontend/checker.cot | Pending | |
+| 2.7 frontend/ir.cot | Pending | |
+| 2.8 frontend/lower.cot | Pending | |
+| 3.1 ssa/op.cot | Pending | |
+| 3.2 ssa/value.cot | Pending | |
+| 3.3 ssa/block.cot | Pending | |
+| 3.4 ssa/func.cot | Pending | |
+| 3.5 ssa/builder.cot | Pending | |
+| 3.6 ssa/liveness.cot | Pending | |
+| 3.7 ssa/regalloc.cot | Pending | |
+| 4.1 arm64/asm.cot | Pending | |
+| 4.2 arm64/regs.cot | Pending | |
+| 5.1 codegen/arm64.cot | Pending | |
+| 5.2 codegen/genssa.cot | Pending | |
+| 6.1 obj/macho.cot | Pending | |
+| 7.1-7.14 Zig-only files | Pending | Last |
 
 ---
 
-## Self-Hosting Blockers (Priority Order)
+## Section 1: main.cot
 
-These are the specific issues that must be fixed before cot0 can compile itself.
+**Target**: Match `src/main.zig` + `src/driver.zig`
 
-### 1. Import Module Scoping (FIXED)
-**Status:** FIXED (2026-01-20)
-**Root Cause:** PTYPE_* constants were defined in multiple files (parser.cot, lower.cot, checker.cot). When files imported each other, these constants got added to the global scope multiple times.
-**Fix:** Centralized PTYPE_* constants in types.cot. All files now import from there.
+### Step 1.1: Restructure to Driver Pattern
 
-### 2. const Declarations (WORKING)
-**Status:** Complete - parsing and type checking both work
-**Verified:** `const MAX: i64 = 42` compiles and runs correctly
+Zig uses a `Driver` struct. cot0 should match:
 
-### 3. @builtin Expressions (WORKING)
-**Status:** Complete - `@sizeOf` and `@alignOf` work correctly
-**Verified:** `@sizeOf(i64)` returns 8 correctly
-
-### 4. Cross-File Function Resolution (WORKING)
-**Status:** Complete
-**Verified:** All cot0 test files with cross-file imports compile and run
-
-### 5. Large Struct Field Offsets (BUG-034)
-**Status:** FIXED (2026-01-20)
-**Symptom:** Structs with embedded arrays > 4KB caused codegen panic "integer does not fit in destination type"
-**Root Cause:** ARM64 ADD immediate only supports 12-bit offsets (max 4095)
-**Fix:** Added `emitAddImm()` function that splits large offsets into multiple ADDs (following Go's asm7.go pattern)
-**Test:** `test/bugs/bug034_large_field_offset.cot`
-
-### 6. len() Builtin Support (2026-01-21)
-**Status:** COMPLETE
-**Feature:** Added `len()` builtin for string literals
-**Pattern:** Copied from Zig's `src/frontend/lower.zig:2014` (`lowerBuiltinLen`)
-**Implementation:** `cot0/frontend/lower.cot` - `lower_builtin_len()` function
-**Test:** `len("hello") == 5` returns true
-
-### 7. Nested Struct Field Offset Bug (BUG-051)
-**Status:** OPEN
-**Symptom:** `o.inner.a` reads `o.inner.b` instead (wrong field offset)
-**Test case:**
 ```cot
-struct Inner { a: i64, b: i64, }
-struct Outer { inner: Inner, c: i64, }
-fn main() i64 {
-    var o: Outer
-    o.inner.a = 10
-    return o.inner.a  // Returns 20 instead of 10
+struct Driver {
+    allocator: *Allocator,
+    source: *Source,
+    seen_files: *StringHashMap,
+    // ...
 }
+
+fn Driver_init(allocator: *Allocator) Driver { ... }
+fn Driver_compileFile(self: *Driver, path: string) i64 { ... }
+fn Driver_compileSource(self: *Driver, source: string) i64 { ... }
+fn Driver_parseFileRecursive(self: *Driver, path: string) i64 { ... }
+fn Driver_setDebugPhases(self: *Driver, phases: i64) { ... }
 ```
-**Investigation:** Need to check Zig's `lowerFieldAccess` for nested struct handling
+
+### Step 1.2: Rename Functions
+
+| Current cot0 | Target Name | Notes |
+|--------------|-------------|-------|
+| `compile()` | `Driver_compileFile()` | Restructure as method |
+| `process_all_imports()` | `Driver_parseFileRecursive()` | Rename |
+| `parse_import_file()` | (inline in parseFileRecursive) | Merge |
+| `is_path_imported()` | (use seen_files.contains()) | Remove |
+| `add_imported_path()` | (use seen_files.put()) | Remove |
+
+### Step 1.3: Add Missing Functions
+
+| Function | Source | Notes |
+|----------|--------|-------|
+| `findRuntimePath()` | main.zig:42 | Locate runtime library |
+| `Driver_init()` | driver.zig:15 | Constructor |
+| `Driver_compileSource()` | driver.zig:48 | Single-file compilation |
+| `Driver_setDebugPhases()` | driver.zig:92 | Debug control |
+
+### Step 1.4: Remove/Refactor Helpers
+
+These don't have Zig counterparts - use stdlib instead:
+
+| Remove | Replace With |
+|--------|--------------|
+| `strlen()` | `str.len` (slice length) |
+| `streq()` | `mem_eql()` |
+| `strcpy()` | slice copy |
+| `print_int()` | `println()` |
 
 ---
 
-## Current Status (2026-01-20)
+## Section 2.1: frontend/token.cot
 
-### cot0-stage1 Compilation: SUCCESS
+**Target**: Match `src/frontend/token.zig`
+
+### Changes Needed
+
+| Current cot0 | Target Name |
+|--------------|-------------|
+| `token_type_name()` | `Token_typeName()` |
+
+---
+
+## Section 2.2: frontend/scanner.cot
+
+**Target**: Match `src/frontend/scanner.zig`
+
+### Changes Needed
+
+| Current cot0 | Target Name |
+|--------------|-------------|
+| `scanner_init()` | `Scanner_init()` |
+| `scanner_scan_token()` | `Scanner_next()` |
+| `scanner_peek()` | `Scanner_peek()` |
+| `scan_string()` | `Scanner_string()` |
+| `scan_number()` | `Scanner_number()` |
+| `scan_identifier()` | `Scanner_identifier()` |
+
+---
+
+## Section 2.3: frontend/ast.cot
+
+**Target**: Match `src/frontend/ast.zig`
+
+### Changes Needed
+
+| Current cot0 | Target Name |
+|--------------|-------------|
+| `node_pool_init()` | `AST_init()` |
+| `alloc_node()` | `AST_allocNode()` |
+
+### Add Missing
+
+- `AST_deinit()`
+- `AST_getNode()`
+
+---
+
+## Section 2.4: frontend/parser.cot
+
+**Target**: Match `src/frontend/parser.zig`
+
+### Changes Needed (31 renames)
+
+| Current cot0 | Target Name |
+|--------------|-------------|
+| `parser_init()` | `Parser_init()` |
+| `parse_declaration()` | `Parser_declaration()` |
+| `parse_fn_declaration()` | `Parser_fnDeclaration()` |
+| `parse_struct_declaration()` | `Parser_structDeclaration()` |
+| `parse_var_declaration()` | `Parser_varDeclaration()` |
+| `parse_statement()` | `Parser_statement()` |
+| `parse_if_statement()` | `Parser_ifStatement()` |
+| `parse_while_statement()` | `Parser_whileStatement()` |
+| `parse_for_statement()` | `Parser_forStatement()` |
+| `parse_for_in_statement()` | `Parser_forInStatement()` |
+| `parse_return_statement()` | `Parser_returnStatement()` |
+| `parse_switch_statement()` | `Parser_switchStatement()` |
+| `parse_block()` | `Parser_block()` |
+| `parse_expression()` | `Parser_expression()` |
+| `parse_assignment()` | `Parser_assignment()` |
+| `parse_or()` | `Parser_orExpr()` |
+| `parse_and()` | `Parser_andExpr()` |
+| `parse_equality()` | `Parser_equality()` |
+| `parse_comparison()` | `Parser_comparison()` |
+| `parse_term()` | `Parser_term()` |
+| `parse_factor()` | `Parser_factor()` |
+| `parse_bitwise()` | `Parser_bitwise()` |
+| `parse_shift()` | `Parser_shift()` |
+| `parse_unary()` | `Parser_unary()` |
+| `parse_postfix()` | `Parser_postfix()` |
+| `parse_primary()` | `Parser_primary()` |
+| `parse_call()` | `Parser_call()` |
+| `parse_type()` | `Parser_parseType()` |
+| `parse_function_type()` | `Parser_functionType()` |
+| `advance_parser()` | `Parser_advance()` |
+| `match_token()` | `Parser_match()` |
+
+---
+
+## Sections 3-7: Similar Pattern
+
+Each section follows the same process:
+1. Rename "Equivalent" functions to match Zig names
+2. Add "Missing in cot0" functions by copying from Zig
+3. Evaluate "Missing in Zig" functions (cot0-only)
+4. Update COMPARISON.md status
+5. Test after each change
+
+---
+
+## Section 7: Zig-Only Files (Create New)
+
+These files don't exist in cot0 yet. Create them:
+
+| New cot0 File | Copy From |
+|---------------|-----------|
+| `core/errors.cot` | `src/core/errors.zig` |
+| `core/types.cot` | `src/core/types.zig` |
+| `frontend/source.cot` | `src/frontend/source.zig` |
+| `frontend/errors.cot` | `src/frontend/errors.zig` |
+| `ssa/dom.cot` | `src/ssa/dom.zig` |
+| `ssa/abi.cot` | `src/ssa/abi.zig` |
+| `ssa/debug.cot` | `src/ssa/debug.zig` |
+| `ssa/compile.cot` | `src/ssa/compile.zig` |
+| `ssa/stackalloc.cot` | `src/ssa/stackalloc.zig` |
+| `ssa/passes/lower.cot` | `src/ssa/passes/lower.zig` |
+| `ssa/passes/schedule.cot` | `src/ssa/passes/schedule.zig` |
+| `ssa/passes/expand_calls.cot` | `src/ssa/passes/expand_calls.zig` |
+| `ssa/passes/decompose.cot` | `src/ssa/passes/decompose.zig` |
+| `codegen/generic.cot` | `src/codegen/generic.zig` |
+
+---
+
+## Testing Protocol
+
+After each function change:
+
 ```bash
-./zig-out/bin/cot cot0/main.cot -o /tmp/cot0-stage1  # Works!
-```
-The bootstrap compiler successfully compiles cot0/main.cot to an executable.
+# Rebuild cot0-stage1
+./zig-out/bin/cot cot0/main.cot -o /tmp/cot0-stage1
 
-### cot0-stage1 Simple Programs: SUCCESS
-```bash
-/tmp/cot0-stage1 simple.cot -o simple_out  # Works!
-```
-cot0-stage1 can compile simple programs (return values, loops, if/else, function calls).
-
-### Self-Hosting Blockers
-
-#### Blocker 1: Parser Crashes on Large Files
-```bash
-/tmp/cot0-stage1 cot0/main.cot -o /tmp/cot0-stage2  # CRASHES at Phase 2
-/tmp/cot0-stage1 cot0/frontend/parser.cot -o /tmp/out  # CRASHES at Phase 2
-```
-
-**Symptoms:**
-- Small files (<200 lines) parse successfully
-- Large files (main.cot=1241 lines, parser.cot=~1000 lines) crash during parsing
-- No error message - process exits silently after "Phase 2: Parsing..."
-
-**Likely causes:**
-- Stack overflow in recursive descent parser
-- Buffer overflow in node pool or children array
-- Memory corruption
-
-**Investigation needed:**
-1. Add debug output to cot0/main.cot parser to find where it crashes
-2. Check MAX_NODES, MAX_CHILDREN constants are large enough
-3. Check for infinite loops in parse functions
-
-#### Blocker 2: Cross-File Function Calls Not Resolving
-```
-WARNING: Could not find target function!
-```
-
-**Symptoms:**
-- When compiling files with imports, function calls to imported functions show warnings
-- Compiled program crashes (exit 138 = SIGBUS)
-
-**Root cause:** Call target resolution in genssa.cot doesn't find functions from imported files.
-
-**Files to investigate:**
-- `cot0/codegen/genssa.cot` - function symbol lookup
-- `cot0/main.cot` - how function symbols are registered
-
-#### (RESOLVED) Import Path Resolution
-Imports from CWD work correctly when running from project directory:
-```bash
-cd /Users/johnc/cot-land/bootstrap-0.2
-/tmp/cot0-stage1 cot0/frontend/token_test.cot -o /tmp/out  # Imports work!
+# Test basic functionality
+echo 'fn main() i64 { return 42 }' > /tmp/test.cot
+/tmp/cot0-stage1 /tmp/test.cot -o /tmp/test.o
+zig cc /tmp/test.o -o /tmp/test && /tmp/test; echo "Exit: $?"
+# Expected: 42
 ```
 
 ---
 
-## Next Steps (Priority Order)
-
-### 1. Fix Parser Crash on Large Files (BLOCKER - P0)
-**Files:** `cot0/frontend/parser.cot`, `cot0/main.cot`
-**Task:** Debug why parsing crashes on files > 200 lines. Add debug output, check buffer sizes.
-
-### 2. Fix Cross-File Function Resolution (BLOCKER - P1)
-**Files:** `cot0/codegen/genssa.cot`, `cot0/main.cot`
-**Task:** Ensure function symbols from imports are visible during code generation.
-
-### 3. Complete Self-Hosting
-**Command:** `/tmp/cot0-stage1 cot0/main.cot -o /tmp/cot0-stage2`
-**Task:** Use stage1 to compile stage2. Verify they produce identical output.
-
-**Note:** @builtin lowering and codegen is already complete (@sizeOf, @alignOf, @string, @intCast all work).
-
----
-
-### Test Matrix for Self-Hosting
-
-| cot0 Source File | Can Compile? | Result |
-|------------------|--------------|--------|
-| `token_test.cot` | Yes | 18 tests pass |
-| `ast_test.cot` | Yes | 12 tests pass |
-| `types_test.cot` | Yes | passes |
-| `ir_test.cot` | Yes | passes |
-| `scanner_test.cot` | Yes | 18 tests pass |
-| `parser_test.cot` | Yes | 22 tests pass |
-| `lower_test.cot` | Yes | passes |
-| `checker_test.cot` | Yes | passes |
-
----
-
-## Test Status
-
-| Test File | Status |
-|-----------|--------|
-| `token_test.cot` | 18/18 pass |
-| `ast_test.cot` | 12/12 pass |
-| `types_test.cot` | passes |
-| `ir_test.cot` | passes |
-| `scanner_test.cot` | 18/18 pass |
-| `parser_test.cot` | 22/22 pass |
-| `lower_test.cot` | passes |
-| `checker_test.cot` | passes |
-| `ssa/ssa_test.cot` | passes |
-| `ssa/builder_test.cot` | passes |
-| `ssa/liveness_test.cot` | passes |
-| `ssa/regalloc_test.cot` | passes |
-| `frontend/lower_test.cot` | passes |
-| `codegen/genssa_test.cot` | 3/3 pass |
-| `obj/macho_writer_test.cot` | 4/4 pass |
-
----
-
-## The Path to Self-Hosting
-
-Self-hosting requires two parallel tracks:
-
-### Track 1: Bootstrap Compiler Features
-The Zig bootstrap compiler must support all features used in cot0 source files.
-
-### Track 2: Cot0 Module Implementation
-The cot0 compiler modules must be implemented in Cot.
-
-**Current blocker:** cot0 uses features (structs, enums, pointers) that cot0's parser cannot yet parse. We must extend cot0's parser before we can self-host.
-
----
-
-## Sprint B: Struct and Enum Declarations (COMPLETE 2026-01-17)
-
-**Goal:** cot0 parser can parse `struct Name { ... }` and `enum Name { ... }`
-
-**Verification:** parser_test.cot includes struct/enum tests (tests 11-14), all pass
-
-### Tasks (all complete)
-
-1. [x] **token.cot**: Add tokens for Struct, Enum, Dot
-2. [x] **ast.cot**: Add node kinds: StructDecl, EnumDecl, FieldDecl, FieldAccess, EnumAccess
-3. [x] **parser.cot**: Add parse_struct_decl(), parse_enum_decl(), parse_field_access()
-4. [x] **types.cot**: Add type_make_struct(), type_make_enum() functions
-
-### Test Cases
-```cot
-// Parser can now parse:
-struct Point { x: i64, y: i64, }
-enum Color { Red, Green, Blue, }
-point.x                         // Field access
-TokenType.Ident                 // Enum variant access
-```
-
----
-
-## Sprint E: Full Type Checking (COMPLETE 2026-01-17)
-
-**Goal:** cot0 type checker validates all parsed constructs
-
-**Verification:** Type checker passes on all cot0 files
-
-### Tasks
-
-1. [x] Scope management (define, lookup, parent chain)
-2. [x] Variable declaration checking (check_var_decl)
-3. [x] Control flow checking (if/while condition must be bool)
-4. [x] Struct/enum type checking (check_struct_decl, check_enum_decl)
-5. [x] Pointer operations checking (address-of, dereference)
-6. [x] Comparison operators return bool
-7. [x] Logical operators (and/or) require bool operands
-8. [x] Unary operators (neg, not, bitnot) type checking
-9. [x] Field access checking (struct.field, Enum.Variant, string.len/ptr)
-
----
-
-## Sprint F: IR & SSA (COMPLETE 2026-01-17)
-
-**Goal:** Implement IR and SSA modules in Cot
-
-**Verification:** All SSA modules compile, ssa_test.cot passes
-
-### Files implemented
-- [x] `ir.cot` - IR node definitions and builder (already existed)
-- [ ] `lower.cot` - AST to IR conversion (deferred)
-- [x] `ssa/op.cot` - SSA operations enum with predicates
-- [x] `ssa/value.cot` - SSA values with use tracking
-- [x] `ssa/block.cot` - Basic blocks with edges
-- [x] `ssa/func.cot` - Functions with locals
-- [ ] `ssa/builder.cot` - IR to SSA conversion (deferred)
-
-Note: Added `undefined` keyword to Cot bootstrap compiler to support
-struct initialization pattern: `var v: Value = undefined;`
-
----
-
-## Sprint G: Backend (COMPLETE 2026-01-17)
-
-**Goal:** Implement code generation modules in Cot
-
-### Files implemented
-- [x] `arm64/asm.cot` - ARM64 instruction encoding (697 lines)
-- [x] `arm64/regs.cot` - Register definitions and classification
-- [x] `codegen/arm64.cot` - Code generation helpers
-- [x] `obj/macho.cot` - Mach-O constants and structures
-
-Tests: asm_test.cot (7 tests), regs_test.cot (2 tests), arm64_test.cot (4 tests), macho_test.cot (3 tests)
-
-Also fixed: BUG-026 (integer literals > 2^31 not parsed correctly)
-
----
-
-## Sprint H: Core Transformations (COMPLETE 2026-01-18)
-
-**Goal:** Implement the transformation passes that connect frontend to backend
-
-### Files implemented
-- [x] `frontend/lower.cot` - AST to IR conversion
-- [x] `ssa/builder.cot` - IR to SSA conversion
-- [x] `ssa/liveness.cot` - Live range analysis
-- [x] `ssa/regalloc.cot` - Register allocation
-
-Tests: lower_test.cot, builder_test.cot, liveness_test.cot, regalloc_test.cot all pass
-
-All core infrastructure working. BUG-027 through BUG-030 fixed on 2026-01-18.
-
----
-
-## Sprint I: Integration (IN PROGRESS)
-
-**Goal:** Complete compiler that can compile itself
-
-### Progress (2026-01-19)
-- [x] `main.cot` - Full driver with 7-phase pipeline (compiles, reads files, generates Mach-O)
-- [x] Module integration phase 1 (parser.cot constants → PTYPE_*)
-- [x] Module integration phase 2 (SSA import chains fixed, MAX_PARAMS → FUNC_MAX_PARAMS)
-- [x] All cot0 modules can now be imported together
-- [x] `driver_test.cot` - Scanner → Parser pipeline verified working
-- [x] `genssa.cot` - SSA to machine code generator (620 lines, all ops implemented)
-- [x] `genssa_test.cot` - Tests for genssa (3/3 pass)
-- [x] `macho.cot` - Mach-O writer with MachOWriter struct (690 lines)
-- [x] `macho_writer_test.cot` - Tests for Mach-O writer (4/4 pass)
-- [x] Wire full pipeline in driver (Scanner → Parser → Lowerer → SSA → genssa → Mach-O)
-- [x] Resolve import conflicts (MAIN_ prefix for constants, avoid path conflicts)
-- [x] Complete lowerer for function bodies
-- [x] Wire IR → SSA conversion
-- [x] Add file output (write Mach-O to disk)
-- [x] Local variables with Load/Store (memory-based for loops)
-- [x] While loops with variable updates
-- [x] If/else statements
-- [x] Function calls with parameters
-- [x] Add command line argument parsing (argc/argv, file reading)
-- [x] Parser fixes for self-hosting (parse_arg_expr, optional semicolons, optional void return)
-- [x] @builtin expression parsing (@string, @intCast, @sizeOf, @alignOf)
-- [x] @builtin lowering and code generation (all working)
-- [ ] Extend lowerer for remaining constructs (pointers, structs, etc.)
-
-### Current Pipeline Output
-
-**Simple return:** `fn main() i64 { return 42; }` → Exit code: 42 ✅
-
-**Local variables:** `fn main() i64 { var x: i64 = 42; return x; }` → Exit code: 42 ✅
-
-**While loops:** `fn main() i64 { var x: i64 = 0; while x < 5 { x = x + 1; } return x; }` → Exit code: 5 ✅
-
-**Function calls:** `fn add1(x: i64) i64 { return x + 1; } fn main() i64 { let a: i64 = add1(40); return add1(a); }` → Exit code: 42 ✅
-
-Sample output:
-```
-Cot0 Self-Hosting Compiler v0.2
-================================
-
-Compiling: fn main() i64 { var x: i64 = 42; return x; }
-
-Phase 1: Scanning...     Tokens: 17
-Phase 2: Parsing...      Nodes: 7
-Phase 3: Lowering to IR... IR nodes: 4
-Phase 4: Building SSA... Blocks: 1, Values: 6
-Phase 5: Generating machine code... Code bytes: 28
-Phase 6: Creating Mach-O object... Mach-O bytes: 343
-Phase 7: Writing output... Wrote 343 bytes
-
-Compilation successful!
-```
-
-**Full pipeline working!** Local variables use memory-based Load/Store for proper loop-carried dependency handling.
-
-### What's Complete
-
-**genssa.cot** - Full SSA to machine code generation:
-- GenState struct for holding codegen state
-- genssa() main function walks blocks and values
-- ssaGenValue dispatches by Op type
-- All arithmetic ops (Add, Sub, Mul, Div, Mod, And, Or, Xor, Shl, Shr, Neg, Not)
-- All comparison ops (Eq, Ne, Lt, Le, Gt, Ge)
-- Memory ops (Load, Store, LocalAddr)
-- Control flow (Return, Copy)
-- Branch resolution infrastructure
-
-**macho.cot** - Complete Mach-O object file writer:
-- MachOWriter struct with external buffers
-- macho_writer_init() - Initialize writer with buffers
-- macho_add_code() - Add code to text section
-- macho_add_symbol() - Add symbols with string table entries
-- macho_add_reloc() - Add relocations
-- write_macho() - Generate complete Mach-O object file
-- Output helpers (out_byte, out_u32, out_u64, out_zeros, out_bytes)
-- Section and command writers
-
-### End-to-End Test Success (2026-01-18)
-
-The `e2e_codegen_test.cot` demonstrates the full backend pipeline working:
-
-```
-Phase 1: Build SSA function (return 42)
-  Created 1 block(s), 2 value(s)
-Phase 2: Generate machine code (genssa)
-  Generated 8 bytes of machine code
-Phase 3: Create Mach-O object file
-  Created 319 byte Mach-O object file
-Phase 4: Write to /tmp/return42.o
-  Wrote 319 bytes to /tmp/return42.o
-```
-
-When linked and run: **Exit code: 42** ✅
-
-### Remaining Steps
-
-1. **Wire full pipeline in driver** - Connect all frontend + backend modules:
-   - Scanner → Parser → AST → Lowerer → IR → SSABuilder → SSA
-   - genssa → machine code → MachOWriter → object file
-
-2. **Test complete compilation** - Compile real Cot source to executable
-
-### Bug Fixes (2026-01-18)
-
-- **BUG-032 FIXED**: `open()` mode parameter now works correctly
-  - Root cause: `open()` is variadic on macOS; variadic args must go on stack
-  - Fix: Added `getVariadicFixedArgCount()` and `setupCallArgsWithVariadic()` to ARM64 codegen
-  - Reference: Go's `runtime/sys_darwin_arm64.s` pattern
-
-- **BUG-031 FIXED**: Array field in struct through pointer crashes
-  - Root cause: Arrays are inline like structs, should return address not load
-  - Fix: Added `.array` check in `field_value` and `field_local` handlers
-
-### Verification
-```bash
-# Compile cot0 with bootstrap compiler
-./zig-out/bin/cot cot0/main.cot -o cot0-stage1
-
-# Compile cot0 with stage1
-./cot0-stage1 cot0/main.cot -o cot0-stage2
-
-# Verify stage1 and stage2 produce identical output
-diff cot0-stage1 cot0-stage2
-```
-
----
-
-## Completed Sprints
-
-### Sprint H: Core Transformations (COMPLETE 2026-01-18)
-
-Added to cot0:
-- **frontend/lower.cot**: AST to IR lowering with Lowerer struct and FuncBuilder
-- **ssa/builder.cot**: IR to SSA conversion with SSABuilder, BlockDefs, variable tracking
-- **ssa/liveness.cot**: Live range analysis with LiveMap, BlockLiveness, fixed-point iteration
-- **ssa/regalloc.cot**: Register allocation with ValState, RegState, spilling
-
-Tests: 4 new test files all pass
-
----
-
-### Sprint G: Backend (COMPLETE 2026-01-17)
-
-Added to cot0:
-- **arm64/asm.cot**: ARM64 instruction encoding (MOVZ, ADD, SUB, LDR, STR, B, BL, RET, etc.)
-- **arm64/regs.cot**: Register definitions (X0-X30, SP, classification functions)
-- **codegen/arm64.cot**: Code generation helpers (select_load, select_store, codegen_* functions)
-- **obj/macho.cot**: Mach-O format constants and structures
-
-Fixed in bootstrap compiler:
-- **BUG-026**: Integer literals > 2^31 parsed incorrectly (changed parseInt base 10 → 0)
-
-Tests: 16 backend tests pass
-
----
-
-### Sprint F: IR & SSA (COMPLETE 2026-01-17)
-
-Added to cot0:
-- **ssa/op.cot**: SSA operations enum (Op) with predicates (is_constant, is_comparison, etc.)
-- **ssa/value.cot**: Value struct with use tracking, argument management, ValuePool
-- **ssa/block.cot**: Block struct with control flow, BlockKind enum, BlockPool
-- **ssa/func.cot**: Func struct with locals, emission helpers
-
-Added to bootstrap compiler:
-- **undefined keyword**: Allows `var v: Type = undefined;` pattern for struct initialization
-  - Token, AST node, parser, type checker, and lowering support
-
-Tests: ssa_test.cot passes
-
----
-
-### Sprint E: Full Type Checking (COMPLETE 2026-01-17)
-
-Added to cot0:
-- **checker.cot**: Extended check_expr with comparison/logical/unary operators
-- **checker.cot**: Added check_struct_decl, check_enum_decl, check_var_decl
-- **checker.cot**: Added if/while condition checking (must be bool)
-- **checker.cot**: Added FieldAccess checking for struct/enum/string
-
-Tests: checker_test.cot tests scope define/lookup (4 total tests pass)
-
-**TypeRegistry (2026-01-20):**
-- Added `resolve_type_handle()` - converts parser type handles to TypePool type indices
-- Rewrote `check_struct_decl()` - computes field offsets with proper alignment
-- Field-by-name lookup now works via TypePool.fields array
-
----
-
-### Sprint D: Imports and Constants (COMPLETE 2026-01-17)
-
-Added to cot0:
-- **token.cot**: Import, Const tokens (already present)
-- **ast.cot**: ImportDecl, ConstDecl node kinds + constructors
-- **parser.cot**: parse_import(), parse_const_decl() functions
-
-Tests: parser_test.cot tests 19-22 verify import/const parsing (22 total tests pass)
-
----
-
-### Sprint C: Pointers and Strings (COMPLETE 2026-01-17)
-
-Added to cot0:
-- **ast.cot**: StringLit, AddressOf, DerefExpr node kinds + constructors
-- **parser.cot**: String literal in parse_atom(), address-of in parse_unary(), dereference in postfix loop
-
-Tests: parser_test.cot tests 15-18 verify pointer/string parsing (18 total tests pass)
-
----
-
-### Sprint B: Struct and Enum Declarations (COMPLETE 2026-01-17)
-
-Added to cot0:
-- **token.cot**: Struct, Enum, Dot tokens (already present)
-- **ast.cot**: StructDecl, EnumDecl, FieldDecl, FieldAccess nodes + constructors
-- **parser.cot**: parse_struct_decl(), parse_enum_decl(), field access in parse_unary()
-- **types.cot**: type_make_struct(), type_make_enum() functions
-
-Tests: parser_test.cot tests 11-14 verify struct/enum parsing
-
----
-
-### Sprint A: Core Parsing Infrastructure (COMPLETE 2026-01-17)
-
-Added to cot0 parser:
-- Tokens: Let, Var, If, Else, While, Bool, True, False, And, Or, Not, EqEq, NotEq, Less, LessEq, Greater, GreaterEq
-- AST nodes: VarDecl, IfStmt, WhileStmt
-- Parser: parse_type(), parse_var_decl(), parse_if_stmt(), parse_while_stmt()
-- Operator precedence for comparisons and logical ops
-
-Bug fixes during Sprint A:
-- BUG-020 through BUG-025 (register allocation, stack slots, string handling)
-
----
-
-## Feature Matrix
-
-Features used by cot0 source files vs what cot0 can handle:
-
-| Feature | Used in cot0? | cot0 can parse? | cot0 can check? |
-|---------|--------------|-----------------|-----------------|
-| `let`/`var` declarations | Yes | Yes (Sprint A) | Yes (Sprint E) |
-| `if`/`else`/`while` | Yes | Yes (Sprint A) | Yes (Sprint E) |
-| Comparisons/logical ops | Yes | Yes (Sprint A) | Yes (Sprint E) |
-| `struct` declarations | Yes | Yes (Sprint B) | Yes (Sprint E) |
-| `enum` declarations | Yes | Yes (Sprint B) | Yes (Sprint E) |
-| Field access `s.field` | Yes | Yes (Sprint B) | Yes (TypeRegistry) |
-| Pointer types `*T` | Yes | Yes (Sprint C) | Yes (Sprint E) |
-| Address-of `&x` | Yes | Yes (Sprint C) | Yes (Sprint E) |
-| Dereference `ptr.*` | Yes | Yes (Sprint C) | Yes (Sprint E) |
-| String literals | Yes | Yes (Sprint C) | Yes (Sprint E) |
-| `import` statements | Yes | Yes (Sprint D) | Partial (no dedup) |
-| `const` declarations | Yes | Yes (Sprint D) | Yes |
-| `@builtin` expressions | Yes | Yes (Sprint I) | Yes |
-
----
-
-## Recent Bug Fixes
-
-- BUG-034: Large struct field offsets overflow ADD immediate (fixed 2026-01-20)
-- BUG-025: String pointer null after many accesses (Go's use distance tracking)
-- BUG-024: String pointer null in string comparisons
-- BUG-023: Stack slot reuse causes value corruption
-- BUG-022: Comparison operands use same register
-- BUG-021: Chained AND with 4+ conditions
-- BUG-020: Many nested if statements segfault
-
-See [../BUGS.md](../BUGS.md) for complete history.
+## Completion Criteria
+
+A section is COMPLETE when:
+1. ALL functions show "Same" in COMPARISON.md
+2. cot0-stage1 still compiles and runs
+3. No regressions in test output
+
+The project is COMPLETE when:
+1. ALL 21 sections show COMPLETE
+2. COMPARISON.md has NO "Equivalent" or "Missing" entries
+3. cot0 can compile itself (self-hosting)

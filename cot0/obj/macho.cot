@@ -271,7 +271,7 @@ struct MachOWriter {
 // Writer Initialization
 // ============================================================================
 
-fn macho_writer_init(w: *MachOWriter,
+fn MachOWriter_init(w: *MachOWriter,
                      code: *u8, code_cap: i64,
                      data: *u8, data_cap: i64,
                      symbols: *Symbol, symbols_cap: i64,
@@ -312,7 +312,7 @@ fn macho_writer_init(w: *MachOWriter,
 // ============================================================================
 
 // Add code bytes to text section
-fn macho_add_code(w: *MachOWriter, bytes: *u8, len: i64) {
+fn MachOWriter_addCode(w: *MachOWriter, bytes: *u8, len: i64) {
     var i: i64 = 0;
     while i < len and w.code_count < w.code_cap {
         let src: *u8 = bytes + i;
@@ -324,7 +324,7 @@ fn macho_add_code(w: *MachOWriter, bytes: *u8, len: i64) {
 }
 
 // Add a string to the string table, return its offset
-fn macho_add_string(w: *MachOWriter, s: *u8, len: i64) i64 {
+fn MachOWriter_addString(w: *MachOWriter, s: *u8, len: i64) i64 {
     let offset: i64 = w.strings_count;
 
     var i: i64 = 0;
@@ -347,13 +347,13 @@ fn macho_add_string(w: *MachOWriter, s: *u8, len: i64) i64 {
 }
 
 // Add a symbol
-fn macho_add_symbol(w: *MachOWriter, name: *u8, name_len: i64,
+fn MachOWriter_addSymbol(w: *MachOWriter, name: *u8, name_len: i64,
                     value: i64, section: i64, is_external: bool) i64 {
     if w.symbols_count >= w.symbols_cap {
         return 0 - 1;  // Error
     }
 
-    let name_offset: i64 = macho_add_string(w, name, name_len);
+    let name_offset: i64 = MachOWriter_addString(w, name, name_len);
 
     let sym: *Symbol = w.symbols + w.symbols_count;
     sym.name_offset = name_offset;
@@ -367,7 +367,7 @@ fn macho_add_symbol(w: *MachOWriter, name: *u8, name_len: i64,
 }
 
 // Add a relocation
-fn macho_add_reloc(w: *MachOWriter, offset: i64, symbol_idx: i64,
+fn MachOWriter_addReloc(w: *MachOWriter, offset: i64, symbol_idx: i64,
                    reloc_type: i64, is_pcrel: bool) {
     if w.relocs_count >= w.relocs_cap {
         return;

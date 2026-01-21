@@ -17,9 +17,9 @@ fn init_test_pool() *NodePool {
 
 fn main() i64 {
     let pool: *NodePool = init_test_pool();
-    var p: Parser = parser_new("42", pool);
+    var p: Parser = Parser_init("42", pool);
 
-    let expr: i64 = parse_expr(&p);
+    let expr: i64 = Parser_parseExpr(&p);
 
     let n: *Node = node_get(pool, expr);
     if n.kind != NodeKind.IntLit { return 1; }

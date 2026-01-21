@@ -139,7 +139,7 @@ enum Op {
 // ============================================================================
 
 // Check if operation is a constant (rematerializable)
-fn op_is_constant(op: Op) bool {
+fn Op_isConstant(op: Op) bool {
     if op == Op.ConstBool { return true; }
     if op == Op.ConstInt { return true; }
     if op == Op.ConstNil { return true; }
@@ -149,7 +149,7 @@ fn op_is_constant(op: Op) bool {
 }
 
 // Check if operation is a comparison (returns bool)
-fn op_is_comparison(op: Op) bool {
+fn Op_isComparison(op: Op) bool {
     if op == Op.Eq64 { return true; }
     if op == Op.Ne64 { return true; }
     if op == Op.Lt64 { return true; }
@@ -162,7 +162,7 @@ fn op_is_comparison(op: Op) bool {
 }
 
 // Check if operation is commutative
-fn op_is_commutative(op: Op) bool {
+fn Op_isCommutative(op: Op) bool {
     if op == Op.Add64 { return true; }
     if op == Op.Mul64 { return true; }
     if op == Op.And64 { return true; }
@@ -174,7 +174,7 @@ fn op_is_commutative(op: Op) bool {
 }
 
 // Check if operation has side effects (can't be eliminated)
-fn op_has_side_effects(op: Op) bool {
+fn Op_hasSideEffects(op: Op) bool {
     if op == Op.Store { return true; }
     if op == Op.Move { return true; }
     if op == Op.Zero { return true; }
@@ -186,14 +186,14 @@ fn op_has_side_effects(op: Op) bool {
 }
 
 // Check if operation is a control flow terminator
-fn op_is_terminator(op: Op) bool {
+fn Op_isTerminator(op: Op) bool {
     if op == Op.Return { return true; }
     if op == Op.TailCall { return true; }
     return false;
 }
 
 // Check if operation is ARM64-specific
-fn op_is_arm64(op: Op) bool {
+fn Op_isArm64(op: Op) bool {
     if op == Op.ARM64_ADD { return true; }
     if op == Op.ARM64_SUB { return true; }
     if op == Op.ARM64_MUL { return true; }
@@ -220,9 +220,9 @@ fn op_is_arm64(op: Op) bool {
 }
 
 // Get number of arguments for an operation
-fn op_arg_count(op: Op) i64 {
+fn Op_argCount(op: Op) i64 {
     // Constants take 0 args
-    if op_is_constant(op) { return 0; }
+    if Op_isConstant(op) { return 0; }
     if op == Op.InitMem { return 0; }
     if op == Op.Arg { return 0; }
     if op == Op.Addr { return 0; }

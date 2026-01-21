@@ -105,26 +105,26 @@ fn test_register_constants() i64 {
 fn test_basic_alloc() i64 {
     // Create a simple function
     var f: Func = undefined;
-    func_init(&f, 0, 4, 2,
+    Func_init(&f, 0, 4, 2,
               &g_blocks[0], 100,
               &g_values[0], 1000,
               &g_locals[0], 50);
 
     // Create entry block
-    let entry: i64 = func_new_entry_block(&f);
+    let entry: i64 = Func_newEntryBlock(&f);
     if entry != 0 { return 30; }
 
     // Create some values
-    let v0: *Value = func_emit_const_int(&f, 42, 2);
-    let v1: *Value = func_emit_const_int(&f, 10, 2);
+    let v0: *Value = Func_emitConstInt(&f, 42, 2);
+    let v1: *Value = Func_emitConstInt(&f, 10, 2);
 
     // Set up liveness result (empty for this simple test)
     var lr: LivenessResult = undefined;
-    liveness_result_init(&lr, &g_block_liveness[0], 50);
+    LivenessResult_init(&lr, &g_block_liveness[0], 50);
 
     // Initialize regalloc
     var ra: RegAllocState = undefined;
-    regalloc_init(&ra, &f, &g_val_states[0], 1000, &g_reg_states[0], &lr);
+    RegAlloc_init(&ra, &f, &g_val_states[0], 1000, &g_reg_states[0], &lr);
 
     // Ensure val states for our values
     ensure_val_state(&ra, v0.id);
@@ -138,12 +138,12 @@ fn test_basic_alloc() i64 {
 
     // Test assign_reg
     assign_reg(&ra, v0.id, 0);
-    if not regalloc_in_reg(&ra, v0.id) { return 33; }
-    if regalloc_get_reg(&ra, v0.id) != 0 { return 34; }
+    if not RegAlloc_inReg(&ra, v0.id) { return 33; }
+    if RegAlloc_getReg(&ra, v0.id) != 0 { return 34; }
 
     // Test free_reg
     free_reg(&ra, 0);
-    if regalloc_in_reg(&ra, v0.id) { return 35; }
+    if RegAlloc_inReg(&ra, v0.id) { return 35; }
 
     return 0;
 }

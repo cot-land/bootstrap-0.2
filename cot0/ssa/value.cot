@@ -52,7 +52,7 @@ struct Value {
 // Value Constructors
 // ============================================================================
 
-fn value_new(id: i64, op: Op, type_idx: i64, block_id: i64) Value {
+fn Value_new(id: i64, op: Op, type_idx: i64, block_id: i64) Value {
     var v: Value = undefined;
     v.id = id;
     v.op = op;
@@ -72,14 +72,14 @@ fn value_new(id: i64, op: Op, type_idx: i64, block_id: i64) Value {
     return v;
 }
 
-fn value_new_const_int(id: i64, value: i64, type_idx: i64, block_id: i64) Value {
-    var v: Value = value_new(id, Op.ConstInt, type_idx, block_id);
+fn Value_newConstInt(id: i64, value: i64, type_idx: i64, block_id: i64) Value {
+    var v: Value = Value_new(id, Op.ConstInt, type_idx, block_id);
     v.aux_int = value;
     return v;
 }
 
-fn value_new_const_bool(id: i64, value: bool, block_id: i64) Value {
-    var v: Value = value_new(id, Op.ConstBool, 1, block_id);  // TYPE_BOOL = 1
+fn Value_newConstBool(id: i64, value: bool, block_id: i64) Value {
+    var v: Value = Value_new(id, Op.ConstBool, 1, block_id);  // TYPE_BOOL = 1
     if value {
         v.aux_int = 1;
     } else {
@@ -95,7 +95,7 @@ fn value_new_const_bool(id: i64, value: bool, block_id: i64) Value {
 // Add a single argument to a value
 // IMPORTANT: Always use this instead of modifying args directly!
 // This maintains use count invariants.
-fn value_add_arg(v: *Value, arg: *Value) {
+fn Value_addArg(v: *Value, arg: *Value) {
     if v.args_count >= MAX_ARGS { return; }
 
     let idx: i64 = v.args_count;
@@ -105,20 +105,20 @@ fn value_add_arg(v: *Value, arg: *Value) {
 }
 
 // Add two arguments (common case for binary ops)
-fn value_add_arg2(v: *Value, arg0: *Value, arg1: *Value) {
-    value_add_arg(v, arg0);
-    value_add_arg(v, arg1);
+fn Value_addArg2(v: *Value, arg0: *Value, arg1: *Value) {
+    Value_addArg(v, arg0);
+    Value_addArg(v, arg1);
 }
 
 // Add three arguments (e.g., store: ptr, val, mem)
-fn value_add_arg3(v: *Value, arg0: *Value, arg1: *Value, arg2: *Value) {
-    value_add_arg(v, arg0);
-    value_add_arg(v, arg1);
-    value_add_arg(v, arg2);
+fn Value_addArg3(v: *Value, arg0: *Value, arg1: *Value, arg2: *Value) {
+    Value_addArg(v, arg0);
+    Value_addArg(v, arg1);
+    Value_addArg(v, arg2);
 }
 
 // Set argument at specific index (for phi nodes and similar)
-fn value_set_arg(v: *Value, idx: i64, arg: *Value) {
+fn Value_setArg(v: *Value, idx: i64, arg: *Value) {
     if idx < 0 or idx >= MAX_ARGS { return; }
 
     // Decrement old arg's use count if present
@@ -134,7 +134,7 @@ fn value_set_arg(v: *Value, idx: i64, arg: *Value) {
 }
 
 // Reset all arguments (for value replacement)
-fn value_reset_args(v: *Value) {
+fn Value_resetArgs(v: *Value) {
     var i: i64 = 0;
     while i < MAX_ARGS {
         v.args[i] = INVALID_ID;
@@ -148,39 +148,39 @@ fn value_reset_args(v: *Value) {
 // ============================================================================
 
 // Check if value is a constant (rematerializable)
-fn value_is_constant(v: *Value) bool {
-    return op_is_constant(v.op);
+fn Value_isConstant(v: *Value) bool {
+    return Op_isConstant(v.op);
 }
 
 // Check if value has side effects
-fn value_has_side_effects(v: *Value) bool {
-    return op_has_side_effects(v.op);
+fn Value_hasSideEffects(v: *Value) bool {
+    return Op_hasSideEffects(v.op);
 }
 
 // Check if value is dead (no uses and no side effects)
-fn value_is_dead(v: *Value) bool {
-    return v.uses == 0 and not value_has_side_effects(v);
+fn Value_isDead(v: *Value) bool {
+    return v.uses == 0 and not Value_hasSideEffects(v);
 }
 
 // Check if value produces a boolean result
-fn value_is_bool(v: *Value) bool {
-    return op_is_comparison(v.op) or v.op == Op.ConstBool;
+fn Value_isBool(v: *Value) bool {
+    return Op_isComparison(v.op) or v.op == Op.ConstBool;
 }
 
 // Get first argument (or INVALID_ID if none)
-fn value_arg0(v: *Value) i64 {
+fn Value_arg0(v: *Value) i64 {
     if v.args_count < 1 { return INVALID_ID; }
     return v.args[0];
 }
 
 // Get second argument (or INVALID_ID if none)
-fn value_arg1(v: *Value) i64 {
+fn Value_arg1(v: *Value) i64 {
     if v.args_count < 2 { return INVALID_ID; }
     return v.args[1];
 }
 
 // Get third argument (or INVALID_ID if none)
-fn value_arg2(v: *Value) i64 {
+fn Value_arg2(v: *Value) i64 {
     if v.args_count < 3 { return INVALID_ID; }
     return v.args[2];
 }
@@ -197,26 +197,26 @@ struct ValuePool {
     cap: i64,
 }
 
-fn value_pool_init(pool: *ValuePool, values: *Value, cap: i64) {
+fn ValuePool_init(pool: *ValuePool, values: *Value, cap: i64) {
     pool.values = values;
     pool.count = 0;
     pool.cap = cap;
 }
 
-fn value_pool_alloc(pool: *ValuePool, op: Op, type_idx: i64, block_id: i64) *Value {
+fn ValuePool_alloc(pool: *ValuePool, op: Op, type_idx: i64, block_id: i64) *Value {
     if pool.count >= pool.cap {
         return pool.values;  // Return first value as error placeholder
     }
 
     let id: i64 = pool.count;
     let v: *Value = pool.values + id;
-    v.* = value_new(id, op, type_idx, block_id);
+    v.* = Value_new(id, op, type_idx, block_id);
     pool.count = pool.count + 1;
 
     return v;
 }
 
-fn value_pool_get(pool: *ValuePool, id: i64) *Value {
+fn ValuePool_get(pool: *ValuePool, id: i64) *Value {
     if id < 0 or id >= pool.count {
         return pool.values;  // Return first value as error placeholder
     }
@@ -228,12 +228,12 @@ fn value_pool_get(pool: *ValuePool, id: i64) *Value {
 // ============================================================================
 
 // Increment use count (call when value becomes an argument)
-fn value_inc_uses(v: *Value) {
+fn Value_incUses(v: *Value) {
     v.uses = v.uses + 1;
 }
 
 // Decrement use count (call when value is no longer referenced)
-fn value_dec_uses(v: *Value) {
+fn Value_decUses(v: *Value) {
     if v.uses > 0 {
         v.uses = v.uses - 1;
     }

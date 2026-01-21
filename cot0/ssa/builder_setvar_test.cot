@@ -1,4 +1,4 @@
-// Test builder_set_var specifically
+// Test SSABuilder_setVar specifically
 import "builder.cot"
 
 var g_blocks: [100]Block;
@@ -11,26 +11,26 @@ var g_var_storage: [2000]VarDef;
 
 fn main() i64 {
     var f: Func = undefined;
-    func_init(&f, 0, 4, 2,
+    Func_init(&f, 0, 4, 2,
               &g_blocks[0], 100,
               &g_values[0], 1000,
               &g_locals[0], 50);
 
     var b: SSABuilder = undefined;
-    builder_init(&b, &f,
+    SSABuilder_init(&b, &f,
                  &g_all_defs[0], 50,
                  &g_block_map[0], 50,
                  &g_node_values[0], 500,
                  &g_var_storage[0], 2000);
 
-    let result: i64 = builder_convert(&b);
+    let result: i64 = SSABuilder_convert(&b);
     if result != 0 { return 1; }
 
-    // Test builder_set_var - this was crashing before
-    builder_set_var(&b, 0, 100);
+    // Test SSABuilder_setVar - this was crashing before
+    SSABuilder_setVar(&b, 0, 100);
 
-    // Test builder_get_var
-    let val: i64 = builder_get_var(&b, 0);
+    // Test SSABuilder_getVar
+    let val: i64 = SSABuilder_getVar(&b, 0);
     if val != 100 { return 2; }
 
     return 0;

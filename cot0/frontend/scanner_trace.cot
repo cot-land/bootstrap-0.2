@@ -19,8 +19,8 @@ fn init_pool() *NodePool {
 fn main() i64 {
     let pool: *NodePool = init_pool();
 
-    // Call parser_new which returns Parser by value (>16 bytes)
-    var p: Parser = parser_new("42", pool);
+    // Call Parser_init which returns Parser by value (>16 bytes)
+    var p: Parser = Parser_init("42", pool);
 
     // Check scanner field first
     if len(p.scanner.source) != 2 { return 5; }

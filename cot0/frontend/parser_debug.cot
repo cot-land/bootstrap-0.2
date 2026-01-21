@@ -19,8 +19,8 @@ fn init_test_pool() *NodePool {
 fn main() i64 {
     let pool: *NodePool = init_test_pool();
 
-    // Call parser_new and check pool field
-    var p: Parser = parser_new("42", pool);
+    // Call Parser_init and check pool field
+    var p: Parser = Parser_init("42", pool);
 
     // The pool pointer should match what we passed in
     // Return 0 if match, 1 if not

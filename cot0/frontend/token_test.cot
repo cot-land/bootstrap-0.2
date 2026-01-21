@@ -6,150 +6,150 @@ fn main() i64 {
     var passed: i64 = 0;
     var failed: i64 = 0;
 
-    // Test 1: token_new creates token correctly
-    let t1: Token = token_new(TokenType.Int, 10, 15);
+    // Test 1: Token_new creates token correctly
+    let t1: Token = Token_new(TokenType.Int, 10, 15);
     if t1.start == 10 and t1.end == 15 {
         passed = passed + 1;
     } else {
-        println("FAIL: token_new");
+        println("FAIL: Token_new");
         failed = failed + 1;
     }
 
-    // Test 2: is_keyword recognizes "fn"
-    if is_keyword("fn") == TokenType.Fn {
+    // Test 2: Token_lookup recognizes "fn"
+    if Token_lookup("fn") == TokenType.Fn {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword fn");
+        println("FAIL: Token_lookup fn");
         failed = failed + 1;
     }
 
-    // Test 3: is_keyword recognizes "i64"
-    if is_keyword("i64") == TokenType.I64 {
+    // Test 3: Token_lookup recognizes "i64"
+    if Token_lookup("i64") == TokenType.I64 {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword i64");
+        println("FAIL: Token_lookup i64");
         failed = failed + 1;
     }
 
-    // Test 4: is_keyword recognizes "return"
-    if is_keyword("return") == TokenType.Return {
+    // Test 4: Token_lookup recognizes "return"
+    if Token_lookup("return") == TokenType.Return {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword return");
+        println("FAIL: Token_lookup return");
         failed = failed + 1;
     }
 
-    // Test 5: is_keyword returns Ident for non-keywords
-    if is_keyword("foo") == TokenType.Ident {
+    // Test 5: Token_lookup returns Ident for non-keywords
+    if Token_lookup("foo") == TokenType.Ident {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword foo");
+        println("FAIL: Token_lookup foo");
         failed = failed + 1;
     }
 
     // Sprint A: New keyword tests
 
-    // Test 6: is_keyword recognizes "let"
-    if is_keyword("let") == TokenType.Let {
+    // Test 6: Token_lookup recognizes "let"
+    if Token_lookup("let") == TokenType.Let {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword let");
+        println("FAIL: Token_lookup let");
         failed = failed + 1;
     }
 
-    // Test 7: is_keyword recognizes "var"
-    if is_keyword("var") == TokenType.Var {
+    // Test 7: Token_lookup recognizes "var"
+    if Token_lookup("var") == TokenType.Var {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword var");
+        println("FAIL: Token_lookup var");
         failed = failed + 1;
     }
 
-    // Test 8: is_keyword recognizes "if"
-    if is_keyword("if") == TokenType.If {
+    // Test 8: Token_lookup recognizes "if"
+    if Token_lookup("if") == TokenType.If {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword if");
+        println("FAIL: Token_lookup if");
         failed = failed + 1;
     }
 
-    // Test 9: is_keyword recognizes "else"
-    if is_keyword("else") == TokenType.Else {
+    // Test 9: Token_lookup recognizes "else"
+    if Token_lookup("else") == TokenType.Else {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword else");
+        println("FAIL: Token_lookup else");
         failed = failed + 1;
     }
 
-    // Test 10: is_keyword recognizes "while"
-    if is_keyword("while") == TokenType.While {
+    // Test 10: Token_lookup recognizes "while"
+    if Token_lookup("while") == TokenType.While {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword while");
+        println("FAIL: Token_lookup while");
         failed = failed + 1;
     }
 
-    // Test 11: is_keyword recognizes "bool"
-    if is_keyword("bool") == TokenType.Bool {
+    // Test 11: Token_lookup recognizes "bool"
+    if Token_lookup("bool") == TokenType.Bool {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword bool");
+        println("FAIL: Token_lookup bool");
         failed = failed + 1;
     }
 
-    // Test 12: is_keyword recognizes "true"
-    if is_keyword("true") == TokenType.True {
+    // Test 12: Token_lookup recognizes "true"
+    if Token_lookup("true") == TokenType.True {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword true");
+        println("FAIL: Token_lookup true");
         failed = failed + 1;
     }
 
-    // Test 13: is_keyword recognizes "false"
-    if is_keyword("false") == TokenType.False {
+    // Test 13: Token_lookup recognizes "false"
+    if Token_lookup("false") == TokenType.False {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword false");
+        println("FAIL: Token_lookup false");
         failed = failed + 1;
     }
 
-    // Test 14: is_keyword recognizes "and"
-    if is_keyword("and") == TokenType.And {
+    // Test 14: Token_lookup recognizes "and"
+    if Token_lookup("and") == TokenType.And {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword and");
+        println("FAIL: Token_lookup and");
         failed = failed + 1;
     }
 
-    // Test 15: is_keyword recognizes "or"
-    if is_keyword("or") == TokenType.Or {
+    // Test 15: Token_lookup recognizes "or"
+    if Token_lookup("or") == TokenType.Or {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword or");
+        println("FAIL: Token_lookup or");
         failed = failed + 1;
     }
 
-    // Test 16: is_keyword recognizes "not"
-    if is_keyword("not") == TokenType.Not {
+    // Test 16: Token_lookup recognizes "not"
+    if Token_lookup("not") == TokenType.Not {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword not");
+        println("FAIL: Token_lookup not");
         failed = failed + 1;
     }
 
-    // Test 17: is_keyword recognizes "struct"
-    if is_keyword("struct") == TokenType.Struct {
+    // Test 17: Token_lookup recognizes "struct"
+    if Token_lookup("struct") == TokenType.Struct {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword struct");
+        println("FAIL: Token_lookup struct");
         failed = failed + 1;
     }
 
-    // Test 18: is_keyword recognizes "enum"
-    if is_keyword("enum") == TokenType.Enum {
+    // Test 18: Token_lookup recognizes "enum"
+    if Token_lookup("enum") == TokenType.Enum {
         passed = passed + 1;
     } else {
-        println("FAIL: is_keyword enum");
+        println("FAIL: Token_lookup enum");
         failed = failed + 1;
     }
 

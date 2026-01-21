@@ -19,8 +19,8 @@ fn init_pool() *NodePool {
 fn main() i64 {
     let pool: *NodePool = init_pool();
 
-    // Just test parser_new
-    var p: Parser = parser_new("42", pool);
+    // Just test Parser_init
+    var p: Parser = Parser_init("42", pool);
 
     // Return the token kind as exit code for debugging
     // TokenType: Int = 0, Ident = 1, Fn = 2, ...

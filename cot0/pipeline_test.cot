@@ -99,12 +99,12 @@ fn main() i64 {
     // =======================================================================
     // Phase 1: Scanner
     // =======================================================================
-    var scanner: Scanner = scanner_new(source);
+    var scanner: Scanner = Scanner_init(source);
     var tok_count: i64 = 0;
-    var tok: Token = scanner_next(&scanner);
+    var tok: Token = Scanner_next(&scanner);
     while tok.kind != TokenType.Eof {
         tok_count = tok_count + 1;
-        tok = scanner_next(&scanner);
+        tok = Scanner_next(&scanner);
     }
 
     print_str("Phase 1 - Scanner: ");
@@ -121,14 +121,14 @@ fn main() i64 {
     // Phase 2: Parser
     // =======================================================================
     let pool: *NodePool = init_parser_pool();
-    var parser: Parser = parser_new(source, pool);
-    let file_node: i64 = parse_file(&parser);
+    var parser: Parser = Parser_init(source, pool);
+    let file_node: i64 = Parser_parseFile(&parser);
 
     print_str("Phase 2 - Parser: ");
     print_num(pool.count);
     print_str(" AST nodes\n");
 
-    if parser_had_error(&parser) {
+    if Parser_hadError(&parser) {
         print_str("  FAIL: Parser error\n");
         return 2;
     }
@@ -143,13 +143,13 @@ fn main() i64 {
     // Phase 3: Lowerer (AST -> IR)
     // =======================================================================
     var lowerer: Lowerer = undefined;
-    lowerer_init(&lowerer,
+    Lowerer_init(&lowerer,
                  &g_nodes[0], pool.count,
                  source.ptr, len(source),
                  &g_ir_nodes[0], 1000,
                  &g_ir_locals[0], 100);
 
-    let ir_count: i64 = lowerer_lower_all(&lowerer);
+    let ir_count: i64 = Lowerer_lowerAll(&lowerer);
 
     print_str("Phase 3 - Lowerer: ");
     print_num(lowerer.ir_nodes_count);
@@ -162,20 +162,20 @@ fn main() i64 {
     // Phase 4: SSA Builder (IR -> SSA)
     // =======================================================================
     var ssa_func: Func = undefined;
-    func_init(&ssa_func, 0, 4, TYPE_I64,
+    Func_init(&ssa_func, 0, 4, TYPE_I64,
               &g_ssa_blocks[0], 100,
               &g_ssa_values[0], 1000,
               &g_ssa_locals[0], 50);
 
     var builder: SSABuilder = undefined;
-    builder_init(&builder, &ssa_func,
+    SSABuilder_init(&builder, &ssa_func,
                  &g_all_defs[0], 50,
                  &g_block_map[0], 50,
                  &g_node_values[0], 500,
                  &g_var_storage[0], 2000);
 
     // Create entry block
-    let ssa_result: i64 = builder_convert(&builder);
+    let ssa_result: i64 = SSABuilder_convert(&builder);
 
     print_str("Phase 4 - SSA Builder: ");
     print_num(ssa_func.blocks_count);

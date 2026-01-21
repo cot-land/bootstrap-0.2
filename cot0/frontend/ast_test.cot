@@ -25,13 +25,13 @@ fn reset_pool(pool: *NodePool) {
 fn test_int_lit() i64 {
     let pool: *NodePool = init_test_pool();
 
-    let idx: i64 = node_int_lit(pool, 42, 0, 2);
+    let idx: i64 = Node_intLit(pool, 42, 0, 2);
 
     // Check node was created
     if idx != 0 { return 1; }
 
     // Check node kind
-    let n: *Node = node_get(pool, idx);
+    let n: *Node = Node_get(pool, idx);
     if n.kind != NodeKind.IntLit { return 2; }
 
     // Check value
@@ -44,11 +44,11 @@ fn test_int_lit() i64 {
 fn test_ident() i64 {
     let pool: *NodePool = init_test_pool();
 
-    let idx: i64 = node_ident(pool, 0, 3, 0, 3);  // "foo" at offset 0, length 3
+    let idx: i64 = Node_ident(pool, 0, 3, 0, 3);  // "foo" at offset 0, length 3
 
     if idx != 0 { return 1; }
 
-    let n: *Node = node_get(pool, idx);
+    let n: *Node = Node_get(pool, idx);
     if n.kind != NodeKind.Ident { return 2; }
     if n.field0 != 0 { return 3; }  // name_start
     if n.field1 != 3 { return 4; }  // name_len
@@ -61,13 +61,13 @@ fn test_binary() i64 {
     let pool: *NodePool = init_test_pool();
 
     // Create operands
-    let left: i64 = node_int_lit(pool, 1, 0, 1);
-    let right: i64 = node_int_lit(pool, 2, 4, 5);
+    let left: i64 = Node_intLit(pool, 1, 0, 1);
+    let right: i64 = Node_intLit(pool, 2, 4, 5);
 
     // Create binary add
-    let add_idx: i64 = node_binary(pool, BinaryOp.Add, left, right, 0, 5);
+    let add_idx: i64 = Node_binary(pool, BinaryOp.Add, left, right, 0, 5);
 
-    let n: *Node = node_get(pool, add_idx);
+    let n: *Node = Node_get(pool, add_idx);
     if n.kind != NodeKind.BinaryExpr { return 1; }
     if n.field0 != left { return 2; }   // left operand
     if n.field1 != right { return 3; }  // right operand
@@ -80,10 +80,10 @@ fn test_binary() i64 {
 fn test_return() i64 {
     let pool: *NodePool = init_test_pool();
 
-    let value: i64 = node_int_lit(pool, 42, 7, 9);
-    let ret_idx: i64 = node_return(pool, value, 0, 10);
+    let value: i64 = Node_intLit(pool, 42, 7, 9);
+    let ret_idx: i64 = Node_return(pool, value, 0, 10);
 
-    let n: *Node = node_get(pool, ret_idx);
+    let n: *Node = Node_get(pool, ret_idx);
     if n.kind != NodeKind.ReturnStmt { return 1; }
     if n.field0 != value { return 2; }
 
@@ -95,27 +95,27 @@ fn test_block() i64 {
     let pool: *NodePool = init_test_pool();
 
     // Create two statements
-    let val1: i64 = node_int_lit(pool, 1, 0, 1);
-    let val2: i64 = node_int_lit(pool, 2, 0, 1);
-    let stmt1: i64 = node_return(pool, val1, 0, 10);
-    let stmt2: i64 = node_return(pool, val2, 0, 10);
+    let val1: i64 = Node_intLit(pool, 1, 0, 1);
+    let val2: i64 = Node_intLit(pool, 2, 0, 1);
+    let stmt1: i64 = Node_return(pool, val1, 0, 10);
+    let stmt2: i64 = Node_return(pool, val2, 0, 10);
 
     // Add to children array
     let children_start: i64 = pool.children_count;
-    node_add_child(pool, stmt1);
-    node_add_child(pool, stmt2);
+    Node_addChild(pool, stmt1);
+    Node_addChild(pool, stmt2);
 
     // Create block
-    let block_idx: i64 = node_block(pool, children_start, 2, 0, 20);
+    let block_idx: i64 = Node_block(pool, children_start, 2, 0, 20);
 
-    let n: *Node = node_get(pool, block_idx);
+    let n: *Node = Node_get(pool, block_idx);
     if n.kind != NodeKind.BlockStmt { return 1; }
     if n.field0 != children_start { return 2; }
     if n.field1 != 2 { return 3; }  // 2 statements
 
     // Check children retrieval
-    let child0: i64 = node_child(pool, children_start, 0);
-    let child1: i64 = node_child(pool, children_start, 1);
+    let child0: i64 = Node_child(pool, children_start, 0);
+    let child1: i64 = Node_child(pool, children_start, 1);
     if child0 != stmt1 { return 4; }
     if child1 != stmt2 { return 5; }
 
@@ -124,23 +124,23 @@ fn test_block() i64 {
 
 // Test 6: Node kind helpers
 fn test_kind_helpers() i64 {
-    if not is_expr(NodeKind.IntLit) { return 1; }
-    if not is_expr(NodeKind.Ident) { return 2; }
-    if not is_expr(NodeKind.BinaryExpr) { return 3; }
-    if not is_expr(NodeKind.CallExpr) { return 4; }
+    if not NodeKind_isExpr(NodeKind.IntLit) { return 1; }
+    if not NodeKind_isExpr(NodeKind.Ident) { return 2; }
+    if not NodeKind_isExpr(NodeKind.BinaryExpr) { return 3; }
+    if not NodeKind_isExpr(NodeKind.CallExpr) { return 4; }
 
-    if is_expr(NodeKind.ReturnStmt) { return 5; }
-    if is_expr(NodeKind.BlockStmt) { return 6; }
+    if NodeKind_isExpr(NodeKind.ReturnStmt) { return 5; }
+    if NodeKind_isExpr(NodeKind.BlockStmt) { return 6; }
 
-    if not is_stmt(NodeKind.ReturnStmt) { return 7; }
-    if not is_stmt(NodeKind.ExprStmt) { return 8; }
-    if not is_stmt(NodeKind.BlockStmt) { return 9; }
+    if not NodeKind_isStmt(NodeKind.ReturnStmt) { return 7; }
+    if not NodeKind_isStmt(NodeKind.ExprStmt) { return 8; }
+    if not NodeKind_isStmt(NodeKind.BlockStmt) { return 9; }
 
-    if is_stmt(NodeKind.IntLit) { return 10; }
+    if NodeKind_isStmt(NodeKind.IntLit) { return 10; }
 
-    if not is_decl(NodeKind.FnDecl) { return 11; }
-    if not is_decl(NodeKind.ParamDecl) { return 12; }
-    if is_decl(NodeKind.IntLit) { return 13; }
+    if not NodeKind_isDecl(NodeKind.FnDecl) { return 11; }
+    if not NodeKind_isDecl(NodeKind.ParamDecl) { return 12; }
+    if NodeKind_isDecl(NodeKind.IntLit) { return 13; }
 
     return 0;
 }
@@ -179,12 +179,12 @@ fn test_var_decl() i64 {
     let pool: *NodePool = init_test_pool();
 
     // Create initializer
-    let init_expr: i64 = node_int_lit(pool, 42, 10, 12);
+    let init_expr: i64 = Node_intLit(pool, 42, 10, 12);
 
     // Create var decl: let x: i64 = 42
-    let var_idx: i64 = node_var_decl(pool, 1, 4, 1, 0, 0, init_expr, 0, 15);
+    let var_idx: i64 = Node_varDecl(pool, 1, 4, 1, 0, 0, init_expr, 0, 15);
 
-    let n: *Node = node_get(pool, var_idx);
+    let n: *Node = Node_get(pool, var_idx);
     if n.kind != NodeKind.VarDecl { return 1; }
     if n.field0 != 1 { return 2; }           // is_let = true
     if n.field1 != 4 { return 3; }           // name_start
@@ -199,26 +199,26 @@ fn test_if_stmt() i64 {
     let pool: *NodePool = init_test_pool();
 
     // Create condition: x > 0
-    let cond: i64 = node_int_lit(pool, 1, 0, 1);  // Placeholder for condition
+    let cond: i64 = Node_intLit(pool, 1, 0, 1);  // Placeholder for condition
 
     // Create then block
-    let then_val: i64 = node_int_lit(pool, 10, 0, 2);
-    let then_ret: i64 = node_return(pool, then_val, 0, 10);
+    let then_val: i64 = Node_intLit(pool, 10, 0, 2);
+    let then_ret: i64 = Node_return(pool, then_val, 0, 10);
     let then_start: i64 = pool.children_count;
-    node_add_child(pool, then_ret);
-    let then_block: i64 = node_block(pool, then_start, 1, 0, 15);
+    Node_addChild(pool, then_ret);
+    let then_block: i64 = Node_block(pool, then_start, 1, 0, 15);
 
     // Create else block
-    let else_val: i64 = node_int_lit(pool, 20, 0, 2);
-    let else_ret: i64 = node_return(pool, else_val, 0, 10);
+    let else_val: i64 = Node_intLit(pool, 20, 0, 2);
+    let else_ret: i64 = Node_return(pool, else_val, 0, 10);
     let else_start: i64 = pool.children_count;
-    node_add_child(pool, else_ret);
-    let else_block: i64 = node_block(pool, else_start, 1, 0, 15);
+    Node_addChild(pool, else_ret);
+    let else_block: i64 = Node_block(pool, else_start, 1, 0, 15);
 
     // Create if statement
-    let if_idx: i64 = node_if_stmt(pool, cond, then_block, else_block, 0, 30);
+    let if_idx: i64 = Node_ifStmt(pool, cond, then_block, else_block, 0, 30);
 
-    let n: *Node = node_get(pool, if_idx);
+    let n: *Node = Node_get(pool, if_idx);
     if n.kind != NodeKind.IfStmt { return 1; }
     if n.field0 != cond { return 2; }
     if n.field1 != then_block { return 3; }
@@ -232,19 +232,19 @@ fn test_while_stmt() i64 {
     let pool: *NodePool = init_test_pool();
 
     // Create condition
-    let cond: i64 = node_int_lit(pool, 1, 0, 1);
+    let cond: i64 = Node_intLit(pool, 1, 0, 1);
 
     // Create body block
-    let body_val: i64 = node_int_lit(pool, 1, 0, 1);
-    let body_stmt: i64 = node_expr_stmt(pool, body_val, 0, 5);
+    let body_val: i64 = Node_intLit(pool, 1, 0, 1);
+    let body_stmt: i64 = Node_exprStmt(pool, body_val, 0, 5);
     let body_start: i64 = pool.children_count;
-    node_add_child(pool, body_stmt);
-    let body: i64 = node_block(pool, body_start, 1, 0, 10);
+    Node_addChild(pool, body_stmt);
+    let body: i64 = Node_block(pool, body_start, 1, 0, 10);
 
     // Create while statement
-    let while_idx: i64 = node_while_stmt(pool, cond, body, 0, 20);
+    let while_idx: i64 = Node_whileStmt(pool, cond, body, 0, 20);
 
-    let n: *Node = node_get(pool, while_idx);
+    let n: *Node = Node_get(pool, while_idx);
     if n.kind != NodeKind.WhileStmt { return 1; }
     if n.field0 != cond { return 2; }
     if n.field1 != body { return 3; }
@@ -256,20 +256,20 @@ fn test_while_stmt() i64 {
 fn test_unary() i64 {
     let pool: *NodePool = init_test_pool();
 
-    let operand: i64 = node_int_lit(pool, 5, 1, 2);
-    let neg_idx: i64 = node_unary(pool, UnaryOp.Neg, operand, 0, 2);
+    let operand: i64 = Node_intLit(pool, 5, 1, 2);
+    let neg_idx: i64 = Node_unary(pool, UnaryOp.Neg, operand, 0, 2);
 
-    let n: *Node = node_get(pool, neg_idx);
+    let n: *Node = Node_get(pool, neg_idx);
     if n.kind != NodeKind.UnaryExpr { return 1; }
     if n.field0 != operand { return 2; }
     if n.field1 != 0 { return 3; }  // Neg = 0
 
     // Test Not operator
     reset_pool(pool);
-    let op2: i64 = node_int_lit(pool, 1, 1, 2);
-    let not_idx: i64 = node_unary(pool, UnaryOp.Not, op2, 0, 2);
+    let op2: i64 = Node_intLit(pool, 1, 1, 2);
+    let not_idx: i64 = Node_unary(pool, UnaryOp.Not, op2, 0, 2);
 
-    let n2: *Node = node_get(pool, not_idx);
+    let n2: *Node = Node_get(pool, not_idx);
     if n2.field1 != 1 { return 4; }  // Not = 1
 
     return 0;

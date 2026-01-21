@@ -10,16 +10,16 @@ struct Scanner {
     pos: i64,
 }
 
-fn scanner_new(source: string) Scanner {
+fn Scanner_init(source: string) Scanner {
     return Scanner{ .source = source, .pos = 0 };
 }
 
-fn scanner_at_end(s: *Scanner) bool {
+fn Scanner_isAtEnd(s: *Scanner) bool {
     return s.pos >= len(s.source);
 }
 
-fn scanner_peek(s: *Scanner) u8 {
-    if scanner_at_end(s) {
+fn Scanner_peek(s: *Scanner) u8 {
+    if Scanner_isAtEnd(s) {
         return 0;
     }
     return s.source[s.pos];
@@ -27,44 +27,44 @@ fn scanner_peek(s: *Scanner) u8 {
 
 // Peek at next character (for two-char operators)
 // Following Go's scanner.go pattern
-fn scanner_peek_next(s: *Scanner) u8 {
+fn Scanner_peekNext(s: *Scanner) u8 {
     if s.pos + 1 >= len(s.source) {
         return 0;
     }
     return s.source[s.pos + 1];
 }
 
-fn scanner_advance(s: *Scanner) u8 {
-    let c: u8 = scanner_peek(s);
+fn Scanner_advance(s: *Scanner) u8 {
+    let c: u8 = Scanner_peek(s);
     s.pos = s.pos + 1;
     return c;
 }
 
-fn is_digit(c: u8) bool {
+fn isDigit(c: u8) bool {
     return c >= 48 and c <= 57;  // '0' to '9'
 }
 
-fn is_alpha(c: u8) bool {
+fn isAlpha(c: u8) bool {
     return (c >= 65 and c <= 90) or   // A-Z
            (c >= 97 and c <= 122) or  // a-z
            c == 95;                    // _
 }
 
-fn is_alnum(c: u8) bool {
-    return is_alpha(c) or is_digit(c);
+fn isAlphaNumeric(c: u8) bool {
+    return isAlpha(c) or isDigit(c);
 }
 
-fn skip_whitespace(s: *Scanner) {
-    while not scanner_at_end(s) {
-        let c: u8 = scanner_peek(s);
+fn Scanner_skipWhitespace(s: *Scanner) {
+    while not Scanner_isAtEnd(s) {
+        let c: u8 = Scanner_peek(s);
         if c == 32 or c == 9 or c == 10 or c == 13 {  // space, tab, newline, cr
-            scanner_advance(s);
+            Scanner_advance(s);
         } else if c == 47 {  // '/'
             // Check for comment
             if s.pos + 1 < len(s.source) and s.source[s.pos + 1] == 47 {
                 // Line comment - skip to end of line
-                while not scanner_at_end(s) and scanner_peek(s) != 10 {
-                    scanner_advance(s);
+                while not Scanner_isAtEnd(s) and Scanner_peek(s) != 10 {
+                    Scanner_advance(s);
                 }
             } else {
                 return;
@@ -75,264 +75,264 @@ fn skip_whitespace(s: *Scanner) {
     }
 }
 
-fn scan_number(s: *Scanner) Token {
+fn Scanner_scanNumber(s: *Scanner) Token {
     let start: i64 = s.pos;
-    while is_digit(scanner_peek(s)) {
-        scanner_advance(s);
+    while isDigit(Scanner_peek(s)) {
+        Scanner_advance(s);
     }
-    return token_new(TokenType.Int, start, s.pos - start);
+    return Token_new(TokenType.Int, start, s.pos - start);
 }
 
-fn scan_ident(s: *Scanner) Token {
+fn Scanner_scanIdentifier(s: *Scanner) Token {
     let start: i64 = s.pos;
-    while is_alnum(scanner_peek(s)) {
-        scanner_advance(s);
+    while isAlphaNumeric(Scanner_peek(s)) {
+        Scanner_advance(s);
     }
     // Check if it's a keyword
     let text: string = @string(s.source.ptr + start, s.pos - start);
-    let tt: TokenType = is_keyword(text);
-    return token_new(tt, start, s.pos - start);
+    let tt: TokenType = Token_lookup(text);
+    return Token_new(tt, start, s.pos - start);
 }
 
 // Scan character literal: '...'
-fn scan_char(s: *Scanner) Token {
+fn Scanner_scanChar(s: *Scanner) Token {
     let start: i64 = s.pos;
-    scanner_advance(s);  // Skip opening '
+    Scanner_advance(s);  // Skip opening '
 
-    if not scanner_at_end(s) {
-        let c: u8 = scanner_peek(s);
+    if not Scanner_isAtEnd(s) {
+        let c: u8 = Scanner_peek(s);
         if c == 92 {  // \ (escape)
-            scanner_advance(s);  // Skip backslash
-            if not scanner_at_end(s) {
-                scanner_advance(s);  // Skip escaped char
+            Scanner_advance(s);  // Skip backslash
+            if not Scanner_isAtEnd(s) {
+                Scanner_advance(s);  // Skip escaped char
             }
         } else if c != 39 {  // not closing '
-            scanner_advance(s);  // Skip the char
+            Scanner_advance(s);  // Skip the char
         }
     }
 
     // Skip closing quote
-    if not scanner_at_end(s) and scanner_peek(s) == 39 {
-        scanner_advance(s);
+    if not Scanner_isAtEnd(s) and Scanner_peek(s) == 39 {
+        Scanner_advance(s);
     }
 
-    return token_new(TokenType.CharLit, start, s.pos - start);
+    return Token_new(TokenType.CharLit, start, s.pos - start);
 }
 
 // Scan string literal: "..."
 // Following Go's scanner.go stdString pattern
-fn scan_string(s: *Scanner) Token {
+fn Scanner_scanString(s: *Scanner) Token {
     let start: i64 = s.pos;
-    scanner_advance(s);  // Skip opening "
+    Scanner_advance(s);  // Skip opening "
 
-    while not scanner_at_end(s) {
-        let c: u8 = scanner_peek(s);
+    while not Scanner_isAtEnd(s) {
+        let c: u8 = Scanner_peek(s);
         if c == 34 {  // "
-            scanner_advance(s);  // Skip closing "
-            return token_new(TokenType.StringLit, start, s.pos - start);
+            Scanner_advance(s);  // Skip closing "
+            return Token_new(TokenType.StringLit, start, s.pos - start);
         }
         if c == 92 {  // \ (escape)
-            scanner_advance(s);  // Skip backslash
-            if not scanner_at_end(s) {
-                scanner_advance(s);  // Skip escaped char
+            Scanner_advance(s);  // Skip backslash
+            if not Scanner_isAtEnd(s) {
+                Scanner_advance(s);  // Skip escaped char
             }
         } else if c == 10 {  // newline - unterminated string
-            return token_new(TokenType.Error, start, s.pos - start);
+            return Token_new(TokenType.Error, start, s.pos - start);
         } else {
-            scanner_advance(s);
+            Scanner_advance(s);
         }
     }
 
     // Unterminated string
-    return token_new(TokenType.Error, start, s.pos - start);
+    return Token_new(TokenType.Error, start, s.pos - start);
 }
 
-fn scanner_next(s: *Scanner) Token {
-    skip_whitespace(s);
+fn Scanner_next(s: *Scanner) Token {
+    Scanner_skipWhitespace(s);
 
-    if scanner_at_end(s) {
-        return token_new(TokenType.Eof, s.pos, 0);
+    if Scanner_isAtEnd(s) {
+        return Token_new(TokenType.Eof, s.pos, 0);
     }
 
     let start: i64 = s.pos;
-    let c: u8 = scanner_advance(s);
+    let c: u8 = Scanner_advance(s);
 
     // Delimiters - single character
-    if c == 40 { return token_new(TokenType.LParen, start, 1); }   // (
-    if c == 41 { return token_new(TokenType.RParen, start, 1); }   // )
-    if c == 123 { return token_new(TokenType.LBrace, start, 1); }  // {
-    if c == 125 { return token_new(TokenType.RBrace, start, 1); }  // }
-    if c == 91 { return token_new(TokenType.LBracket, start, 1); } // [
-    if c == 93 { return token_new(TokenType.RBracket, start, 1); } // ]
-    if c == 44 { return token_new(TokenType.Comma, start, 1); }    // ,
-    if c == 58 { return token_new(TokenType.Colon, start, 1); }    // :
-    if c == 59 { return token_new(TokenType.Semi, start, 1); }     // ;
-    if c == 46 { return token_new(TokenType.Dot, start, 1); }      // .
-    if c == 64 { return token_new(TokenType.At, start, 1); }       // @
-    if c == 126 { return token_new(TokenType.Tilde, start, 1); }   // ~
+    if c == 40 { return Token_new(TokenType.LParen, start, 1); }   // (
+    if c == 41 { return Token_new(TokenType.RParen, start, 1); }   // )
+    if c == 123 { return Token_new(TokenType.LBrace, start, 1); }  // {
+    if c == 125 { return Token_new(TokenType.RBrace, start, 1); }  // }
+    if c == 91 { return Token_new(TokenType.LBracket, start, 1); } // [
+    if c == 93 { return Token_new(TokenType.RBracket, start, 1); } // ]
+    if c == 44 { return Token_new(TokenType.Comma, start, 1); }    // ,
+    if c == 58 { return Token_new(TokenType.Colon, start, 1); }    // :
+    if c == 59 { return Token_new(TokenType.Semi, start, 1); }     // ;
+    if c == 46 { return Token_new(TokenType.Dot, start, 1); }      // .
+    if c == 64 { return Token_new(TokenType.At, start, 1); }       // @
+    if c == 126 { return Token_new(TokenType.Tilde, start, 1); }   // ~
 
     // Two-character operators - following Go's scanner.go pattern
     // = or == or =>
     if c == 61 {  // =
-        let next: u8 = scanner_peek(s);
+        let next: u8 = Scanner_peek(s);
         if next == 61 {  // ==
-            scanner_advance(s);
-            return token_new(TokenType.EqEq, start, 2);
+            Scanner_advance(s);
+            return Token_new(TokenType.EqEq, start, 2);
         }
         if next == 62 {  // => (FatArrow for switch cases)
-            scanner_advance(s);
-            return token_new(TokenType.FatArrow, start, 2);
+            Scanner_advance(s);
+            return Token_new(TokenType.FatArrow, start, 2);
         }
-        return token_new(TokenType.Eq, start, 1);
+        return Token_new(TokenType.Eq, start, 1);
     }
 
     // ! or !=
     if c == 33 {  // !
-        if scanner_peek(s) == 61 {  // !=
-            scanner_advance(s);
-            return token_new(TokenType.NotEq, start, 2);
+        if Scanner_peek(s) == 61 {  // !=
+            Scanner_advance(s);
+            return Token_new(TokenType.NotEq, start, 2);
         }
-        return token_new(TokenType.Bang, start, 1);
+        return Token_new(TokenType.Bang, start, 1);
     }
 
     // < or <= or <<
     if c == 60 {  // <
-        let next: u8 = scanner_peek(s);
+        let next: u8 = Scanner_peek(s);
         if next == 61 {  // <=
-            scanner_advance(s);
-            return token_new(TokenType.LessEq, start, 2);
+            Scanner_advance(s);
+            return Token_new(TokenType.LessEq, start, 2);
         }
         if next == 60 {  // <<
-            scanner_advance(s);
-            return token_new(TokenType.LessLess, start, 2);
+            Scanner_advance(s);
+            return Token_new(TokenType.LessLess, start, 2);
         }
-        return token_new(TokenType.Less, start, 1);
+        return Token_new(TokenType.Less, start, 1);
     }
 
     // > or >= or >>
     if c == 62 {  // >
-        let next: u8 = scanner_peek(s);
+        let next: u8 = Scanner_peek(s);
         if next == 61 {  // >=
-            scanner_advance(s);
-            return token_new(TokenType.GreaterEq, start, 2);
+            Scanner_advance(s);
+            return Token_new(TokenType.GreaterEq, start, 2);
         }
         if next == 62 {  // >>
-            scanner_advance(s);
-            return token_new(TokenType.GreaterGreater, start, 2);
+            Scanner_advance(s);
+            return Token_new(TokenType.GreaterGreater, start, 2);
         }
-        return token_new(TokenType.Greater, start, 1);
+        return Token_new(TokenType.Greater, start, 1);
     }
 
     // & or && or &=
     if c == 38 {  // &
-        let next: u8 = scanner_peek(s);
+        let next: u8 = Scanner_peek(s);
         if next == 38 {  // &&
-            scanner_advance(s);
-            return token_new(TokenType.AmpAmp, start, 2);
+            Scanner_advance(s);
+            return Token_new(TokenType.AmpAmp, start, 2);
         }
         if next == 61 {  // &=
-            scanner_advance(s);
-            return token_new(TokenType.AmpEq, start, 2);
+            Scanner_advance(s);
+            return Token_new(TokenType.AmpEq, start, 2);
         }
-        return token_new(TokenType.Amp, start, 1);
+        return Token_new(TokenType.Amp, start, 1);
     }
 
     // | or || or |=
     if c == 124 {  // |
-        let next: u8 = scanner_peek(s);
+        let next: u8 = Scanner_peek(s);
         if next == 124 {  // ||
-            scanner_advance(s);
-            return token_new(TokenType.PipePipe, start, 2);
+            Scanner_advance(s);
+            return Token_new(TokenType.PipePipe, start, 2);
         }
         if next == 61 {  // |=
-            scanner_advance(s);
-            return token_new(TokenType.PipeEq, start, 2);
+            Scanner_advance(s);
+            return Token_new(TokenType.PipeEq, start, 2);
         }
-        return token_new(TokenType.Pipe, start, 1);
+        return Token_new(TokenType.Pipe, start, 1);
     }
 
     // + or +=
     if c == 43 {  // +
-        if scanner_peek(s) == 61 {  // +=
-            scanner_advance(s);
-            return token_new(TokenType.PlusEq, start, 2);
+        if Scanner_peek(s) == 61 {  // +=
+            Scanner_advance(s);
+            return Token_new(TokenType.PlusEq, start, 2);
         }
-        return token_new(TokenType.Plus, start, 1);
+        return Token_new(TokenType.Plus, start, 1);
     }
 
     // - or -= or ->
     if c == 45 {  // -
-        let next: u8 = scanner_peek(s);
+        let next: u8 = Scanner_peek(s);
         if next == 61 {  // -=
-            scanner_advance(s);
-            return token_new(TokenType.MinusEq, start, 2);
+            Scanner_advance(s);
+            return Token_new(TokenType.MinusEq, start, 2);
         }
         if next == 62 {  // -> (following Zig compiler pattern for function types)
-            scanner_advance(s);
-            return token_new(TokenType.Arrow, start, 2);
+            Scanner_advance(s);
+            return Token_new(TokenType.Arrow, start, 2);
         }
-        return token_new(TokenType.Minus, start, 1);
+        return Token_new(TokenType.Minus, start, 1);
     }
 
     // * or *=
     if c == 42 {  // *
-        if scanner_peek(s) == 61 {  // *=
-            scanner_advance(s);
-            return token_new(TokenType.StarEq, start, 2);
+        if Scanner_peek(s) == 61 {  // *=
+            Scanner_advance(s);
+            return Token_new(TokenType.StarEq, start, 2);
         }
-        return token_new(TokenType.Star, start, 1);
+        return Token_new(TokenType.Star, start, 1);
     }
 
     // / or /=
     if c == 47 {  // /
-        if scanner_peek(s) == 61 {  // /=
-            scanner_advance(s);
-            return token_new(TokenType.SlashEq, start, 2);
+        if Scanner_peek(s) == 61 {  // /=
+            Scanner_advance(s);
+            return Token_new(TokenType.SlashEq, start, 2);
         }
-        return token_new(TokenType.Slash, start, 1);
+        return Token_new(TokenType.Slash, start, 1);
     }
 
     // % or %=
     if c == 37 {  // %
-        if scanner_peek(s) == 61 {  // %=
-            scanner_advance(s);
-            return token_new(TokenType.PercentEq, start, 2);
+        if Scanner_peek(s) == 61 {  // %=
+            Scanner_advance(s);
+            return Token_new(TokenType.PercentEq, start, 2);
         }
-        return token_new(TokenType.Percent, start, 1);
+        return Token_new(TokenType.Percent, start, 1);
     }
 
     // ^ or ^=
     if c == 94 {  // ^
-        if scanner_peek(s) == 61 {  // ^=
-            scanner_advance(s);
-            return token_new(TokenType.CaretEq, start, 2);
+        if Scanner_peek(s) == 61 {  // ^=
+            Scanner_advance(s);
+            return Token_new(TokenType.CaretEq, start, 2);
         }
-        return token_new(TokenType.Caret, start, 1);
+        return Token_new(TokenType.Caret, start, 1);
     }
 
     // String literal
     if c == 34 {  // "
         s.pos = start;  // Back up to re-read
-        return scan_string(s);
+        return Scanner_scanString(s);
     }
 
     // Character literal
     if c == 39 {  // '
         s.pos = start;  // Back up to re-read
-        return scan_char(s);
+        return Scanner_scanChar(s);
     }
 
     // Numbers
-    if is_digit(c) {
+    if isDigit(c) {
         s.pos = start;  // Back up to re-read
-        return scan_number(s);
+        return Scanner_scanNumber(s);
     }
 
     // Identifiers and keywords
-    if is_alpha(c) {
+    if isAlpha(c) {
         s.pos = start;  // Back up to re-read
-        return scan_ident(s);
+        return Scanner_scanIdentifier(s);
     }
 
-    return token_new(TokenType.Error, start, 1);
+    return Token_new(TokenType.Error, start, 1);
 }
