@@ -1,501 +1,250 @@
 # Bootstrap 0.2 - Development Guidelines
 
----
+## ⚠️ CRITICAL: READ THIS ENTIRE SECTION BEFORE DOING ANYTHING ⚠️
 
-## CRITICAL: COT0 IS COT - READ THIS FIRST
-
-**cot0 IS Cot.** It is NOT a different language. It is NOT a "hacky bootstrap thing."
-
-cot0 is valid Cot code that happens to use a simplified subset of language features. Every line of cot0 code MUST be valid Cot that the bootstrap compiler can compile.
-
-### What this means:
-
-1. **Use built-in functions** - `print()`, `println()` are built-ins. Do NOT redefine them with syscalls.
-2. **Follow SYNTAX.md exactly** - If SYNTAX.md says the syntax is `X`, cot0 uses `X`. No variations.
-3. **No "cot0-specific" conventions** - There is no such thing. cot0 code IS Cot code.
-4. **Simplified, not different** - cot0 may not use ALL Cot features (e.g., may skip generics initially), but what it DOES use must match Cot exactly.
-
-### Before writing ANY cot0 code:
-
-1. Check SYNTAX.md - Is this valid Cot syntax?
-2. Check if a built-in exists - Don't hand-roll what the language provides
-3. Ask: "Would this compile with the bootstrap compiler as normal Cot?" If no, it's wrong.
-
-**The goal is self-hosting.** cot0 must compile itself. If cot0 diverges from Cot, self-hosting becomes impossible.
-
----
-
-## BUGS - ADD TO BUGS.md IMMEDIATELY
-
-**When you find a bug, IMMEDIATELY add it to [BUGS.md](BUGS.md).** Do NOT skip this step. Do NOT comment out failing tests. Fix bugs when found.
-
----
-
-## BUG FIXING WORKFLOW - MANDATORY STEPS
-
-**Every bug MUST follow this exact workflow. No exceptions.**
-
-### Step 1: Run COT_DEBUG=all
-
-```bash
-COT_DEBUG=all ./zig-out/bin/cot /tmp/bugtest.cot -o /tmp/bugtest 2>&1 | less
-```
-
-Trace the value/type through the entire pipeline. The debug output should make the bug location **obvious**.
-
-### Step 2: If Debug Output Is Too Thin - ADD MORE DEBUG FIRST
-
-If `COT_DEBUG=all` doesn't pinpoint the exact issue:
-- **STOP** - Do not guess at the fix
-- **ADD debug logging** that WOULD have revealed the bug
-- **Re-run** with the new logging
-- **Verify** the bug location is now obvious
-- Only THEN proceed to step 3
-
-Good debug output shows:
-- **Types** on every value: `v14: i32 = const_int [0]` (not `v14 = const_int`)
-- **Decisions**: `store v3, v1 -> STR w0 (4-byte)` vs `STR x0 (8-byte)`
-- **Mismatches**: `WARNING: storing enum (4B) with 8-byte instruction`
-
-### Step 3: Investigate Go - MANDATORY
-
-**Before writing ANY fix, search `~/learning/go` for how Go handles this case.**
-
-```bash
-# Example searches:
-grep -r "enum\|const.*type" ~/learning/go/src/cmd/compile/internal/types/
-grep -r "struct.*offset\|field.*align" ~/learning/go/src/cmd/compile/internal/types/size.go
-grep -r "expand_calls\|decompose" ~/learning/go/src/cmd/compile/internal/ssa/
-```
-
-**Why this is mandatory:**
-- Go's compiler has been battle-tested for 15+ years
-- Every edge case we hit, they've already solved
-- This is why bootstrap 0.1 and 1.0 failed - we guessed at fixes instead of copying proven patterns
-
-### Step 4: Implement the Fix
-
-Only after steps 1-3 are complete:
-1. Adapt Go's pattern to our Zig codebase
-2. Implement the fix
-3. Verify with `COT_DEBUG=all` that the issue is resolved
-4. Run `./zig-out/bin/cot test/e2e/all_tests.cot` to check for regressions
-
-### The Pattern That Fails (DO NOT DO THIS)
+### THE GOAL (DO NOT LOSE SIGHT OF THIS)
 
 ```
-See bug → Grep source → Guess fix → Fix causes new bug → Repeat forever
+┌─────────────────────────────────────────────────────────────────────────┐
+│                                                                         │
+│   GOAL: cot0-stage1 must pass ALL 166 tests                             │
+│                                                                         │
+│   Command to test:                                                      │
+│   /tmp/cot0-stage1 test/e2e/all_tests.cot -o /tmp/tests && /tmp/tests   │
+│                                                                         │
+│   cot0 is a REPLICA of the Zig compiler. Same features. Same tests.    │
+│                                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### The Pattern That Works
+### PRIORITY ORDER (NEVER DEVIATE)
+
+1. **FIX BUGS IN ZIG COMPILER** - The Zig compiler (`src/*.zig`) must work perfectly
+2. **COPY ZIG PATTERNS TO COT0** - cot0 (`cot0/*.cot`) replicates the Zig compiler
+3. **PASS ALL 166 TESTS** - Both compilers must pass `test/e2e/all_tests.cot`
+
+### ⚠️ MANDATORY BUG FIXING WORKFLOW ⚠️
+
+**EVERY bug fix MUST follow these steps. NO EXCEPTIONS. NO WORKAROUNDS.**
 
 ```
-See bug → COT_DEBUG=all → Add debug if needed → Search ~/learning/go → Copy Go's pattern → Fix works first time
+┌─────────────────────────────────────────────────────────────────────────┐
+│  STEP 1: Investigate Go source code FIRST                               │
+│                                                                         │
+│  grep -r "relevant_term" ~/learning/go/src/cmd/compile/internal/        │
+│                                                                         │
+│  Go's compiler is the REFERENCE IMPLEMENTATION. Find how Go handles     │
+│  the equivalent scenario. Read and understand their pattern.            │
+│                                                                         │
+│  Key Go directories:                                                    │
+│  - ~/learning/go/src/cmd/compile/internal/ssa/       (SSA passes)       │
+│  - ~/learning/go/src/cmd/compile/internal/ssagen/    (SSA generation)   │
+│  - ~/learning/go/src/cmd/compile/internal/types2/    (type checking)    │
+│  - ~/learning/go/src/cmd/compile/internal/walk/      (AST walking)      │
+│  - ~/learning/go/src/cmd/compile/internal/abi/       (calling conv)     │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  STEP 2: Run COT_DEBUG=all to trace the bug                             │
+│                                                                         │
+│  COT_DEBUG=all ./zig-out/bin/cot /tmp/bugtest.cot -o /tmp/bugtest       │
+│                                                                         │
+│  If debug output doesn't reveal the bug, ADD MORE DEBUG FIRST.          │
+│  Do NOT guess at fixes.                                                 │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│  STEP 3: Implement the fix by copying Go's pattern                      │
+│                                                                         │
+│  - Log the bug in BUGS.md with full details                             │
+│  - Adapt Go's pattern to Zig                                            │
+│  - NEVER workaround bugs - FIX THEM                                     │
+│  - NEVER skip features - IMPLEMENT THEM                                 │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
+
+### WHAT "NO WORKAROUNDS" MEANS
+
+- ❌ DO NOT revert code to avoid a bug
+- ❌ DO NOT disable features because they're broken
+- ❌ DO NOT use simpler alternatives to avoid fixing the real issue
+- ✅ DO log the bug in BUGS.md
+- ✅ DO investigate Go's implementation
+- ✅ DO fix the actual bug
 
 ---
 
-## USE BUILT-IN TOOLS FOR TEST FILES
-
-**ALWAYS use Edit/Write tools for creating and updating test files** - never use bash `cat` or heredocs to write test code. This ensures:
-1. The test code is visible in Claude Code CLI output
-2. The code is properly formatted and not truncated
-3. Changes can be reviewed before committing
-
-**For debugging tests:**
-- Create temporary test files with `Write` tool at `/tmp/test_*.cot`
-- Update `test/e2e/all_tests.cot` with `Edit` tool
-- Run tests with `Bash` to execute the compiled binary
-
----
-
-## REFRESH YOUR KNOWLEDGE REGULARLY
-
-**Before implementing ANY feature, re-read [SYNTAX.md](SYNTAX.md)** to ensure you understand the exact Cot syntax. This prevents implementing wrong syntax or missing edge cases.
-
-**Use `COT_DEBUG=all`** to trace values through the pipeline when debugging.
-
----
-
-## INVESTIGATE GO'S IMPLEMENTATION FOR NON-TRIVIAL BUGS
-
-**When debugging is not straightforward, ALWAYS check `~/learning/go` first.**
-
-On 2026-01-14 we had a critical bug where the register allocator was spilling values incorrectly. After investigating Go's implementation, we found the key pattern:
-
-**Go's pattern (from `regalloc.go`):**
-```go
-// AFTER using an arg, decrement its use count
-// If use count reaches 0, FREE the register immediately
-for (v.args) |arg| {
-    vs.uses -= 1;
-    if (vs.uses == 0) {
-        freeReg(vs.firstReg());
-    }
-}
-```
-
-**The fix:** Added use count tracking to our ValState and decremented/freed after each value processes its args.
-
-**RULE:** When a bug is not a simple/obvious fix:
-1. **Search `~/learning/go`** for how Go handles the same scenario
-2. **Read the Go implementation** - they've solved these problems before
-3. **Adapt their pattern** to our Zig codebase
-4. Checking Go's approach prevents reinventing the wheel with subtle bugs
-
----
-
-## CRITICAL LESSON: FOLLOW GO'S PARAMETERIZED PATTERNS
-
-On 2026-01-14 we had a bug where `encodeLDPPost` emitted STP (store) instead of LDP (load) because we wrote separate functions and forgot to set bit 22. This caused crashes.
-
-**Go's pattern (from `asm7.go`):**
-```go
-// ONE function handles both LDP and STP
-// The load/store bit is an EXPLICIT parameter - impossible to forget
-o1 = c.opldpstp(p, o, v, rf, rt1, rt2, 1)  // 1 = load
-o1 = c.opldpstp(p, o, v, rt, rf1, rf2, 0)  // 0 = store
-```
-
-**Our fix:** All related ARM64 instructions now share ONE parameterized function in `src/arm64/asm.zig`:
-- `encodeLdpStp(..., is_load: bool)` - LDP/STP share one function
-- `encodeAddSubReg(..., is_sub: bool)` - ADD/SUB share one function
-- `encodeLdrStr(..., is_load: bool)` - LDR/STR share one function
-
-**RULE:** When adding new instruction encodings, NEVER create separate functions for related instructions. Use ONE function with explicit parameters for the critical bits.
-
----
-
-## THIS IS OUR THIRD REWRITE - READ THIS FIRST
-
-Cot has been through **three rewrites**:
-1. **Cot 0.1** - Failed. 200k lines in 2 weeks. Bugs compounded faster than fixes.
-2. **Bootstrap 1.0** - Got far but hit "whack-a-mole" mode. Fix one bug, create another.
-3. **Bootstrap 0.2** (this project) - Clean slate with PROVEN PATTERNS from Go.
-
-**The pattern that killed previous attempts:**
-```
-Write code → Find bug → Fix bug → Create new bug → Fix that → Create two more → ...
-```
-
-**The pattern we MUST follow:**
-```
-Write test → Write code → Test passes → Commit → Next feature
-```
-
-If you find yourself debugging without a test that exposes the bug, **STOP**. Write the test first.
-
-**Current Status:** See [STATUS.md](STATUS.md)
-
----
-
-## Zig 0.15 API - CRITICAL
-
-This project uses **Zig 0.15.2**. The API is DIFFERENT from tutorials and examples online.
-
-### ArrayList - THE MOST COMMON MISTAKE
+## ZIG 0.15 API CHANGES (MEMORIZE THIS)
 
 ```zig
-// WRONG - Will NOT compile in Zig 0.15:
-var list = std.ArrayList(u32).init(allocator);
-list.append(item);
-list.deinit();
-
-// CORRECT - Zig 0.15 ArrayListUnmanaged:
+// Zig 0.15 requires allocator on EVERY ArrayList method
 var list = std.ArrayListUnmanaged(u32){};
-try list.append(allocator, item);   // allocator on EVERY method call
-list.deinit(allocator);             // allocator on deinit too
+try list.append(allocator, item);      // allocator required!
+list.deinit(allocator);                // allocator required!
+
+// HashMap too
+var map = std.StringHashMapUnmanaged(u32){};
+try map.put(allocator, key, value);    // allocator required!
+map.deinit(allocator);                 // allocator required!
 ```
-
-**Memory rule:** Every `ArrayList` method takes `allocator` as first parameter:
-- `list.append(allocator, item)`
-- `list.appendSlice(allocator, slice)`
-- `list.deinit(allocator)`
-- `list.toOwnedSlice(allocator)`
-
-### AutoHashMap - Same Pattern
-
-```zig
-// CORRECT for Zig 0.15:
-var map = std.AutoHashMap(K, V).init(allocator);  // init is OK here
-defer map.deinit();
-try map.put(key, value);  // no allocator needed on put
-```
-
-### Build System
-
-```zig
-// CORRECT for Zig 0.15:
-const exe = b.addExecutable(.{
-    .name = "cot",
-    .root_module = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    }),
-});
-
-// WRONG (old API - root_source_file was top-level):
-const exe = b.addExecutable(.{
-    .name = "cot",
-    .root_source_file = b.path("src/main.zig"),  // WRONG
-});
-```
-
-### Allocator VTable
-
-```zig
-// CORRECT for Zig 0.15 custom allocators:
-const vtable = std.mem.Allocator.VTable{
-    .alloc = myAlloc,
-    .resize = myResize,
-    .free = myFree,
-    .remap = myRemap,  // NEW in 0.15 - required!
-};
-```
-
-### Quick Reference Card
-
-| What | Old API | Zig 0.15 API |
-|------|---------|--------------|
-| ArrayList init | `.init(allocator)` | `{}` (empty struct) |
-| ArrayList append | `.append(item)` | `.append(allocator, item)` |
-| ArrayList deinit | `.deinit()` | `.deinit(allocator)` |
-| Build exe | `.root_source_file` at top | Inside `.root_module = b.createModule(...)` |
-| Print | `std.io.getStdOut()` | `std.debug.print()` |
-| Allocator VTable | 3 functions | 4 functions (add `remap`) |
 
 ---
 
-## TEST-DRIVEN DEVELOPMENT - NON-NEGOTIABLE
+## PROJECT ARCHITECTURE
 
-### Before Writing Code
+### The Two Compilers
 
-1. **Identify** what you're implementing
-2. **Write a test** that will pass when it works
-3. **Run test** - it should fail (proves test works)
-4. **Implement** the feature
-5. **Run test** - it should pass
-6. **Commit**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    ZIG BOOTSTRAP COMPILER                        │
+│  Source: src/*.zig                                               │
+│  Binary: ./zig-out/bin/cot                                       │
+│  Purpose: Compiles ANY Cot source code                          │
+│  Status: COMPLETE - 166 e2e tests pass                          │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+              compiles        │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                         COT0 COMPILER                            │
+│  Source: cot0/*.cot (written in Cot)                            │
+│  Binary: /tmp/cot0-stage1                                       │
+│  Status: IMMATURE - compiles simple programs only               │
+│                                                                 │
+│  cot0 needs significant maturation before self-hosting.         │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-### Running Tests
+### Current State (2026-01-21)
+
+| Component | Status |
+|-----------|--------|
+| Zig compiler | **COMPLETE** - 166 tests pass |
+| cot0-stage1 simple programs | Works |
+| cot0-stage1 test suite | Hangs (parser issue) |
+| cot0 maturity | **LOW** - needs extensive work |
+
+---
+
+## THE PATH FORWARD - MATURATION BEFORE SELF-HOSTING
+
+**Self-hosting is NOT the next step.** cot0 must mature first.
+
+### Phase 1: Make cot0 Robust (CURRENT)
+
+1. **Add extensive debugging to cot0**
+   - COT_DEBUG=all should trace every phase
+   - Parser should log what it's parsing
+   - Each phase should have visibility
+
+2. **Copy logic from Zig compiler (src/*.zig) into cot0**
+   - The Zig compiler works. cot0 should match its patterns.
+   - When cot0 has a bug, find how Zig handles it and copy that.
+
+3. **Fix bugs systematically**
+   - Don't guess at fixes
+   - Use debug output to find root cause
+   - Copy the working pattern from Zig
+
+### Phase 2: Test Suite Passes with cot0-stage1
+
+1. **Get cot0-stage1 to compile the 166-test suite**
+   - Currently hangs - parser needs debugging/fixing
+   - Run each test individually to find which ones fail
+
+2. **All 166 tests must pass when compiled BY cot0-stage1**
+   - Not just compiled by Zig compiler
+   - cot0-stage1 must produce working binaries
+
+### Phase 3: Build Confidence
+
+1. **Compile increasingly complex programs with cot0-stage1**
+2. **Compare output with Zig compiler output**
+3. **Fix any discrepancies**
+
+### Phase 4: Self-Hosting (FUTURE)
+
+Only after phases 1-3:
+- cot0-stage1 compiles cot0/*.cot → cot0-stage2
+- Verify stage1 and stage2 produce identical output
+
+---
+
+## WORKING ON COT0
+
+### When cot0-stage1 has a bug:
+
+1. **Add debug output to cot0** that would reveal the bug
+2. **Rebuild cot0-stage1** with the Zig compiler
+3. **Run with debug** to see what's happening
+4. **Find the equivalent code in src/*.zig** - the Zig compiler works
+5. **Copy the Zig pattern** into cot0
+
+### Commands
 
 ```bash
-# Fast unit tests (run after every change)
-zig build test
+# Build Zig compiler
+zig build
 
-# All tests including integration
-zig build test-all
+# Test Zig compiler (should pass)
+./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/all_tests && /tmp/all_tests
 
-# Golden file tests only
-zig build test-golden
+# Build cot0-stage1
+./zig-out/bin/cot cot0/main.cot -o /tmp/cot0-stage1
 
-# Update golden files after intentional changes
-COT_UPDATE_GOLDEN=1 zig build test-golden
+# Test cot0-stage1 with simple program
+echo 'fn main() i64 { return 42 }' > /tmp/test.cot
+/tmp/cot0-stage1 /tmp/test.cot -o /tmp/test.o
+zig cc /tmp/test.o -o /tmp/test && /tmp/test; echo "Exit: $?"
+
+# Test cot0-stage1 with test suite (currently hangs)
+/tmp/cot0-stage1 cot0/test/all_tests.cot -o /tmp/cot0_tests
 ```
 
-### Table-Driven Test Pattern (from Go)
+---
+
+## FILE STRUCTURE
+
+```
+bootstrap-0.2/
+├── src/                    # Zig bootstrap compiler (WORKING - reference this)
+├── cot0/                   # Cot compiler in Cot (MATURING)
+│   ├── main.cot
+│   ├── debug.cot          # Debug logging
+│   ├── frontend/          # Parser, types, lowering
+│   ├── ssa/               # SSA modules
+│   ├── codegen/           # Code generation
+│   └── test/              # Test suite for cot0-stage1
+├── test/e2e/              # Test suite (166 tests)
+└── runtime/               # Runtime library
+```
+
+---
+
+## KEY POINTS
+
+1. **cot0 is immature.** It needs work before self-hosting.
+2. **The Zig compiler is the reference.** When cot0 has bugs, look at src/*.zig.
+3. **Add debugging first.** Don't guess at fixes.
+4. **Test suite must pass with cot0-stage1** before attempting self-hosting.
+5. **Self-hosting is the end goal, not the next step.**
+
+---
+
+## ZIG 0.15 API
 
 ```zig
-const TestCase = struct {
-    name: []const u8,
-    input: Input,
-    expected: Expected,
-};
-
-const test_cases = [_]TestCase{
-    .{ .name = "empty input", .input = .{}, .expected = .{} },
-    .{ .name = "single item", .input = .{.x = 1}, .expected = .{.y = 2} },
-    // ... more cases
-};
-
-test "feature works correctly" {
-    for (test_cases) |tc| {
-        const actual = myFunction(tc.input);
-        std.testing.expectEqual(tc.expected, actual) catch |err| {
-            std.debug.print("FAILED: {s}\n", .{tc.name});
-            return err;
-        };
-    }
-}
+// ArrayList - allocator on EVERY method
+var list = std.ArrayListUnmanaged(u32){};
+try list.append(allocator, item);
+list.deinit(allocator);
 ```
-
----
-
-## ARCHITECTURE - GO-INSPIRED
-
-We follow Go 1.22's compiler architecture. See `~/learning/go` for reference implementations.
-
-### Pipeline Phases
-
-```
-Source → Parse → Type Check → Lower to IR → Convert to SSA → Optimize → Codegen → Object
-```
-
-### Key Modules
-
-| Module | Purpose | Go Reference |
-|--------|---------|--------------|
-| `src/ssa/value.zig` | SSA values with use counting | `cmd/compile/internal/ssa/value.go` |
-| `src/ssa/block.zig` | Basic blocks with edges | `cmd/compile/internal/ssa/block.go` |
-| `src/ssa/func.zig` | Functions as block containers | `cmd/compile/internal/ssa/func.go` |
-| `src/frontend/ir.zig` | Typed IR definitions | `cmd/compile/internal/ir/` |
-| `src/frontend/ssa_builder.zig` | IR→SSA with FwdRef pattern | `cmd/compile/internal/ssagen/` |
-
-### Design Patterns We Use
-
-1. **FwdRef pattern** - Deferred phi insertion for correct SSA
-2. **Table-driven tests** - Struct arrays with name, input, expected
-3. **Phase snapshots** - Capture before/after to verify pass effects
-4. **Golden files** - Known-good output for regression detection
-5. **Type interning** - TypeRegistry with indices for fast comparison
-6. **Allocation tracking** - `CountingAllocator` for performance tests
-
----
-
-## AVOIDING WHACK-A-MOLE MODE
-
-### Symptoms of Whack-a-Mole
-
-- Fixing a bug creates a new bug elsewhere
-- Tests that passed yesterday now fail
-- "It worked before I changed X" but you don't know why
-- Multiple debugging sessions without progress
-
-### Prevention Strategies
-
-1. **Never fix a bug without a test first**
-   - Write a test that exposes the bug
-   - Verify the test fails
-   - Fix the bug
-   - Verify the test passes
-   - If test suite has regressions, the fix was wrong
-
-2. **Use the verification pass**
-   ```zig
-   const errors = try ssa.test_helpers.validateInvariants(&f, allocator);
-   try std.testing.expectEqual(@as(usize, 0), errors.len);
-   ```
-
-3. **Snapshot before/after**
-   ```zig
-   var before = try ssa.debug.PhaseSnapshot.capture(allocator, &f, "before");
-   defer before.deinit();
-
-   // ... run optimization pass ...
-
-   var after = try ssa.debug.PhaseSnapshot.capture(allocator, &f, "after");
-   defer after.deinit();
-
-   const stats = before.compare(&after);
-   // Now you can see exactly what changed
-   ```
-
-### When Stuck
-
-1. **Stop** - Don't keep trying random fixes
-2. **Write a minimal test case** that exposes the problem
-3. **Use debug output** - `try ssa.dump(&f, .text, writer)`
-4. **Compare with Go** - How does Go handle this case?
-5. **Ask** - It's better to clarify than to dig deeper into the wrong hole
-
----
-
-## DEVELOPMENT WORKFLOW
-
-### For Each Feature
-
-1. **Reference Go** - Find equivalent in `~/learning/go`
-2. **Write tests first** - What should this feature do?
-3. **Implement** - Match Go's approach, adapted to Zig
-4. **Run tests** - `zig build test`
-5. **Update documentation** - STATUS.md if major milestone
-
-### For Each Bug Fix
-
-1. **Write failing test** - Proves the bug exists
-2. **Fix the bug** - Minimal change
-3. **Run full suite** - No regressions
-
-### For Each Commit
-
-```bash
-# Before committing
-zig build test
-
-# Commit with descriptive message
-git commit -m "Fix phi node predecessor ordering
-
-Fixes issue where phi args didn't match block pred order.
-Added regression test in ssa_builder.zig.
-
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
-```
-
----
-
-## WHEN IN DOUBT
-
-1. **Check Go source** - `~/learning/go/src/cmd/compile/internal/ssa/`
-2. **Check existing tests** - How do we test similar things?
-3. **Check Zig 0.15 docs** - API may differ from examples online
-4. **Ask John** - Better to clarify than guess wrong
 
 ---
 
 ## RUNTIME LIBRARY
 
-**String concatenation uses the runtime library, which is auto-linked by the compiler.**
-
-The Cot compiler generates calls to `___cot_str_concat` for string `+` operations. The compiler automatically finds and links `runtime/cot_runtime.o` when it exists.
-
-**To compile and run programs (auto-linking):**
 ```bash
-# Just compile and run - runtime is auto-linked!
-./zig-out/bin/cot program.cot -o program
-./program
-```
-
-**The e2e tests use string concatenation:**
-```bash
-./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/all_tests
-/tmp/all_tests  # Expected exit: 0
-```
-
-**If you see "undefined symbol: ___cot_str_concat"**, the runtime wasn't found. Build it:
-```bash
+# If "undefined symbol: ___cot_str_concat":
 zig build-obj -OReleaseFast runtime/cot_runtime.zig -femit-bin=runtime/cot_runtime.o
 ```
-
-See [STATUS.md](STATUS.md) for more details on the runtime library.
-
----
-
-## DOCUMENTATION
-
-| Document | Purpose |
-|----------|---------|
-| [STATUS.md](STATUS.md) | Current project status and remaining work |
-| [REGISTER_ALLOC.md](REGISTER_ALLOC.md) | Go's 6-phase regalloc algorithm |
-| [DATA_STRUCTURES.md](DATA_STRUCTURES.md) | Go-to-Zig data structure translations |
-| [TESTING_FRAMEWORK.md](TESTING_FRAMEWORK.md) | Testing philosophy and patterns |
-
----
-
-## CURRENT GOAL
-
-**Self-hosting:** Implement remaining language features so the compiler can compile itself.
-
-See STATUS.md for the detailed checklist. Current sprint: **Strings & Characters**
-
-**Implementation order:**
-1. Sprint 1: Strings & Characters (u8, char literals, string type, string literals)
-2. Sprint 2: Arrays (fixed arrays, literals, indexing)
-3. Sprint 3: Pointers (*T, &x, ptr.*)
-4. Sprint 4: Bitwise & Logical operators
-5. Sprint 5: Enums
-6. Sprint 6: Advanced (optionals, slices, for-in)
-
-**ALWAYS check `~/learning/go` before implementing a feature.** The Go compiler has solved these problems already.
-
-The goal is not speed. The goal is **never having to rewrite again**.

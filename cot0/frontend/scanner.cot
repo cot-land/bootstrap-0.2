@@ -94,6 +94,31 @@ fn scan_ident(s: *Scanner) Token {
     return token_new(tt, start, s.pos - start);
 }
 
+// Scan character literal: '...'
+fn scan_char(s: *Scanner) Token {
+    let start: i64 = s.pos;
+    scanner_advance(s);  // Skip opening '
+
+    if not scanner_at_end(s) {
+        let c: u8 = scanner_peek(s);
+        if c == 92 {  // \ (escape)
+            scanner_advance(s);  // Skip backslash
+            if not scanner_at_end(s) {
+                scanner_advance(s);  // Skip escaped char
+            }
+        } else if c != 39 {  // not closing '
+            scanner_advance(s);  // Skip the char
+        }
+    }
+
+    // Skip closing quote
+    if not scanner_at_end(s) and scanner_peek(s) == 39 {
+        scanner_advance(s);
+    }
+
+    return token_new(TokenType.CharLit, start, s.pos - start);
+}
+
 // Scan string literal: "..."
 // Following Go's scanner.go stdString pattern
 fn scan_string(s: *Scanner) Token {
@@ -279,6 +304,12 @@ fn scanner_next(s: *Scanner) Token {
     if c == 34 {  // "
         s.pos = start;  // Back up to re-read
         return scan_string(s);
+    }
+
+    // Character literal
+    if c == 39 {  // '
+        s.pos = start;  // Back up to re-read
+        return scan_char(s);
     }
 
     // Numbers

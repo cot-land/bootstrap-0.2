@@ -1833,6 +1833,12 @@ pub const Lowerer = struct {
         const callee_node = self.tree.getNode(call.callee) orelse return ir.null_node;
         const callee_expr = callee_node.asExpr() orelse return ir.null_node;
 
+        // Handle method calls: obj.method(args...) -> method(&obj, args...)
+        // Following Go's pattern: receiver is prepended as first argument.
+        if (callee_expr == .field_access) {
+            return try self.lowerMethodCall(call, callee_expr.field_access);
+        }
+
         const func_name = if (callee_expr == .ident)
             callee_expr.ident.name
         else
@@ -1898,6 +1904,109 @@ pub const Lowerer = struct {
 
         // Direct call to named function
         return try fb.emitCall(func_name, args.items, false, return_type, call.span);
+    }
+
+    /// Lower method call: obj.method(args...) -> method(&obj, args...)
+    /// Following Go's pattern from ssagen/ssa.go: receiver is prepended to args.
+    fn lowerMethodCall(self: *Lowerer, call: ast.Call, fa: ast.FieldAccess) Error!ir.NodeIndex {
+        const fb = self.current_func orelse return ir.null_node;
+
+        const method_name = fa.field;
+
+        // Get the type of the receiver (base expression)
+        const base_type_idx = self.inferExprType(fa.base);
+        const base_type = self.type_reg.get(base_type_idx);
+
+        // Get struct name from base type (may be struct or pointer to struct)
+        const struct_name = switch (base_type) {
+            .struct_type => |st| st.name,
+            .pointer => |ptr| blk: {
+                const pointee = self.type_reg.get(ptr.elem);
+                if (pointee == .struct_type) {
+                    break :blk pointee.struct_type.name;
+                }
+                return ir.null_node;
+            },
+            else => return ir.null_node,
+        };
+
+        // Look up the method
+        const method_info = self.chk.lookupMethod(struct_name, method_name) orelse {
+            debug.log(.lower, "lowerMethodCall: method '{s}.{s}' not found", .{ struct_name, method_name });
+            return ir.null_node;
+        };
+
+        debug.log(.lower, "lowerMethodCall: {s}.{s} -> func '{s}', receiver_is_ptr={}", .{
+            struct_name,
+            method_name,
+            method_info.func_name,
+            method_info.receiver_is_ptr,
+        });
+
+        // Build args list with receiver as first argument
+        var args = std.ArrayListUnmanaged(ir.NodeIndex){};
+        defer args.deinit(self.allocator);
+
+        // Lower the receiver
+        // If method expects pointer receiver and base is a value, take address
+        // If method expects value receiver and base is a pointer, dereference
+        const receiver_val = blk: {
+            if (method_info.receiver_is_ptr) {
+                // Method expects pointer receiver
+                if (base_type == .pointer) {
+                    // Base is already a pointer - just lower it
+                    break :blk try self.lowerExprNode(fa.base);
+                } else {
+                    // Base is a value - need to take its address
+                    // Check if base is an identifier (local variable)
+                    const base_node = self.tree.getNode(fa.base) orelse return ir.null_node;
+                    const base_expr = base_node.asExpr() orelse return ir.null_node;
+                    if (base_expr == .ident) {
+                        if (fb.lookupLocal(base_expr.ident.name)) |local_idx| {
+                            break :blk try fb.emitAddrLocal(local_idx, base_type_idx, fa.span);
+                        }
+                    }
+                    // For other expressions, lower and take address
+                    // (This is a simplification - complex cases may need more handling)
+                    break :blk try self.lowerExprNode(fa.base);
+                }
+            } else {
+                // Method expects value receiver
+                if (base_type == .pointer) {
+                    // Base is a pointer - dereference it
+                    const ptr_val = try self.lowerExprNode(fa.base);
+                    break :blk try fb.emitPtrLoadValue(ptr_val, base_type_idx, fa.span);
+                } else {
+                    // Base is already a value
+                    break :blk try self.lowerExprNode(fa.base);
+                }
+            }
+        };
+
+        try args.append(self.allocator, receiver_val);
+
+        // Lower the remaining arguments
+        for (call.args) |arg_idx| {
+            const arg_node = try self.lowerExprNode(arg_idx);
+            try args.append(self.allocator, arg_node);
+        }
+
+        // Get return type from method's function type
+        const func_type = self.type_reg.get(method_info.func_type);
+        const return_type = if (func_type == .func)
+            func_type.func.return_type
+        else
+            TypeRegistry.VOID;
+
+        debug.log(.lower, "lowerMethodCall: calling '{s}' with {d} args, return_type={d} (size={d}B)", .{
+            method_info.func_name,
+            args.items.len,
+            return_type,
+            self.type_reg.sizeOf(return_type),
+        });
+
+        // Call the method by its full function name
+        return try fb.emitCall(method_info.func_name, args.items, false, return_type, call.span);
     }
 
     /// Lower builtin len() function.

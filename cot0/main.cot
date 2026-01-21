@@ -630,6 +630,8 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // Convert this function's IR nodes to SSA
         var current_ir_block: i64 = 0;
         var next_reg: i64 = X1;
+        // Max register is X28 (29 is FP, 30 is LR, 31 is SP/XZR)
+        let max_reg: i64 = 28;
         ir_idx = ir_func.nodes_start;
         while ir_idx < ir_end {
             let ir_node: *IRNode = &g_ir_nodes[ir_idx];
@@ -643,12 +645,14 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 let val: *Value = func_emit_const_int(&ssa_func, ir_node.value, TYPE_I64);
                 val.reg = next_reg;
                 next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
                 g_ir_to_ssa_id[ir_idx] = val.id;
             } else if ir_node.kind == IRNodeKind.ConstString {
                 // String literal: left=str_start, right=str_len in source
                 let val: *Value = func_emit_const_string(&ssa_func, ir_node.left, ir_node.right);
                 val.reg = next_reg;
                 next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
                 g_ir_to_ssa_id[ir_idx] = val.id;
             } else if ir_node.kind == IRNodeKind.MakeString {
                 // @string(ptr, len): left=ptr_expr, right=len_expr (relative IR indices)
@@ -662,6 +666,7 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 value_add_arg2(make_val, ptr_val, len_val);
                 make_val.reg = next_reg;
                 next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
                 g_ir_to_ssa_id[ir_idx] = make_val.id;
             } else if ir_node.kind == IRNodeKind.Binary {
                 // left and right are relative IR indices
@@ -673,7 +678,10 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 let right_val: *Value = func_get_value(&ssa_func, right_id);
                 let ssa_op: Op = ir_op_to_ssa_op(ir_node.op);
                 let val: *Value = func_emit_binary(&ssa_func, ssa_op, left_val, right_val, TYPE_I64);
-                val.reg = X0;
+                // Use next_reg to avoid clobbering parameters (following Zig compiler pattern)
+                val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
                 g_ir_to_ssa_id[ir_idx] = val.id;
             } else if ir_node.kind == IRNodeKind.StoreLocal {
                 let loc_idx: i64 = ir_node.left;  // local index (not IR node)
@@ -697,6 +705,7 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                     let load_val: *Value = func_emit_load_local(&ssa_func, loc_idx);
                     load_val.reg = next_reg;
                     next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
                     g_ir_to_ssa_id[ir_idx] = load_val.id;
                 }
             } else if ir_node.kind == IRNodeKind.AddrLocal {
@@ -706,6 +715,7 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 addr_val.aux_int = loc_idx;
                 addr_val.reg = next_reg;
                 next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
                 g_ir_to_ssa_id[ir_idx] = addr_val.id;
             } else if ir_node.kind == IRNodeKind.Load {
                 // Load from pointer: left = ptr expr (relative IR index)
@@ -716,6 +726,7 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 value_add_arg(load_val, ptr_val);
                 load_val.reg = next_reg;
                 next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
                 g_ir_to_ssa_id[ir_idx] = load_val.id;
             } else if ir_node.kind == IRNodeKind.Store {
                 // Store to pointer: left = ptr expr, right = value expr (relative)
@@ -748,6 +759,7 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 value_add_arg(load_val, off_val);
                 load_val.reg = next_reg;
                 next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
                 g_ir_to_ssa_id[ir_idx] = load_val.id;
             } else if ir_node.kind == IRNodeKind.FieldValue {
                 // Access field via computed address: left = base_expr, right = offset
@@ -767,6 +779,7 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 value_add_arg(load_val, off_val);
                 load_val.reg = next_reg;
                 next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
                 g_ir_to_ssa_id[ir_idx] = load_val.id;
             } else if ir_node.kind == IRNodeKind.StoreFieldLocal {
                 // Store to field of local struct: left = local_idx, right = offset, value = stored_expr
@@ -779,11 +792,17 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 // 1. Get address of local
                 let addr_val: *Value = func_new_value(&ssa_func, Op.LocalAddr, TYPE_I64);
                 addr_val.aux_int = loc_idx;
+                addr_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
 
                 // 2. Add offset to get field address
                 let off_val: *Value = func_new_value(&ssa_func, Op.OffPtr, TYPE_I64);
                 value_add_arg(off_val, addr_val);
                 off_val.aux_int = offset;
+                off_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
 
                 // 3. Store the value
                 let store_val: *Value = func_new_value(&ssa_func, Op.Store, TYPE_VOID);
@@ -803,6 +822,9 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 let off_val: *Value = func_new_value(&ssa_func, Op.OffPtr, TYPE_I64);
                 value_add_arg(off_val, base_val);
                 off_val.aux_int = offset;
+                off_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
 
                 // 2. Store the value
                 let store_val: *Value = func_new_value(&ssa_func, Op.Store, TYPE_VOID);
@@ -820,19 +842,32 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 // 1. Get address of local array
                 let addr_val: *Value = func_new_value(&ssa_func, Op.LocalAddr, TYPE_I64);
                 addr_val.aux_int = loc_idx;
+                addr_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
 
                 // 2. Compute byte offset: index * elem_size
                 let size_val: *Value = func_emit_const_int(&ssa_func, elem_size, TYPE_I64);
+                size_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
                 let offset_val: *Value = func_emit_binary(&ssa_func, Op.Mul64, idx_val, size_val, TYPE_I64);
+                offset_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
 
                 // 3. Add offset to base address
                 let ptr_val: *Value = func_emit_binary(&ssa_func, Op.AddPtr, addr_val, offset_val, TYPE_I64);
+                ptr_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
 
                 // 4. Load the element value
                 let load_val: *Value = func_new_value(&ssa_func, Op.Load, ir_node.type_idx);
                 value_add_arg(load_val, ptr_val);
                 load_val.reg = next_reg;
                 next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
                 g_ir_to_ssa_id[ir_idx] = load_val.id;
             } else if ir_node.kind == IRNodeKind.IndexValue {
                 // Index via computed address: left = base_expr, right = index_expr, value = elem_size
@@ -847,16 +882,26 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
                 // 1. Compute byte offset: index * elem_size
                 let size_val: *Value = func_emit_const_int(&ssa_func, elem_size, TYPE_I64);
+                size_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
                 let offset_val: *Value = func_emit_binary(&ssa_func, Op.Mul64, idx_val, size_val, TYPE_I64);
+                offset_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
 
                 // 2. Add offset to base address
                 let ptr_val: *Value = func_emit_binary(&ssa_func, Op.AddPtr, base_val, offset_val, TYPE_I64);
+                ptr_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
 
                 // 3. Load the element value
                 let load_val: *Value = func_new_value(&ssa_func, Op.Load, ir_node.type_idx);
                 value_add_arg(load_val, ptr_val);
                 load_val.reg = next_reg;
                 next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
                 g_ir_to_ssa_id[ir_idx] = load_val.id;
             } else if ir_node.kind == IRNodeKind.StoreIndexLocal {
                 // Store to local array element: left = local_idx, right = index_expr, value = stored_expr, op = elem_size
@@ -872,13 +917,25 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 // 1. Get address of local array
                 let addr_val: *Value = func_new_value(&ssa_func, Op.LocalAddr, TYPE_I64);
                 addr_val.aux_int = loc_idx;
+                addr_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
 
                 // 2. Compute byte offset: index * elem_size
                 let size_val: *Value = func_emit_const_int(&ssa_func, elem_size, TYPE_I64);
+                size_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
                 let offset_val: *Value = func_emit_binary(&ssa_func, Op.Mul64, idx_val, size_val, TYPE_I64);
+                offset_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
 
                 // 3. Add offset to base address
                 let ptr_val: *Value = func_emit_binary(&ssa_func, Op.AddPtr, addr_val, offset_val, TYPE_I64);
+                ptr_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
 
                 // 4. Store the value
                 let store_val: *Value = func_new_value(&ssa_func, Op.Store, TYPE_VOID);
@@ -899,10 +956,19 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
                 // 1. Compute byte offset: index * elem_size
                 let size_val: *Value = func_emit_const_int(&ssa_func, elem_size, TYPE_I64);
+                size_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
                 let offset_val: *Value = func_emit_binary(&ssa_func, Op.Mul64, idx_val, size_val, TYPE_I64);
+                offset_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
 
                 // 2. Add offset to base address
                 let ptr_val: *Value = func_emit_binary(&ssa_func, Op.AddPtr, base_val, offset_val, TYPE_I64);
+                ptr_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
 
                 // 3. Store the value
                 let store_val: *Value = func_new_value(&ssa_func, Op.Store, TYPE_VOID);

@@ -8,6 +8,7 @@ enum TokenType {
     // Literals
     Int,        // 42, 0xFF, 0b1010
     StringLit,  // "hello"
+    CharLit,    // 'a'
 
     // Identifiers
     Ident,      // foo, bar

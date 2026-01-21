@@ -21,15 +21,34 @@
 
 Write a minimal Cot compiler in Cot that can compile trivial programs.
 
-## Supported Features (cot0 only)
+## Current Status (2026-01-21)
 
-| Feature | Example |
-|---------|---------|
-| i64 type | `let x: i64 = 42;` |
-| Integer literals | `42`, `0xFF`, `0b1010` |
-| Arithmetic | `+`, `-`, `*`, `/` |
-| Functions | `fn add(a: i64, b: i64) i64 { ... }` |
-| Return | `return x + y;` |
+**83/168 test functions compile and pass** (Tiers 1-13)
+
+### Supported Features
+
+| Feature | Status | Example |
+|---------|--------|---------|
+| i64 type | ✅ | `let x: i64 = 42;` |
+| Integer literals | ✅ | `42`, `0xFF`, `0b1010` |
+| Arithmetic | ✅ | `+`, `-`, `*`, `/`, `%` |
+| Bitwise ops | ✅ | `&`, `\|`, `^`, `<<`, `>>` |
+| Comparisons | ✅ | `==`, `!=`, `<`, `>`, `<=`, `>=` |
+| Logical ops | ✅ | `and`, `or` |
+| Functions | ✅ | `fn add(a: i64, b: i64) i64 { ... }` |
+| Control flow | ✅ | `if/else`, `while`, `break`, `continue` |
+| Structs | ✅ | `struct Point { x: i64, y: i64 }` |
+| Arrays | ✅ | `let arr: [3]i64 = [3]i64{1, 2, 3};` |
+| Pointers | ✅ | `let p: *i64 = &x;` |
+| Enums | ✅ | `enum Color { Red, Green, Blue }` |
+| Strings | ✅ | `let s: string = "hello";` |
+| null keyword | ❌ | `let p: *i64 = null;` |
+| Function types | ❌ | `fn(i64) -> i64` |
+
+### Blockers for Full Test Suite
+
+1. **`null` keyword** - Parser doesn't recognize `null` literal
+2. **Function type syntax** - Can't parse `fn(i64, i64) -> i64`
 
 ## Bootstrap Chain
 

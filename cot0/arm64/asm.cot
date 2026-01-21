@@ -259,17 +259,24 @@ fn ldst_size_from_bytes(bytes: i64) i64 {
 
 // Encode LDR/STR with explicit size parameter.
 // The size parameter sets bits [31:30] controlling the access width.
+// offset is in BYTES - this function scales it internally for ARM64 encoding.
+// ARM64 unsigned offset LDR/STR uses scaled immediates (offset / access_size).
 fn encode_ldr_str_sized(rt: i64, rn: i64, offset: i64, size: i64, is_load: bool) i64 {
     let v: i64 = 0;  // Not SIMD
     var opc: i64 = 0;
     if is_load { opc = 1; }
+    // Scale the byte offset by access size: 1<<size bytes
+    // size=0 (byte): divide by 1, size=1 (half): divide by 2,
+    // size=2 (word): divide by 4, size=3 (dword): divide by 8
+    let scale: i64 = 1 << size;
+    let scaled_offset: i64 = offset / scale;
     // Encoding: size 111 V 01 opc imm12 Rn Rt
     return (size << 30) |
            (7 << 27) |         // 0b111 = 7
            (v << 26) |
            (1 << 24) |         // 0b01 = 1
            (opc << 22) |
-           ((offset & 4095) << 10) |
+           ((scaled_offset & 4095) << 10) |
            encode_rn(rn) |
            encode_rd(rt);
 }

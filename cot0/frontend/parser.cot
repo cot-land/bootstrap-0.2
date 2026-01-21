@@ -77,6 +77,28 @@ fn parser_at_end(p: *Parser) bool {
     return p.current.kind == TokenType.Eof;
 }
 
+// Peek ahead to check if token AFTER current is a dot (for struct literal detection)
+// This temporarily advances and restores scanner state
+fn parser_peek_next_is_dot(p: *Parser) bool {
+    // Save scanner position and token fields individually (avoid struct copy issues)
+    let saved_pos: i64 = p.scanner.pos;
+    let saved_kind: TokenType = p.current.kind;
+    let saved_start: i64 = p.current.start;
+    let saved_end: i64 = p.current.end;
+
+    // Advance to next token
+    parser_advance(p);
+    let is_dot: bool = p.current.kind == TokenType.Dot;
+
+    // Restore scanner position and token fields
+    p.scanner.pos = saved_pos;
+    p.current.kind = saved_kind;
+    p.current.start = saved_start;
+    p.current.end = saved_end;
+
+    return is_dot;
+}
+
 // ============================================================================
 // Operator Helpers (using precedence from ast.cot)
 // ============================================================================
@@ -241,6 +263,30 @@ fn parse_atom(p: *Parser) i64 {
         return node_string_lit(p.pool, str_start, str_len, start, start + length);
     }
 
+    // Character literal: 'A' or '\n'
+    if kind == TokenType.CharLit {
+        let start: i64 = p.current.start;
+        let length: i64 = p.current.end;
+        // Get the character value (skip opening quote)
+        let char_offset: i64 = start + 1;
+        let first_char: u8 = p.source[char_offset];
+        var char_value: i64 = 0;
+        if first_char == 92 {  // backslash - escape sequence
+            let escaped: u8 = p.source[char_offset + 1];
+            if escaped == 110 { char_value = 10; }       // \n -> newline
+            else if escaped == 116 { char_value = 9; }   // \t -> tab
+            else if escaped == 114 { char_value = 13; }  // \r -> carriage return
+            else if escaped == 48 { char_value = 0; }    // \0 -> null
+            else if escaped == 92 { char_value = 92; }   // \\ -> backslash
+            else if escaped == 39 { char_value = 39; }   // \' -> single quote
+            else { char_value = @intCast(i64, escaped); }
+        } else {
+            char_value = @intCast(i64, first_char);
+        }
+        parser_advance(p);
+        return node_int_lit(p.pool, char_value, start, start + length);
+    }
+
     // Boolean literal: true
     if kind == TokenType.True {
         let start: i64 = p.current.start;
@@ -257,13 +303,48 @@ fn parse_atom(p: *Parser) i64 {
         return node_int_lit(p.pool, 0, start, end);  // false = 0
     }
 
+    // Array literal: [elem1, elem2, ...]
+    if kind == TokenType.LBracket {
+        let start: i64 = p.current.start;
+        parser_advance(p);  // consume '['
+
+        // Parse elements
+        let elements_start: i64 = p.pool.children_count;
+        var elements_count: i64 = 0;
+
+        // Check for empty array []
+        if not parser_check(p, TokenType.RBracket) {
+            // Parse first element
+            let first: i64 = parse_expr(p);
+            node_add_child(p.pool, first);
+            elements_count = elements_count + 1;
+
+            // Parse remaining elements
+            while parser_check(p, TokenType.Comma) {
+                parser_advance(p);  // consume ','
+                if parser_check(p, TokenType.RBracket) {
+                    break;  // Allow trailing comma
+                }
+                let elem: i64 = parse_expr(p);
+                node_add_child(p.pool, elem);
+                elements_count = elements_count + 1;
+            }
+        }
+
+        let end_pos: i64 = p.current.start + p.current.end;
+        parser_want(p, TokenType.RBracket);  // consume ']'
+
+        return node_array_lit(p.pool, elements_start, elements_count, start, end_pos);
+    }
+
     // Identifier
     if kind == TokenType.Ident {
         return parse_ident_only(p);
     }
 
-    // Error - unexpected token
+    // Error - unexpected token - advance to prevent infinite loop
     p.had_error = true;
+    parser_advance(p);  // CRITICAL: advance past bad token for error recovery
     return node_int_lit(p.pool, 0, 0, 0);  // Return dummy node
 }
 
@@ -291,6 +372,12 @@ fn make_binary_node(p: *Parser, op_int: i64, left: i64, right: i64) i64 {
     // Logical
     if op_int == 11 { return node_binary(p.pool, BinaryOp.And, left, right, left_node.start, right_node.end); }
     if op_int == 12 { return node_binary(p.pool, BinaryOp.Or, left, right, left_node.start, right_node.end); }
+    // Bitwise
+    if op_int == 13 { return node_binary(p.pool, BinaryOp.BitAnd, left, right, left_node.start, right_node.end); }
+    if op_int == 14 { return node_binary(p.pool, BinaryOp.BitOr, left, right, left_node.start, right_node.end); }
+    if op_int == 15 { return node_binary(p.pool, BinaryOp.BitXor, left, right, left_node.start, right_node.end); }
+    if op_int == 16 { return node_binary(p.pool, BinaryOp.Shl, left, right, left_node.start, right_node.end); }
+    if op_int == 17 { return node_binary(p.pool, BinaryOp.Shr, left, right, left_node.start, right_node.end); }
 
     return node_binary(p.pool, BinaryOp.Add, left, right, left_node.start, right_node.end);
 }
@@ -536,7 +623,8 @@ fn parse_unary(p: *Parser) i64 {
                 result = node_index(p.pool, result, index, start, end);
             }
             // Check for struct literal: TypeName{ .field = value, ... }
-            else if parser_check(p, TokenType.LBrace) {
+            // IMPORTANT: Only if next token after '{' is '.' (to distinguish from blocks)
+            else if parser_check(p, TokenType.LBrace) and parser_peek_next_is_dot(p) {
                 // result should be an Ident node (the type name)
                 let result_node: *Node = node_get(p.pool, result);
                 if result_node.kind == NodeKind.Ident {
@@ -676,10 +764,14 @@ fn parse_return_stmt(p: *Parser) i64 {
 fn parse_var_decl(p: *Parser) i64 {
     let start: i64 = p.current.start;
 
-    // Check if 'let' or 'var'
+    // Check if 'let', 'const', or 'var'
+    // is_let: 0 = var (mutable), 1 = let (immutable), 2 = const (compile-time const)
     var is_let: i64 = 0;
     if parser_check(p, TokenType.Let) {
         is_let = 1;
+        parser_advance(p);
+    } else if parser_check(p, TokenType.Const) {
+        is_let = 2;  // const treated as immutable like let
         parser_advance(p);
     } else {
         parser_want(p, TokenType.Var);
@@ -771,8 +863,8 @@ fn parse_stmt(p: *Parser) i64 {
         return parse_return_stmt(p);
     }
 
-    // Variable declarations
-    if kind == TokenType.Let or kind == TokenType.Var {
+    // Variable declarations (let, var, const)
+    if kind == TokenType.Let or kind == TokenType.Var or kind == TokenType.Const {
         return parse_var_decl(p);
     }
 
@@ -783,6 +875,22 @@ fn parse_stmt(p: *Parser) i64 {
 
     if kind == TokenType.While {
         return parse_while_stmt(p);
+    }
+
+    // Break statement
+    if kind == TokenType.Break {
+        let start: i64 = p.current.start;
+        parser_advance(p);
+        parser_got(p, TokenType.Semi);  // Optional semicolon
+        return node_break_stmt(p.pool, start, p.current.start);
+    }
+
+    // Continue statement
+    if kind == TokenType.Continue {
+        let start: i64 = p.current.start;
+        parser_advance(p);
+        parser_got(p, TokenType.Semi);  // Optional semicolon
+        return node_continue_stmt(p.pool, start, p.current.start);
     }
 
     // Default: expression statement
@@ -1097,6 +1205,38 @@ fn parse_const_decl(p: *Parser) i64 {
     return node_const_decl(p.pool, name_start, name_len, type_handle, init_expr, start, end);
 }
 
+// Parse var declaration at top level: var NAME: type = expr;
+// Following Zig parser's pattern for parseVarDecl
+fn parse_global_var_decl(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    parser_want(p, TokenType.Var);
+
+    // Variable name
+    let name_start: i64 = p.current.start;
+    let name_len: i64 = p.current.end;
+    parser_want(p, TokenType.Ident);
+
+    // Type annotation (required for globals)
+    var type_handle: i64 = -1;
+    var type_start: i64 = 0;
+    if parser_got(p, TokenType.Colon) {
+        type_start = p.current.start;
+        type_handle = parse_type(p);
+    }
+
+    // Optional initializer
+    var init_expr: i64 = -1;
+    if parser_got(p, TokenType.Eq) {
+        init_expr = parse_expr(p);
+    }
+
+    let end: i64 = p.current.start + p.current.end;
+    parser_got(p, TokenType.Semi);  // Optional semicolon
+
+    // Use node_var_decl with is_let=0 (indicating var, not let)
+    return node_var_decl(p.pool, 0, name_start, name_len, type_start, type_handle, init_expr, start, end);
+}
+
 // ============================================================================
 // Top-Level Parsing
 // ============================================================================
@@ -1116,6 +1256,11 @@ fn parse_decl(p: *Parser) i64 {
     // Const declaration
     if parser_check(p, TokenType.Const) {
         return parse_const_decl(p);
+    }
+
+    // Var declaration (global variable)
+    if parser_check(p, TokenType.Var) {
+        return parse_global_var_decl(p);
     }
 
     if parser_check(p, TokenType.Fn) {

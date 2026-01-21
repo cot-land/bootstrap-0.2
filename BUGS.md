@@ -1,6 +1,14 @@
 # Bug Tracking
 
-Bugs discovered during cot0 self-hosting work.
+## ⚠️ CRITICAL: ALL 166 TESTS MUST PASS ON COT0 FIRST ⚠️
+
+**THIS IS THE ONLY FOCUS. NOTHING ELSE MATTERS UNTIL THIS IS DONE.**
+
+```
+/tmp/cot0-stage1 test/e2e/all_tests.cot -o /tmp/tests && /tmp/tests
+```
+
+**Current blocker:** cot0-stage1 parser hangs on larger files.
 
 ---
 
@@ -35,7 +43,218 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
-(none)
+### BUG-040: `null` keyword not supported in cot0 parser
+
+**Status:** Open
+**Priority:** P0 (blocking Tier 14+ tests)
+**Discovered:** 2026-01-21
+
+**Description:**
+The cot0 parser doesn't recognize the `null` keyword. Code like `let p: *i64 = null` fails to parse.
+
+**Blockers:**
+- `test_ptr_null` and other Tier 14+ tests
+- 85 remaining test functions
+
+**Fix Required:**
+Add `null` keyword to scanner and parser, following Zig compiler pattern in `src/frontend/scanner.zig` and `src/frontend/parser.zig`.
+
+---
+
+### BUG-041: Function type syntax not supported in cot0 parser
+
+**Status:** Open
+**Priority:** P1 (blocking one test)
+**Discovered:** 2026-01-21
+
+**Description:**
+The cot0 parser doesn't support function type syntax like `fn(i64, i64) -> i64`. This blocks tests that use function pointers.
+
+---
+
+## Recently Fixed Bugs
+
+### BUG-039: Bitwise operators not supported in cot0
+
+**Status:** FIXED
+**Priority:** P0
+**Discovered:** 2026-01-21
+**Fixed:** 2026-01-21
+
+**Description:**
+Bitwise operators `&`, `|`, `^`, `<<`, `>>` were not supported in cot0. Operations like `15 ^ 10` returned wrong values (25 instead of 5).
+
+**Root Cause:**
+Multiple layers needed updates:
+1. `ast.cot` - BinaryOp enum missing BitAnd, BitOr, BitXor, Shl, Shr
+2. `ast.cot` - `token_to_binop` and `binop_from_int` didn't map tokens 13-17
+3. `ast.cot` - `token_precedence` missing for Pipe, Caret, LessLess, GreaterGreater, Amp
+4. `parser.cot` - `make_binary_node` didn't handle op_int 13-17
+5. `lower.cot` - `ast_op_to_ir_op` didn't map ast_op 13-17
+
+**Fix:**
+Added bitwise operator support through all cot0 compiler layers following Zig compiler pattern.
+
+---
+
+### BUG-038: Register clobbering in binary operations (cot0)
+
+**Status:** FIXED
+**Priority:** P0
+**Discovered:** 2026-01-21
+**Fixed:** 2026-01-21
+
+**Description:**
+Comparison chains like `test_chain(15)` returned 0 instead of 90. The `cset x0, eq` instruction was overwriting the parameter in x0.
+
+**Root Cause:**
+In `cot0/main.cot`, binary operations hardcoded `val.reg = X0` for results. This clobbered parameters that were still in x0.
+
+**Go/Zig Reference:**
+The Zig compiler uses `next_reg` to allocate the next available register for results, avoiding parameter clobbering.
+
+**Fix:**
+Changed `val.reg = X0;` to `val.reg = next_reg;` in `cot0/main.cot` line 681, following the Zig compiler pattern.
+
+---
+
+### BUG-037: ARM64 scaled offset encoding for LDR/STR (cot0)
+
+**Status:** FIXED
+**Priority:** P0
+**Discovered:** 2026-01-21
+**Fixed:** 2026-01-21
+
+**Description:**
+Array literal initialization produced wrong store offsets. `arr[1] = 20` stored at SP+64 instead of SP+8, causing incorrect array element values.
+
+**Root Cause:**
+ARM64 LDR/STR with unsigned immediate offset uses **scaled** immediates. The offset field encodes `byte_offset / access_size`, not the raw byte offset. For 8-byte accesses, offset 8 should be encoded as 1.
+
+**Fix:**
+In `cot0/arm64/asm.cot`, `encode_ldr_str_sized` now divides the byte offset by the access size:
+```cot
+let scale: i64 = 1 << size;
+let scaled_offset: i64 = offset / scale;
+```
+
+**Verified:**
+Array literal `[3]i64{10, 20, 30}` now correctly stores arr[0]=10, arr[1]=20, arr[2]=30.
+
+---
+
+### BUG-036: Method call syntax (obj.method()) not lowered
+
+**Status:** FIXED
+**Priority:** P0 (was blocking method support)
+**Discovered:** 2026-01-21
+**Fixed:** 2026-01-21
+
+**Description:**
+Method calls using the `obj.method()` syntax were not being lowered at all. The `lowerCall` function only handled callee expressions that were simple identifiers, returning `ir.null_node` for field_access callees (method calls).
+
+**Root Cause:**
+In `src/frontend/lower.zig`, `lowerCall` had:
+```zig
+const func_name = if (callee_expr == .ident)
+    callee_expr.ident.name
+else
+    return ir.null_node;  // Method calls fell through here!
+```
+
+Method calls like `f.create()` have a `field_access` callee, not an `ident` callee, so they were silently ignored.
+
+**Go Reference:**
+Go's ssagen/ssa.go prepends the receiver to the call arguments:
+```go
+// Set receiver (for interface calls).
+if rcvr != nil {
+    callArgs = append(callArgs, rcvr)
+}
+```
+
+**Fix:**
+Added `lowerMethodCall` function in `src/frontend/lower.zig`:
+1. Detect field_access callee in lowerCall
+2. Look up method from checker's method_registry
+3. Lower receiver (taking address if method expects pointer)
+4. Prepend receiver to args list
+5. Call method by its function name
+
+**Verified:**
+- 16-byte struct return (x0/x1): Exit 15 (correct)
+- 24-byte struct return (x8 hidden pointer): Exit 30 (correct)
+
+---
+
+### BUG-035: Returning composite field (struct) via off_ptr uses void type, breaks hidden return detection
+
+**Status:** FIXED
+**Priority:** P0 (was blocking cot0-stage1 compilation)
+**Discovered:** 2026-01-21
+**Fixed:** 2026-01-21
+
+**Description:**
+When a function returns a struct field from another struct (e.g., `return p.peek_tok` where `peek_tok` is a `Token` struct), the return value is an `off_ptr` operation with `void(0B)` type instead of the actual struct type. This causes codegen to not detect that the function returns >16B and fails to use the hidden return path.
+
+**Reproducer:**
+```cot
+struct Token {
+    kind: i64,
+    start: i64,
+    end: i64,
+}
+
+struct Parser {
+    current: Token,
+    peek_tok: Token,
+    has_peek: bool,
+}
+
+fn test_peek(p: *Parser) Token {
+    if p.has_peek {
+        return p.peek_tok  // Returns 24-byte Token
+    }
+    return p.current
+}
+
+fn main() i64 {
+    var p: Parser
+    p.has_peek = true
+    p.peek_tok.kind = 42
+    let t: Token = test_peek(&p)
+    return t.kind  // Expected: 42, Actual: 8
+}
+```
+
+**Debug Output (COT_DEBUG=all):**
+```
+  b2 (ret):
+    v10: void(0B) = off_ptr v9 [24] : uses=1
+    control: v10
+```
+The control value v10 has type `void(0B)` but should be `composite(24B)` for Token.
+
+**Root Cause:**
+In `src/frontend/ssa_builder.zig` at the `.field_value` handler (line ~1103), when creating an `off_ptr` for composite field access, it always uses `TypeRegistry.VOID`:
+```zig
+const off_val = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, .{});
+```
+
+When this off_ptr is used as a return value, codegen checks `getTypeSize(ret_val.type_idx)` which returns 0 for VOID. Since 0 <= 16, hidden return is not triggered, and only the address is returned instead of copying the 24-byte struct.
+
+**Go Reference:**
+Go's SSA builder assigns proper types to offset operations. In `cmd/compile/internal/ssagen/ssa.go`, offset pointers carry the type information of the pointed-to element.
+
+**Fix:**
+Change line ~1103 in `src/frontend/ssa_builder.zig` to use `node.type_idx` instead of `TypeRegistry.VOID` when the field is a composite type:
+```zig
+const off_type = if (field_type == .struct_type or field_type == .array)
+    node.type_idx
+else
+    TypeRegistry.VOID;
+const off_val = try self.func.newValue(.off_ptr, off_type, cur, .{});
+```
 
 ---
 
