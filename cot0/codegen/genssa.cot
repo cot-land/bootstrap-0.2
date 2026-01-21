@@ -466,6 +466,14 @@ fn GenState_slicePtr(gs: *GenState, v: *Value) {
         if ptr_val.reg >= 0 and ptr_val.reg != rd {
             GenState_emitInst(gs, encode_mov_reg(rd, ptr_val.reg));
         }
+    } else if slice_val.op == Op.ConstString {
+        // ConstString: aux_int=str_start (offset in source), aux_ptr=str_len
+        // TODO: Need proper string data section support
+        // For now, the ConstString value should have its address computed
+        // Copy from the ConstString's register (if it has one)
+        if slice_val.reg >= 0 and slice_val.reg != rd {
+            GenState_emitInst(gs, encode_mov_reg(rd, slice_val.reg));
+        }
     } else {
         // Other cases: just copy the register (assume ptr is there)
         if slice_val.reg >= 0 and slice_val.reg != rd {
@@ -497,6 +505,11 @@ fn GenState_sliceLen(gs: *GenState, v: *Value) {
         if len_val.reg >= 0 and len_val.reg != rd {
             GenState_emitInst(gs, encode_mov_reg(rd, len_val.reg));
         }
+    } else if slice_val.op == Op.ConstString {
+        // ConstString: aux_int=str_start, aux_ptr=str_len
+        // The length is stored in aux_ptr
+        let str_len: i64 = slice_val.aux_ptr;
+        GenState_emitInst(gs, encode_mov_imm(rd, str_len));
     } else {
         // Other cases: fallback (shouldn't normally happen)
         if slice_val.reg >= 0 and slice_val.reg != rd {

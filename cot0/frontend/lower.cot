@@ -502,6 +502,14 @@ fn Lowerer_lowerVarDecl(l: *Lowerer, node: *Node) {
         func_builder_set_local_size(fb, local_idx, 16);
     }
 
+    // Set array local size based on array length
+    // PTYPE_ARRAY_BASE = 10000, PTYPE_SLICE_BASE = 100000
+    if type_handle >= PTYPE_ARRAY_BASE and type_handle < PTYPE_SLICE_BASE {
+        let array_len: i64 = PType_arraySize(type_handle);
+        let array_size: i64 = array_len * 8;  // 8 bytes per i64 element
+        func_builder_set_local_size(fb, local_idx, array_size);
+    }
+
     // Check for type annotation indicating a struct type
     // Handles both direct struct (Point) and pointer-to-struct (*Point)
     // PTYPE encoding: direct = 100+offset, pointer = 110+offset (overlaps at high offsets)
@@ -1473,11 +1481,14 @@ fn Lowerer_lowerBuiltinPrint(l: *Lowerer, node: *Node, is_println: bool) i64 {
     // Lower the string argument
     let str_val: i64 = Lowerer_lowerExpr(l, arg_node);
 
+    // Extract ptr and len from the string (following Zig's pattern)
+    let ptr_val: i64 = func_builder_emit_slice_ptr(fb, str_val, TYPE_I64);
+    let len_val: i64 = func_builder_emit_slice_len(fb, str_val);
+
     // Create fd=1 (stdout) constant
     let fd_val: i64 = func_builder_emit_const_int(fb, 1);
 
-    // Store args for write call: write(fd, str)
-    // Note: For now we pass the string directly, codegen needs to handle extracting ptr/len
+    // Store args for write call: write(fd, ptr, len)
     let write_args_start: i64 = l.call_args_count;
 
     // arg0: fd
@@ -1487,10 +1498,17 @@ fn Lowerer_lowerBuiltinPrint(l: *Lowerer, node: *Node, is_println: bool) i64 {
         l.call_args_count = l.call_args_count + 1;
     }
 
-    // arg1: string value (codegen will handle extracting ptr/len)
+    // arg1: ptr (pointer to string data)
     if l.call_args_count < l.call_args_cap {
         let slot: *i64 = l.call_args + l.call_args_count;
-        slot.* = str_val;
+        slot.* = ptr_val;
+        l.call_args_count = l.call_args_count + 1;
+    }
+
+    // arg2: len (length of string)
+    if l.call_args_count < l.call_args_cap {
+        let slot: *i64 = l.call_args + l.call_args_count;
+        slot.* = len_val;
         l.call_args_count = l.call_args_count + 1;
     }
 
@@ -1499,7 +1517,7 @@ fn Lowerer_lowerBuiltinPrint(l: *Lowerer, node: *Node, is_println: bool) i64 {
     call_node.func_name_start = write_pos;  // Actual position of "write" in source
     call_node.func_name_len = 5;            // "write" is 5 chars
     call_node.args_start = write_args_start;
-    call_node.args_count = 2;  // fd and string
+    call_node.args_count = 3;  // fd, ptr, len
     let write_result: i64 = func_builder_emit(fb, call_node);
 
     // TODO: For println, also write a newline
@@ -1950,6 +1968,8 @@ fn Lowerer_lowerIndex(l: *Lowerer, node: *Node) i64 {
     // IndexExpr fields:
     // field0 = base expression (array/pointer)
     // field1 = index expression
+    //
+    // Following src/frontend/lower.zig:1623-1712 (lowerIndex)
 
     let fb: *FuncBuilder = l.current_func;
     if fb == null { return NULL_NODE; }
@@ -1957,7 +1977,7 @@ fn Lowerer_lowerIndex(l: *Lowerer, node: *Node) i64 {
     let base_node: *Node = l.nodes + node.field0;
     let index_node_idx: i64 = node.field1;
 
-    // For cot0, assume element type is i64 (8 bytes) for simplicity
+    // For cot0, assume element type is i64 (8 bytes)
     let elem_size: i64 = 8;
     let elem_type: i64 = TYPE_I64;
 
@@ -1965,43 +1985,68 @@ fn Lowerer_lowerIndex(l: *Lowerer, node: *Node) i64 {
     let index_node: *Node = l.nodes + index_node_idx;
     let index_ir: i64 = Lowerer_lowerExpr(l, index_node);
 
-    // Case 1: Base is an identifier (local array or slice variable)
+    // Check if base is a local variable (optimized path)
+    // Following src/frontend/lower.zig:1668-1697
     if base_node.kind == NodeKind.Ident {
         // Look up the local variable
         var local_idx: i64 = -1;
-        var local_type_idx: i64 = TYPE_I64;
+        var local: *IRLocal = null;
         var i: i64 = 0;
         while i < fb.locals_count {
-            let local: *IRLocal = fb.locals + i;
-            if names_equal(l.source, local.name_start, local.name_len,
+            let check_local: *IRLocal = fb.locals + i;
+            if names_equal(l.source, check_local.name_start, check_local.name_len,
                           base_node.field0, base_node.field1) {
                 local_idx = i;
-                local_type_idx = local.type_idx;
+                local = check_local;
             }
             i = i + 1;
         }
 
-        if local_idx >= 0 {
-            // Check if local is a slice - slices store a pointer, not data
+        if local_idx >= 0 and local != null {
+            let local_type_idx: i64 = local.type_idx;
+
+            // Slice variables: load slice, extract ptr, then index
+            // Following src/frontend/lower.zig:1677-1687
             if local_type_idx == TYPE_SLICE {
-                // For slices: load the pointer first, then index from it
+                // Load the slice value (ptr + len)
+                let slice_val: i64 = func_builder_emit_load_local(fb, local_idx);
+                // Extract pointer from slice
+                let ptr_val: i64 = func_builder_emit_slice_ptr(fb, slice_val, TYPE_I64);
+                // Index through the pointer
+                return func_builder_emit_index_value(fb, ptr_val, index_ir, elem_size, elem_type);
+            }
+
+            // Pointer parameters/variables: load the pointer, then index through it
+            // Following src/frontend/lower.zig:1689-1694 pattern
+            // Pointer types are in range [PTYPE_PTR_BASE, PTYPE_USER_BASE)
+            if local_type_idx >= PTYPE_PTR_BASE and local_type_idx < PTYPE_USER_BASE {
+                // Local contains a pointer - load it and use index_value
                 let ptr_val: i64 = func_builder_emit_load_local(fb, local_idx);
                 return func_builder_emit_index_value(fb, ptr_val, index_ir, elem_size, elem_type);
-            } else {
-                // For arrays: index directly into local storage
-                return func_builder_emit_index_local(fb, local_idx, index_ir, elem_size, elem_type);
             }
+
+            // Array parameters are passed by reference - the local contains a pointer
+            // Following src/frontend/lower.zig:1689-1694
+            if local.is_param and local_type_idx >= PTYPE_ARRAY_BASE and local_type_idx < PTYPE_SLICE_BASE {
+                let ptr_val: i64 = func_builder_emit_load_local(fb, local_idx);
+                return func_builder_emit_index_value(fb, ptr_val, index_ir, elem_size, elem_type);
+            }
+
+            // Regular local array - emit index_local for direct access
+            // Following src/frontend/lower.zig:1695-1696
+            return func_builder_emit_index_local(fb, local_idx, index_ir, elem_size, elem_type);
         }
+
+        // TODO: Check for global array variable (BUG-029)
+        // Following src/frontend/lower.zig:1699-1706
     }
 
-    // Case 2: Base is any other expression - lower it and emit IndexValue
-    // Following src/frontend/lower.zig:1625-1662 pattern
+    // Base is a computed expression - lower it and emit IndexValue
+    // Following src/frontend/lower.zig:1709-1711
     let base_val: i64 = Lowerer_lowerExpr(l, base_node);
 
-    // Check if base returns a slice (e.g., get_slice_from_ptr()[0])
-    // For slices, we need to extract the pointer first using SlicePtr
+    // Check if base returns a slice - extract pointer first
     if Lowerer_exprReturnsSlice(l, base_node) {
-        // Emit SlicePtr to extract pointer from slice value
         let ptr_val: i64 = func_builder_emit_slice_ptr(fb, base_val, TYPE_I64);
         return func_builder_emit_index_value(fb, ptr_val, index_ir, elem_size, elem_type);
     }
