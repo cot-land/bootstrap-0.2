@@ -130,7 +130,7 @@ actually compared line-by-line. During a partial audit (2026-01-22), several fun
 | `Token_isTypeKeyword(t) bool` | `Token.isTypeKeyword() bool` | DIFFERENT | cot0 checks 6 types; Zig checks 16 types (has more sized types) |
 | `Token_isAssignment(t) bool` | `Token.isAssignment() bool` | Same | Both check same assignment operators |
 | `TokenType` enum (60 variants) | `Token` enum(u8) (80+ variants) | DIFFERENT | Zig has float_lit, string_interp_*, coalesce, optional_chain, period_star, period_question, kw_defer, kw_new, kw_undefined, kw_union, kw_type, more sized types |
-| — | `Token.string() []const u8` | Missing in cot0 | No token-to-string conversion in cot0 |
+| `Token_string(t) string` | `Token.string() []const u8` | Same | Added 2026-01-22 |
 | — | `token_strings` comptime array | Missing in cot0 | No compile-time generated strings |
 | — | Tests (60+ lines) | Missing in cot0 | cot0 has no tests |
 
@@ -398,9 +398,9 @@ This encoding allows quick type classification without TypeRegistry lookup, but 
 | `op_has_side_effects(op) bool` | `Op.hasSideEffects()` | Same | Both check for side effect ops |
 | — | `OpInfo struct` | Missing in cot0 | Zig has comprehensive OpInfo with arg counts, result type, flags |
 | — | `Op.isTerminator()` | Missing in cot0 | No terminator classification |
-| — | `Op.isBranch()` | Missing in cot0 | No branch classification |
+| `Op_isBranch(op)` | `Op.isBranch()` | Same | Added 2026-01-22 |
 | — | `Op.numArgs()` | Missing in cot0 | No arg count tracking |
-| — | `Op.isCall()` | Missing in cot0 | No call classification |
+| `Op_isCall(op)` | `Op.isCall()` | Same | Added 2026-01-22 |
 | — | `Op.resultType()` | Missing in cot0 | No result type inference |
 | — | ARM64-specific ops | Missing in cot0 | Zig has ADDShifted, SUBShifted, MADD, CSEL, etc. |
 | — | Memory ops | Missing in cot0 | Zig has LDRPost, STRPre, LDP, STP, etc. |
@@ -740,13 +740,13 @@ This encoding allows quick type classification without TypeRegistry lookup, but 
 | `encode_neg(rd, rm)` | — | Missing in Zig |
 | `encode_ldrw(rt, rn, offset)` | — | Missing in Zig |
 | `encode_strw(rt, rn, offset)` | — | Missing in Zig |
-| — | `encodeSXTB32/64()` | Missing in cot0 |
-| — | `encodeSXTH32/64()` | Missing in cot0 |
-| — | `encodeSXTW()` | Missing in cot0 |
-| — | `encodeUXTB32/64()` | Missing in cot0 |
-| — | `encodeUXTH32/64()` | Missing in cot0 |
-| — | `encodeTST()` | Missing in cot0 |
-| — | `invertCond()` | Missing in cot0 |
+| `encode_sxtb(rd, rn)` | `encodeSXTB32/64()` | Same | Added 2026-01-22 (64-bit only) |
+| `encode_sxth(rd, rn)` | `encodeSXTH32/64()` | Same | Added 2026-01-22 (64-bit only) |
+| `encode_sxtw(rd, rn)` | `encodeSXTW()` | Same | Added 2026-01-22 |
+| `encode_uxtb(rd, rn)` | `encodeUXTB32/64()` | Same | Added 2026-01-22 (64-bit only) |
+| `encode_uxth(rd, rn)` | `encodeUXTH32/64()` | Same | Added 2026-01-22 (64-bit only) |
+| `encode_tst_reg(rn, rm)` | `encodeTST()` | Same | Added 2026-01-22 |
+| `invert_cond(cond)` | `invertCond()` | Same | Added 2026-01-22 |
 
 ### 4.2 cot0/arm64/regs.cot (cot0-only)
 
@@ -1071,7 +1071,7 @@ These files exist in the Zig compiler but have no cot0 counterpart yet.
 | File | cot0 Lines | Zig Lines | Ratio | Notes |
 |------|------------|-----------|-------|-------|
 | main.cot | ~1500 | ~400 | 375% | cot0 has 1000+ lines of global array declarations |
-| token.cot/zig | 273 | 460 | 59% | Missing Token.string(), StaticStringMap |
+| token.cot/zig | 280 | 460 | 61% | Has Token_string(); Missing StaticStringMap |
 | scanner.cot/zig | 338 | 753 | 45% | Missing interpolation, error reporting, block comments |
 | ast.cot/zig | 1131 | 743 | 152% | MORE lines but LESS type safety (generic fields) |
 | parser.cot/zig | 1659 | 1644 | 101% | Similar but missing lookahead, recursion limit |
