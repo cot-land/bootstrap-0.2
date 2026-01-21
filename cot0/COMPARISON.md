@@ -397,9 +397,9 @@ This encoding allows quick type classification without TypeRegistry lookup, but 
 | `op_is_comparison(op) bool` | `Op.isComparison()` | Same | Both check for comparison ops |
 | `op_has_side_effects(op) bool` | `Op.hasSideEffects()` | Same | Both check for side effect ops |
 | — | `OpInfo struct` | Missing in cot0 | Zig has comprehensive OpInfo with arg counts, result type, flags |
-| — | `Op.isTerminator()` | Missing in cot0 | No terminator classification |
+| `Op_isTerminator(op)` | `Op.isTerminator()` | Same | Already present |
 | `Op_isBranch(op)` | `Op.isBranch()` | Same | Added 2026-01-22 |
-| — | `Op.numArgs()` | Missing in cot0 | No arg count tracking |
+| `Op_numArgs(op)` | `Op.numArgs()` | Same | Renamed from Op_argCount |
 | `Op_isCall(op)` | `Op.isCall()` | Same | Added 2026-01-22 |
 | — | `Op.resultType()` | Missing in cot0 | No result type inference |
 | — | ARM64-specific ops | Missing in cot0 | Zig has ADDShifted, SUBShifted, MADD, CSEL, etc. |

@@ -220,7 +220,7 @@ fn Op_isArm64(op: Op) bool {
 }
 
 // Get number of arguments for an operation
-fn Op_argCount(op: Op) i64 {
+fn Op_numArgs(op: Op) i64 {
     // Constants take 0 args
     if Op_isConstant(op) { return 0; }
     if op == Op.InitMem { return 0; }
