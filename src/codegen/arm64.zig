@@ -2198,8 +2198,8 @@ pub const ARM64CodeGen = struct {
                 // Get stack offset from local_offsets (set by stackalloc)
                 if (local_idx < self.func.local_offsets.len) {
                     const byte_off = self.func.local_offsets[local_idx];
-                    // ADD Rd, SP, #offset
-                    try self.emit(asm_mod.encodeADDImm(dest_reg, 31, @intCast(byte_off), 0));
+                    // Use emitAddImm to handle large offsets (>4095 bytes)
+                    try self.emitAddImm(dest_reg, 31, @intCast(byte_off));
                     debug.log(.codegen, "      -> ADD x{d}, SP, #{d} (local_addr {d})", .{ dest_reg, byte_off, local_idx });
                 } else {
                     // Fallback: offset 0 (shouldn't happen)
@@ -2284,7 +2284,8 @@ pub const ARM64CodeGen = struct {
                         const local_idx: usize = @intCast(base.aux_int);
                         if (local_idx < self.func.local_offsets.len) {
                             const local_offset = self.func.local_offsets[local_idx];
-                            try self.emit(asm_mod.encodeADDImm(dest_reg, 31, @intCast(local_offset), 0));
+                            // Use emitAddImm to handle large offsets (>4095 bytes)
+                            try self.emitAddImm(dest_reg, 31, @intCast(local_offset));
                             base_reg = dest_reg;
                             debug.log(.codegen, "      -> ADD x{d}, SP, #{d} (regen local_addr {d})", .{ dest_reg, local_offset, local_idx });
                         } else {
@@ -2452,7 +2453,8 @@ pub const ARM64CodeGen = struct {
                             const local_idx: u32 = @intCast(src_addr.aux_int);
                             if (local_idx < self.func.local_offsets.len) {
                                 const local_off = self.func.local_offsets[local_idx];
-                                try self.emit(asm_mod.encodeADDImm(src_reg, 31, @intCast(local_off), 0));
+                                // Use emitAddImm to handle large offsets (>4095 bytes)
+                                try self.emitAddImm(src_reg, 31, @intCast(local_off));
                                 debug.log(.codegen, "      store >16B: recomputed local_addr {d} at SP+{d} -> x{d}", .{ local_idx, local_off, src_reg });
                             } else {
                                 debug.log(.codegen, "      store >16B: local_idx {d} out of range!", .{local_idx});
