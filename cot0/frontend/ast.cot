@@ -34,6 +34,7 @@ enum NodeKind {
     BlockStmt,      // { stmt; stmt; }
     IfStmt,         // if cond { body } else { body }
     WhileStmt,      // while cond { body }
+    ForStmt,        // for item in array { body }
     BreakStmt,      // break;
     ContinueStmt,   // continue;
 
@@ -51,6 +52,7 @@ enum NodeKind {
     // Member access
     FieldAccess,    // expr.field
     IndexExpr,      // expr[index]
+    SliceExpr,      // expr[start:end]
 
     // Composite literals
     StructLit,      // TypeName{ .field = value, ... }
@@ -432,6 +434,29 @@ fn node_while_stmt(pool: *NodePool, cond: i64, body: i64, start: i64, end: i64) 
     return idx;
 }
 
+// Create a for-in statement node: for item in array { body }
+// Following Zig compiler pattern from src/frontend/lower.zig:lowerFor
+// field0: binding name_start
+// field1: binding name_len
+// field2: iterable expression node index
+// field3: body node index (block)
+fn node_for_stmt(pool: *NodePool, binding_start: i64, binding_len: i64,
+                 iterable: i64, body: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ForStmt;
+    n.start = start;
+    n.end = end;
+    n.field0 = binding_start;   // Loop variable name offset
+    n.field1 = binding_len;     // Loop variable name length
+    n.field2 = iterable;        // Iterable expression (array/slice)
+    n.field3 = body;            // Body block
+
+    return idx;
+}
+
 // Create a break statement node
 fn node_break_stmt(pool: *NodePool, start: i64, end: i64) i64 {
     let idx: i64 = pool.count;
@@ -731,6 +756,29 @@ fn node_index(pool: *NodePool, base: i64, index: i64,
     n.field0 = base;    // Base expression (array/slice/pointer)
     n.field1 = index;   // Index expression
     n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a SliceExpr node: expr[start:end]
+// Following Zig compiler pattern from src/frontend/parser.zig:787-792
+// field0: base expression
+// field1: start expression (-1 if omitted, e.g., arr[:end])
+// field2: end expression (-1 if omitted, e.g., arr[start:])
+// field3: unused
+fn node_slice(pool: *NodePool, base: i64, slice_start: i64, slice_end: i64,
+              start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.SliceExpr;
+    n.start = start;
+    n.end = end;
+    n.field0 = base;         // Base expression (array)
+    n.field1 = slice_start;  // Start index (-1 if omitted)
+    n.field2 = slice_end;    // End index (-1 if omitted)
     n.field3 = 0;
 
     return idx;

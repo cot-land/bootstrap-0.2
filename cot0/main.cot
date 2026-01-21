@@ -601,8 +601,10 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
         }
 
         // Register this function's locals (params first, then regular locals)
+        // Also copy size from IR locals to SSA locals
         var local_idx: i64 = ir_func.locals_start;
         let locals_end: i64 = ir_func.locals_start + ir_func.locals_count;
+        var ssa_local_idx: i64 = 0;
         while local_idx < locals_end {
             let ir_local: *IRLocal = &g_ir_locals[local_idx];
             if ir_local.is_param {
@@ -612,17 +614,26 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 func_add_local(&ssa_func, ir_local.name_start, ir_local.name_len,
                                ir_local.type_idx, ir_local.is_mutable);
             }
+            // Copy size from IR local to SSA local
+            let ssa_local: *Local = func_get_local(&ssa_func, ssa_local_idx);
+            ssa_local.size = ir_local.size;
             local_idx = local_idx + 1;
+            ssa_local_idx = ssa_local_idx + 1;
         }
 
-        // Compute stack layout
+        // Compute stack layout using actual local sizes
+        // Following Zig compiler pattern: accumulate offsets based on actual sizes
         local_idx = 0;
+        var current_offset: i64 = 0;
         while local_idx < ssa_func.locals_count {
             let ssa_local: *Local = func_get_local(&ssa_func, local_idx);
-            ssa_local.offset = local_idx * 8;
+            // Align to 8 bytes
+            current_offset = (current_offset + 7) & -8;
+            ssa_local.offset = current_offset;
+            current_offset = current_offset + ssa_local.size;
             local_idx = local_idx + 1;
         }
-        ssa_func.frame_size = ssa_func.locals_count * 8;
+        ssa_func.frame_size = current_offset;
         if ssa_func.frame_size % 16 != 0 {
             ssa_func.frame_size = ssa_func.frame_size + (16 - (ssa_func.frame_size % 16));
         }
@@ -663,6 +674,20 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 let ptr_val: *Value = func_get_value(&ssa_func, ptr_id);
                 let len_val: *Value = func_get_value(&ssa_func, len_id);
                 let make_val: *Value = func_new_value(&ssa_func, Op.StringMake, TYPE_STRING);
+                value_add_arg2(make_val, ptr_val, len_val);
+                make_val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
+                g_ir_to_ssa_id[ir_idx] = make_val.id;
+            } else if ir_node.kind == IRNodeKind.MakeSlice {
+                // Slice creation: left=ptr_expr, right=len_expr (relative IR indices)
+                let ptr_abs: i64 = ir_func.nodes_start + ir_node.left;
+                let len_abs: i64 = ir_func.nodes_start + ir_node.right;
+                let ptr_id: i64 = g_ir_to_ssa_id[ptr_abs];
+                let len_id: i64 = g_ir_to_ssa_id[len_abs];
+                let ptr_val: *Value = func_get_value(&ssa_func, ptr_id);
+                let len_val: *Value = func_get_value(&ssa_func, len_id);
+                let make_val: *Value = func_new_value(&ssa_func, Op.SliceMake, TYPE_I64);
                 value_add_arg2(make_val, ptr_val, len_val);
                 make_val.reg = next_reg;
                 next_reg = next_reg + 1;

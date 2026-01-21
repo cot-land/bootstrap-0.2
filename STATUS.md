@@ -31,17 +31,46 @@
 
 | Tier | Status | Test Functions |
 |------|--------|----------------|
-| 1-14 | ✅ PASS | 88 functions (basic ops, control flow, structs, arrays, pointers, bitwise, null) |
-| 15+ | ❌ BLOCKED | Needs slice syntax, for-in loops, switch statements |
+| 1-10 | ✅ PASS | 73 functions (basic ops, control flow, structs, arrays, pointers) |
+| 11 | ✅ PASS | Bitwise operators working |
+| 12+ | TESTING | Logical operators, slices, for-in loops |
+| Function types | ❌ BLOCKED | `var f: fn(...) -> T` not supported |
 
 ### Current Blockers
 
-1. **Slice syntax** - `arr[start:end]` not parsed
-2. **For-in loops** - `for item in array { }` not supported
-3. **Switch statements** - `switch x { }` not supported
+1. ~~**Slice syntax** - `arr[start:end]` not parsed~~ **COMPLETE** (parse, lower, index all working)
+2. ~~**For-in loops** - `for item in array { }` not supported~~ **COMPLETE** (desugars to while loop)
+3. **For-in over slices** - Needs slice (ptr, len) storage; currently only stores ptr
+4. **Function type variables** - `var f: fn(...) -> T` not supported
+5. **Switch statements** - `switch x { }` not supported
 
 ### Recent Fixes (2026-01-21)
 
+- **For-in loops** - Added ForStmt to AST, parser, and lowerer (desugars to while loop like Zig compiler)
+- **Modulo operator** - Fixed genssa_mod to compute `a - (a/b)*b` instead of just SDIV
+- **BUG-043/BUG-044: Stack layout** - Fixed stack offset calculation to use actual local sizes instead of assuming 8 bytes per local
+- **Slice syntax** - Parser handles `arr[start:end]`, slice type `[]T`, SliceExpr lowering, TYPE_SLICE for locals
+
+### Tests Passing
+
+| Feature | Status |
+|---------|--------|
+| Basic arithmetic | ✅ PASS |
+| Function calls | ✅ PASS |
+| Local variables | ✅ PASS |
+| Comparisons | ✅ PASS |
+| If/else | ✅ PASS |
+| While loops | ✅ PASS |
+| For-in (arrays) | ✅ PASS |
+| For-in (slices) | ❌ FAIL (needs slice len) |
+| Structs | ✅ PASS |
+| Arrays | ✅ PASS |
+| Pointers | ✅ PASS |
+| Bitwise ops | ✅ PASS |
+| Modulo | ✅ PASS |
+| Slice indexing | ✅ PASS |
+| Function types | ❌ FAIL |
+| Switch | ❌ NOT IMPL |
 - **null keyword** - Parser recognizes `null` literal (value 0)
 - **Function type syntax** - `fn(i64, i64) -> i64` now parsed
 - **Branch fixups** - Reset gs.branches_count between functions (following Zig pattern)

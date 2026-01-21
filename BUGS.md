@@ -8,7 +8,10 @@
 /tmp/cot0-stage1 test/e2e/all_tests.cot -o /tmp/tests && /tmp/tests
 ```
 
-**Current blocker:** cot0-stage1 parser hangs on larger files.
+**Current blockers:**
+- For-in over slices (needs slice length storage)
+- Function type variables (`var f: fn(...) -> T`)
+- Switch statements
 
 ---
 
@@ -42,6 +45,65 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 ---
 
 ## Open Bugs
+
+### BUG-046: For-in over slices uses wrong length
+
+**Status:** OPEN
+**Priority:** P1 (blocking slice iteration tests)
+**Discovered:** 2026-01-21
+
+**Description:**
+For-in loops over slices use the local's storage size (8 bytes for the pointer) instead of the slice's runtime length. This causes the loop to iterate only once regardless of slice size.
+
+**Test:**
+```cot
+fn main() i64 {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[1:4]  // slice of length 3
+    var sum: i64 = 0
+    for x in s { sum = sum + x }
+    return sum  // Expected: 90 (20+30+40), Actual: 24
+}
+```
+
+**Root Cause:**
+In `cot0/frontend/lower.cot`, `lower_for` gets array length from `local.size / 8`. For slices, the local stores only the pointer (8 bytes), so `8 / 8 = 1` iteration.
+
+**Required Fix:**
+Slices need to store both (ptr, len), not just ptr. Then for-in lowering needs to:
+1. Detect slice type locals
+2. Emit code to load the length at runtime from the slice's len field
+
+**Zig Reference:**
+`src/frontend/lower.zig:977-1036` - Uses `emitSliceLen()` for slices, compile-time length for arrays.
+
+---
+
+### BUG-045: Modulo operator only emitted SDIV (cot0)
+
+**Status:** FIXED
+**Priority:** P0 (was breaking modulo tests)
+**Discovered:** 2026-01-21
+**Fixed:** 2026-01-21
+
+**Description:**
+The `%` modulo operator returned the quotient instead of the remainder. `5 % 2` returned 2 instead of 1.
+
+**Root Cause:**
+In `cot0/codegen/genssa.cot`, `genssa_mod` only emitted SDIV, with a TODO comment. ARM64 has no modulo instruction.
+
+**Zig Reference:**
+`src/codegen/arm64.zig:1684-1702` - Computes `a % b = a - (a/b)*b`:
+```zig
+SDIV x16, a, b     // x16 = a / b
+MUL  x16, x16, b   // x16 = (a / b) * b
+SUB  dest, a, x16  // dest = a - (a / b) * b
+```
+
+**Fix:**
+Updated `cot0/codegen/genssa.cot` `genssa_mod` to emit the full 3-instruction sequence.
+
+---
 
 ### BUG-040: `null` keyword not supported in cot0 parser
 
@@ -104,6 +166,54 @@ Zig clears branch fixups at the start of each function.
 
 **Fix:**
 In `cot0/main.cot`, reset `gs.branches_count = 0` before calling `genssa()` for each function.
+
+---
+
+### BUG-043: Arrays with >3 elements segfault in cot0-stage1
+
+**Status:** FIXED
+**Priority:** P1 (was blocking many tests)
+**Discovered:** 2026-01-21
+**Fixed:** 2026-01-21
+
+**Description:**
+Arrays with more than 3 elements segfaulted at runtime when compiled by cot0-stage1.
+
+**Root Cause:**
+Same as BUG-044 - stack offset calculation assumed all locals were 8 bytes, causing array storage to overlap with subsequent locals.
+
+**Fix:**
+Same fix as BUG-044 - use actual local sizes for stack layout.
+
+---
+
+### BUG-044: Second local variable after array corrupts indexing in cot0-stage1
+
+**Status:** FIXED
+**Priority:** P1 (was blocking slice tests)
+**Discovered:** 2026-01-21
+**Fixed:** 2026-01-21
+
+**Description:**
+Declaring a second local variable after an array variable corrupted the array indexing result.
+
+**Root Cause:**
+In `cot0/main.cot`, stack offset calculation used `local_idx * 8`, assuming all locals are 8 bytes. Arrays need more space (e.g., `[5]i64` needs 40 bytes), so subsequent locals overlapped with array storage.
+
+**Zig Reference:**
+`src/ssa/stackalloc.zig:364-369` - Zig accumulates offsets based on actual `local_sizes`:
+```zig
+for (f.local_sizes, 0..) |size, idx| {
+    current_offset = (current_offset + 7) & ~@as(i32, 7);
+    f.local_offsets[idx] = current_offset;
+    current_offset += @intCast(size);
+}
+```
+
+**Fix:**
+1. `cot0/frontend/ir.cot` - Added `func_builder_set_local_size()` function
+2. `cot0/frontend/lower.cot` - In `lower_array_lit_to_local`, set local size to `elements_count * 8`
+3. `cot0/main.cot` - Copy IR local sizes to SSA locals, compute stack offsets using cumulative sizes instead of `local_idx * 8`
 
 ---
 

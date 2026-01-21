@@ -261,6 +261,8 @@ fn genssa_value(gs: *GenState, v: *Value) {
         genssa_const_string(gs, v);
     } else if v.op == Op.StringMake {
         genssa_string_make(gs, v);
+    } else if v.op == Op.SliceMake {
+        genssa_slice_make(gs, v);
     } else if v.op == Op.Add64 {
         genssa_add(gs, v);
     } else if v.op == Op.Sub64 {
@@ -365,6 +367,24 @@ fn genssa_string_make(gs: *GenState, v: *Value) {
     // Full string support would need to handle the len as well
 }
 
+fn genssa_slice_make(gs: *GenState, v: *Value) {
+    // SliceMake: args[0]=ptr, args[1]=len
+    // Result is a slice (ptr, len pair)
+    // For now, just move ptr to dest register for indexing
+    let rd: i64 = v.reg;
+    if rd < 0 { return; }
+
+    let f: *Func = gs.func;
+    let ptr_val: *Value = func_get_value(f, v.args[0]);
+
+    // Move ptr to destination register
+    if ptr_val.reg >= 0 and ptr_val.reg != rd {
+        emit_inst(gs, encode_mov_reg(rd, ptr_val.reg));
+    }
+    // Note: len is in args[1] but for now we just pass ptr
+    // Full slice support would store (ptr, len) together
+}
+
 fn genssa_add(gs: *GenState, v: *Value) {
     let rd: i64 = v.reg;
     if rd < 0 { return; }
@@ -420,8 +440,8 @@ fn genssa_div(gs: *GenState, v: *Value) {
 
 fn genssa_mod(gs: *GenState, v: *Value) {
     // ARM64 doesn't have MOD - compute as: a % b = a - (a/b)*b
-    // This requires a temp register, which complicates things
-    // For now, just emit SDIV (incomplete)
+    // Following Zig compiler pattern from src/codegen/arm64.zig:1684-1702
+    // Use x16 (IP0) as scratch register
     let rd: i64 = v.reg;
     if rd < 0 { return; }
 
@@ -429,8 +449,15 @@ fn genssa_mod(gs: *GenState, v: *Value) {
     let arg0: *Value = func_get_value(f, v.args[0]);
     let arg1: *Value = func_get_value(f, v.args[1]);
 
-    // TODO: Full MOD implementation
-    emit_inst(gs, encode_sdiv(rd, arg0.reg, arg1.reg));
+    let rn: i64 = arg0.reg;  // dividend (a)
+    let rm: i64 = arg1.reg;  // divisor (b)
+
+    // x16 = a / b (quotient)
+    emit_inst(gs, encode_sdiv(16, rn, rm));
+    // x16 = (a / b) * b
+    emit_inst(gs, encode_mul(16, 16, rm));
+    // dest = a - (a / b) * b (remainder)
+    emit_inst(gs, encode_sub_reg(rd, rn, 16));
 }
 
 fn genssa_and(gs: *GenState, v: *Value) {

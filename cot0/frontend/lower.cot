@@ -379,6 +379,8 @@ fn lower_stmt(l: *Lowerer, node: *Node) {
         lower_if(l, node);
     } else if node.kind == NodeKind.WhileStmt {
         lower_while(l, node);
+    } else if node.kind == NodeKind.ForStmt {
+        lower_for(l, node);
     } else if node.kind == NodeKind.BreakStmt {
         lower_break(l);
     } else if node.kind == NodeKind.ContinueStmt {
@@ -434,11 +436,19 @@ fn lower_var_decl(l: *Lowerer, node: *Node) {
 
     // is_mutable = NOT is_let (var = mutable, let = immutable)
     let is_mutable: bool = node.field0 == 0;
-    let local_idx: i64 = func_builder_add_local(fb, node.field1, node.field2, TYPE_I64, is_mutable);
+    let type_handle: i64 = node.field4;
+
+    // Determine local type based on type_handle
+    // PTYPE_SLICE_BASE = 100000, PTYPE_ARRAY_BASE = 10000, PTYPE_USER_BASE = 100
+    var local_type: i64 = TYPE_I64;
+    if type_handle >= PTYPE_SLICE_BASE {
+        local_type = TYPE_SLICE;  // Mark as slice for special indexing handling
+    }
+
+    let local_idx: i64 = func_builder_add_local(fb, node.field1, node.field2, local_type, is_mutable);
 
     // Check for type annotation indicating a struct type
-    let type_handle: i64 = node.field4;
-    if type_handle >= PTYPE_USER_BASE {
+    if type_handle >= PTYPE_USER_BASE and type_handle < PTYPE_ARRAY_BASE {
         // Extract struct type name from type annotation
         let type_name_start: i64 = type_handle - PTYPE_USER_BASE;
 
@@ -548,6 +558,10 @@ fn lower_array_lit_to_local(l: *Lowerer, node: *Node, local_idx: i64) {
 
     let elements_start: i64 = node.field0;
     let elements_count: i64 = node.field1;
+
+    // Set the local's size to fit all elements (8 bytes per element for i64)
+    let array_size: i64 = elements_count * 8;
+    func_builder_set_local_size(fb, local_idx, array_size);
 
     // For each element, store to the local at the appropriate offset
     var i: i64 = 0;
@@ -664,6 +678,130 @@ fn lower_while(l: *Lowerer, node: *Node) {
     func_builder_set_block(fb, exit_block);
 }
 
+// Lower for-in loop: for item in array { body }
+// Following Zig compiler pattern from src/frontend/lower.zig:lowerFor
+//
+// Desugars to:
+//   var __idx: i64 = 0;
+//   var __len: i64 = <array_length>;
+//   while __idx < __len {
+//       let item = array[__idx];
+//       body
+//       __idx = __idx + 1;
+//   }
+fn lower_for(l: *Lowerer, node: *Node) {
+    // ForStmt fields:
+    // field0 = binding name_start
+    // field1 = binding name_len
+    // field2 = iterable expression (node index)
+    // field3 = body (block node index)
+
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return; }
+
+    let binding_start: i64 = node.field0;
+    let binding_len: i64 = node.field1;
+    let iter_node_idx: i64 = node.field2;
+    let body_node_idx: i64 = node.field3;
+
+    // Get the iterable node
+    let iter_node: *Node = l.nodes + iter_node_idx;
+
+    // Determine array length from iterable
+    // For now, we need the iterable to be an identifier to look up its type
+    var array_len: i64 = 0;
+    var iter_local_idx: i64 = -1;
+    if iter_node.kind == NodeKind.Ident {
+        // Look up the local variable
+        var i: i64 = 0;
+        while i < fb.locals_count {
+            let local: *IRLocal = fb.locals + i;
+            if names_equal(l.source, local.name_start, local.name_len,
+                          iter_node.field0, iter_node.field1) {
+                iter_local_idx = i;
+                // Get array length from local size (assuming 8 bytes per element)
+                array_len = local.size / 8;
+                if array_len < 1 {
+                    array_len = 1;  // Default to at least 1
+                }
+            }
+            i = i + 1;
+        }
+    }
+
+    // Create index variable: var __idx: i64 = 0
+    let idx_local: i64 = func_builder_add_local(fb, 0, 0, TYPE_I64, true);  // unnamed temp local
+    let zero: i64 = func_builder_emit_const_int(fb, 0);
+    func_builder_emit_store_local(fb, idx_local, zero);
+
+    // Create length variable: var __len: i64 = <length>
+    let len_local: i64 = func_builder_add_local(fb, 0, 0, TYPE_I64, false);
+    let len_val: i64 = func_builder_emit_const_int(fb, array_len);
+    func_builder_emit_store_local(fb, len_local, len_val);
+
+    // Create loop blocks: header (condition), body, incr, exit
+    let header_block: i64 = func_builder_new_block(fb);
+    let body_block: i64 = func_builder_new_block(fb);
+    let incr_block: i64 = func_builder_new_block(fb);
+    let exit_block: i64 = func_builder_new_block(fb);
+
+    // Save outer loop context and set new one
+    // Note: continue goes to incr_block (increment then check), break goes to exit_block
+    let saved_continue: i64 = l.loop_continue_block;
+    let saved_break: i64 = l.loop_break_block;
+    l.loop_continue_block = incr_block;
+    l.loop_break_block = exit_block;
+
+    // Jump to header
+    func_builder_emit_jump(fb, header_block);
+
+    // Header block: __idx < __len
+    func_builder_set_block(fb, header_block);
+    let idx_val: i64 = func_builder_emit_load_local(fb, idx_local);
+    let len_cond: i64 = func_builder_emit_load_local(fb, len_local);
+    let cond: i64 = func_builder_emit_binary(fb, IR_OP_LT, idx_val, len_cond, TYPE_BOOL);
+    func_builder_emit_branch(fb, cond, body_block, exit_block);
+
+    // Body block: let item = array[__idx]; body
+    func_builder_set_block(fb, body_block);
+
+    // Create binding variable: let item = array[__idx]
+    let binding_local: i64 = func_builder_add_local(fb, binding_start, binding_len, TYPE_I64, false);
+
+    // Load current index
+    let cur_idx: i64 = func_builder_emit_load_local(fb, idx_local);
+
+    // Get element at index
+    if iter_local_idx >= 0 {
+        // For arrays: arr[__idx]
+        let elem_size: i64 = 8;  // Assume i64 elements
+        let elem_val: i64 = func_builder_emit_index_local(fb, iter_local_idx, cur_idx, elem_size, TYPE_I64);
+        func_builder_emit_store_local(fb, binding_local, elem_val);
+    }
+
+    // Lower body
+    let body_node: *Node = l.nodes + body_node_idx;
+    let body_terminated: bool = lower_block_check_terminated(l, body_node);
+    if not body_terminated {
+        func_builder_emit_jump(fb, incr_block);
+    }
+
+    // Increment block: __idx = __idx + 1
+    func_builder_set_block(fb, incr_block);
+    let idx_before_incr: i64 = func_builder_emit_load_local(fb, idx_local);
+    let one: i64 = func_builder_emit_const_int(fb, 1);
+    let idx_after_incr: i64 = func_builder_emit_binary(fb, IR_OP_ADD, idx_before_incr, one, TYPE_I64);
+    func_builder_emit_store_local(fb, idx_local, idx_after_incr);
+    func_builder_emit_jump(fb, header_block);
+
+    // Restore outer loop context
+    l.loop_continue_block = saved_continue;
+    l.loop_break_block = saved_break;
+
+    // Continue in exit block
+    func_builder_set_block(fb, exit_block);
+}
+
 fn lower_break(l: *Lowerer) {
     let fb: *FuncBuilder = l.current_func;
     if fb == null { return; }
@@ -710,6 +848,8 @@ fn lower_expr(l: *Lowerer, node: *Node) i64 {
         return lower_field_access(l, node);
     } else if node.kind == NodeKind.IndexExpr {
         return lower_index(l, node);
+    } else if node.kind == NodeKind.SliceExpr {
+        return lower_slice_expr(l, node);
     } else if node.kind == NodeKind.BuiltinCall {
         return lower_builtin_call(l, node);
     }
@@ -1124,7 +1264,82 @@ fn lower_index(l: *Lowerer, node: *Node) i64 {
     let index_node: *Node = l.nodes + index_node_idx;
     let index_ir: i64 = lower_expr(l, index_node);
 
-    // Case 1: Base is an identifier (local array variable)
+    // Case 1: Base is an identifier (local array or slice variable)
+    if base_node.kind == NodeKind.Ident {
+        // Look up the local variable
+        var local_idx: i64 = -1;
+        var local_type_idx: i64 = TYPE_I64;
+        var i: i64 = 0;
+        while i < fb.locals_count {
+            let local: *IRLocal = fb.locals + i;
+            if names_equal(l.source, local.name_start, local.name_len,
+                          base_node.field0, base_node.field1) {
+                local_idx = i;
+                local_type_idx = local.type_idx;
+            }
+            i = i + 1;
+        }
+
+        if local_idx >= 0 {
+            // Check if local is a slice - slices store a pointer, not data
+            if local_type_idx == TYPE_SLICE {
+                // For slices: load the pointer first, then index from it
+                let ptr_val: i64 = func_builder_emit_load_local(fb, local_idx);
+                return func_builder_emit_index_value(fb, ptr_val, index_ir, elem_size, elem_type);
+            } else {
+                // For arrays: index directly into local storage
+                return func_builder_emit_index_local(fb, local_idx, index_ir, elem_size, elem_type);
+            }
+        }
+    }
+
+    // Case 2: Base is any other expression - lower it and emit IndexValue
+    let base_val: i64 = lower_expr(l, base_node);
+    return func_builder_emit_index_value(fb, base_val, index_ir, elem_size, elem_type);
+}
+
+// Lower slice expression: arr[start:end]
+// SliceExpr fields:
+// field0 = base expression (node index)
+// field1 = start index (-1 if omitted)
+// field2 = end index (-1 if omitted)
+fn lower_slice_expr(l: *Lowerer, node: *Node) i64 {
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return NULL_NODE; }
+
+    let base_node: *Node = l.nodes + node.field0;
+    let start_node_idx: i64 = node.field1;
+    let end_node_idx: i64 = node.field2;
+
+    // For cot0, assume element type is i64 (8 bytes)
+    let elem_size: i64 = 8;
+
+    // Default start to 0 if not specified
+    var start_ir: i64;
+    if start_node_idx < 0 {
+        start_ir = func_builder_emit_const_int(fb, 0);
+    } else {
+        let start_node: *Node = l.nodes + start_node_idx;
+        start_ir = lower_expr(l, start_node);
+    }
+
+    // Lower base and get end index
+    // For arrays, we need the array length if end is not specified
+    var end_ir: i64;
+    if end_node_idx < 0 {
+        // End not specified - would need array length
+        // For now, default to a placeholder (should come from type info)
+        end_ir = func_builder_emit_const_int(fb, 0);
+    } else {
+        let end_node: *Node = l.nodes + end_node_idx;
+        end_ir = lower_expr(l, end_node);
+    }
+
+    // Calculate length: end - start
+    let len_ir: i64 = func_builder_emit_binary(fb, IR_OP_SUB, end_ir, start_ir, TYPE_I64);
+
+    // Get pointer to base[start]
+    // If base is a local array, get address of element at start index
     if base_node.kind == NodeKind.Ident {
         // Look up the local variable
         var local_idx: i64 = -1;
@@ -1139,14 +1354,24 @@ fn lower_index(l: *Lowerer, node: *Node) i64 {
         }
 
         if local_idx >= 0 {
-            // Emit index into local array
-            return func_builder_emit_index_local(fb, local_idx, index_ir, elem_size, elem_type);
+            // Get address of local array
+            let base_ptr: i64 = func_builder_emit_addr_local(fb, local_idx, TYPE_I64);
+            // Calculate offset: start * elem_size
+            let elem_size_ir: i64 = func_builder_emit_const_int(fb, elem_size);
+            let offset_ir: i64 = func_builder_emit_binary(fb, IR_OP_MUL, start_ir, elem_size_ir, TYPE_I64);
+            // Add offset to base pointer
+            let ptr_ir: i64 = func_builder_emit_binary(fb, IR_OP_ADD, base_ptr, offset_ir, TYPE_I64);
+            // Make slice (ptr, len)
+            return func_builder_emit_make_slice(fb, ptr_ir, len_ir, TYPE_I64);
         }
     }
 
-    // Case 2: Base is any other expression - lower it and emit IndexValue
+    // Fallback: lower base expression and treat as pointer
     let base_val: i64 = lower_expr(l, base_node);
-    return func_builder_emit_index_value(fb, base_val, index_ir, elem_size, elem_type);
+    let elem_size_ir: i64 = func_builder_emit_const_int(fb, elem_size);
+    let offset_ir: i64 = func_builder_emit_binary(fb, IR_OP_MUL, start_ir, elem_size_ir, TYPE_I64);
+    let ptr_ir: i64 = func_builder_emit_binary(fb, IR_OP_ADD, base_val, offset_ir, TYPE_I64);
+    return func_builder_emit_make_slice(fb, ptr_ir, len_ir, TYPE_I64);
 }
 
 fn lower_field_assign(l: *Lowerer, target: *Node, value_idx: i64) i64 {

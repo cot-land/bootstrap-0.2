@@ -113,6 +113,7 @@ enum IRNodeKind {
 
     // Builtins
     MakeString,   // @string(ptr, len): left = ptr_expr, right = len_expr
+    MakeSlice,    // Slice from array: left = ptr_expr, right = len_expr
 
     // Variable access
     LoadLocal,
@@ -427,6 +428,13 @@ fn func_builder_add_param(fb: *FuncBuilder, name_start: i64, name_len: i64,
     return idx;
 }
 
+// Set the size of a local variable (for arrays)
+fn func_builder_set_local_size(fb: *FuncBuilder, local_idx: i64, size: i64) {
+    if local_idx < 0 or local_idx >= fb.locals_count { return; }
+    let local: *IRLocal = fb.locals + local_idx;
+    local.size = size;
+}
+
 fn func_builder_emit(fb: *FuncBuilder, node: IRNode) i64 {
     if fb.nodes_count >= fb.nodes_cap {
         return NULL_IR_NODE;
@@ -665,5 +673,14 @@ fn func_builder_emit_make_string(fb: *FuncBuilder, ptr_expr: i64, len_expr: i64)
     var node: IRNode = ir_node_new(IRNodeKind.MakeString, TYPE_STRING);
     node.left = ptr_expr;    // Pointer expression
     node.right = len_expr;   // Length expression
+    return func_builder_emit(fb, node);
+}
+
+// Emit slice creation: left = pointer to first element, right = length
+// Slice is represented as (ptr, len) tuple like strings
+fn func_builder_emit_make_slice(fb: *FuncBuilder, ptr_expr: i64, len_expr: i64, slice_type: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.MakeSlice, slice_type);
+    node.left = ptr_expr;    // Pointer to first element
+    node.right = len_expr;   // Length of slice
     return func_builder_emit(fb, node);
 }

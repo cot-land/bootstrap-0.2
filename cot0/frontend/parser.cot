@@ -158,10 +158,19 @@ fn parse_type(p: *Parser) i64 {
         return PTYPE_PTR_BASE + pointee;
     }
 
-    // Array type: [size]T
+    // Array type: [size]T or slice type: []T
+    // Following Zig compiler pattern from src/frontend/parser.zig:563-580
     if kind == TokenType.LBracket {
         parser_advance(p);  // consume '['
-        // Parse array size (must be integer literal)
+
+        // Check for slice type []T (empty brackets)
+        if parser_check(p, TokenType.RBracket) {
+            parser_advance(p);  // consume ']'
+            let elem_type: i64 = parse_type(p);
+            return ptype_register_slice(elem_type);
+        }
+
+        // Array type [size]T - parse size (must be integer literal)
         var array_size: i64 = 0;
         if parser_check(p, TokenType.Int) {
             // Extract value using same pattern as parse_int_lit
@@ -646,19 +655,44 @@ fn parse_unary(p: *Parser) i64 {
 
                 result = node_call(p.pool, result, args_start, args_count, call_start, end);
             }
-            // Check for array indexing: expr[index]
+            // Check for array indexing or slicing: expr[index] or expr[start:end]
+            // Following Zig compiler pattern from src/frontend/parser.zig:760-802
             else if parser_check(p, TokenType.LBracket) {
                 let result_node: *Node = node_get(p.pool, result);
                 let start: i64 = result_node.start;
                 parser_advance(p);  // Consume '['
 
-                // Parse index expression
-                let index: i64 = parse_expr(p);
+                if parser_check(p, TokenType.Colon) {
+                    // Slice from beginning: arr[:end]
+                    parser_advance(p);  // Consume ':'
+                    var slice_end: i64 = -1;
+                    if not parser_check(p, TokenType.RBracket) {
+                        slice_end = parse_expr(p);
+                    }
+                    let end: i64 = p.current.start + p.current.end;
+                    parser_want(p, TokenType.RBracket);
+                    result = node_slice(p.pool, result, -1, slice_end, start, end);
+                } else {
+                    // Parse start/index expression
+                    let start_or_idx: i64 = parse_expr(p);
 
-                let end: i64 = p.current.start + p.current.end;
-                parser_want(p, TokenType.RBracket);
-
-                result = node_index(p.pool, result, index, start, end);
+                    if parser_check(p, TokenType.Colon) {
+                        // Slice: arr[start:end] or arr[start:]
+                        parser_advance(p);  // Consume ':'
+                        var slice_end: i64 = -1;
+                        if not parser_check(p, TokenType.RBracket) {
+                            slice_end = parse_expr(p);
+                        }
+                        let end: i64 = p.current.start + p.current.end;
+                        parser_want(p, TokenType.RBracket);
+                        result = node_slice(p.pool, result, start_or_idx, slice_end, start, end);
+                    } else {
+                        // Simple index: arr[index]
+                        let end: i64 = p.current.start + p.current.end;
+                        parser_want(p, TokenType.RBracket);
+                        result = node_index(p.pool, result, start_or_idx, start, end);
+                    }
+                }
             }
             // Check for struct literal: TypeName{ .field = value, ... }
             // IMPORTANT: Only if next token after '{' is '.' (to distinguish from blocks)
@@ -883,6 +917,30 @@ fn parse_while_stmt(p: *Parser) i64 {
     return node_while_stmt(p.pool, cond, body, start, end);
 }
 
+// Parse for-in statement: for item in array { body }
+// Following Zig compiler pattern from src/frontend/parser.zig:parseForStmt
+fn parse_for_stmt(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    parser_want(p, TokenType.For);
+
+    // Loop variable (binding)
+    let binding_start: i64 = p.current.start;
+    let binding_len: i64 = p.current.end;
+    parser_want(p, TokenType.Ident);
+
+    // Expect 'in' keyword
+    parser_want(p, TokenType.In);
+
+    // Iterable expression (array or slice)
+    let iterable: i64 = parse_expr(p);
+
+    // Body block
+    let body: i64 = parse_block(p);
+
+    let end: i64 = p.current.start;
+    return node_for_stmt(p.pool, binding_start, binding_len, iterable, body, start, end);
+}
+
 // Parse expression statement: expr;
 fn parse_expr_stmt(p: *Parser) i64 {
     let start: i64 = p.current.start;
@@ -913,6 +971,10 @@ fn parse_stmt(p: *Parser) i64 {
 
     if kind == TokenType.While {
         return parse_while_stmt(p);
+    }
+
+    if kind == TokenType.For {
+        return parse_for_stmt(p);
     }
 
     // Break statement
