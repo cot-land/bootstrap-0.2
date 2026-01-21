@@ -1,0 +1,445 @@
+// Cot0 Dominator Tree Computation
+// Computes the dominator tree for a function's control flow graph.
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/ssa/dom.go
+// Reference: bootstrap-0.2/src/ssa/dom.zig
+//
+// Block A dominates block B if every path from entry to B goes through A.
+// Uses the simple iterative algorithm (not Lengauer-Tarjan) for clarity.
+
+// Note: func.cot must be imported before this file
+// Note: list.cot is imported via func.cot → block.cot chain
+// These dependencies come from the import order in genssa.cot
+
+// ============================================================================
+// Dominator Tree State
+// ============================================================================
+
+// DomTree holds dominator computation state and results.
+// After computation, each block's dom field contains its immediate dominator ID.
+struct DomTree {
+    // Reverse postorder of blocks
+    rpo: I64List,
+
+    // RPO number for each block (block_id -> rpo position)
+    // Stored as parallel array: rpo_num[block_id] = position
+    rpo_num: I64List,
+
+    // Visited flags for DFS (parallel array: visited[block_id])
+    visited: I64List,
+
+    // Children in dominator tree - stored as flat list of (parent_id, child_id) pairs
+    // Use DomTree_getChildren to iterate
+    children: I64List,
+
+    // Dominance frontier - stored as flat list of (block_id, frontier_id) pairs
+    frontier: I64List,
+}
+
+// ============================================================================
+// Initialization
+// ============================================================================
+
+fn DomTree_init(dt: *DomTree) {
+    i64list_init(&dt.rpo);
+    i64list_init(&dt.rpo_num);
+    i64list_init(&dt.visited);
+    i64list_init(&dt.children);
+    i64list_init(&dt.frontier);
+}
+
+fn DomTree_deinit(dt: *DomTree) {
+    i64list_deinit(&dt.rpo);
+    i64list_deinit(&dt.rpo_num);
+    i64list_deinit(&dt.visited);
+    i64list_deinit(&dt.children);
+    i64list_deinit(&dt.frontier);
+}
+
+// ============================================================================
+// Helper: Ensure parallel arrays sized for block count
+// ============================================================================
+
+fn DomTree_ensureSize(dt: *DomTree, block_count: i64) {
+    // Ensure rpo_num and visited are sized for all blocks
+    i64list_ensure_capacity(&dt.rpo_num, block_count);
+    i64list_ensure_capacity(&dt.visited, block_count);
+
+    // Initialize to -1 / false
+    while dt.rpo_num.count < block_count {
+        i64list_append(&dt.rpo_num, -1);
+    }
+    while dt.visited.count < block_count {
+        i64list_append(&dt.visited, 0);
+    }
+}
+
+fn DomTree_setVisited(dt: *DomTree, block_id: i64, val: bool) {
+    if block_id >= 0 and block_id < dt.visited.count {
+        if val {
+            i64list_set(&dt.visited, block_id, 1);
+        } else {
+            i64list_set(&dt.visited, block_id, 0);
+        }
+    }
+}
+
+fn DomTree_isVisited(dt: *DomTree, block_id: i64) bool {
+    if block_id < 0 or block_id >= dt.visited.count {
+        return false;
+    }
+    return i64list_get(&dt.visited, block_id) != 0;
+}
+
+fn DomTree_setRPONum(dt: *DomTree, block_id: i64, num: i64) {
+    if block_id >= 0 and block_id < dt.rpo_num.count {
+        i64list_set(&dt.rpo_num, block_id, num);
+    }
+}
+
+fn DomTree_getRPONum(dt: *DomTree, block_id: i64, entry: i64) i64 {
+    if block_id == entry {
+        return 0;
+    }
+    if block_id < 0 or block_id >= dt.rpo_num.count {
+        return 999999;
+    }
+    let num: i64 = i64list_get(&dt.rpo_num, block_id);
+    if num < 0 {
+        return 999999;
+    }
+    return num;
+}
+
+// ============================================================================
+// Reverse Postorder Traversal
+// ============================================================================
+
+fn DomTree_postorderDFS(dt: *DomTree, f: *Func, block_id: i64) {
+    if block_id < 0 or block_id >= f.blocks_count {
+        return;
+    }
+    if DomTree_isVisited(dt, block_id) {
+        return;
+    }
+
+    DomTree_setVisited(dt, block_id, true);
+
+    // Visit successors first
+    let b: *Block = Func_getBlock(f, block_id);
+    var i: i64 = 0;
+    while i < b.succs_count {
+        let succ_id: i64 = b.succs[i];
+        if succ_id >= 0 {
+            DomTree_postorderDFS(dt, f, succ_id);
+        }
+        i = i + 1;
+    }
+
+    // Add this block to postorder (will reverse later for RPO)
+    i64list_append(&dt.rpo, block_id);
+}
+
+fn DomTree_computeRPO(dt: *DomTree, f: *Func) {
+    if f.entry_block < 0 {
+        return;
+    }
+
+    // Clear visited flags
+    var i: i64 = 0;
+    while i < f.blocks_count {
+        DomTree_setVisited(dt, i, false);
+        i = i + 1;
+    }
+
+    // DFS from entry
+    i64list_clear(&dt.rpo);
+    DomTree_postorderDFS(dt, f, f.entry_block);
+
+    // Reverse to get RPO
+    var left: i64 = 0;
+    var right: i64 = dt.rpo.count - 1;
+    while left < right {
+        let tmp: i64 = i64list_get(&dt.rpo, left);
+        i64list_set(&dt.rpo, left, i64list_get(&dt.rpo, right));
+        i64list_set(&dt.rpo, right, tmp);
+        left = left + 1;
+        right = right - 1;
+    }
+
+    // Assign RPO numbers
+    i = 0;
+    while i < dt.rpo.count {
+        let bid: i64 = i64list_get(&dt.rpo, i);
+        DomTree_setRPONum(dt, bid, i);
+        i = i + 1;
+    }
+}
+
+// ============================================================================
+// Dominator Computation
+// ============================================================================
+
+fn DomTree_intersect(dt: *DomTree, f: *Func, b1: i64, b2: i64, entry: i64) i64 {
+    var finger1: i64 = b1;
+    var finger2: i64 = b2;
+
+    while finger1 != finger2 {
+        while DomTree_getRPONum(dt, finger1, entry) > DomTree_getRPONum(dt, finger2, entry) {
+            let b: *Block = Func_getBlock(f, finger1);
+            if b.dom < 0 {
+                finger1 = entry;
+            } else {
+                finger1 = b.dom;
+            }
+        }
+        while DomTree_getRPONum(dt, finger2, entry) > DomTree_getRPONum(dt, finger1, entry) {
+            let b: *Block = Func_getBlock(f, finger2);
+            if b.dom < 0 {
+                finger2 = entry;
+            } else {
+                finger2 = b.dom;
+            }
+        }
+    }
+
+    return finger1;
+}
+
+// Compute dominators for all blocks in function
+fn DomTree_compute(dt: *DomTree, f: *Func) {
+    if f.entry_block < 0 or f.blocks_count == 0 {
+        return;
+    }
+
+    // Ensure arrays are sized
+    DomTree_ensureSize(dt, f.blocks_count);
+
+    // Initialize all dom fields to INVALID_BLOCK
+    var i: i64 = 0;
+    while i < f.blocks_count {
+        let b: *Block = Func_getBlock(f, i);
+        b.dom = INVALID_BLOCK;
+        b.dom_level = 0;
+        i = i + 1;
+    }
+
+    // Compute RPO
+    DomTree_computeRPO(dt, f);
+
+    let entry: i64 = f.entry_block;
+    let entry_b: *Block = Func_getBlock(f, entry);
+    entry_b.dom = INVALID_BLOCK;
+    entry_b.dom_level = 0;
+
+    // Iterative algorithm
+    var changed: bool = true;
+    while changed {
+        changed = false;
+
+        i = 0;
+        while i < dt.rpo.count {
+            let bid: i64 = i64list_get(&dt.rpo, i);
+            if bid == entry {
+                i = i + 1;
+                continue;
+            }
+
+            let b: *Block = Func_getBlock(f, bid);
+            var new_idom: i64 = INVALID_BLOCK;
+            var first_pred: bool = true;
+
+            var p: i64 = 0;
+            while p < b.preds_count {
+                let pred_id: i64 = b.preds[p];
+                if pred_id < 0 {
+                    p = p + 1;
+                    continue;
+                }
+
+                let pred: *Block = Func_getBlock(f, pred_id);
+                if pred.dom < 0 and pred_id != entry {
+                    p = p + 1;
+                    continue;
+                }
+
+                if first_pred {
+                    new_idom = pred_id;
+                    first_pred = false;
+                } else {
+                    new_idom = DomTree_intersect(dt, f, new_idom, pred_id, entry);
+                }
+
+                p = p + 1;
+            }
+
+            if new_idom != b.dom {
+                b.dom = new_idom;
+                changed = true;
+            }
+
+            i = i + 1;
+        }
+    }
+
+    // Build children lists
+    DomTree_buildChildren(dt, f);
+
+    // Compute depths
+    DomTree_computeDepths(dt, f);
+}
+
+// ============================================================================
+// Children and Depth Computation
+// ============================================================================
+
+fn DomTree_buildChildren(dt: *DomTree, f: *Func) {
+    i64list_clear(&dt.children);
+
+    var i: i64 = 0;
+    while i < f.blocks_count {
+        let b: *Block = Func_getBlock(f, i);
+        if b.dom >= 0 and b.dom < f.blocks_count {
+            // Store (parent_id, child_id) pair
+            i64list_append(&dt.children, b.dom);
+            i64list_append(&dt.children, i);
+        }
+        i = i + 1;
+    }
+}
+
+fn DomTree_computeDepths(dt: *DomTree, f: *Func) {
+    if f.entry_block < 0 {
+        return;
+    }
+
+    // BFS using a simple worklist
+    var worklist: I64List = undefined;
+    i64list_init(&worklist);
+
+    let entry_b: *Block = Func_getBlock(f, f.entry_block);
+    entry_b.dom_level = 0;
+    i64list_append(&worklist, f.entry_block);
+
+    var idx: i64 = 0;
+    while idx < worklist.count {
+        let bid: i64 = i64list_get(&worklist, idx);
+        idx = idx + 1;
+
+        let b: *Block = Func_getBlock(f, bid);
+        let parent_depth: i64 = b.dom_level;
+
+        // Find children of bid
+        var i: i64 = 0;
+        while i < dt.children.count {
+            let parent_id: i64 = i64list_get(&dt.children, i);
+            let child_id: i64 = i64list_get(&dt.children, i + 1);
+
+            if parent_id == bid {
+                let child: *Block = Func_getBlock(f, child_id);
+                child.dom_level = parent_depth + 1;
+                i64list_append(&worklist, child_id);
+            }
+
+            i = i + 2;
+        }
+    }
+
+    i64list_deinit(&worklist);
+}
+
+// ============================================================================
+// Dominator Queries
+// ============================================================================
+
+fn DomTree_getIdom(f: *Func, block_id: i64) i64 {
+    if block_id < 0 or block_id >= f.blocks_count {
+        return INVALID_BLOCK;
+    }
+    let b: *Block = Func_getBlock(f, block_id);
+    return b.dom;
+}
+
+fn DomTree_getDepth(f: *Func, block_id: i64) i64 {
+    if block_id < 0 or block_id >= f.blocks_count {
+        return 0;
+    }
+    let b: *Block = Func_getBlock(f, block_id);
+    return b.dom_level;
+}
+
+fn DomTree_dominates(f: *Func, a_id: i64, b_id: i64) bool {
+    if a_id == b_id {
+        return true;
+    }
+
+    var current: i64 = b_id;
+    while current >= 0 {
+        if current == a_id {
+            return true;
+        }
+        let b: *Block = Func_getBlock(f, current);
+        current = b.dom;
+    }
+    return false;
+}
+
+fn DomTree_strictlyDominates(f: *Func, a_id: i64, b_id: i64) bool {
+    return a_id != b_id and DomTree_dominates(f, a_id, b_id);
+}
+
+// ============================================================================
+// Dominance Frontier
+// ============================================================================
+
+fn DomTree_computeFrontier(dt: *DomTree, f: *Func) {
+    i64list_clear(&dt.frontier);
+
+    var i: i64 = 0;
+    while i < f.blocks_count {
+        let b: *Block = Func_getBlock(f, i);
+
+        if b.preds_count < 2 {
+            i = i + 1;
+            continue;
+        }
+
+        var p: i64 = 0;
+        while p < b.preds_count {
+            let pred_id: i64 = b.preds[p];
+            if pred_id < 0 {
+                p = p + 1;
+                continue;
+            }
+
+            var runner: i64 = pred_id;
+            while runner >= 0 and runner != b.dom {
+                // Add (runner, i) to frontier
+                i64list_append(&dt.frontier, runner);
+                i64list_append(&dt.frontier, i);
+
+                let r: *Block = Func_getBlock(f, runner);
+                runner = r.dom;
+            }
+
+            p = p + 1;
+        }
+
+        i = i + 1;
+    }
+}
+
+// Get frontier blocks for a given block (appends to out list)
+fn DomTree_getFrontierFor(dt: *DomTree, block_id: i64, out: *I64List) {
+    var i: i64 = 0;
+    while i < dt.frontier.count {
+        let bid: i64 = i64list_get(&dt.frontier, i);
+        let fid: i64 = i64list_get(&dt.frontier, i + 1);
+
+        if bid == block_id {
+            i64list_append(out, fid);
+        }
+
+        i = i + 2;
+    }
+}

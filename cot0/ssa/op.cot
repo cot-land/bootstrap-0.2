@@ -281,3 +281,21 @@ fn Op_argCount(op: Op) i64 {
     // Phi and Call have variable args
     return -1;
 }
+
+// Check if operation is a branch (affects control flow)
+// Reference: Zig's Op.isBranch()
+fn Op_isBranch(op: Op) bool {
+    if op == Op.Return { return true; }
+    if op == Op.TailCall { return true; }
+    // Note: actual branch instructions are in block control, not values
+    return false;
+}
+
+// Check if operation is a call
+// Reference: Zig's Op.isCall()
+fn Op_isCall(op: Op) bool {
+    if op == Op.Call { return true; }
+    if op == Op.TailCall { return true; }
+    if op == Op.ClosureCall { return true; }
+    return false;
+}

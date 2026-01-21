@@ -1,6 +1,6 @@
 # Bootstrap 0.2 - Project Status
 
-**Last Updated: 2026-01-21**
+**Last Updated: 2026-01-22**
 
 ## Current Goal
 
@@ -9,7 +9,7 @@
 ║                                                                               ║
 ║   Make EVERY function in cot0/COMPARISON.md show "Same"                       ║
 ║                                                                               ║
-║   Progress: 0 / 21 sections complete                                          ║
+║   Progress: 1 / 21 sections complete (3.5 ssa/builder.cot)                     ║
 ║                                                                               ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 ```
@@ -35,7 +35,7 @@ Work through cot0/COMPARISON.md top to bottom. Mark each section complete when A
 | 3.2 | ssa/value.cot | Pending | 9 | 0 | 3 | 0 |
 | 3.3 | ssa/block.cot | Pending | 10 | 0 | 3 | 0 |
 | 3.4 | ssa/func.cot | Pending | 8 | 0 | 4 | 0 |
-| 3.5 | ssa/builder.cot | Pending | 31 | 1 | 3 | 0 |
+| 3.5 | ssa/builder.cot | **DONE** | 35 | 0 | 3 | 0 |
 | 3.6 | ssa/liveness.cot | Pending | 5 | 2 | 3 | 0 |
 | 3.7 | ssa/regalloc.cot | Pending | 9 | 0 | 4 | 0 |
 | 4.1 | arm64/asm.cot | Pending | 41 | 2 | 7 | 5 |
@@ -57,8 +57,8 @@ Functions to make "Same":
 |---------------|--------------|---------------|
 | `compile()` | `Driver.compileFile()` | Rename to `compileFile` |
 | `print_usage()` | inline | Keep (already same concept) |
-| `ir_op_to_ssa_op()` | SSA conversion | Move to appropriate module |
-| `ir_unary_op_to_ssa_op()` | SSA conversion | Move to appropriate module |
+| `ir_op_to_ssa_op()` | SSA conversion | ✓ DONE - Moved to ssa/builder.cot |
+| `ir_unary_op_to_ssa_op()` | SSA conversion | ✓ DONE - Moved to ssa/builder.cot |
 | `print_int()` | `std.debug.print()` | Remove (use stdlib) |
 | `read_file()` | `std.fs.cwd().readFileAlloc()` | Match Zig pattern |
 | `write_file()` | `std.fs.cwd().writeFile()` | Match Zig pattern |
