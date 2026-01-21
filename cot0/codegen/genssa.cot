@@ -387,7 +387,43 @@ fn GenState_constInt(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let imm: i64 = v.aux_int;
-    GenState_emitInst(gs, encode_mov_imm(rd, imm));
+
+    // Handle negative small numbers with MOVN
+    if imm < 0 and imm >= (0 - 65536) {
+        // MOVN loads ~imm16, so for -1 we use MOVN x, 0 (since ~0 = -1)
+        // For -n where n <= 65536, we use MOVN x, (n-1)
+        let notval: i64 = (0 - imm) - 1;
+        GenState_emitInst(gs, encode_movn(rd, notval, 0));
+        return;
+    }
+
+    // Positive values that fit in 16 bits
+    if imm >= 0 and imm <= 65535 {
+        GenState_emitInst(gs, encode_movz(rd, imm, 0));
+        return;
+    }
+
+    // Large positive values need MOVZ + MOVK sequence
+    // MOVZ loads low 16 bits (shift 0)
+    GenState_emitInst(gs, encode_movz(rd, imm & 65535, 0));
+
+    // MOVK for bits 16-31 if non-zero
+    let bits16: i64 = (imm / 65536) & 65535;
+    if bits16 != 0 {
+        GenState_emitInst(gs, encode_movk(rd, bits16, 1));
+    }
+
+    // MOVK for bits 32-47 if non-zero
+    let bits32: i64 = (imm / 4294967296) & 65535;
+    if bits32 != 0 {
+        GenState_emitInst(gs, encode_movk(rd, bits32, 2));
+    }
+
+    // MOVK for bits 48-63 if non-zero
+    let bits48: i64 = (imm / 281474976710656) & 65535;
+    if bits48 != 0 {
+        GenState_emitInst(gs, encode_movk(rd, bits48, 3));
+    }
 }
 
 fn GenState_constBool(gs: *GenState, v: *Value) {
