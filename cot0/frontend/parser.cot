@@ -356,7 +356,7 @@ fn parse_atom(p: *Parser) i64 {
         parser_advance(p);  // consume '['
 
         // Parse elements
-        let elements_start: i64 = p.pool.children_count;
+        let elements_start: i64 = pool_children_count(p.pool);
         var elements_count: i64 = 0;
 
         // Check for empty array []
@@ -526,15 +526,26 @@ fn parse_unary(p: *Parser) i64 {
         return node_address_of(p.pool, operand, start, p.current.start);
     }
 
+    // Switch expression: switch x { 1 => a, else => b }
+    if kind == TokenType.Switch {
+        return parse_switch_expr(p);
+    }
+
     // Builtin call: @string(ptr, len), @intCast(type, val), @sizeOf(type)
     if kind == TokenType.At {
         let start: i64 = p.current.start;
         parser_advance(p);  // Consume '@'
 
-        // Parse builtin name (must be an identifier)
+        // Parse builtin name (must be an identifier OR the keyword "string")
+        // Note: "string" is tokenized as TokenType.String, not Ident
         let name_start: i64 = p.current.start;
-        let name_len: i64 = p.current.end;
-        parser_want(p, TokenType.Ident);
+        let name_len: i64 = p.current.end;  // Token.end is the length
+        let is_string_keyword: bool = p.current.kind == TokenType.String;
+        if is_string_keyword {
+            parser_advance(p);  // Consume "string" keyword
+        } else {
+            parser_want(p, TokenType.Ident);
+        }
 
         parser_want(p, TokenType.LParen);
 
@@ -544,9 +555,8 @@ fn parse_unary(p: *Parser) i64 {
         var arg2: i64 = 0 - 1;
 
         // @string(ptr, len) - two expression args
-        if name_len == 6 and p.source[name_start] == 115 and p.source[name_start + 1] == 116 and
-           p.source[name_start + 2] == 114 and p.source[name_start + 3] == 105 and
-           p.source[name_start + 4] == 110 and p.source[name_start + 5] == 103 {
+        // Note: is_string_keyword is set above when we parsed the builtin name
+        if is_string_keyword {
             // "string" - parse two expr args
             arg1 = parse_expr(p);
             parser_want(p, TokenType.Comma);
@@ -631,24 +641,52 @@ fn parse_unary(p: *Parser) i64 {
                 let call_start: i64 = p.current.start;
                 parser_advance(p);  // Consume '('
 
-                // Record start of arguments in children array
-                let args_start: i64 = p.pool.children_count;
+                // NOTE: Do NOT capture args_start here! Inner calls add to children.
+                // We use temporary storage and add children AFTER parsing all args.
                 var args_count: i64 = 0;
+                // Store parsed argument node indices temporarily (max 8 args)
+                var arg0: i64 = -1;
+                var arg1: i64 = -1;
+                var arg2: i64 = -1;
+                var arg3: i64 = -1;
+                var arg4: i64 = -1;
+                var arg5: i64 = -1;
+                var arg6: i64 = -1;
+                var arg7: i64 = -1;
 
                 // Parse argument list
                 if not parser_check(p, TokenType.RParen) {
                     // First argument
                     let first_arg: i64 = parse_arg_expr(p);
-                    node_add_child(p.pool, first_arg);
+                    if args_count == 0 { arg0 = first_arg; }
                     args_count = args_count + 1;
 
                     // Additional arguments
                     while parser_got(p, TokenType.Comma) {
                         let next_arg: i64 = parse_arg_expr(p);
-                        node_add_child(p.pool, next_arg);
+                        if args_count == 1 { arg1 = next_arg; }
+                        else if args_count == 2 { arg2 = next_arg; }
+                        else if args_count == 3 { arg3 = next_arg; }
+                        else if args_count == 4 { arg4 = next_arg; }
+                        else if args_count == 5 { arg5 = next_arg; }
+                        else if args_count == 6 { arg6 = next_arg; }
+                        else if args_count == 7 { arg7 = next_arg; }
                         args_count = args_count + 1;
                     }
                 }
+
+                // NOW capture args_start - after all inner calls have completed
+                let args_start: i64 = pool_children_count(p.pool);
+
+                // Add arguments to children array
+                if args_count >= 1 { node_add_child(p.pool, arg0); }
+                if args_count >= 2 { node_add_child(p.pool, arg1); }
+                if args_count >= 3 { node_add_child(p.pool, arg2); }
+                if args_count >= 4 { node_add_child(p.pool, arg3); }
+                if args_count >= 5 { node_add_child(p.pool, arg4); }
+                if args_count >= 6 { node_add_child(p.pool, arg5); }
+                if args_count >= 7 { node_add_child(p.pool, arg6); }
+                if args_count >= 8 { node_add_child(p.pool, arg7); }
 
                 let end: i64 = p.current.start + p.current.end;
                 parser_want(p, TokenType.RParen);
@@ -707,7 +745,7 @@ fn parse_unary(p: *Parser) i64 {
                     parser_advance(p);  // Consume '{'
 
                     // Record start of field initializers in children array
-                    let fields_start: i64 = p.pool.children_count;
+                    let fields_start: i64 = pool_children_count(p.pool);
                     var fields_count: i64 = 0;
 
                     // Parse field initializers: .field = value, ...
@@ -874,6 +912,131 @@ fn parse_var_decl(p: *Parser) i64 {
     return node_var_decl(p.pool, is_let, name_start, name_len, type_start, type_handle, init_expr, start, end);
 }
 
+// Parse switch expression: switch x { 1 => a, 2 => b, else => c }
+// Following Zig compiler pattern from src/frontend/parser.zig:parseSwitchExpr
+fn parse_switch_expr(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    parser_want(p, TokenType.Switch);
+
+    // Parse subject expression
+    let subject: i64 = parse_unary(p);
+
+    parser_want(p, TokenType.LBrace);
+
+    // Track cases - store case nodes temporarily (max 16 cases)
+    var case0: i64 = -1;
+    var case1: i64 = -1;
+    var case2: i64 = -1;
+    var case3: i64 = -1;
+    var case4: i64 = -1;
+    var case5: i64 = -1;
+    var case6: i64 = -1;
+    var case7: i64 = -1;
+    var case8: i64 = -1;
+    var case9: i64 = -1;
+    var case10: i64 = -1;
+    var case11: i64 = -1;
+    var case12: i64 = -1;
+    var case13: i64 = -1;
+    var case14: i64 = -1;
+    var case15: i64 = -1;
+    var case_count: i64 = 0;
+    var else_body: i64 = -1;
+
+    while not parser_check(p, TokenType.RBrace) and not parser_at_end(p) {
+        let case_start: i64 = p.current.start;
+
+        // Check for else case
+        if parser_got(p, TokenType.Else) {
+            parser_want(p, TokenType.FatArrow);
+            else_body = parse_expr(p);
+            parser_got(p, TokenType.Comma);  // Optional trailing comma
+        } else {
+            // Parse case patterns (comma-separated until =>)
+            var pat0: i64 = -1;
+            var pat1: i64 = -1;
+            var pat2: i64 = -1;
+            var pat3: i64 = -1;
+            var pat_count: i64 = 0;
+
+            // First pattern
+            pat0 = parse_unary(p);
+            pat_count = 1;
+
+            // Additional patterns
+            while parser_check(p, TokenType.Comma) and not parser_check(p, TokenType.FatArrow) {
+                parser_advance(p);  // Consume comma
+                if parser_check(p, TokenType.FatArrow) or parser_check(p, TokenType.Else) {
+                    break;
+                }
+                if pat_count == 1 { pat1 = parse_unary(p); }
+                else if pat_count == 2 { pat2 = parse_unary(p); }
+                else if pat_count == 3 { pat3 = parse_unary(p); }
+                pat_count = pat_count + 1;
+            }
+
+            parser_want(p, TokenType.FatArrow);
+            let body: i64 = parse_expr(p);
+
+            // Add patterns to children
+            let patterns_start: i64 = pool_children_count(p.pool);
+            if pat_count >= 1 { node_add_child(p.pool, pat0); }
+            if pat_count >= 2 { node_add_child(p.pool, pat1); }
+            if pat_count >= 3 { node_add_child(p.pool, pat2); }
+            if pat_count >= 4 { node_add_child(p.pool, pat3); }
+
+            // Create case node
+            let case_node: i64 = node_switch_case(p.pool, patterns_start, pat_count,
+                                                   body, case_start, p.current.start);
+
+            // Store case node
+            if case_count == 0 { case0 = case_node; }
+            else if case_count == 1 { case1 = case_node; }
+            else if case_count == 2 { case2 = case_node; }
+            else if case_count == 3 { case3 = case_node; }
+            else if case_count == 4 { case4 = case_node; }
+            else if case_count == 5 { case5 = case_node; }
+            else if case_count == 6 { case6 = case_node; }
+            else if case_count == 7 { case7 = case_node; }
+            else if case_count == 8 { case8 = case_node; }
+            else if case_count == 9 { case9 = case_node; }
+            else if case_count == 10 { case10 = case_node; }
+            else if case_count == 11 { case11 = case_node; }
+            else if case_count == 12 { case12 = case_node; }
+            else if case_count == 13 { case13 = case_node; }
+            else if case_count == 14 { case14 = case_node; }
+            else if case_count == 15 { case15 = case_node; }
+            case_count = case_count + 1;
+
+            parser_got(p, TokenType.Comma);  // Optional trailing comma
+        }
+    }
+
+    parser_want(p, TokenType.RBrace);
+
+    // Add cases to children array
+    let cases_start: i64 = pool_children_count(p.pool);
+    if case_count >= 1 { node_add_child(p.pool, case0); }
+    if case_count >= 2 { node_add_child(p.pool, case1); }
+    if case_count >= 3 { node_add_child(p.pool, case2); }
+    if case_count >= 4 { node_add_child(p.pool, case3); }
+    if case_count >= 5 { node_add_child(p.pool, case4); }
+    if case_count >= 6 { node_add_child(p.pool, case5); }
+    if case_count >= 7 { node_add_child(p.pool, case6); }
+    if case_count >= 8 { node_add_child(p.pool, case7); }
+    if case_count >= 9 { node_add_child(p.pool, case8); }
+    if case_count >= 10 { node_add_child(p.pool, case9); }
+    if case_count >= 11 { node_add_child(p.pool, case10); }
+    if case_count >= 12 { node_add_child(p.pool, case11); }
+    if case_count >= 13 { node_add_child(p.pool, case12); }
+    if case_count >= 14 { node_add_child(p.pool, case13); }
+    if case_count >= 15 { node_add_child(p.pool, case14); }
+    if case_count >= 16 { node_add_child(p.pool, case15); }
+
+    let end: i64 = p.current.start;
+    return node_switch_expr(p.pool, subject, cases_start, case_count, else_body, start, end);
+}
+
 // Parse if statement: if expr { body } [else { body }]
 fn parse_if_stmt(p: *Parser) i64 {
     let start: i64 = p.current.start;
@@ -1020,7 +1183,7 @@ fn parse_block(p: *Parser) i64 {
     parser_want(p, TokenType.RBrace);
 
     // NOW add children - this ensures stmts_start is correct even with nested blocks
-    let stmts_start: i64 = p.pool.children_count;
+    let stmts_start: i64 = pool_children_count(p.pool);
     var i: i64 = 0;
     while i < stmts_count {
         node_add_child(p.pool, stmt_indices[i]);
@@ -1069,7 +1232,7 @@ fn parse_extern_fn_decl(p: *Parser) i64 {
 
     // Parameters
     parser_want(p, TokenType.LParen);
-    let params_start: i64 = p.pool.children_count;
+    let params_start: i64 = pool_children_count(p.pool);
     var params_count: i64 = 0;
 
     if not parser_check(p, TokenType.RParen) {
@@ -1112,7 +1275,7 @@ fn parse_fn_decl(p: *Parser) i64 {
 
     // Parameters
     parser_want(p, TokenType.LParen);
-    let params_start: i64 = p.pool.children_count;
+    let params_start: i64 = pool_children_count(p.pool);
     var params_count: i64 = 0;
 
     if not parser_check(p, TokenType.RParen) {
@@ -1190,7 +1353,7 @@ fn parse_struct_decl(p: *Parser) i64 {
     parser_want(p, TokenType.LBrace);
 
     // Parse fields
-    let fields_start: i64 = p.pool.children_count;
+    let fields_start: i64 = pool_children_count(p.pool);
     var fields_count: i64 = 0;
 
     while not parser_check(p, TokenType.RBrace) and not parser_at_end(p) {
@@ -1231,7 +1394,7 @@ fn parse_enum_decl(p: *Parser) i64 {
     parser_want(p, TokenType.LBrace);
 
     // Parse variants
-    let variants_start: i64 = p.pool.children_count;
+    let variants_start: i64 = pool_children_count(p.pool);
     var variants_count: i64 = 0;
 
     while not parser_check(p, TokenType.RBrace) and not parser_at_end(p) {
@@ -1384,7 +1547,7 @@ fn parse_decl(p: *Parser) i64 {
 // Parse entire file (list of declarations)
 fn parse_file(p: *Parser) i64 {
     // Store declarations in children array
-    let decls_start: i64 = p.pool.children_count;
+    let decls_start: i64 = pool_children_count(p.pool);
     var decls_count: i64 = 0;
 
     while not parser_at_end(p) {

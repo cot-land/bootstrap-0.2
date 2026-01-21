@@ -551,11 +551,19 @@ fn encode_eor_reg(rd: i64, rn: i64, rm: i64) i64 {
 // MVN Xd, Xm = ORN Xd, XZR, Xm
 fn encode_orn(rd: i64, rn: i64, rm: i64) i64 {
     let sf: i64 = 1;  // 64-bit
-    // ORN encoding: sf 01 01010 shift=00 1 Rm imm6=000000 Rn Rd
-    // The '1' before Rm is the N bit that inverts the second operand
+    // ORN encoding: sf opc=01 01010 shift=00 N=1 Rm imm6=000000 Rn Rd
+    // bit 31: sf = 1 (64-bit)
+    // bits 30-29: opc = 01 (ORR family)
+    // bits 28-24: 01010 (logical register)
+    // bits 23-22: shift = 00
+    // bit 21: N = 1 (invert Rm for ORN)
+    // bits 20-16: Rm
+    // bits 15-10: imm6 = 000000
+    // bits 9-5: Rn
+    // bits 4-0: Rd
     return (sf << 31) |
-           (1 << 29) |           // opc = 01 (ORR family)
-           (42 << 21) |          // 0b01010 = 10, but full group is 0101010 = 42
+           (1 << 29) |           // opc = 01
+           (10 << 24) |          // 01010 at bits 28-24
            (1 << 21) |           // N = 1 (invert Rm)
            encode_rm(rm) |
            (0 << 10) |           // imm6 = 0 (no shift)

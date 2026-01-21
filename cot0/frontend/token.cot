@@ -32,6 +32,7 @@ enum TokenType {
     In,         // in
     Break,      // break
     Continue,   // continue
+    Switch,     // switch
 
     // Keywords - types
     I64,        // i64
@@ -105,6 +106,7 @@ enum TokenType {
 
     // Arrow (for function types)
     Arrow,      // ->
+    FatArrow,   // =>
 
     // Special
     Eof,        // end of file
@@ -177,6 +179,7 @@ fn is_keyword(text: string) TokenType {
         if text[0] == 105 and text[1] == 109 and text[2] == 112 and text[3] == 111 and text[4] == 114 and text[5] == 116 { return TokenType.Import; }   // import
         if text[0] == 115 and text[1] == 116 and text[2] == 114 and text[3] == 105 and text[4] == 110 and text[5] == 103 { return TokenType.String; }   // string
         if text[0] == 101 and text[1] == 120 and text[2] == 116 and text[3] == 101 and text[4] == 114 and text[5] == 110 { return TokenType.Extern; }   // extern
+        if text[0] == 115 and text[1] == 119 and text[2] == 105 and text[3] == 116 and text[4] == 99 and text[5] == 104 { return TokenType.Switch; }    // switch
     }
 
     // Length 8 keywords

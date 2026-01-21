@@ -316,6 +316,8 @@ fn genssa_value(gs: *GenState, v: *Value) {
         genssa_return(gs, v);
     } else if v.op == Op.Copy {
         genssa_copy(gs, v);
+    } else if v.op == Op.Select {
+        genssa_select(gs, v);
     }
     // Unknown ops are silently ignored for now
 }
@@ -551,6 +553,24 @@ fn genssa_compare(gs: *GenState, v: *Value, cond: i64) {
     emit_inst(gs, codegen_setcc(rd, cond));
 }
 
+fn genssa_select(gs: *GenState, v: *Value) {
+    // Select: args[0] = cond, args[1] = true_val, args[2] = false_val
+    // If cond != 0, return true_val, else return false_val
+    let rd: i64 = v.reg;
+    if rd < 0 { return; }
+
+    let f: *Func = gs.func;
+    let cond_val: *Value = func_get_value(f, v.args[0]);
+    let true_val: *Value = func_get_value(f, v.args[1]);
+    let false_val: *Value = func_get_value(f, v.args[2]);
+
+    // Compare condition with 0
+    emit_inst(gs, encode_cmp_imm(cond_val.reg, 0));
+
+    // CSEL: if NE (cond != 0), select true_val, else select false_val
+    emit_inst(gs, encode_csel(rd, true_val.reg, false_val.reg, COND_NE));
+}
+
 fn genssa_load(gs: *GenState, v: *Value) {
     let rd: i64 = v.reg;
     if rd < 0 { return; }
@@ -690,6 +710,13 @@ fn genssa_call(gs: *GenState, v: *Value) {
 
     // Emit BL instruction placeholder (offset 0, to be patched later)
     emit_inst(gs, encode_bl(0));
+
+    // Move call result from X0 to the assigned register
+    // This preserves call results across nested calls
+    let dest_reg: i64 = v.reg;
+    if dest_reg >= 0 and dest_reg != X0 {
+        emit_inst(gs, encode_mov_reg(dest_reg, X0));
+    }
 }
 
 fn genssa_return(gs: *GenState, v: *Value) {

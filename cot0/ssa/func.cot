@@ -283,6 +283,13 @@ fn func_emit_unary(f: *Func, op: Op, operand: *Value, type_idx: i64) *Value {
     return v;
 }
 
+// Emit a select (conditional value): cond ? true_val : false_val
+fn func_emit_select(f: *Func, cond: *Value, true_val: *Value, false_val: *Value, type_idx: i64) *Value {
+    let v: *Value = func_new_value(f, Op.Select, type_idx);
+    value_add_arg3(v, cond, true_val, false_val);
+    return v;
+}
+
 // Emit a load from local
 fn func_emit_load_local(f: *Func, local_idx: i64) *Value {
     let local: *Local = func_get_local(f, local_idx);

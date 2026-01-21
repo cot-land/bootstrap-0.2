@@ -149,6 +149,9 @@ enum IRNodeKind {
     // Phi (SSA)
     Phi,
 
+    // Conditional
+    Select,       // Conditional select: left = cond, right = true_val, value = false_val
+
     // Misc
     Nop,
 }
@@ -497,6 +500,15 @@ fn func_builder_emit_unary(fb: *FuncBuilder, op: i64, operand: i64, type_idx: i6
     var node: IRNode = ir_node_new(IRNodeKind.Unary, type_idx);
     node.op = op;
     node.left = operand;
+    return func_builder_emit(fb, node);
+}
+
+// Emit a conditional select (ternary-like): cond ? true_val : false_val
+fn func_builder_emit_select(fb: *FuncBuilder, cond: i64, true_val: i64, false_val: i64, type_idx: i64) i64 {
+    var node: IRNode = ir_node_new(IRNodeKind.Select, type_idx);
+    node.left = cond;
+    node.right = true_val;
+    node.value = false_val;
     return func_builder_emit(fb, node);
 }
 

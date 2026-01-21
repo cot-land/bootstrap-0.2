@@ -23,29 +23,36 @@
 | Component | Status |
 |-----------|--------|
 | Zig compiler (src/*.zig) | **COMPLETE** - 166 tests pass |
-| cot0 compiler (cot0/*.cot) | **MATURING** - 83/168 test functions compile |
+| cot0 compiler (cot0/*.cot) | **MATURING** - 35 tests pass (cot0-stage1) |
 | cot0-stage1 simple programs | Works |
-| cot0-stage1 test suite | Partial - Tiers 1-13 work |
+| cot0-stage1 test suite | **35 tests pass** (31 basic + 4 switch) |
 
 ### Test Progress
 
 | Tier | Status | Test Functions |
 |------|--------|----------------|
-| 1-10 | ✅ PASS | 73 functions (basic ops, control flow, structs, arrays, pointers) |
-| 11 | ✅ PASS | Bitwise operators working |
-| 12+ | TESTING | Logical operators, slices, for-in loops |
+| 1-6.5 | ✅ PASS | Basic ops, control flow, loops, edge cases |
+| 7 (Recursion) | ✅ PASS | factorial, fibonacci |
+| 8 (Bool) | ✅ PASS | Boolean operations |
+| 9 (Switch) | ✅ PASS | Switch expressions (4 tests) |
+| External calls | ❌ BLOCKED | println needs relocations |
 | Function types | ❌ BLOCKED | `var f: fn(...) -> T` not supported |
 
 ### Current Blockers
 
-1. ~~**Slice syntax** - `arr[start:end]` not parsed~~ **COMPLETE** (parse, lower, index all working)
-2. ~~**For-in loops** - `for item in array { }` not supported~~ **COMPLETE** (desugars to while loop)
-3. **For-in over slices** - Needs slice (ptr, len) storage; currently only stores ptr
-4. **Function type variables** - `var f: fn(...) -> T` not supported
-5. **Switch statements** - `switch x { }` not supported
+1. ~~**Slice syntax** - `arr[start:end]` not parsed~~ **COMPLETE**
+2. ~~**For-in loops** - `for item in array { }` not supported~~ **COMPLETE**
+3. ~~**Switch statements** - `switch x { }` not supported~~ **COMPLETE**
+4. ~~**Recursion** - Return values not captured~~ **COMPLETE** (BUG-049)
+5. **External function calls** - Need relocations for println, etc.
+6. **Function type variables** - `var f: fn(...) -> T` not supported
 
 ### Recent Fixes (2026-01-21)
 
+- **BUG-049: Recursion return values not captured** - Parameters now spilled to stack at function entry; left operand spilled before calls in binary expressions
+- **BUG-050: ORN instruction encoding incorrect** - Fixed ARM64 ORN encoding (bits 28-24 = 01010, bit 21 = N)
+- **Switch statements implemented** - Added full switch expression support: parsing, lowering to nested selects, CSEL codegen
+- **BUG-046: For-in over slices** - Slice locals now store (ptr, len) at 16 bytes; for-in loads len from offset 8
 - **For-in loops** - Added ForStmt to AST, parser, and lowerer (desugars to while loop like Zig compiler)
 - **Modulo operator** - Fixed genssa_mod to compute `a - (a/b)*b` instead of just SDIV
 - **BUG-043/BUG-044: Stack layout** - Fixed stack offset calculation to use actual local sizes instead of assuming 8 bytes per local
@@ -62,7 +69,7 @@
 | If/else | ✅ PASS |
 | While loops | ✅ PASS |
 | For-in (arrays) | ✅ PASS |
-| For-in (slices) | ❌ FAIL (needs slice len) |
+| For-in (slices) | ✅ PASS |
 | Structs | ✅ PASS |
 | Arrays | ✅ PASS |
 | Pointers | ✅ PASS |

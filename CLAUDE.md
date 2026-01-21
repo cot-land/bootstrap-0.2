@@ -121,8 +121,15 @@ map.deinit(allocator);                 // allocator required!
 |-----------|--------|
 | Zig compiler | **COMPLETE** - 166 tests pass |
 | cot0-stage1 simple programs | Works |
-| cot0-stage1 test suite | Hangs (parser issue) |
-| cot0 maturity | **LOW** - needs extensive work |
+| cot0-stage1 test suite | **35 tests pass** (basic + switch) |
+| cot0 maturity | **IMPROVING** - recursion, switch working |
+
+**Recent Progress:**
+- Switch statements implemented (nested select codegen)
+- Recursion fixed (BUG-049: parameter spilling)
+- ORN encoding fixed (BUG-050)
+
+**Next Blocker:** External function calls (println) - need relocations
 
 ---
 

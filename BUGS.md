@@ -9,9 +9,11 @@
 ```
 
 **Current blockers:**
-- For-in over slices (needs slice length storage)
 - Function type variables (`var f: fn(...) -> T`)
-- Switch statements
+- External function calls (println) - need relocations
+- ~~Switch statements~~ (FIXED)
+
+**Current status:** 35 tests pass (31 basic + 4 switch)
 
 ---
 
@@ -46,33 +48,65 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
-### BUG-046: For-in over slices uses wrong length
+### BUG-048: cot0 parser crashes on large files
 
 **Status:** OPEN
-**Priority:** P1 (blocking slice iteration tests)
+
+**Symptoms:**
+- Parser segfaults (exit 139) when compiling full test suite (~1918 lines, ~9437 tokens)
+- First ~1060 lines compile successfully
+- Individual test patterns work in isolation
+
+**Next Steps:**
+- Add bounds checking and debug output to track node/children counts during parsing
+- Compare with Zig compiler's dynamic array approach
+
+**Location:** cot0/frontend/parser.cot
+
+---
+
+### BUG-047: @string builtin not recognized by cot0 parser
+
+**Status:** FIXED
+
+**Root Cause:** In `parse_unary()`, the code did `parser_want(p, TokenType.Ident)` for the builtin name, but `string` is tokenized as `TokenType.String` (a keyword), not `TokenType.Ident`.
+
+**Fix:** Check for `TokenType.String` explicitly when parsing builtin names, similar to how the Zig compiler handles it:
+```cot
+let is_string_keyword: bool = p.current.kind == TokenType.String;
+if is_string_keyword {
+    parser_advance(p);  // Consume "string" keyword
+} else {
+    parser_want(p, TokenType.Ident);
+}
+// Then check is_string_keyword for @string builtin
+if is_string_keyword {
+    // parse ptr, len args
+}
+```
+
+**Location:** cot0/frontend/parser.cot:530-560
+
+---
+
+### BUG-046: For-in over slices uses wrong length
+
+**Status:** FIXED
+**Priority:** P1 (was blocking slice iteration tests)
 **Discovered:** 2026-01-21
+**Fixed:** 2026-01-21
 
 **Description:**
 For-in loops over slices use the local's storage size (8 bytes for the pointer) instead of the slice's runtime length. This causes the loop to iterate only once regardless of slice size.
 
-**Test:**
-```cot
-fn main() i64 {
-    var arr: [5]i64 = [10, 20, 30, 40, 50]
-    let s: []i64 = arr[1:4]  // slice of length 3
-    var sum: i64 = 0
-    for x in s { sum = sum + x }
-    return sum  // Expected: 90 (20+30+40), Actual: 24
-}
-```
-
 **Root Cause:**
 In `cot0/frontend/lower.cot`, `lower_for` gets array length from `local.size / 8`. For slices, the local stores only the pointer (8 bytes), so `8 / 8 = 1` iteration.
 
-**Required Fix:**
-Slices need to store both (ptr, len), not just ptr. Then for-in lowering needs to:
-1. Detect slice type locals
-2. Emit code to load the length at runtime from the slice's len field
+**Fix Applied:**
+1. Set slice locals to 16 bytes (ptr + len) in `lower_var_decl`
+2. Added `lower_slice_expr_to_local` to store ptr at offset 0 and len at offset 8
+3. Updated `lower_for` to detect slice locals and load length from offset 8
+4. Updated `lower_for` body to index through slice ptr (loaded from offset 0)
 
 **Zig Reference:**
 `src/frontend/lower.zig:977-1036` - Uses `emitSliceLen()` for slices, compile-time length for arrays.
@@ -218,6 +252,104 @@ for (f.local_sizes, 0..) |size, idx| {
 ---
 
 ## Recently Fixed Bugs
+
+### BUG-050: ORN instruction encoding incorrect (cot0)
+
+**Status:** FIXED
+**Priority:** P0 (was breaking NOT operator)
+**Discovered:** 2026-01-21
+**Fixed:** 2026-01-21
+
+**Description:**
+The `not` operator returned wrong values. `not false` returned 132 instead of 1 (true). `not 0` similarly returned a wrong value.
+
+**Root Cause:**
+In `cot0/arm64/asm.cot`, the `encode_orn` function had incorrect bit positioning:
+```cot
+// WRONG:
+(42 << 21) |          // 0b01010 = 10, but putting at wrong position
+(1 << 21) |           // N = 1, also at position 21 - conflict!
+```
+
+The ARM64 ORN instruction encoding requires:
+- bits 28-24: 01010 (logical register group)
+- bit 21: N=1 (invert second operand)
+
+But the code put `42` (0b101010) at position 21 instead of `10` (0b01010) at position 24.
+
+**Fix:**
+Changed `(42 << 21)` to `(10 << 24)`:
+```cot
+(10 << 24) |          // 01010 at bits 28-24
+(1 << 21) |           // N = 1 (invert Rm)
+```
+
+**Test:**
+- `not false` now returns 1 (true) ✓
+- `not 0` now returns 1 ✓
+- Full bool test now passes ✓
+
+---
+
+### BUG-049: Recursive function return values not captured correctly
+
+**Status:** FIXED
+**Priority:** P0 (was blocking recursive tests)
+**Discovered:** 2026-01-21
+**Fixed:** 2026-01-21
+
+**Description:**
+Recursive functions like `factorial(5)` returned wrong values (1 instead of 120). The issue was that values used across function calls were clobbered by the call.
+
+**Root Cause:**
+Two related issues:
+1. **Binary expressions with call operands**: For `n * factorial(n-1)`, the left operand `n` was loaded into a register, then the call clobbered that register (X0-X7 are caller-saved).
+2. **Parameters not stored to stack**: At function entry, parameters stayed in X0-X7 instead of being stored to stack slots. When a recursive call was made, the parameters were clobbered.
+
+**Go Reference:**
+`cmd/compile/internal/ssagen/ssa_builder.go` - Go stores all parameters to stack at function entry:
+```go
+// Phase 3: Store all args to their stack slots
+for (param_values.items, param_indices.items) |param_val, local_idx| {
+    const addr_val = try func.newValue(.local_addr, ...);
+    const store_val = try func.newValue(.store, ...);
+}
+```
+
+**Fix:**
+Two fixes in cot0:
+
+1. `cot0/frontend/lower.cot` - `lower_binary`: Spill left operand to temp local if right operand is a call:
+```cot
+if right_is_call {
+    let left_idx: i64 = lower_expr(l, left_node);
+    let temp_local: i64 = func_builder_add_local(fb, 0, 0, TYPE_I64, true);
+    func_builder_emit_store_local(fb, temp_local, left_idx);
+    right_idx = lower_expr(l, right_node);
+    final_left_idx = func_builder_emit_load_local(fb, temp_local);
+}
+```
+
+2. `cot0/main.cot` - Store parameters to stack at function entry:
+```cot
+while param_local_idx < ssa_func.locals_count {
+    if param_local.is_param {
+        let arg_val = func_new_value(&ssa_func, Op.Arg, ...);
+        let addr_val = func_new_value(&ssa_func, Op.LocalAddr, ...);
+        let store_val = func_new_value(&ssa_func, Op.Store, ...);
+        value_add_arg2(store_val, addr_val, arg_val);
+    }
+}
+```
+
+And changed `LoadLocal` for parameters to load from stack instead of emitting Arg ops.
+
+**Test:**
+- `factorial(5)` now returns 120 ✓
+- `double_times(1, 3)` now returns 8 ✓
+- `fib_recursive(10)` now returns 55 ✓
+
+---
 
 ### BUG-039: Bitwise operators not supported in cot0
 

@@ -172,11 +172,16 @@ fn scanner_next(s: *Scanner) Token {
     if c == 126 { return token_new(TokenType.Tilde, start, 1); }   // ~
 
     // Two-character operators - following Go's scanner.go pattern
-    // = or ==
+    // = or == or =>
     if c == 61 {  // =
-        if scanner_peek(s) == 61 {  // ==
+        let next: u8 = scanner_peek(s);
+        if next == 61 {  // ==
             scanner_advance(s);
             return token_new(TokenType.EqEq, start, 2);
+        }
+        if next == 62 {  // => (FatArrow for switch cases)
+            scanner_advance(s);
+            return token_new(TokenType.FatArrow, start, 2);
         }
         return token_new(TokenType.Eq, start, 1);
     }

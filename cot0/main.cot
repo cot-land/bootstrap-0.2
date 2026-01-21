@@ -50,10 +50,9 @@ const MAIN_MAX_OUTPUT_PATH: i64 = 256;
 var g_output_path: [256]u8;
 var g_output_path_len: i64 = 0;
 
-// AST storage - uses MAX_NODES/MAX_CHILDREN from ast.cot
-var g_nodes: [10000]Node;
-var g_children: [50000]i64;
-var g_pool: NodePool;
+// AST storage - nodes are fixed array, children are dynamic
+var g_nodes: [100000]Node;  // 100k nodes for large files
+var g_pool: NodePool;       // children list is inside, initialized dynamically
 
 // Type pool storage
 const MAIN_MAX_TYPES: i64 = 1000;
@@ -67,12 +66,14 @@ var g_type_pool: TypePool;
 // IR storage
 const MAIN_MAX_IR_NODES: i64 = 10000;
 const MAIN_MAX_IR_LOCALS: i64 = 1000;
-const MAIN_MAX_IR_FUNCS: i64 = 100;
+const MAIN_MAX_IR_FUNCS: i64 = 500;
 const MAIN_MAX_CONSTANTS: i64 = 500;
+const MAIN_MAX_CALL_ARGS: i64 = 2000;
 var g_ir_nodes: [10000]IRNode;
 var g_ir_locals: [1000]IRLocal;
-var g_ir_funcs: [100]IRFunc;
+var g_ir_funcs: [500]IRFunc;
 var g_constants: [500]ConstEntry;
+var g_call_args: [2000]i64;
 
 // SSA storage
 const MAIN_MAX_SSA_BLOCKS: i64 = 1000;
@@ -148,6 +149,14 @@ fn ir_op_to_ssa_op(ir_op: i64) Op {
     if ir_op == 16 { return Op.Shl64; }    // IRBinaryOp.Shl
     if ir_op == 17 { return Op.Shr64; }    // IRBinaryOp.Shr
     return Op.Add64;  // Default fallback
+}
+
+fn ir_unary_op_to_ssa_op(ir_op: i64) Op {
+    // IR unary ops: Neg=18, Not=19, BitNot=20 (from lower.cot IR_OP_NEG, etc.)
+    if ir_op == 18 { return Op.Neg64; }     // IRUnaryOp.Neg
+    if ir_op == 19 { return Op.Not64; }     // IRUnaryOp.Not
+    if ir_op == 20 { return Op.Not64; }     // IRUnaryOp.BitNot (use Not64 for now)
+    return Op.Neg64;  // Default fallback
 }
 
 // print(s) and println(s) are built-in functions - do not redefine them
@@ -226,8 +235,7 @@ fn write_file(path: *u8, data: *u8, data_len: i64) i64 {
 fn init_node_pool() *NodePool {
     g_pool.nodes = &g_nodes[0];
     g_pool.count = 0;
-    g_pool.children = &g_children[0];
-    g_pool.children_count = 0;
+    i64list_init(&g_pool.children);  // Dynamic list - grows as needed
     return &g_pool;
 }
 
@@ -507,12 +515,16 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
     let file_node: i64 = parse_file(&parser);
 
     if parser_had_error(&parser) {
-        print("  FAIL: Parser error\n");
+        print("  FAIL: Parser error at position ");
+        print_int(parser.scanner.pos);
+        print("\n");
         return 1;
     }
 
     print("  Nodes: ");
     print_int(pool.count);
+    print(", Children: ");
+    print_int(pool.children.count);
     print("\n");
 
     // Phase 2.5: Process imports
@@ -536,13 +548,14 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
     var lowerer: Lowerer = undefined;
     lowerer_init(&lowerer,
                  &g_nodes[0], pool.count,
-                 &g_children[0], pool.children_count,
+                 pool.children.items, pool.children.count,
                  &g_source[0], g_source_len,
                  &g_type_pool,
                  &g_ir_nodes[0], MAIN_MAX_IR_NODES,
                  &g_ir_locals[0], MAIN_MAX_IR_LOCALS,
                  &g_ir_funcs[0], MAIN_MAX_IR_FUNCS,
-                 &g_constants[0], MAIN_MAX_CONSTANTS);
+                 &g_constants[0], MAIN_MAX_CONSTANTS,
+                 &g_call_args[0], MAIN_MAX_CALL_ARGS);
 
     let ir_count: i64 = lowerer_lower_all(&lowerer);
     print("  IR nodes: ");
@@ -643,6 +656,31 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
         var next_reg: i64 = X1;
         // Max register is X28 (29 is FP, 30 is LR, 31 is SP/XZR)
         let max_reg: i64 = 28;
+
+        // BUG-049 FIX: At function entry, store parameters to their stack slots.
+        // This ensures parameters survive across function calls, since X0-X7 are
+        // caller-saved and get clobbered by any BL instruction.
+        // Following Zig compiler pattern: ssa_builder.zig Phase 3.
+        var param_local_idx: i64 = 0;
+        while param_local_idx < ssa_func.locals_count {
+            let param_local: *Local = func_get_local(&ssa_func, param_local_idx);
+            if param_local.is_param {
+                // 1. Create Arg value for the parameter (captures value from X0/X1/etc.)
+                let arg_val: *Value = func_new_value(&ssa_func, Op.Arg, TYPE_I64);
+                arg_val.aux_int = param_local.param_idx;
+                arg_val.reg = X0 + param_local.param_idx;
+
+                // 2. Create LocalAddr value for the stack slot
+                let addr_val: *Value = func_new_value(&ssa_func, Op.LocalAddr, TYPE_I64);
+                addr_val.aux_int = param_local_idx;
+
+                // 3. Store Arg to stack slot
+                let store_val: *Value = func_new_value(&ssa_func, Op.Store, TYPE_VOID);
+                value_add_arg2(store_val, addr_val, arg_val);
+            }
+            param_local_idx = param_local_idx + 1;
+        }
+
         ir_idx = ir_func.nodes_start;
         while ir_idx < ir_end {
             let ir_node: *IRNode = &g_ir_nodes[ir_idx];
@@ -708,6 +746,18 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 next_reg = next_reg + 1;
                 if next_reg > max_reg { next_reg = X1; }
                 g_ir_to_ssa_id[ir_idx] = val.id;
+            } else if ir_node.kind == IRNodeKind.Unary {
+                // Unary op: left is operand (relative IR index), op is the operator
+                let operand_abs: i64 = ir_func.nodes_start + ir_node.left;
+                let operand_id: i64 = g_ir_to_ssa_id[operand_abs];
+                let operand_val: *Value = func_get_value(&ssa_func, operand_id);
+                let ssa_op: Op = ir_unary_op_to_ssa_op(ir_node.op);
+                let val: *Value = func_new_value(&ssa_func, ssa_op, TYPE_I64);
+                value_add_arg(val, operand_val);
+                val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
+                g_ir_to_ssa_id[ir_idx] = val.id;
             } else if ir_node.kind == IRNodeKind.StoreLocal {
                 let loc_idx: i64 = ir_node.left;  // local index (not IR node)
                 // right is relative IR index of value to store
@@ -718,21 +768,14 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 g_ir_to_ssa_id[ir_idx] = store_val.id;
             } else if ir_node.kind == IRNodeKind.LoadLocal {
                 let loc_idx: i64 = ir_node.left;
-                let ssa_local: *Local = func_get_local(&ssa_func, loc_idx);
-                if ssa_local.is_param {
-                    // Parameters are in X0-X7 at function entry
-                    // Create a value that represents the argument register
-                    let arg_val: *Value = func_new_value(&ssa_func, Op.Arg, TYPE_I64);
-                    arg_val.aux_int = ssa_local.param_idx;  // Which parameter
-                    arg_val.reg = X0 + ssa_local.param_idx;  // X0, X1, etc.
-                    g_ir_to_ssa_id[ir_idx] = arg_val.id;
-                } else {
-                    let load_val: *Value = func_emit_load_local(&ssa_func, loc_idx);
-                    load_val.reg = next_reg;
-                    next_reg = next_reg + 1;
+                // BUG-049 FIX: All locals (including parameters) are loaded from stack.
+                // Parameters were stored to stack at function entry, so we can
+                // safely load them here without worrying about X0-X7 being clobbered.
+                let load_val: *Value = func_emit_load_local(&ssa_func, loc_idx);
+                load_val.reg = next_reg;
+                next_reg = next_reg + 1;
                 if next_reg > max_reg { next_reg = X1; }
-                    g_ir_to_ssa_id[ir_idx] = load_val.id;
-                }
+                g_ir_to_ssa_id[ir_idx] = load_val.id;
             } else if ir_node.kind == IRNodeKind.AddrLocal {
                 // Address of local variable: left = local index
                 let loc_idx: i64 = ir_node.left;
@@ -1006,14 +1049,37 @@ fn compile(source: string, out_path: *u8, out_path_len: i64) i64 {
                                                  TYPE_I64);
                 var arg_idx: i64 = 0;
                 while arg_idx < ir_node.args_count {
-                    // args_start is relative to function, convert to absolute
-                    let arg_ir_idx: i64 = ir_func.nodes_start + ir_node.args_start + arg_idx;
+                    // args_start is now an index into g_call_args, not IR nodes
+                    // g_call_args contains the actual IR node indices for each argument
+                    let call_args_slot: *i64 = &g_call_args[0] + ir_node.args_start + arg_idx;
+                    let arg_ir_rel: i64 = call_args_slot.*;  // Relative IR index within function
+                    let arg_ir_idx: i64 = ir_func.nodes_start + arg_ir_rel;
                     let arg_ssa_id: i64 = g_ir_to_ssa_id[arg_ir_idx];
                     let arg_val: *Value = func_get_value(&ssa_func, arg_ssa_id);
                     value_add_arg(val, arg_val);
                     arg_idx = arg_idx + 1;
                 }
-                val.reg = X0;
+                // Assign call result to next_reg instead of always X0
+                // This prevents clobbering when call results are used as args to other calls
+                val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
+                g_ir_to_ssa_id[ir_idx] = val.id;
+            } else if ir_node.kind == IRNodeKind.Select {
+                // Select: left = cond, right = true_val, value = false_val
+                let cond_abs: i64 = ir_func.nodes_start + ir_node.left;
+                let true_abs: i64 = ir_func.nodes_start + ir_node.right;
+                let false_abs: i64 = ir_func.nodes_start + ir_node.value;
+                let cond_id: i64 = g_ir_to_ssa_id[cond_abs];
+                let true_id: i64 = g_ir_to_ssa_id[true_abs];
+                let false_id: i64 = g_ir_to_ssa_id[false_abs];
+                let cond_val: *Value = func_get_value(&ssa_func, cond_id);
+                let true_val: *Value = func_get_value(&ssa_func, true_id);
+                let false_val: *Value = func_get_value(&ssa_func, false_id);
+                let val: *Value = func_emit_select(&ssa_func, cond_val, true_val, false_val, TYPE_I64);
+                val.reg = next_reg;
+                next_reg = next_reg + 1;
+                if next_reg > max_reg { next_reg = X1; }
                 g_ir_to_ssa_id[ir_idx] = val.id;
             } else if ir_node.kind == IRNodeKind.Branch {
                 // left is relative IR index of condition

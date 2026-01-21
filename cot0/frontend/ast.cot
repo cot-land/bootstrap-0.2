@@ -9,6 +9,7 @@
 // Reference: ~/learning/go/src/cmd/compile/internal/syntax/nodes.go
 
 import "token.cot"
+import "../lib/list.cot"
 
 // ============================================================================
 // Node Kinds
@@ -61,6 +62,10 @@ enum NodeKind {
 
     // Builtins
     BuiltinCall,    // @string(ptr, len), @intCast(type, val), @sizeOf(type)
+
+    // Switch expression
+    SwitchExpr,     // switch x { 1 => a, 2 => b, else => c }
+    SwitchCase,     // pattern => body (or else => body)
 
     // Special
     BadNode,        // Error placeholder
@@ -148,17 +153,20 @@ struct Node {
 // Node Pool (arena allocation)
 // ============================================================================
 
-// Maximum nodes in a compilation unit
-const MAX_NODES: i64 = 10000;
-const MAX_CHILDREN: i64 = 50000;  // For args, stmts, params arrays
+// Maximum nodes - still fixed for now (nodes are larger, less frequent)
+const MAX_NODES: i64 = 100000;  // 100k nodes should handle any file
 
 struct NodePool {
     nodes: *Node,           // Array of MAX_NODES nodes
     count: i64,             // Current node count
 
-    // Child arrays (for storing lists of node indices)
-    children: *i64,         // Array of node indices for args/stmts/params
-    children_count: i64,
+    // Child arrays - DYNAMIC (grows as needed)
+    children: I64List,      // Dynamic list of node indices for args/stmts/params
+}
+
+// Compatibility: get children_count from the list
+fn pool_children_count(pool: *NodePool) i64 {
+    return pool.children.count;
 }
 
 // ============================================================================
@@ -880,6 +888,53 @@ fn node_builtin_call(pool: *NodePool, name_start: i64, name_len: i64,
 }
 
 // ============================================================================
+// Switch Expression Support
+// ============================================================================
+
+// Create a switch expression node: switch x { cases... else => expr }
+// field0 = subject (expression node index)
+// field1 = cases_start (index in children array)
+// field2 = cases_count
+// field3 = else_body (node index, -1 if no else)
+fn node_switch_expr(pool: *NodePool, subject: i64, cases_start: i64, cases_count: i64,
+                    else_body: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.SwitchExpr;
+    n.start = start;
+    n.end = end;
+    n.field0 = subject;
+    n.field1 = cases_start;
+    n.field2 = cases_count;
+    n.field3 = else_body;
+
+    return idx;
+}
+
+// Create a switch case node: pattern1, pattern2 => body
+// field0 = patterns_start (index in children array)
+// field1 = patterns_count
+// field2 = body (expression node index)
+fn node_switch_case(pool: *NodePool, patterns_start: i64, patterns_count: i64,
+                    body: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.SwitchCase;
+    n.start = start;
+    n.end = end;
+    n.field0 = patterns_start;
+    n.field1 = patterns_count;
+    n.field2 = body;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// ============================================================================
 // Node Accessors
 // ============================================================================
 
@@ -893,18 +948,15 @@ fn node_valid(idx: i64) bool {
     return idx != NULL_NODE;
 }
 
-// Get child node index from children array
+// Get child node index from children array (using dynamic list)
 fn node_child(pool: *NodePool, children_start: i64, offset: i64) i64 {
-    let ptr: *i64 = pool.children + children_start + offset;
-    return ptr.*;
+    return i64list_get(&pool.children, children_start + offset);
 }
 
-// Add child node to children array
+// Add child node to children array (using dynamic list - grows as needed)
 fn node_add_child(pool: *NodePool, child_idx: i64) i64 {
-    let idx: i64 = pool.children_count;
-    let ptr: *i64 = pool.children + idx;
-    ptr.* = child_idx;
-    pool.children_count = pool.children_count + 1;
+    let idx: i64 = pool.children.count;
+    i64list_append(&pool.children, child_idx);
     return idx;
 }
 
