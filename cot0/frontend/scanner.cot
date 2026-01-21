@@ -54,6 +54,12 @@ fn isAlphaNumeric(c: u8) bool {
     return isAlpha(c) or isDigit(c);
 }
 
+// Check if character is a hex digit (0-9, a-f, A-F)
+// Reference: Zig's isHexDigit()
+fn isHexDigit(c: u8) bool {
+    return isDigit(c) or (c >= 65 and c <= 70) or (c >= 97 and c <= 102);
+}
+
 fn Scanner_skipWhitespace(s: *Scanner) {
     while not Scanner_isAtEnd(s) {
         let c: u8 = Scanner_peek(s);

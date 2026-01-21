@@ -159,7 +159,7 @@ actually compared line-by-line. During a partial audit (2026-01-22), several fun
 | — | `TokenInfo` struct | Missing in cot0 | cot0 has no span tracking |
 | — | `Source` class integration | Missing in cot0 | cot0 uses raw string |
 | — | `ErrorReporter` integration | Missing in cot0 | cot0 returns Error token, no reporting |
-| — | `isHexDigit()` | Missing in cot0 | No hex number support |
+| `isHexDigit(c)` | `isHexDigit()` | Same | Added 2026-01-22 |
 | — | `skipBlockComment()` | Missing in cot0 | No block comment support |
 | — | String interpolation | Missing in cot0 | No ${...} interpolation |
 | — | Tests (~100 lines) | Missing in cot0 | cot0 has no tests |
