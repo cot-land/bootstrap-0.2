@@ -20,7 +20,7 @@ import "../arm64/regs.cot"
 // The emitter collects machine code instructions.
 // For self-hosting, we use a simple byte buffer approach.
 // Maximum code size for a single function (can be increased if needed).
-const MAX_CODE_SIZE: i64 = 65536;
+const MAX_CODE_SIZE: i64 = 262144;
 
 struct Emitter {
     // Code buffer (would be dynamically allocated in full implementation)

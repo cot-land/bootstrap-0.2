@@ -11,8 +11,8 @@ import "block.cot"
 // Constants
 // ============================================================================
 
-const FUNC_MAX_PARAMS: i64 = 16;
-const FUNC_MAX_LOCALS: i64 = 256;
+const FUNC_MAX_PARAMS: i64 = 32;
+const FUNC_MAX_LOCALS: i64 = 1024;
 
 // ============================================================================
 // Local Variable

@@ -13,7 +13,7 @@ import "value.cot"
 const INVALID_BLOCK: i64 = -1;
 const MAX_SUCCS: i64 = 2;     // At most 2 successors (branch)
 const MAX_PREDS: i64 = 16;    // Max predecessors
-const MAX_VALUES_PER_BLOCK: i64 = 1000;
+const MAX_VALUES_PER_BLOCK: i64 = 5000;
 
 // ============================================================================
 // Block Kind
@@ -188,7 +188,7 @@ fn block_is_plain(b: *Block) bool {
 // Block Pool (arena allocation)
 // ============================================================================
 
-const MAX_BLOCKS: i64 = 1000;
+const MAX_BLOCKS: i64 = 5000;
 
 struct BlockPool {
     blocks: *Block,       // Externally allocated array

@@ -1245,8 +1245,8 @@ fn parse_block(p: *Parser) i64 {
     parser_want(p, TokenType.LBrace);
 
     // Temporary storage for statement indices (parse first, add children later)
-    // 512 statements should handle main() with 166+ test calls
-    var stmt_indices: [512]i64 = undefined;
+    // 4096 statements should handle large main() functions with 250+ test calls
+    var stmt_indices: [4096]i64 = undefined;
     var stmts_count: i64 = 0;
 
     // Parse statements until '}'

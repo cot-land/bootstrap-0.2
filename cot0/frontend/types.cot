@@ -93,9 +93,9 @@ struct FieldInfo {
 // Type Pool (arena allocation for type interning)
 // ============================================================================
 
-const MAX_TYPES: i64 = 256;
-const MAX_PARAMS: i64 = 1024;  // For function parameter lists
-const MAX_FIELDS: i64 = 1024;  // For struct field info
+const MAX_TYPES: i64 = 1024;
+const MAX_PARAMS: i64 = 5000;  // For function parameter lists
+const MAX_FIELDS: i64 = 5000;  // For struct field info
 
 struct TypePool {
     types: *Type,        // Pointer to array of types

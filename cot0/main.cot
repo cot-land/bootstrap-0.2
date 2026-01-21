@@ -64,32 +64,32 @@ var g_type_fields: [5000]FieldInfo;
 var g_type_pool: TypePool;
 
 // IR storage
-const MAIN_MAX_IR_NODES: i64 = 10000;
-const MAIN_MAX_IR_LOCALS: i64 = 1000;
-const MAIN_MAX_IR_FUNCS: i64 = 500;
-const MAIN_MAX_CONSTANTS: i64 = 500;
-const MAIN_MAX_CALL_ARGS: i64 = 2000;
-var g_ir_nodes: [10000]IRNode;
-var g_ir_locals: [1000]IRLocal;
-var g_ir_funcs: [500]IRFunc;
-var g_constants: [500]ConstEntry;
-var g_call_args: [2000]i64;
+const MAIN_MAX_IR_NODES: i64 = 50000;
+const MAIN_MAX_IR_LOCALS: i64 = 5000;
+const MAIN_MAX_IR_FUNCS: i64 = 1000;
+const MAIN_MAX_CONSTANTS: i64 = 2000;
+const MAIN_MAX_CALL_ARGS: i64 = 10000;
+var g_ir_nodes: [50000]IRNode;
+var g_ir_locals: [5000]IRLocal;
+var g_ir_funcs: [1000]IRFunc;
+var g_constants: [2000]ConstEntry;
+var g_call_args: [10000]i64;
 
 // SSA storage
-const MAIN_MAX_SSA_BLOCKS: i64 = 1000;
-const MAIN_MAX_SSA_VALUES: i64 = 10000;
-const MAIN_MAX_SSA_LOCALS: i64 = 500;
-var g_ssa_blocks: [1000]Block;
-var g_ssa_values: [10000]Value;
-var g_ssa_locals: [500]Local;
+const MAIN_MAX_SSA_BLOCKS: i64 = 5000;
+const MAIN_MAX_SSA_VALUES: i64 = 50000;
+const MAIN_MAX_SSA_LOCALS: i64 = 2500;
+var g_ssa_blocks: [5000]Block;
+var g_ssa_values: [50000]Value;
+var g_ssa_locals: [2500]Local;
 
 // Codegen storage
-const MAIN_MAX_CODE: i64 = 65536;
-const MAIN_MAX_CALL_SITES: i64 = 1000;
-var g_code: [65536]u8;
-var g_bstart: [1000]i64;
-var g_branches: [1000]Branch;
-var g_call_sites: [1000]CallSite;
+const MAIN_MAX_CODE: i64 = 262144;
+const MAIN_MAX_CALL_SITES: i64 = 5000;
+var g_code: [262144]u8;
+var g_bstart: [5000]i64;
+var g_branches: [5000]Branch;
+var g_call_sites: [5000]CallSite;
 
 // Mach-O storage
 const MAIN_MAX_DATA: i64 = 65536;
@@ -104,10 +104,10 @@ var g_relocs: [10000]Reloc;
 var g_output: [1048576]u8;
 
 // IR to SSA mapping (IR node index -> SSA value ID)
-var g_ir_to_ssa_id: [10000]i64;
+var g_ir_to_ssa_id: [50000]i64;
 
 // Local variable to SSA value mapping (local index -> SSA value ID)
-var g_local_to_ssa_id: [1000]i64;
+var g_local_to_ssa_id: [5000]i64;
 
 // Import tracking - store imported file paths to avoid duplicates
 const MAX_IMPORT_PATHS: i64 = 100;

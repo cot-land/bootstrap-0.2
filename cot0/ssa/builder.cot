@@ -17,8 +17,8 @@ import "func.cot"
 // Constants
 // ============================================================================
 
-const MAX_VAR_DEFS: i64 = 256;     // Max variable definitions per block
-const MAX_BLOCK_DEFS: i64 = 100;   // Max blocks with definitions
+const MAX_VAR_DEFS: i64 = 1024;    // Max variable definitions per block
+const MAX_BLOCK_DEFS: i64 = 500;   // Max blocks with definitions
 
 // IR node indices (from lower.cot/ir.cot)
 const IR_NULL_NODE: i64 = -1;

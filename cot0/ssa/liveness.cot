@@ -42,7 +42,7 @@ fn live_info_new(id: i64, dist: i64, pos: i64) LiveInfo {
 // Live Map (sparse set for tracking live values)
 // ============================================================================
 
-const MAX_LIVE_VALUES: i64 = 256;
+const MAX_LIVE_VALUES: i64 = 1024;
 
 struct LiveMap {
     entries: *LiveInfo,    // Dense storage (external)
@@ -163,7 +163,7 @@ fn live_map_add_distance_all(lm: *LiveMap, delta: i64) {
 // Block Liveness
 // ============================================================================
 
-const MAX_LIVE_PER_BLOCK: i64 = 128;
+const MAX_LIVE_PER_BLOCK: i64 = 512;
 
 struct BlockLiveness {
     block_id: i64,

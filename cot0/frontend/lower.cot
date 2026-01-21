@@ -72,7 +72,7 @@ struct ConstEntry {
     value: i64,
 }
 
-const MAX_CONSTANTS: i64 = 500;
+const MAX_CONSTANTS: i64 = 2000;
 
 // Struct field info for name-based lookup
 struct StructFieldLookup {

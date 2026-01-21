@@ -189,7 +189,7 @@ fn value_arg2(v: *Value) i64 {
 // Value Pool (arena allocation)
 // ============================================================================
 
-const MAX_VALUES: i64 = 10000;
+const MAX_VALUES: i64 = 50000;
 
 struct ValuePool {
     values: *Value,       // Externally allocated array
