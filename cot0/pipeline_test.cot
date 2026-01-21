@@ -60,6 +60,12 @@ var g_nodes: [1000]Node;
 var g_children: [5000]i64;
 var g_pool: NodePool;
 
+// Type registry
+var g_types: [100]Type;
+var g_type_params: [100]i64;
+var g_type_fields: [100]FieldInfo;
+var g_type_registry: TypeRegistry;
+
 // IR pools
 var g_ir_nodes: [1000]IRNode;
 var g_ir_locals: [100]IRLocal;
@@ -78,6 +84,11 @@ fn init_parser_pool() *NodePool {
     g_pool.count = 0;
     g_pool.children = &g_children[0];
     g_pool.children_count = 0;
+    // Initialize type registry
+    g_type_registry.types = &g_types[0];
+    g_type_registry.params = &g_type_params[0];
+    g_type_registry.fields = &g_type_fields[0];
+    TypeRegistry_init(&g_type_registry);
     return &g_pool;
 }
 
@@ -121,7 +132,7 @@ fn main() i64 {
     // Phase 2: Parser
     // =======================================================================
     let pool: *NodePool = init_parser_pool();
-    var parser: Parser = Parser_init(source, pool);
+    var parser: Parser = Parser_init(source, pool, &g_type_registry);
     let file_node: i64 = Parser_parseFile(&parser);
 
     print_str("Phase 2 - Parser: ");

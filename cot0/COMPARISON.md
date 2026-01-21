@@ -10,7 +10,7 @@ actually compared line-by-line. During a partial audit (2026-01-22), several fun
 
 - `lower_binary`: cot0 has 60-line BUG-049 spill workaround, Zig is 20 lines
 - `lower_call`: cot0 has manual 8-arg tracking + two-pass spill, Zig uses ArrayList
-- `lower_index`: cot0 missing pointer type check via TypePool
+- `lower_index`: cot0 missing pointer type check via TypeRegistry
 - `lower_var_decl`: cot0 uses PTYPE encoding vs Zig's type registry
 
 **DO NOT TRUST "Same" STATUS without verification.**
@@ -105,7 +105,7 @@ actually compared line-by-line. During a partial audit (2026-01-22), several fun
 | `strcpy(dest, src, max) i64` | `allocator.dupe()` | DIFFERENT | cot0 manual copy; Zig allocates new slice |
 | — | `findRuntimePath()` | Missing in cot0 | cot0 has no runtime path discovery |
 | — | `pipeline_debug.initGlobal()` | Missing in cot0 | cot0 has no debug infrastructure |
-| — | `TypeRegistry.init()` | Missing in cot0 | cot0 uses TypePool with global arrays instead |
+| — | `TypeRegistry.init()` | Missing in cot0 | cot0 uses TypeRegistry with global arrays instead |
 | — | `Scope.init()` | Missing in cot0 | cot0 has no scope management like Zig |
 | — | `ErrorReporter` | Missing in cot0 | cot0 uses print() directly |
 
@@ -247,15 +247,15 @@ actually compared line-by-line. During a partial audit (2026-01-22), several fun
 
 | cot0 Function | Zig Function | Status | Comment |
 |---------------|--------------|--------|---------|
-| `TypePool struct` | `TypeRegistry struct` | DIFFERENT | cot0 uses pointers to global arrays (*Type, *i64, *FieldInfo); Zig uses allocator with ArrayListUnmanaged |
-| `TypePool_init(pool)` | `TypeRegistry.init()` | DIFFERENT | cot0 sets up pointers to global arrays; Zig allocates with allocator |
-| `TypePool_get(pool, idx) *Type` | `getType()` | Same | Both return Type by index |
-| `TypePool_findByName(pool, name_start, name_len) i64` | `findTypeByName()` | DIFFERENT | cot0 uses name_start/len indices; Zig uses []const u8 slice |
-| `TypePool_makePointer(pool, elem) i64` | `makePointer()` | Same | Both create pointer types |
-| `TypePool_makeArray(pool, elem, len) i64` | `makeArray()` | Same | Both create array types |
-| `TypePool_makeStruct(pool, name, len, fields, count, size, align) i64` | `makeStruct()` | DIFFERENT | cot0 takes name as start/len; Zig takes []const u8 |
-| `TypePool_makeFunc(pool, params_start, params_count, ret) i64` | `makeFunction()` | Same | Both create function types |
-| `TypePool_setSource(pool, source, len)` | `setSource()` | DIFFERENT | cot0 stores raw pointer; Zig has no equivalent (uses slices) |
+| `TypeRegistry struct` | `TypeRegistry struct` | DIFFERENT | cot0 uses pointers to global arrays (*Type, *i64, *FieldInfo); Zig uses allocator with ArrayListUnmanaged |
+| `TypeRegistry_init(pool)` | `TypeRegistry.init()` | DIFFERENT | cot0 sets up pointers to global arrays; Zig allocates with allocator |
+| `TypeRegistry_get(pool, idx) *Type` | `getType()` | Same | Both return Type by index |
+| `TypeRegistry_findByName(pool, name_start, name_len) i64` | `findTypeByName()` | DIFFERENT | cot0 uses name_start/len indices; Zig uses []const u8 slice |
+| `TypeRegistry_makePointer(pool, elem) i64` | `makePointer()` | Same | Both create pointer types |
+| `TypeRegistry_makeArray(pool, elem, len) i64` | `makeArray()` | Same | Both create array types |
+| `TypeRegistry_makeStruct(pool, name, len, fields, count, size, align) i64` | `makeStruct()` | DIFFERENT | cot0 takes name as start/len; Zig takes []const u8 |
+| `TypeRegistry_makeFunc(pool, params_start, params_count, ret) i64` | `makeFunction()` | Same | Both create function types |
+| `TypeRegistry_setSource(pool, source, len)` | `setSource()` | DIFFERENT | cot0 stores raw pointer; Zig has no equivalent (uses slices) |
 | `TypeInfo_*` functions | `TypeInfo.*` methods | DIFFERENT | cot0 takes (pool, idx); Zig has methods on TypeInfo struct |
 | `PType_*` functions | No direct equivalent | cot0-only | cot0 uses PTYPE encoding (ranges like PTYPE_PTR_BASE=10, PTYPE_ARRAY_BASE=10000) |
 | — | `TypeRegistry.deinit()` | Missing in cot0 | cot0 uses global arrays, no cleanup |
@@ -269,7 +269,7 @@ actually compared line-by-line. During a partial audit (2026-01-22), several fun
 - 10000-99999: array types (PTYPE_ARRAY_BASE=10000)
 - 100000+: slice types (PTYPE_SLICE_BASE=100000)
 
-This encoding allows quick type classification without TypePool lookup, but is fragile and limits type count. Zig uses proper TypeRegistry with TypeIndex lookups.
+This encoding allows quick type classification without TypeRegistry lookup, but is fragile and limits type count. Zig uses proper TypeRegistry with TypeIndex lookups.
 
 ### 2.6 cot0/frontend/checker.cot vs src/frontend/checker.zig
 
@@ -355,7 +355,7 @@ This encoding allows quick type classification without TypePool lookup, but is f
 | `Lowerer_lowerBinary(l, node) i64` | `lowerBinary()` | **DIFFERENT - BUG-049** | cot0 has 60-line spill workaround (lines 1150-1210); Zig is 20 lines - proper SSA handles spilling |
 | `Lowerer_lowerUnary(l, node) i64` | `lowerUnary()` | Same | Both handle negation, not, etc. |
 | `Lowerer_lowerCall(l, node) i64` | `lowerCall()` | **DIFFERENT - WORKAROUND** | cot0 has manual 8-arg tracking (MAX_CALL_ARGS_TRACKED=8), two-pass spill logic (~150 lines); Zig uses ArrayList (~50 lines) |
-| `Lowerer_lowerIndex(l, node) i64` | `lowerIndex()` | **DIFFERENT - BUG** | cot0 missing TypePool.isPointer() check; uses PTYPE_PTR_BASE range check which is wrong |
+| `Lowerer_lowerIndex(l, node) i64` | `lowerIndex()` | **DIFFERENT - BUG** | cot0 missing TypeRegistry.isPointer() check; uses PTYPE_PTR_BASE range check which is wrong |
 | `Lowerer_lowerField(l, node) i64` | `lowerField()` | DIFFERENT | cot0 scans source for field names; Zig uses type_reg.getField() |
 | `Lowerer_lowerIf(l, node)` | `lowerIf()` | Same | Both lower if statements |
 | `Lowerer_lowerWhile(l, node)` | `lowerWhile()` | Same | Both lower while loops |
@@ -1116,7 +1116,7 @@ These files exist in the Zig compiler but have no cot0 counterpart yet.
    - `lower_binary`: 60+ lines of BUG-049 manual spilling
    - `lower_call`: 150+ lines of manual arg tracking + two-pass spill
    - `lower_var_decl`: PTYPE range checks instead of type_reg.sizeOf()
-   - `lower_index`: Wrong pointer type check (PTYPE_PTR_BASE vs TypePool)
+   - `lower_index`: Wrong pointer type check (PTYPE_PTR_BASE vs TypeRegistry)
 
 4. **cot0 is missing entire subsystems:**
    - No SSA passes: lower.zig, schedule.zig, expand_calls.zig, decompose.zig
@@ -1163,8 +1163,8 @@ Result: Cleaner code, proper SSA handling
 
 #### Priority 4: Fix Type System
 ```
-Problem: Uses PTYPE encoding hack instead of TypePool
-Fix: Change `if type_handle >= PTYPE_PTR_BASE` to `TypePool_isPointer(pool, type_handle)`
+Problem: Uses PTYPE encoding hack instead of TypeRegistry
+Fix: Change `if type_handle >= PTYPE_PTR_BASE` to `TypeRegistry_isPointer(pool, type_handle)`
 Result: Correct type handling for pointers, arrays, slices
 ```
 

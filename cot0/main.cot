@@ -18,6 +18,10 @@ import "frontend/lower.cot"
 // Codegen - genssa.cot imports ../ssa/func.cot transitively
 import "codegen/genssa.cot"
 
+// SSA Builder - IR to SSA conversion (matches Zig's ssa_builder.zig)
+// Must be imported AFTER genssa.cot to avoid duplicate func.cot imports
+import "ssa/builder.cot"
+
 // Object file writer
 import "obj/macho.cot"
 
@@ -61,7 +65,7 @@ const MAIN_MAX_FIELDS: i64 = 5000;
 var g_types: [1000]Type;
 var g_type_params: [5000]i64;
 var g_type_fields: [5000]FieldInfo;
-var g_type_pool: TypePool;
+var g_type_pool: TypeRegistry;
 
 // IR storage
 const MAIN_MAX_IR_NODES: i64 = 50000;
@@ -108,6 +112,15 @@ var g_ir_to_ssa_id: [50000]i64;
 
 // Local variable to SSA value mapping (local index -> SSA value ID)
 var g_local_to_ssa_id: [5000]i64;
+
+// SSABuilder storage arrays (for builder.cot)
+const BUILDER_MAX_BLOCK_DEFS: i64 = 500;
+const BUILDER_MAX_VAR_DEFS: i64 = 50000;
+const BUILDER_MAX_BLOCK_MAP: i64 = 500;
+var g_builder_all_defs: [500]BlockDefs;
+var g_builder_block_map: [500]BlockMapping;
+var g_builder_node_values: [50000]VarDef;
+var g_builder_var_storage: [100000]VarDef;
 
 // Import tracking - store imported file paths to avoid duplicates
 const MAX_IMPORT_PATHS: i64 = 100;
@@ -162,37 +175,7 @@ fn Driver_setDebugPhases(phases: *u8, phases_len: i64) {
 // Helper Functions
 // ============================================================================
 
-// Map IR binary operation to SSA Op
-fn ir_op_to_ssa_op(ir_op: i64) Op {
-    // Cast to IRBinaryOp conceptually - compare as i64
-    if ir_op == 0 { return Op.Add64; }     // IRBinaryOp.Add
-    if ir_op == 1 { return Op.Sub64; }     // IRBinaryOp.Sub
-    if ir_op == 2 { return Op.Mul64; }     // IRBinaryOp.Mul
-    if ir_op == 3 { return Op.Div64; }     // IRBinaryOp.Div
-    if ir_op == 4 { return Op.Mod64; }     // IRBinaryOp.Mod
-    if ir_op == 5 { return Op.Eq64; }      // IRBinaryOp.Eq
-    if ir_op == 6 { return Op.Ne64; }      // IRBinaryOp.Ne
-    if ir_op == 7 { return Op.Lt64; }      // IRBinaryOp.Lt
-    if ir_op == 8 { return Op.Le64; }      // IRBinaryOp.Le
-    if ir_op == 9 { return Op.Gt64; }      // IRBinaryOp.Gt
-    if ir_op == 10 { return Op.Ge64; }     // IRBinaryOp.Ge
-    if ir_op == 11 { return Op.And64; }    // IRBinaryOp.And (logical - use bitwise)
-    if ir_op == 12 { return Op.Or64; }     // IRBinaryOp.Or (logical - use bitwise)
-    if ir_op == 13 { return Op.And64; }    // IRBinaryOp.BitAnd
-    if ir_op == 14 { return Op.Or64; }     // IRBinaryOp.BitOr
-    if ir_op == 15 { return Op.Xor64; }    // IRBinaryOp.BitXor
-    if ir_op == 16 { return Op.Shl64; }    // IRBinaryOp.Shl
-    if ir_op == 17 { return Op.Shr64; }    // IRBinaryOp.Shr
-    return Op.Add64;  // Default fallback
-}
-
-fn ir_unary_op_to_ssa_op(ir_op: i64) Op {
-    // IR unary ops: Neg=18, Not=19, BitNot=20 (from lower.cot IR_OP_NEG, etc.)
-    if ir_op == 18 { return Op.Neg64; }     // IRUnaryOp.Neg
-    if ir_op == 19 { return Op.Not64; }     // IRUnaryOp.Not
-    if ir_op == 20 { return Op.Not64; }     // IRUnaryOp.BitNot (use Not64 for now)
-    return Op.Neg64;  // Default fallback
-}
+// NOTE: ir_op_to_ssa_op and ir_unary_op_to_ssa_op are now in ssa/builder.cot
 
 // print(s) and println(s) are built-in functions - do not redefine them
 
@@ -470,7 +453,7 @@ fn parse_import_file(import_path: *u8, import_path_len: i64, pool: *NodePool) i6
     let import_source: string = @string(&g_source[start_offset], bytes_read);
 
     let nodes_before: i64 = pool.count;
-    var parser: Parser = Parser_init(import_source, pool);
+    var parser: Parser = Parser_init(import_source, pool, &g_type_pool);
     Parser_parseFile(&parser);
 
     if Parser_hadError(&parser) {
@@ -543,10 +526,16 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print_int(tok_count);
     print("\n");
 
+    // Initialize type registry (needed for parser)
+    g_type_pool.types = &g_types[0];
+    g_type_pool.params = &g_type_params[0];
+    g_type_pool.fields = &g_type_fields[0];
+    TypeRegistry_init(&g_type_pool);
+
     // Phase 2: Parse
     print("Phase 2: Parsing...\n");
     let pool: *NodePool = init_node_pool();
-    var parser: Parser = Parser_init(source, pool);
+    var parser: Parser = Parser_init(source, pool, &g_type_pool);
     let file_node: i64 = Parser_parseFile(&parser);
 
     if Parser_hadError(&parser) {
@@ -572,13 +561,8 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     // Phase 3: Lower to IR
     print("Phase 3: Lowering to IR...\n");
 
-    // Initialize type pool for field access
-    // Use g_source (combined source buffer) instead of original source
-    g_type_pool.types = &g_types[0];
-    g_type_pool.params = &g_type_params[0];
-    g_type_pool.fields = &g_type_fields[0];
-    TypePool_init(&g_type_pool);
-    TypePool_setSource(&g_type_pool, &g_source[0], g_source_len);
+    // Update type registry source to combined source buffer (after imports)
+    TypeRegistry_setSource(&g_type_pool, &g_source[0], g_source_len);
 
     var lowerer: Lowerer = undefined;
     Lowerer_init(&lowerer,
@@ -628,548 +612,39 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
                   &g_ssa_values[0], MAIN_MAX_SSA_VALUES,
                   &g_ssa_locals[0], MAIN_MAX_SSA_LOCALS);
 
-        // Find max block_id for this function's IR nodes
-        var max_block_id: i64 = 0;
-        var ir_idx: i64 = ir_func.nodes_start;
-        let ir_end: i64 = ir_func.nodes_start + ir_func.nodes_count;
-        while ir_idx < ir_end {
-            let ir_node: *IRNode = &g_ir_nodes[ir_idx];
-            if ir_node.block_id > max_block_id {
-                max_block_id = ir_node.block_id;
-            }
-            ir_idx = ir_idx + 1;
-        }
+        // ==================================================================
+        // IR to SSA Conversion using SSABuilder
+        // Matches Zig's ssa_builder.zig structure
+        // ==================================================================
 
-        // Create SSA blocks
-        let entry: i64 = Func_newEntryBlock(&ssa_func);
-        var block_idx: i64 = 1;
-        while block_idx <= max_block_id {
-            Func_newBlock(&ssa_func, BlockKind.Plain);
-            block_idx = block_idx + 1;
-        }
+        // Initialize SSA builder with storage arrays
+        var builder: SSABuilder = undefined;
+        SSABuilder_init(&builder, &ssa_func,
+                        &g_builder_all_defs[0], BUILDER_MAX_BLOCK_DEFS,
+                        &g_builder_block_map[0], BUILDER_MAX_BLOCK_MAP,
+                        &g_builder_node_values[0], BUILDER_MAX_VAR_DEFS,
+                        &g_builder_var_storage[0], 100000);
 
-        // Register this function's locals (params first, then regular locals)
-        // Also copy size from IR locals to SSA locals
-        var local_idx: i64 = ir_func.locals_start;
-        let locals_end: i64 = ir_func.locals_start + ir_func.locals_count;
-        var ssa_local_idx: i64 = 0;
-        while local_idx < locals_end {
-            let ir_local: *IRLocal = &g_ir_locals[local_idx];
-            if ir_local.is_param {
-                Func_addParam(&ssa_func, ir_local.name_start, ir_local.name_len,
-                               ir_local.type_idx);
-            } else {
-                Func_addLocal(&ssa_func, ir_local.name_start, ir_local.name_len,
-                               ir_local.type_idx, ir_local.is_mutable);
-            }
-            // Copy size from IR local to SSA local
-            let ssa_local: *Local = Func_getLocal(&ssa_func, ssa_local_idx);
-            ssa_local.size = ir_local.size;
-            local_idx = local_idx + 1;
-            ssa_local_idx = ssa_local_idx + 1;
-        }
+        // Set IR references for this function
+        SSABuilder_setIR(&builder,
+                         &g_ir_nodes[0], ir_func.nodes_start, ir_func.nodes_count,
+                         &g_ir_locals[0], ir_func.locals_start, ir_func.locals_count,
+                         &g_source[0], g_source_len,
+                         &g_call_args[0]);
 
-        // Compute stack layout using actual local sizes
-        // Following Zig compiler pattern: accumulate offsets based on actual sizes
-        local_idx = 0;
-        var current_offset: i64 = 0;
-        while local_idx < ssa_func.locals_count {
-            let ssa_local: *Local = Func_getLocal(&ssa_func, local_idx);
-            // Align to 8 bytes
-            current_offset = (current_offset + 7) & -8;
-            ssa_local.offset = current_offset;
-            current_offset = current_offset + ssa_local.size;
-            local_idx = local_idx + 1;
-        }
-        ssa_func.frame_size = current_offset;
-        if ssa_func.frame_size % 16 != 0 {
-            ssa_func.frame_size = ssa_func.frame_size + (16 - (ssa_func.frame_size % 16));
-        }
+        // Build SSA from IR (handles blocks, locals, params, conversion)
+        let build_result: i64 = SSABuilder_build(&builder);
 
-        // Convert this function's IR nodes to SSA
-        var current_ir_block: i64 = 0;
-        var next_reg: i64 = X1;
-        // Max register is X28 (29 is FP, 30 is LR, 31 is SP/XZR)
-        let max_reg: i64 = 28;
+        // Compute stack layout using StackAlloc pass
+        // This assigns offsets to locals and computes frame_size with 16-byte alignment
+        let stack_result: StackAllocResult = StackAlloc_run(&ssa_func);
 
-        // BUG-049 FIX: At function entry, store parameters to their stack slots.
-        // This ensures parameters survive across function calls, since X0-X7 are
-        // caller-saved and get clobbered by any BL instruction.
-        // Following Zig compiler pattern: ssa_builder.zig Phase 3.
-        var param_local_idx: i64 = 0;
-        while param_local_idx < ssa_func.locals_count {
-            let param_local: *Local = Func_getLocal(&ssa_func, param_local_idx);
-            if param_local.is_param {
-                // 1. Create Arg value for the parameter (captures value from X0/X1/etc.)
-                let arg_val: *Value = Func_newValue(&ssa_func, Op.Arg, TYPE_I64);
-                arg_val.aux_int = param_local.param_idx;
-                arg_val.reg = X0 + param_local.param_idx;
-
-                // 2. Create LocalAddr value for the stack slot
-                let addr_val: *Value = Func_newValue(&ssa_func, Op.LocalAddr, TYPE_I64);
-                addr_val.aux_int = param_local_idx;
-
-                // 3. Store Arg to stack slot
-                let store_val: *Value = Func_newValue(&ssa_func, Op.Store, TYPE_VOID);
-                Value_addArg2(store_val, addr_val, arg_val);
-            }
-            param_local_idx = param_local_idx + 1;
-        }
-
-        ir_idx = ir_func.nodes_start;
-        while ir_idx < ir_end {
-            let ir_node: *IRNode = &g_ir_nodes[ir_idx];
-
-            if ir_node.block_id != current_ir_block {
-                current_ir_block = ir_node.block_id;
-                Func_setBlock(&ssa_func, current_ir_block);
-            }
-
-            if ir_node.kind == IRNodeKind.ConstInt {
-                let val: *Value = Func_emitConstInt(&ssa_func, ir_node.value, TYPE_I64);
-                val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = val.id;
-            } else if ir_node.kind == IRNodeKind.ConstString {
-                // String literal: left=str_start, right=str_len in source
-                let val: *Value = Func_emitConstString(&ssa_func, ir_node.left, ir_node.right);
-                val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = val.id;
-            } else if ir_node.kind == IRNodeKind.MakeString {
-                // @string(ptr, len): left=ptr_expr, right=len_expr (relative IR indices)
-                let ptr_abs: i64 = ir_func.nodes_start + ir_node.left;
-                let len_abs: i64 = ir_func.nodes_start + ir_node.right;
-                let ptr_id: i64 = g_ir_to_ssa_id[ptr_abs];
-                let len_id: i64 = g_ir_to_ssa_id[len_abs];
-                let ptr_val: *Value = Func_getValue(&ssa_func, ptr_id);
-                let len_val: *Value = Func_getValue(&ssa_func, len_id);
-                let make_val: *Value = Func_newValue(&ssa_func, Op.StringMake, TYPE_STRING);
-                Value_addArg2(make_val, ptr_val, len_val);
-                make_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = make_val.id;
-            } else if ir_node.kind == IRNodeKind.MakeSlice {
-                // Slice creation: left=ptr_expr, right=len_expr (relative IR indices)
-                let ptr_abs: i64 = ir_func.nodes_start + ir_node.left;
-                let len_abs: i64 = ir_func.nodes_start + ir_node.right;
-                let ptr_id: i64 = g_ir_to_ssa_id[ptr_abs];
-                let len_id: i64 = g_ir_to_ssa_id[len_abs];
-                let ptr_val: *Value = Func_getValue(&ssa_func, ptr_id);
-                let len_val: *Value = Func_getValue(&ssa_func, len_id);
-                let make_val: *Value = Func_newValue(&ssa_func, Op.SliceMake, TYPE_I64);
-                Value_addArg2(make_val, ptr_val, len_val);
-                make_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = make_val.id;
-            } else if ir_node.kind == IRNodeKind.SlicePtr {
-                // Extract pointer from slice: left=slice_expr (relative IR index)
-                // Following src/frontend/ir.zig:1133-1135 emitSlicePtr
-                let slice_abs: i64 = ir_func.nodes_start + ir_node.left;
-                let slice_id: i64 = g_ir_to_ssa_id[slice_abs];
-                let slice_val: *Value = Func_getValue(&ssa_func, slice_id);
-                let ptr_val: *Value = Func_newValue(&ssa_func, Op.SlicePtr, TYPE_I64);
-                Value_addArg(ptr_val, slice_val);
-                ptr_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = ptr_val.id;
-            } else if ir_node.kind == IRNodeKind.SliceLen {
-                // Extract length from slice: left=slice_expr (relative IR index)
-                let slice_abs: i64 = ir_func.nodes_start + ir_node.left;
-                let slice_id: i64 = g_ir_to_ssa_id[slice_abs];
-                let slice_val: *Value = Func_getValue(&ssa_func, slice_id);
-                let len_val: *Value = Func_newValue(&ssa_func, Op.SliceLen, TYPE_I64);
-                Value_addArg(len_val, slice_val);
-                len_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = len_val.id;
-            } else if ir_node.kind == IRNodeKind.Binary {
-                // left and right are relative IR indices
-                let left_abs: i64 = ir_func.nodes_start + ir_node.left;
-                let right_abs: i64 = ir_func.nodes_start + ir_node.right;
-                let left_id: i64 = g_ir_to_ssa_id[left_abs];
-                let right_id: i64 = g_ir_to_ssa_id[right_abs];
-                let left_val: *Value = Func_getValue(&ssa_func, left_id);
-                let right_val: *Value = Func_getValue(&ssa_func, right_id);
-                let ssa_op: Op = ir_op_to_ssa_op(ir_node.op);
-                let val: *Value = Func_emitBinary(&ssa_func, ssa_op, left_val, right_val, TYPE_I64);
-                // Use next_reg to avoid clobbering parameters (following Zig compiler pattern)
-                val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = val.id;
-            } else if ir_node.kind == IRNodeKind.Unary {
-                // Unary op: left is operand (relative IR index), op is the operator
-                let operand_abs: i64 = ir_func.nodes_start + ir_node.left;
-                let operand_id: i64 = g_ir_to_ssa_id[operand_abs];
-                let operand_val: *Value = Func_getValue(&ssa_func, operand_id);
-                let ssa_op: Op = ir_unary_op_to_ssa_op(ir_node.op);
-                let val: *Value = Func_newValue(&ssa_func, ssa_op, TYPE_I64);
-                Value_addArg(val, operand_val);
-                val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = val.id;
-            } else if ir_node.kind == IRNodeKind.StoreLocal {
-                let loc_idx: i64 = ir_node.left;  // local index (not IR node)
-                // right is relative IR index of value to store
-                let value_abs: i64 = ir_func.nodes_start + ir_node.right;
-                let value_ssa_id: i64 = g_ir_to_ssa_id[value_abs];
-                let value_val: *Value = Func_getValue(&ssa_func, value_ssa_id);
-                let store_val: *Value = Func_emitStoreLocal(&ssa_func, loc_idx, value_val);
-                g_ir_to_ssa_id[ir_idx] = store_val.id;
-            } else if ir_node.kind == IRNodeKind.LoadLocal {
-                let loc_idx: i64 = ir_node.left;
-                // BUG-049 FIX: All locals (including parameters) are loaded from stack.
-                // Parameters were stored to stack at function entry, so we can
-                // safely load them here without worrying about X0-X7 being clobbered.
-                let load_val: *Value = Func_emitLoadLocal(&ssa_func, loc_idx);
-                load_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = load_val.id;
-            } else if ir_node.kind == IRNodeKind.AddrLocal {
-                // Address of local variable: left = local index
-                let loc_idx: i64 = ir_node.left;
-                let addr_val: *Value = Func_newValue(&ssa_func, Op.LocalAddr, TYPE_I64);
-                addr_val.aux_int = loc_idx;
-                addr_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = addr_val.id;
-            } else if ir_node.kind == IRNodeKind.Load {
-                // Load from pointer: left = ptr expr (relative IR index)
-                let ptr_abs: i64 = ir_func.nodes_start + ir_node.left;
-                let ptr_id: i64 = g_ir_to_ssa_id[ptr_abs];
-                let ptr_val: *Value = Func_getValue(&ssa_func, ptr_id);
-                let load_val: *Value = Func_newValue(&ssa_func, Op.Load, TYPE_I64);
-                Value_addArg(load_val, ptr_val);
-                load_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = load_val.id;
-            } else if ir_node.kind == IRNodeKind.Store {
-                // Store to pointer: left = ptr expr, right = value expr (relative)
-                let ptr_abs: i64 = ir_func.nodes_start + ir_node.left;
-                let val_abs: i64 = ir_func.nodes_start + ir_node.right;
-                let ptr_id: i64 = g_ir_to_ssa_id[ptr_abs];
-                let val_id: i64 = g_ir_to_ssa_id[val_abs];
-                let ptr_val: *Value = Func_getValue(&ssa_func, ptr_id);
-                let val_val: *Value = Func_getValue(&ssa_func, val_id);
-                let store_val: *Value = Func_newValue(&ssa_func, Op.Store, TYPE_VOID);
-                Value_addArg2(store_val, ptr_val, val_val);
-                g_ir_to_ssa_id[ir_idx] = store_val.id;
-            } else if ir_node.kind == IRNodeKind.FieldLocal {
-                // Access field of local struct: left = local_idx, right = offset
-                // SSA pattern: LocalAddr + OffPtr + Load
-                let loc_idx: i64 = ir_node.left;
-                let offset: i64 = ir_node.right;
-
-                // 1. Get address of local
-                let addr_val: *Value = Func_newValue(&ssa_func, Op.LocalAddr, TYPE_I64);
-                addr_val.aux_int = loc_idx;
-
-                // 2. Add offset to get field address
-                let off_val: *Value = Func_newValue(&ssa_func, Op.OffPtr, TYPE_I64);
-                Value_addArg(off_val, addr_val);
-                off_val.aux_int = offset;
-
-                // 3. Load the field value
-                let load_val: *Value = Func_newValue(&ssa_func, Op.Load, ir_node.type_idx);
-                Value_addArg(load_val, off_val);
-                load_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = load_val.id;
-            } else if ir_node.kind == IRNodeKind.FieldValue {
-                // Access field via computed address: left = base_expr, right = offset
-                // SSA pattern: base + OffPtr + Load
-                let base_abs: i64 = ir_func.nodes_start + ir_node.left;
-                let offset: i64 = ir_node.right;
-                let base_id: i64 = g_ir_to_ssa_id[base_abs];
-                let base_val: *Value = Func_getValue(&ssa_func, base_id);
-
-                // 1. Add offset to base to get field address
-                let off_val: *Value = Func_newValue(&ssa_func, Op.OffPtr, TYPE_I64);
-                Value_addArg(off_val, base_val);
-                off_val.aux_int = offset;
-
-                // 2. Load the field value
-                let load_val: *Value = Func_newValue(&ssa_func, Op.Load, ir_node.type_idx);
-                Value_addArg(load_val, off_val);
-                load_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = load_val.id;
-            } else if ir_node.kind == IRNodeKind.StoreFieldLocal {
-                // Store to field of local struct: left = local_idx, right = offset, value = stored_expr
-                let loc_idx: i64 = ir_node.left;
-                let offset: i64 = ir_node.right;
-                let val_abs: i64 = ir_func.nodes_start + ir_node.value;
-                let val_id: i64 = g_ir_to_ssa_id[val_abs];
-                let val_val: *Value = Func_getValue(&ssa_func, val_id);
-
-                // 1. Get address of local
-                let addr_val: *Value = Func_newValue(&ssa_func, Op.LocalAddr, TYPE_I64);
-                addr_val.aux_int = loc_idx;
-                addr_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-
-                // 2. Add offset to get field address
-                let off_val: *Value = Func_newValue(&ssa_func, Op.OffPtr, TYPE_I64);
-                Value_addArg(off_val, addr_val);
-                off_val.aux_int = offset;
-                off_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-
-                // 3. Store the value
-                let store_val: *Value = Func_newValue(&ssa_func, Op.Store, TYPE_VOID);
-                Value_addArg2(store_val, off_val, val_val);
-                g_ir_to_ssa_id[ir_idx] = store_val.id;
-            } else if ir_node.kind == IRNodeKind.StoreField {
-                // Store to field via computed address: left = base_expr, right = offset, value = stored_expr
-                let base_abs: i64 = ir_func.nodes_start + ir_node.left;
-                let offset: i64 = ir_node.right;
-                let val_abs: i64 = ir_func.nodes_start + ir_node.value;
-                let base_id: i64 = g_ir_to_ssa_id[base_abs];
-                let val_id: i64 = g_ir_to_ssa_id[val_abs];
-                let base_val: *Value = Func_getValue(&ssa_func, base_id);
-                let val_val: *Value = Func_getValue(&ssa_func, val_id);
-
-                // 1. Add offset to base to get field address
-                let off_val: *Value = Func_newValue(&ssa_func, Op.OffPtr, TYPE_I64);
-                Value_addArg(off_val, base_val);
-                off_val.aux_int = offset;
-                off_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-
-                // 2. Store the value
-                let store_val: *Value = Func_newValue(&ssa_func, Op.Store, TYPE_VOID);
-                Value_addArg2(store_val, off_val, val_val);
-                g_ir_to_ssa_id[ir_idx] = store_val.id;
-            } else if ir_node.kind == IRNodeKind.IndexLocal {
-                // Index into local array: left = local_idx, right = index_expr, value = elem_size
-                // SSA pattern: LocalAddr + (index * elem_size) + AddPtr + Load
-                let loc_idx: i64 = ir_node.left;
-                let idx_abs: i64 = ir_func.nodes_start + ir_node.right;
-                let elem_size: i64 = ir_node.value;
-                let idx_id: i64 = g_ir_to_ssa_id[idx_abs];
-                let idx_val: *Value = Func_getValue(&ssa_func, idx_id);
-
-                // 1. Get address of local array
-                let addr_val: *Value = Func_newValue(&ssa_func, Op.LocalAddr, TYPE_I64);
-                addr_val.aux_int = loc_idx;
-                addr_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-
-                // 2. Compute byte offset: index * elem_size
-                let size_val: *Value = Func_emitConstInt(&ssa_func, elem_size, TYPE_I64);
-                size_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                let offset_val: *Value = Func_emitBinary(&ssa_func, Op.Mul64, idx_val, size_val, TYPE_I64);
-                offset_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-
-                // 3. Add offset to base address
-                let ptr_val: *Value = Func_emitBinary(&ssa_func, Op.AddPtr, addr_val, offset_val, TYPE_I64);
-                ptr_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-
-                // 4. Load the element value
-                let load_val: *Value = Func_newValue(&ssa_func, Op.Load, ir_node.type_idx);
-                Value_addArg(load_val, ptr_val);
-                load_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = load_val.id;
-            } else if ir_node.kind == IRNodeKind.IndexValue {
-                // Index via computed address: left = base_expr, right = index_expr, value = elem_size
-                // SSA pattern: base + (index * elem_size) + AddPtr + Load
-                let base_abs: i64 = ir_func.nodes_start + ir_node.left;
-                let idx_abs: i64 = ir_func.nodes_start + ir_node.right;
-                let elem_size: i64 = ir_node.value;
-                let base_id: i64 = g_ir_to_ssa_id[base_abs];
-                let idx_id: i64 = g_ir_to_ssa_id[idx_abs];
-                let base_val: *Value = Func_getValue(&ssa_func, base_id);
-                let idx_val: *Value = Func_getValue(&ssa_func, idx_id);
-
-                // 1. Compute byte offset: index * elem_size
-                let size_val: *Value = Func_emitConstInt(&ssa_func, elem_size, TYPE_I64);
-                size_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                let offset_val: *Value = Func_emitBinary(&ssa_func, Op.Mul64, idx_val, size_val, TYPE_I64);
-                offset_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-
-                // 2. Add offset to base address
-                let ptr_val: *Value = Func_emitBinary(&ssa_func, Op.AddPtr, base_val, offset_val, TYPE_I64);
-                ptr_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-
-                // 3. Load the element value
-                let load_val: *Value = Func_newValue(&ssa_func, Op.Load, ir_node.type_idx);
-                Value_addArg(load_val, ptr_val);
-                load_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = load_val.id;
-            } else if ir_node.kind == IRNodeKind.StoreIndexLocal {
-                // Store to local array element: left = local_idx, right = index_expr, value = stored_expr, op = elem_size
-                let loc_idx: i64 = ir_node.left;
-                let idx_abs: i64 = ir_func.nodes_start + ir_node.right;
-                let val_abs: i64 = ir_func.nodes_start + ir_node.value;
-                let elem_size: i64 = ir_node.op;
-                let idx_id: i64 = g_ir_to_ssa_id[idx_abs];
-                let val_id: i64 = g_ir_to_ssa_id[val_abs];
-                let idx_val: *Value = Func_getValue(&ssa_func, idx_id);
-                let val_val: *Value = Func_getValue(&ssa_func, val_id);
-
-                // 1. Get address of local array
-                let addr_val: *Value = Func_newValue(&ssa_func, Op.LocalAddr, TYPE_I64);
-                addr_val.aux_int = loc_idx;
-                addr_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-
-                // 2. Compute byte offset: index * elem_size
-                let size_val: *Value = Func_emitConstInt(&ssa_func, elem_size, TYPE_I64);
-                size_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                let offset_val: *Value = Func_emitBinary(&ssa_func, Op.Mul64, idx_val, size_val, TYPE_I64);
-                offset_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-
-                // 3. Add offset to base address
-                let ptr_val: *Value = Func_emitBinary(&ssa_func, Op.AddPtr, addr_val, offset_val, TYPE_I64);
-                ptr_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-
-                // 4. Store the value
-                let store_val: *Value = Func_newValue(&ssa_func, Op.Store, TYPE_VOID);
-                Value_addArg2(store_val, ptr_val, val_val);
-                g_ir_to_ssa_id[ir_idx] = store_val.id;
-            } else if ir_node.kind == IRNodeKind.StoreIndexValue {
-                // Store via indexed address: left = base_expr, right = index_expr, value = stored_expr, op = elem_size
-                let base_abs: i64 = ir_func.nodes_start + ir_node.left;
-                let idx_abs: i64 = ir_func.nodes_start + ir_node.right;
-                let val_abs: i64 = ir_func.nodes_start + ir_node.value;
-                let elem_size: i64 = ir_node.op;
-                let base_id: i64 = g_ir_to_ssa_id[base_abs];
-                let idx_id: i64 = g_ir_to_ssa_id[idx_abs];
-                let val_id: i64 = g_ir_to_ssa_id[val_abs];
-                let base_val: *Value = Func_getValue(&ssa_func, base_id);
-                let idx_val: *Value = Func_getValue(&ssa_func, idx_id);
-                let val_val: *Value = Func_getValue(&ssa_func, val_id);
-
-                // 1. Compute byte offset: index * elem_size
-                let size_val: *Value = Func_emitConstInt(&ssa_func, elem_size, TYPE_I64);
-                size_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                let offset_val: *Value = Func_emitBinary(&ssa_func, Op.Mul64, idx_val, size_val, TYPE_I64);
-                offset_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-
-                // 2. Add offset to base address
-                let ptr_val: *Value = Func_emitBinary(&ssa_func, Op.AddPtr, base_val, offset_val, TYPE_I64);
-                ptr_val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-
-                // 3. Store the value
-                let store_val: *Value = Func_newValue(&ssa_func, Op.Store, TYPE_VOID);
-                Value_addArg2(store_val, ptr_val, val_val);
-                g_ir_to_ssa_id[ir_idx] = store_val.id;
-            } else if ir_node.kind == IRNodeKind.Call {
-                let val: *Value = Func_emitCall(&ssa_func,
-                                                 ir_node.func_name_start,
-                                                 ir_node.func_name_len,
-                                                 TYPE_I64);
-                var arg_idx: i64 = 0;
-                while arg_idx < ir_node.args_count {
-                    // args_start is now an index into g_call_args, not IR nodes
-                    // g_call_args contains the actual IR node indices for each argument
-                    let call_args_slot: *i64 = &g_call_args[0] + ir_node.args_start + arg_idx;
-                    let arg_ir_rel: i64 = call_args_slot.*;  // Relative IR index within function
-                    let arg_ir_idx: i64 = ir_func.nodes_start + arg_ir_rel;
-                    let arg_ssa_id: i64 = g_ir_to_ssa_id[arg_ir_idx];
-                    let arg_val: *Value = Func_getValue(&ssa_func, arg_ssa_id);
-                    Value_addArg(val, arg_val);
-                    arg_idx = arg_idx + 1;
-                }
-                // Assign call result to next_reg instead of always X0
-                // This prevents clobbering when call results are used as args to other calls
-                val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = val.id;
-            } else if ir_node.kind == IRNodeKind.Select {
-                // Select: left = cond, right = true_val, value = false_val
-                let cond_abs: i64 = ir_func.nodes_start + ir_node.left;
-                let true_abs: i64 = ir_func.nodes_start + ir_node.right;
-                let false_abs: i64 = ir_func.nodes_start + ir_node.value;
-                let cond_id: i64 = g_ir_to_ssa_id[cond_abs];
-                let true_id: i64 = g_ir_to_ssa_id[true_abs];
-                let false_id: i64 = g_ir_to_ssa_id[false_abs];
-                let cond_val: *Value = Func_getValue(&ssa_func, cond_id);
-                let true_val: *Value = Func_getValue(&ssa_func, true_id);
-                let false_val: *Value = Func_getValue(&ssa_func, false_id);
-                let val: *Value = Func_emitSelect(&ssa_func, cond_val, true_val, false_val, TYPE_I64);
-                val.reg = next_reg;
-                next_reg = next_reg + 1;
-                if next_reg > max_reg { next_reg = X1; }
-                g_ir_to_ssa_id[ir_idx] = val.id;
-            } else if ir_node.kind == IRNodeKind.Branch {
-                // left is relative IR index of condition
-                let cond_abs: i64 = ir_func.nodes_start + ir_node.left;
-                let cond_id: i64 = g_ir_to_ssa_id[cond_abs];
-                let then_block: i64 = ir_node.right;
-                let else_block: i64 = ir_node.value;
-                let cond_val: *Value = Func_getValue(&ssa_func, cond_id);
-                Func_emitIf(&ssa_func, cond_val, then_block, else_block);
-                g_ir_to_ssa_id[ir_idx] = -1;
-            } else if ir_node.kind == IRNodeKind.Jump {
-                let target_block: i64 = ir_node.left;
-                Func_emitJump(&ssa_func, target_block);
-                g_ir_to_ssa_id[ir_idx] = -1;
-            } else if ir_node.kind == IRNodeKind.Return {
-                if ir_node.left >= 0 {
-                    // left is relative to function, convert to absolute
-                    let abs_idx: i64 = ir_func.nodes_start + ir_node.left;
-                    let val_id: i64 = g_ir_to_ssa_id[abs_idx];
-                    let ret_val: *Value = Func_getValue(&ssa_func, val_id);
-                    Func_emitReturn(&ssa_func, ret_val);
-                } else {
-                    // Void return - emit return with no value
-                    let void_ret: *Value = Func_newValue(&ssa_func, Op.Return, TYPE_VOID);
-                    // No args for void return
-                }
-            }
-
-            ir_idx = ir_idx + 1;
-        }
-
-        Func_emitReturnBlock(&ssa_func);
+        // Compute dominator tree for the function
+        // This sets b.dom (immediate dominator) and b.dom_level (depth) for each block
+        var dom_tree: DomTree = undefined;
+        DomTree_init(&dom_tree);
+        DomTree_compute(&dom_tree, &ssa_func);
+        DomTree_deinit(&dom_tree);
 
         total_blocks = total_blocks + ssa_func.blocks_count;
         total_values = total_values + ssa_func.values_count;

@@ -395,7 +395,8 @@ fn Node_varDecl(pool: *NodePool, is_let: i64, name_start: i64, name_len: i64,
     n.field1 = name_start;      // Name offset in source
     n.field2 = name_len;        // Name length
     n.field3 = init_expr;       // Init expression (-1 if none)
-    n.field4 = type_handle;     // Type handle from parser
+    n.field4 = type_start;      // Type annotation position (for later resolution)
+    n.field5 = type_handle;     // Resolved type (may be placeholder, resolved during lowering)
 
     return idx;
 }

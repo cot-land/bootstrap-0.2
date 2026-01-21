@@ -31,7 +31,7 @@ struct Symbol {
     name_start: i64,     // Name offset in source
     name_len: i64,       // Name length
     kind: SymbolKind,    // What kind of symbol
-    type_idx: i64,       // Type index from TypePool
+    type_idx: i64,       // Type index from TypeRegistry
     node_idx: i64,       // AST node where defined
     mutable: bool,       // var vs let/const
     is_extern: bool,     // extern fn?
@@ -171,7 +171,7 @@ fn names_equal(src1: *u8, start1: i64, len1: i64, src2: *u8, start2: i64, len2: 
 // ============================================================================
 
 struct Checker {
-    type_pool: *TypePool,   // Type registry
+    type_pool: *TypeRegistry,   // Type registry
     scope_pool: *ScopePool, // Scope pool
     ast_pool: *NodePool,    // AST nodes
     source: *u8,            // Source text
@@ -181,7 +181,7 @@ struct Checker {
     error_count: i64,       // Number of errors found
 }
 
-fn Checker_init(chk: *Checker, type_pool: *TypePool, scope_pool: *ScopePool,
+fn Checker_init(chk: *Checker, type_pool: *TypeRegistry, scope_pool: *ScopePool,
                 ast_pool: *NodePool, source: *u8) {
     chk.type_pool = type_pool;
     chk.scope_pool = scope_pool;
@@ -349,7 +349,7 @@ fn Checker_checkExpr(chk: *Checker, node_idx: i64) i64 {
         let operand_type: i64 = Checker_checkExpr(chk, operand);
 
         // Create pointer type
-        return TypePool_makePointer(chk.type_pool, operand_type);
+        return TypeRegistry_makePointer(chk.type_pool, operand_type);
     }
 
     // DerefExpr -> operand must be pointer, returns element type
@@ -544,7 +544,7 @@ fn Checker_checkVarDecl(chk: *Checker, node_idx: i64) {
 // ============================================================================
 // PTYPE_* constants are defined in types.cot
 
-// Resolve a parser type handle to a TypePool type index
+// Resolve a parser type handle to a TypeRegistry type index
 // Mirrors Zig bootstrap's resolveTypeRef
 fn Checker_resolveTypeHandle(chk: *Checker, type_handle: i64) i64 {
     // Basic types: direct mapping
@@ -559,7 +559,7 @@ fn Checker_resolveTypeHandle(chk: *Checker, type_handle: i64) i64 {
     if type_handle >= PTYPE_PTR_BASE and type_handle < PTYPE_USER_BASE {
         let pointee_handle: i64 = type_handle - PTYPE_PTR_BASE;
         let pointee_type: i64 = Checker_resolveTypeHandle(chk, pointee_handle);
-        return TypePool_makePointer(chk.type_pool, pointee_type);
+        return TypeRegistry_makePointer(chk.type_pool, pointee_type);
     }
 
     // User-defined types: PTYPE_USER_BASE + source_offset
@@ -604,7 +604,7 @@ fn Checker_checkStructDecl(chk: *Checker, node_idx: i64) {
     let ast_fields_start: i64 = node.field2;  // Index into AST children array
     let fields_count: i64 = node.field3;
 
-    // Record start of fields in TypePool's fields array
+    // Record start of fields in TypeRegistry's fields array
     let type_fields_start: i64 = chk.type_pool.fields_count;
 
     // Process each field and compute offsets
@@ -637,8 +637,8 @@ fn Checker_checkStructDecl(chk: *Checker, node_idx: i64) {
             max_align = field_align;
         }
 
-        // Add field to TypePool with computed offset
-        TypePool_addField(chk.type_pool, fname_start, fname_len, field_type, offset);
+        // Add field to TypeRegistry with computed offset
+        TypeRegistry_addField(chk.type_pool, fname_start, fname_len, field_type, offset);
 
         // Advance offset by field size
         offset = offset + field_size;
@@ -649,8 +649,8 @@ fn Checker_checkStructDecl(chk: *Checker, node_idx: i64) {
     // Align final size to struct alignment (round up to max_align)
     let struct_size: i64 = (offset + max_align - 1) / max_align * max_align;
 
-    // Create struct type with TypePool fields_start (not AST children start)
-    let struct_type: i64 = TypePool_makeStruct(chk.type_pool, name_start, name_len,
+    // Create struct type with TypeRegistry fields_start (not AST children start)
+    let struct_type: i64 = TypeRegistry_makeStruct(chk.type_pool, name_start, name_len,
                                              type_fields_start, fields_count,
                                              struct_size, max_align);
 
@@ -673,7 +673,7 @@ fn Checker_checkEnumDecl(chk: *Checker, node_idx: i64) {
     let variants_count: i64 = node.field3;
 
     // Create enum type
-    let enum_type: i64 = TypePool_makeEnum(chk.type_pool, name_start, name_len, variants_count);
+    let enum_type: i64 = TypeRegistry_makeEnum(chk.type_pool, name_start, name_len, variants_count);
 
     // Register as type name in scope
     let sym: Symbol = Symbol_new(name_start, name_len, SymbolKind.TypeName,

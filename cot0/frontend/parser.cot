@@ -19,22 +19,24 @@ import "../lib/list.cot"
 // ============================================================================
 
 struct Parser {
-    source: string,      // Source code being parsed
-    scanner: Scanner,    // Embedded scanner
-    current: Token,      // Current token
-    pool: *NodePool,     // AST node pool for allocation
-    had_error: bool,     // Error flag
+    source: string,           // Source code being parsed
+    scanner: Scanner,         // Embedded scanner
+    current: Token,           // Current token
+    pool: *NodePool,          // AST node pool for allocation
+    type_registry: *TypeRegistry,  // Type registry for type creation
+    had_error: bool,          // Error flag
 }
 
 // ============================================================================
 // Parser Initialization
 // ============================================================================
 
-fn Parser_init(source: string, pool: *NodePool) Parser {
+fn Parser_init(source: string, pool: *NodePool, type_registry: *TypeRegistry) Parser {
     var p: Parser;
     p.source = source;
     p.scanner = Scanner_init(source);
     p.pool = pool;
+    p.type_registry = type_registry;
     p.had_error = false;
     // Prime the parser with first token
     p.current = Scanner_next(&p.scanner);
@@ -118,49 +120,46 @@ fn Parser_binopInt(p: *Parser) i64 {
 // Type Parsing
 // ============================================================================
 
-// Type representation: we store type as start/length in source + a type_kind
-// For cot0 simplicity, we return a type "handle" that encodes the type kind
-// Parse a type: i64 | i32 | u8 | bool | void | string | *T | TypeName
-// Type handles (PTYPE_*) are defined in types.cot
-// Returns type handle (encoded as i64)
+// Parse a type and return a TypeRegistry index
+// Types: i64 | i32 | u8 | bool | void | string | *T | [N]T | []T | TypeName
+// Returns TypeRegistry index (not PTYPE encoding)
 fn Parser_parseType(p: *Parser) i64 {
     let kind: TokenType = p.current.kind;
 
-    // Built-in types
+    // Built-in types - return predefined TypeRegistry indices
     if kind == TokenType.I64 {
         Parser_advance(p);
-        return PTYPE_I64;
+        return TYPE_I64;
     }
     if kind == TokenType.I32 {
         Parser_advance(p);
-        return PTYPE_I32;
+        return TYPE_I32;
     }
     if kind == TokenType.U8 {
         Parser_advance(p);
-        return PTYPE_U8;
+        return TYPE_U8;
     }
     if kind == TokenType.Bool {
         Parser_advance(p);
-        return PTYPE_BOOL;
+        return TYPE_BOOL;
     }
     if kind == TokenType.Void {
         Parser_advance(p);
-        return PTYPE_VOID;
+        return TYPE_VOID;
     }
     if kind == TokenType.String {
         Parser_advance(p);
-        return PTYPE_STRING;
+        return TYPE_STRING;
     }
 
     // Pointer type: *T
     if kind == TokenType.Star {
         Parser_advance(p);
         let pointee: i64 = Parser_parseType(p);
-        return PTYPE_PTR_BASE + pointee;
+        return TypeRegistry_makePointer(p.type_registry, pointee);
     }
 
     // Array type: [size]T or slice type: []T
-    // Following Zig compiler pattern from src/frontend/parser.zig:563-580
     if kind == TokenType.LBracket {
         Parser_advance(p);  // consume '['
 
@@ -168,13 +167,12 @@ fn Parser_parseType(p: *Parser) i64 {
         if Parser_check(p, TokenType.RBracket) {
             Parser_advance(p);  // consume ']'
             let elem_type: i64 = Parser_parseType(p);
-            return PType_registerSlice(elem_type);
+            return TypeRegistry_makeSlice(p.type_registry, elem_type);
         }
 
         // Array type [size]T - parse size (must be integer literal)
         var array_size: i64 = 0;
         if Parser_check(p, TokenType.Int) {
-            // Extract value using same pattern as Parser_parseIntLit
             let arr_start: i64 = p.current.start;
             let arr_end: i64 = p.current.end;
             var arr_i: i64 = arr_start;
@@ -191,18 +189,37 @@ fn Parser_parseType(p: *Parser) i64 {
         }
         Parser_want(p, TokenType.RBracket);  // consume ']'
         let elem_type: i64 = Parser_parseType(p);
-        return PType_registerArray(elem_type, array_size);
+        return TypeRegistry_makeArray(p.type_registry, elem_type, array_size);
     }
 
-    // User-defined type (struct/enum name) - store source offset
+    // User-defined type (struct/enum name) - look up in TypeRegistry
     if kind == TokenType.Ident {
-        let offset: i64 = p.current.start;
+        let name_start: i64 = p.current.start;
+        // Calculate name length
+        var name_len: i64 = 0;
+        var pos: i64 = name_start;
+        while true {
+            let c: u8 = p.source[pos];
+            if (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or
+               (c >= 48 and c <= 57) or c == 95 {
+                name_len = name_len + 1;
+                pos = pos + 1;
+            } else {
+                break;
+            }
+        }
         Parser_advance(p);
-        return PTYPE_USER_BASE + offset;
+        // Look up type by name in TypeRegistry
+        // Struct types are registered by checker before lowering
+        let type_idx: i64 = TypeRegistry_findByName(p.type_registry, name_start, name_len);
+        if type_idx >= 0 {
+            return type_idx;
+        }
+        // Type not found yet - will be resolved after checker runs
+        return TYPE_I64;
     }
 
     // Function type: fn(params) -> ret
-    // Following Zig compiler pattern from src/frontend/parser.zig:parseType
     if kind == TokenType.Fn {
         Parser_advance(p);  // consume 'fn'
         Parser_want(p, TokenType.LParen);  // consume '('
@@ -210,7 +227,6 @@ fn Parser_parseType(p: *Parser) i64 {
         // Parse parameter types (comma-separated)
         while not Parser_check(p, TokenType.RParen) and not Parser_check(p, TokenType.Eof) {
             let param_type: i64 = Parser_parseType(p);
-            // We don't store param types for now - just skip them
             if not Parser_check(p, TokenType.Comma) {
                 break;
             }
@@ -220,19 +236,19 @@ fn Parser_parseType(p: *Parser) i64 {
         Parser_want(p, TokenType.RParen);  // consume ')'
 
         // Parse return type after '->'
+        var ret_type: i64 = TYPE_VOID;
         if Parser_check(p, TokenType.Arrow) {
             Parser_advance(p);  // consume '->'
-            let ret_type: i64 = Parser_parseType(p);
+            ret_type = Parser_parseType(p);
         }
 
-        // Return I64 as placeholder - function types not fully implemented
-        // This allows type checking to pass for function pointer declarations
-        return PTYPE_I64;
+        // TODO: Create proper function type in registry
+        return TYPE_I64;  // Placeholder
     }
 
     // Error - unexpected token
     p.had_error = true;
-    return PTYPE_I64;  // Default
+    return TYPE_I64;
 }
 
 // Helper to check if type is a pointer type

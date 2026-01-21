@@ -13,10 +13,10 @@ var g_ir_locals: [50]IRLocal;
 var g_ir_funcs: [10]IRFunc;
 var g_children: [200]i64;
 var g_constants: [50]ConstEntry;
-var g_type_pool: TypePool;
+var g_type_pool: TypeRegistry;
 var g_source: [100]u8;
 
-// TypePool backing storage
+// TypeRegistry backing storage
 var g_types: [256]Type;
 var g_params: [1024]i64;
 var g_fields: [1024]FieldInfo;
@@ -76,7 +76,7 @@ fn test_lower_int_lit() i64 {
     node.field3 = 0;
 
     // Initialize type pool with backing storage
-    TypePool_initWithStorage(&g_type_pool, &g_types[0], &g_params[0], &g_fields[0]);
+    TypeRegistry_initWithStorage(&g_type_pool, &g_types[0], &g_params[0], &g_fields[0]);
 
     // Create lowerer
     var l: Lowerer = undefined;
@@ -152,7 +152,7 @@ fn test_lower_binary() i64 {
     n2.field3 = 0;
 
     // Initialize type pool with backing storage
-    TypePool_initWithStorage(&g_type_pool, &g_types[0], &g_params[0], &g_fields[0]);
+    TypeRegistry_initWithStorage(&g_type_pool, &g_types[0], &g_params[0], &g_fields[0]);
 
     // Create lowerer
     var l: Lowerer = undefined;

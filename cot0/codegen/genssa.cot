@@ -932,11 +932,29 @@ fn GenState_return(gs: *GenState, v: *Value) {
     let f: *Func = gs.func;
 
     // If there's a return value, move it to X0
+    // For slices (SliceMake), move ptr to X0 and len to X1
     if v.args_count > 0 {
         let arg0_id: i64 = v.args[0];
         let ret_val: *Value = Func_getValue(f, arg0_id);
-        if ret_val.reg != X0 and ret_val.reg >= 0 {
-            GenState_emitInst(gs, encode_mov_reg(X0, ret_val.reg));
+
+        // Check if returning a slice (SliceMake)
+        if ret_val.op == Op.SliceMake {
+            // Slice return: ptr in X0, len in X1
+            let ptr_val: *Value = Func_getValue(f, ret_val.args[0]);
+            let len_val: *Value = Func_getValue(f, ret_val.args[1]);
+            // Move ptr to X0
+            if ptr_val.reg >= 0 and ptr_val.reg != X0 {
+                GenState_emitInst(gs, encode_mov_reg(X0, ptr_val.reg));
+            }
+            // Move len to X1
+            if len_val.reg >= 0 and len_val.reg != X1 {
+                GenState_emitInst(gs, encode_mov_reg(X1, len_val.reg));
+            }
+        } else {
+            // Regular return: move to X0
+            if ret_val.reg != X0 and ret_val.reg >= 0 {
+                GenState_emitInst(gs, encode_mov_reg(X0, ret_val.reg));
+            }
         }
     }
 

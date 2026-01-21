@@ -2,132 +2,131 @@
 
 **Last Updated: 2026-01-21**
 
-## Current State
+## Current Goal
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   Make EVERY function in cot0/COMPARISON.md show "Same"                       ║
+║                                                                               ║
+║   Progress: 0 / 21 sections complete                                          ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+```
+
+---
+
+## Section Progress
+
+Work through cot0/COMPARISON.md top to bottom. Mark each section complete when ALL functions show "Same".
+
+| Section | File | Status | Same | Equiv | Missing cot0 | Missing Zig |
+|---------|------|--------|------|-------|--------------|-------------|
+| 1 | main.cot | **IN PROGRESS** | 1 | 17 | 4 | 0 |
+| 2.1 | frontend/token.cot | Pending | 0 | 2 | 0 | 0 |
+| 2.2 | frontend/scanner.cot | Pending | 16 | 5 | 0 | 0 |
+| 2.3 | frontend/ast.cot | Pending | 23 | 2 | 2 | 0 |
+| 2.4 | frontend/parser.cot | Pending | 5 | 31 | 0 | 0 |
+| 2.5 | frontend/types.cot | Pending | 10 | 2 | 4 | 0 |
+| 2.6 | frontend/checker.cot | Pending | 24 | 0 | 2 | 0 |
+| 2.7 | frontend/ir.cot | Pending | 10 | 0 | 1 | 0 |
+| 2.8 | frontend/lower.cot | Pending | 18 | 0 | 2 | 0 |
+| 3.1 | ssa/op.cot | Pending | 1 | 3 | 3 | 0 |
+| 3.2 | ssa/value.cot | Pending | 9 | 0 | 3 | 0 |
+| 3.3 | ssa/block.cot | Pending | 10 | 0 | 3 | 0 |
+| 3.4 | ssa/func.cot | Pending | 8 | 0 | 4 | 0 |
+| 3.5 | ssa/builder.cot | Pending | 31 | 1 | 3 | 0 |
+| 3.6 | ssa/liveness.cot | Pending | 5 | 2 | 3 | 0 |
+| 3.7 | ssa/regalloc.cot | Pending | 9 | 0 | 4 | 0 |
+| 4.1 | arm64/asm.cot | Pending | 41 | 2 | 7 | 5 |
+| 4.2 | arm64/regs.cot | Pending | — | — | — | 5 (cot0-only) |
+| 5.1 | codegen/arm64.cot | Pending | 0 | 26 | 13 | 0 |
+| 5.2 | codegen/genssa.cot | Pending | — | — | — | 39 (cot0-only) |
+| 6.1 | obj/macho.cot | Pending | 3 | 3 | 6 | 16 |
+| 7.* | Zig-only files | Pending | 0 | 0 | ~150 | 0 |
+
+---
+
+## Current Task
+
+**Section 1: main.cot vs main.zig + driver.zig**
+
+Functions to make "Same":
+
+| cot0 Function | Zig Function | Action Needed |
+|---------------|--------------|---------------|
+| `compile()` | `Driver.compileFile()` | Rename to `compileFile` |
+| `print_usage()` | inline | Keep (already same concept) |
+| `ir_op_to_ssa_op()` | SSA conversion | Move to appropriate module |
+| `ir_unary_op_to_ssa_op()` | SSA conversion | Move to appropriate module |
+| `print_int()` | `std.debug.print()` | Remove (use stdlib) |
+| `read_file()` | `std.fs.cwd().readFileAlloc()` | Match Zig pattern |
+| `write_file()` | `std.fs.cwd().writeFile()` | Match Zig pattern |
+| `init_node_pool()` | AST init | Move to ast.cot |
+| `is_path_imported()` | `seen_files.contains()` | Rename |
+| `add_imported_path()` | `seen_files.put()` | Rename |
+| `extract_base_dir()` | `std.fs.path.dirname()` | Match stdlib |
+| `build_import_path()` | `std.fs.path.join()` | Match stdlib |
+| `adjust_node_positions()` | Position in Source | Move to source.cot |
+| `parse_import_file()` | parseFileRecursive | Rename |
+| `process_all_imports()` | `parseFileRecursive()` | Rename |
+| `strlen()` | Slice length | Remove (use slice.len) |
+| `streq()` | `std.mem.eql()` | Match stdlib |
+| `strcpy()` | `allocator.dupe()` | Match stdlib |
+| — | `findRuntimePath()` | Add |
+| — | `Driver.init()` | Add |
+| — | `Driver.compileSource()` | Add |
+| — | `Driver.setDebugPhases()` | Add |
+
+---
+
+## Summary Statistics
+
+| Metric | Count |
+|--------|-------|
+| Total sections | 21 |
+| Sections complete | 0 |
+| Functions "Same" | ~220 |
+| Functions "Equivalent" | ~95 |
+| Functions missing in cot0 | ~220 |
+| Zig-only file functions | ~150 |
+| **Total work items** | ~465 |
+
+---
+
+## Zig Compiler Status
 
 | Component | Status |
 |-----------|--------|
 | Zig compiler (src/*.zig) | **COMPLETE** - 166 tests pass |
-| cot0 compiler (cot0/*.cot) | **MATURING** - compiles all 166 test functions |
-| cot0-stage1 simple programs | Works |
-| cot0-stage1 test suite | Parser crash on full main() - investigating |
-
-### Test Progress
-
-| Tier | Status | Test Functions |
-|------|--------|----------------|
-| 1-6.5 | PASS | Basic ops, control flow, loops, edge cases |
-| 7-9 | PASS | Structs, arrays, pointers |
-| 10-14 | PASS | Bitwise, logical, enums, null |
-| 15 | PASS | Slices, string concat, @string |
-| 16-17 | PASS | For-in loops, switch |
-| 18 | BLOCKED | Function pointers (indirect calls broken) |
-| 19-20 | PASS | Pointer arithmetic, bitwise NOT |
-| 21-22 | PASS | Compound assignments, @intCast |
-| 23-24 | PARTIAL | Defer (works), Globals (stale value bug) |
-| 25-26 | PASS | Stress tests, bug regressions |
-
-### Current Blockers
-
-1. **Parser crash on full test file** - All 166 test functions compile, but parsing the full main() with 250+ statements causes crash (under investigation)
-2. **Function pointer calls** - Indirect calls treated as external function calls
-3. **Global variable stale value** - Multiple writes to same global use cached value
-
-### Recent Fixes (2026-01-21)
-
-- **BUG-053: Struct local stack allocation** - Struct locals now get proper size (16 bytes for Point, etc.)
-- **BUG-052: Pointer-to-struct detection** - Disambiguates `Point` vs `*Point` by checking for `*` character
-- **Pointer field access** - `ptr.*.x` and `ptr.*.y` now work correctly with proper offsets
-- **Postfix ops on parenthesized expressions** - `(buf + 8).*` now works
-- **Standalone block statements** - `{ ... }` inside functions now works
-- **Nested parentheses** - `((a))` now works correctly
-- **Statement buffer increase** - From 128 to 512 for larger functions
-- **Compound assignments** - `+=`, `-=`, `*=`, `/=`, `&=`, `|=` now work
-- **Void extern functions** - `extern fn free(ptr: *i64);` (no return type)
-- **External function call relocations** - ARM64_RELOC_BRANCH26 for extern fn
-- **BUG-049: Recursion return values** - Parameters spilled to stack at entry
-- **BUG-050: ORN instruction encoding** - Fixed ARM64 ORN encoding
-
-### Tests Passing
-
-| Feature | Status |
-|---------|--------|
-| Basic arithmetic | PASS |
-| Function calls | PASS |
-| Local variables | PASS |
-| Comparisons | PASS |
-| If/else | PASS |
-| While loops | PASS |
-| For-in (arrays/slices) | PASS |
-| Structs | PASS |
-| Arrays | PASS |
-| Pointers | PASS |
-| Pointer field access (ptr.*.field) | PASS |
-| Bitwise ops | PASS |
-| Bitwise NOT (~) | PASS |
-| Modulo | PASS |
-| Slice indexing | PASS |
-| Switch | PASS |
-| External calls | PASS |
-| Compound assign | PASS |
-| Pointer arithmetic | PASS |
-| Defer | PASS |
-| Function pointers | FAIL (codegen) |
-| Global variables | PARTIAL (stale value bug) |
 
 ---
 
-## The Goal
+## Quick Reference
 
-**cot0 must mature before self-hosting.**
+```bash
+# Build Zig compiler
+zig build
 
-Self-hosting (cot0 compiles itself) is the end goal, not the next step.
+# Test Zig compiler
+./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/all_tests && /tmp/all_tests
 
----
+# Build cot0-stage1
+./zig-out/bin/cot cot0/main.cot -o /tmp/cot0-stage1
 
-## Maturation Path
-
-### Phase 1: Make cot0 Robust (CURRENT)
-
-- Add extensive debugging to cot0
-- Copy logic from Zig compiler into cot0
-- Fix bugs systematically using debug output
-
-### Phase 2: Test Suite Passes with cot0-stage1
-
-- Get cot0-stage1 to compile the 166-test suite
-- All tests must pass when compiled BY cot0-stage1
-
-### Phase 3: Build Confidence
-
-- Compile increasingly complex programs
-- Compare with Zig compiler output
-- Fix discrepancies
-
-### Phase 4: Self-Hosting (FUTURE)
-
-- Only after phases 1-3 are complete
-- cot0-stage1 compiles cot0/*.cot
+# Test cot0-stage1
+echo 'fn main() i64 { return 42 }' > /tmp/test.cot
+/tmp/cot0-stage1 /tmp/test.cot -o /tmp/test.o
+zig cc /tmp/test.o -o /tmp/test && /tmp/test; echo "Exit: $?"
+```
 
 ---
 
-## Zig Compiler Features (Complete)
+## Key Documents
 
-- Integer literals, arithmetic, comparisons
-- Boolean type, local variables
-- Functions, recursion, if/else, while, for-in
-- Structs, enums, switch
-- Strings, arrays, slices
-- Pointers, optionals
-- Bitwise/logical operators
-- Imports, globals, extern fn
-
----
-
-## Documentation
-
-| File | Purpose |
-|------|---------|
-| [CLAUDE.md](CLAUDE.md) | Architecture, maturation path |
-| [SYNTAX.md](SYNTAX.md) | Language syntax |
+| Document | Purpose |
+|----------|---------|
+| [cot0/COMPARISON.md](cot0/COMPARISON.md) | Master checklist |
+| [CLAUDE.md](CLAUDE.md) | Development guidelines |
+| [cot0/ROADMAP.md](cot0/ROADMAP.md) | Detailed file-by-file plan |
 | [BUGS.md](BUGS.md) | Bug tracking |
-| [cot0/README.md](cot0/README.md) | cot0 overview |
