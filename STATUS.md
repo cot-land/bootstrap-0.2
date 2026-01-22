@@ -1,5 +1,8 @@
 # Bootstrap 0.2 - Project Status
 
+> **WORK MODE**: Continue working on parity improvements without pausing for summaries.
+> The user will stop you when enough progress has been made. Just keep working.
+
 **Last Updated: 2026-01-22**
 
 ## Current Goal

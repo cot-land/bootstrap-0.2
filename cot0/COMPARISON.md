@@ -1,5 +1,8 @@
 # cot0 vs Zig Compiler Function Comparison
 
+> **WORK MODE**: Continue working on parity improvements without pausing for summaries.
+> The user will stop you when enough progress has been made. Just keep working.
+
 This document provides a comparison of functions between the cot0 self-hosting compiler and the Zig bootstrap compiler.
 
 ## ⚠️ AUDIT WARNING
