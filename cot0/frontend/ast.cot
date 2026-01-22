@@ -169,6 +169,18 @@ fn NodePool_childrenCount(pool: *NodePool) i64 {
     return pool.children.count;
 }
 
+// Get node count
+// Reference: Zig's AST.numNodes()
+fn NodePool_count(pool: *NodePool) i64 {
+    return pool.count;
+}
+
+// Get node by index
+// Reference: Zig's AST.getNode()
+fn NodePool_get(pool: *NodePool, idx: i64) *Node {
+    return pool.nodes + idx;
+}
+
 // ============================================================================
 // Node Constructors
 // ============================================================================
