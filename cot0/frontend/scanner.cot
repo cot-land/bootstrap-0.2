@@ -40,6 +40,12 @@ fn Scanner_advance(s: *Scanner) u8 {
     return c;
 }
 
+// Get current position in source
+// Reference: Zig's Scanner.getPosition()
+fn Scanner_getPosition(s: *Scanner) i64 {
+    return s.pos;
+}
+
 fn isDigit(c: u8) bool {
     return c >= 48 and c <= 57;  // '0' to '9'
 }
