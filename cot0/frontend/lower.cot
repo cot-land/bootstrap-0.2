@@ -15,6 +15,7 @@ import "ir.cot"
 import "types.cot"
 import "parser.cot"  // For parse_* functions
 
+
 // ============================================================================
 // Type Resolution
 // ============================================================================
@@ -355,6 +356,7 @@ fn Lowerer_lowerFnDecl(l: *Lowerer, node: *Node) {
     // field4 = ret_type
     // field5 = body (block node index)
 
+
     // Record starting positions for this function
     let nodes_start: i64 = l.ir_nodes_count;
     let locals_start: i64 = l.ir_locals_count;
@@ -439,6 +441,11 @@ fn Lowerer_lowerBlockCheckTerminated(l: *Lowerer, node: *Node) bool {
 
     let stmts_start: i64 = node.field0;
     let stmts_count: i64 = node.field1;
+
+    // Safety check: bail if stmts_count is corrupted
+    if stmts_count > 500 {
+        return false;  // Stop lowering this corrupted block
+    }
 
     var terminated: bool = false;
 
@@ -993,6 +1000,10 @@ fn Lowerer_lowerWhile(l: *Lowerer, node: *Node) {
     // Body block: execute body, jump back to header
     FuncBuilder_setBlock(fb, body_block);
     let body_node: *Node = l.nodes + node.field1;
+    // Safety check: ensure body is a BlockStmt
+    if body_node.kind != NodeKind.BlockStmt {
+        return;
+    }
     let body_terminated: bool = Lowerer_lowerBlockCheckTerminated(l, body_node);
     if not body_terminated {
         FuncBuilder_emitJump(fb, header_block);

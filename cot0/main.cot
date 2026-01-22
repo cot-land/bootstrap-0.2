@@ -33,6 +33,7 @@ extern fn open(path: *u8, flags: i32, mode: i32) i32;
 extern fn read(fd: i32, buf: *u8, count: i64) i64;
 extern fn write(fd: i32, buf: *u8, count: i64) i64;
 extern fn close(fd: i32) i32;
+// malloc_u8, realloc_u8, free_u8 are declared in lib/list.cot
 
 // File flags (macOS)
 const O_RDONLY: i32 = 0;
@@ -46,9 +47,10 @@ const FILE_MODE: i32 = 420;  // 0o644
 // Note: MAX_NODES and MAX_CHILDREN are defined in ast.cot
 // ============================================================================
 
-const MAIN_MAX_SOURCE: i64 = 1048576;    // 1 MB source file
-var g_source: [1048576]u8;
+// Source buffer - dynamically allocated
+var g_source: *u8 = null;
 var g_source_len: i64 = 0;
+var g_source_cap: i64 = 0;
 
 const MAIN_MAX_OUTPUT_PATH: i64 = 256;
 var g_output_path: [256]u8;
@@ -63,55 +65,62 @@ const MAIN_MAX_TYPES: i64 = 1000;
 const MAIN_MAX_PARAMS: i64 = 5000;
 const MAIN_MAX_FIELDS: i64 = 5000;
 var g_types: [1000]Type;
-var g_type_params: [5000]i64;
+var g_type_params: *i64 = null;
+var g_type_params_cap: i64 = 0;
 var g_type_fields: [5000]FieldInfo;
 var g_type_pool: TypeRegistry;
 
 // IR storage
-const MAIN_MAX_IR_NODES: i64 = 50000;
+const MAIN_MAX_IR_NODES: i64 = 100000;
 const MAIN_MAX_IR_LOCALS: i64 = 5000;
 const MAIN_MAX_IR_FUNCS: i64 = 1000;
 const MAIN_MAX_CONSTANTS: i64 = 2000;
 const MAIN_MAX_CALL_ARGS: i64 = 10000;
-var g_ir_nodes: [50000]IRNode;
+var g_ir_nodes: [100000]IRNode;
 var g_ir_locals: [5000]IRLocal;
 var g_ir_funcs: [1000]IRFunc;
 var g_constants: [2000]ConstEntry;
-var g_call_args: [10000]i64;
+var g_call_args: *i64 = null;
+var g_call_args_cap: i64 = 0;
 
 // SSA storage
-const MAIN_MAX_SSA_BLOCKS: i64 = 5000;
-const MAIN_MAX_SSA_VALUES: i64 = 50000;
-const MAIN_MAX_SSA_LOCALS: i64 = 2500;
-var g_ssa_blocks: [5000]Block;
-var g_ssa_values: [50000]Value;
-var g_ssa_locals: [2500]Local;
+const MAIN_MAX_SSA_BLOCKS: i64 = 10000;
+const MAIN_MAX_SSA_VALUES: i64 = 200000;
+const MAIN_MAX_SSA_LOCALS: i64 = 5000;
+var g_ssa_blocks: [10000]Block;
+var g_ssa_values: [200000]Value;
+var g_ssa_locals: [5000]Local;
 
-// Codegen storage
-const MAIN_MAX_CODE: i64 = 262144;
+// Codegen storage - g_code is dynamically allocated
 const MAIN_MAX_CALL_SITES: i64 = 5000;
-var g_code: [262144]u8;
-var g_bstart: [5000]i64;
+var g_code: *u8 = null;
+var g_code_cap: i64 = 0;
+var g_bstart: *i64 = null;
+var g_bstart_cap: i64 = 0;
 var g_branches: [5000]Branch;
 var g_call_sites: [5000]CallSite;
 
-// Mach-O storage
-const MAIN_MAX_DATA: i64 = 65536;
+// Mach-O storage - g_data dynamically allocated
 const MAIN_MAX_SYMBOLS: i64 = 1000;
-const MAIN_MAX_STRINGS: i64 = 32768;
+// g_strings dynamically allocated
 const MAIN_MAX_RELOCS: i64 = 10000;
-const MAIN_MAX_OUTPUT: i64 = 1048576;
-var g_data: [65536]u8;
+var g_data: *u8 = null;
+var g_data_cap: i64 = 0;
 var g_symbols: [1000]Symbol;
-var g_strings: [32768]u8;
+var g_strings: *u8 = null;
+var g_strings_cap: i64 = 0;
 var g_relocs: [10000]Reloc;
-var g_output: [1048576]u8;
+// g_output is dynamically allocated
+var g_output: *u8 = null;
+var g_output_cap: i64 = 0;
 
 // IR to SSA mapping (IR node index -> SSA value ID)
-var g_ir_to_ssa_id: [50000]i64;
+var g_ir_to_ssa_id: *i64 = null;
+var g_ir_to_ssa_id_cap: i64 = 0;
 
 // Local variable to SSA value mapping (local index -> SSA value ID)
-var g_local_to_ssa_id: [5000]i64;
+var g_local_to_ssa_id: *i64 = null;
+var g_local_to_ssa_id_cap: i64 = 0;
 
 // SSABuilder storage arrays (for builder.cot)
 const BUILDER_MAX_BLOCK_DEFS: i64 = 500;
@@ -126,7 +135,8 @@ var g_builder_var_storage: [100000]VarDef;
 const MAX_IMPORT_PATHS: i64 = 100;
 const MAX_IMPORT_PATH_LEN: i64 = 256;
 var g_import_paths: [25600]u8;  // 100 * 256 = flat array for paths
-var g_import_path_lens: [100]i64;
+var g_import_path_lens: *i64 = null;
+var g_import_path_lens_cap: i64 = 0;
 var g_import_count: i64 = 0;
 
 // Base directory for resolving relative imports
@@ -151,7 +161,7 @@ struct Driver {
 
 fn Driver_init() Driver {
     var d: Driver = undefined;
-    d.source_ptr = &g_source[0];
+    d.source_ptr = g_source;
     d.source_len = 0;
     d.output_path = &g_output_path[0];
     d.output_path_len = 0;
@@ -216,7 +226,7 @@ fn read_file(path: *u8) i64 {
         return -1;
     }
 
-    g_source_len = read(fd, &g_source[0], MAIN_MAX_SOURCE - 1);
+    g_source_len = read(fd, g_source, g_source_cap - 1);
     close(fd);
 
     if g_source_len < 0 {
@@ -224,7 +234,8 @@ fn read_file(path: *u8) i64 {
         return -1;
     }
 
-    g_source[g_source_len] = 0;
+    let src_end: *u8 = g_source + g_source_len;
+    src_end.* = 0;
     return g_source_len;
 }
 
@@ -265,7 +276,8 @@ fn init_node_pool() *NodePool {
 fn is_path_imported(path: *u8, path_len: i64) bool {
     var i: i64 = 0;
     while i < g_import_count {
-        let stored_len: i64 = g_import_path_lens[i];
+        let stored_len_ptr: *i64 = g_import_path_lens + i;
+        let stored_len: i64 = stored_len_ptr.*;
         if stored_len == path_len {
             // Compare paths
             let stored_path: *u8 = &g_import_paths[i * MAX_IMPORT_PATH_LEN];
@@ -301,7 +313,8 @@ fn add_imported_path(path: *u8, path_len: i64) {
         dst_c.* = src_c.*;
         i = i + 1;
     }
-    g_import_path_lens[g_import_count] = path_len;
+    let len_ptr: *i64 = g_import_path_lens + g_import_count;
+    len_ptr.* = path_len;
     g_import_count = g_import_count + 1;
 }
 
@@ -334,7 +347,7 @@ fn extract_base_dir(path: *u8, path_len: i64) {
     g_base_dir_len = last_slash + 1;
 }
 
-// Build full path: base_dir + import_path
+// Build full path: base_dir + import_path (simple concatenation)
 // Result stored in g_import_path_buf
 fn build_import_path(import_path: *u8, import_path_len: i64) i64 {
     var result_len: i64 = 0;
@@ -359,6 +372,104 @@ fn build_import_path(import_path: *u8, import_path_len: i64) i64 {
     // Null terminate
     g_import_path_buf[result_len] = 0;
     return result_len;
+}
+
+// Resolve an import path relative to a base directory, handling ".." components
+// Result stored in g_import_path_buf, returns length
+fn resolve_import_path(base_dir: *u8, base_len: i64, rel_path: *u8, rel_len: i64) i64 {
+    // Copy base_dir to result buffer first
+    var result_len: i64 = 0;
+    var i: i64 = 0;
+    while i < base_len and result_len < MAX_IMPORT_PATH_LEN {
+        let c: *u8 = base_dir + i;
+        g_import_path_buf[result_len] = c.*;
+        result_len = result_len + 1;
+        i = i + 1;
+    }
+
+    // Process rel_path, handling ".." by removing last directory component
+    i = 0;
+    while i < rel_len {
+        // Check for "../" at current position
+        if i + 2 < rel_len {
+            let c0: *u8 = rel_path + i;
+            let c1: *u8 = rel_path + i + 1;
+            let c2: *u8 = rel_path + i + 2;
+            if c0.* == 46 and c1.* == 46 and c2.* == 47 {  // "../"
+                // Go up one directory: remove trailing slash first
+                if result_len > 0 {
+                    result_len = result_len - 1;
+                }
+                // Remove chars back to previous '/'
+                while result_len > 0 {
+                    let rc: *u8 = &g_import_path_buf[result_len - 1];
+                    if rc.* == 47 {  // '/'
+                        break;
+                    }
+                    result_len = result_len - 1;
+                }
+                i = i + 3;  // Skip "../"
+                continue;
+            }
+        }
+        // Check for ".." at end (no trailing slash)
+        if i + 1 == rel_len - 1 {
+            let c0: *u8 = rel_path + i;
+            let c1: *u8 = rel_path + i + 1;
+            if c0.* == 46 and c1.* == 46 {  // ".."
+                if result_len > 0 {
+                    result_len = result_len - 1;
+                }
+                while result_len > 0 {
+                    let rc: *u8 = &g_import_path_buf[result_len - 1];
+                    if rc.* == 47 {
+                        break;
+                    }
+                    result_len = result_len - 1;
+                }
+                i = i + 2;
+                continue;
+            }
+        }
+        // Regular character, copy it
+        if result_len < MAX_IMPORT_PATH_LEN {
+            let c: *u8 = rel_path + i;
+            g_import_path_buf[result_len] = c.*;
+            result_len = result_len + 1;
+        }
+        i = i + 1;
+    }
+
+    g_import_path_buf[result_len] = 0;
+    return result_len;
+}
+
+// Extract directory from a full path (everything up to and including last '/')
+// Returns the length of the directory portion
+fn get_dir_from_path(path: *u8, path_len: i64, out_dir: *u8, max_len: i64) i64 {
+    var last_slash: i64 = -1;
+    var i: i64 = 0;
+    while i < path_len {
+        let c: *u8 = path + i;
+        if c.* == 47 {  // '/'
+            last_slash = i;
+        }
+        i = i + 1;
+    }
+
+    if last_slash < 0 {
+        return 0;
+    }
+
+    // Copy up to and including the slash
+    i = 0;
+    while i <= last_slash and i < max_len {
+        let c: *u8 = path + i;
+        let d: *u8 = out_dir + i;
+        d.* = c.*;
+        i = i + 1;
+    }
+    return last_slash + 1;
 }
 
 // Adjust source positions in newly parsed nodes to be absolute in g_source
@@ -414,10 +525,17 @@ fn adjust_node_positions(pool: *NodePool, start_idx: i64, end_idx: i64, offset: 
     }
 }
 
-// Read and parse an imported file, returns number of new nodes or -1 on error
-fn parse_import_file(import_path: *u8, import_path_len: i64, pool: *NodePool) i64 {
-    // Build full path
-    let full_path_len: i64 = build_import_path(import_path, import_path_len);
+// Temporary buffer for storing directory of importing file
+var g_importing_dir: [256]u8;
+var g_importing_dir_len: i64 = 0;
+
+// Read and parse an imported file, recursively processing its imports
+// base_dir: directory of the file containing the import statement
+// Returns number of new nodes (including from recursive imports)
+fn parse_import_file_with_dir(import_path: *u8, import_path_len: i64, pool: *NodePool,
+                               base_dir: *u8, base_dir_len: i64) i64 {
+    // Resolve the import path relative to base_dir, handling ".."
+    let full_path_len: i64 = resolve_import_path(base_dir, base_dir_len, import_path, import_path_len);
 
     // Check if already imported
     if is_path_imported(&g_import_path_buf[0], full_path_len) {
@@ -426,6 +544,11 @@ fn parse_import_file(import_path: *u8, import_path_len: i64, pool: *NodePool) i6
 
     // Mark as imported
     add_imported_path(&g_import_path_buf[0], full_path_len);
+
+    // Get the directory of this imported file (for resolving its imports)
+    var this_file_dir: [256]u8;
+    let this_file_dir_len: i64 = get_dir_from_path(&g_import_path_buf[0], full_path_len,
+                                                    &this_file_dir[0], 256);
 
     // Read the file - append to existing source
     let fd: i32 = open(&g_import_path_buf[0], O_RDONLY, 0);
@@ -437,7 +560,7 @@ fn parse_import_file(import_path: *u8, import_path_len: i64, pool: *NodePool) i6
     }
 
     let start_offset: i64 = g_source_len;
-    let bytes_read: i64 = read(fd, &g_source[g_source_len], MAIN_MAX_SOURCE - g_source_len - 1);
+    let bytes_read: i64 = read(fd, g_source + g_source_len, g_source_cap - g_source_len - 1);
     close(fd);
 
     if bytes_read < 0 {
@@ -446,11 +569,11 @@ fn parse_import_file(import_path: *u8, import_path_len: i64, pool: *NodePool) i6
     }
 
     g_source_len = g_source_len + bytes_read;
-    g_source[g_source_len] = 0;
+    let src_end2: *u8 = g_source + g_source_len;
+    src_end2.* = 0;
 
     // Parse the imported file
-    // Create a string slice pointing to just the new content
-    let import_source: string = @string(&g_source[start_offset], bytes_read);
+    let import_source: string = @string(g_source + start_offset, bytes_read);
 
     let nodes_before: i64 = pool.count;
     var parser: Parser = Parser_init(import_source, pool, &g_type_pool);
@@ -461,14 +584,42 @@ fn parse_import_file(import_path: *u8, import_path_len: i64, pool: *NodePool) i6
     }
 
     // Adjust positions in new nodes to be absolute in g_source
-    // The parser reported positions relative to import_source (starting at 0)
-    // but we need them relative to g_source (starting at start_offset)
-    let new_nodes: i64 = pool.count - nodes_before;
-    if new_nodes > 0 {
+    let direct_new_nodes: i64 = pool.count - nodes_before;
+    if direct_new_nodes > 0 {
         adjust_node_positions(pool, nodes_before, pool.count, start_offset);
     }
 
-    return new_nodes;
+    // Recursively process imports in the newly parsed file
+    var total_new_nodes: i64 = direct_new_nodes;
+    var i: i64 = nodes_before;
+    while i < nodes_before + direct_new_nodes {
+        let node: *Node = pool.nodes + i;
+        if node.kind == NodeKind.ImportDecl {
+            // field0 = path_start (already adjusted), field1 = path_len
+            let nested_path: *u8 = g_source + node.field0;
+            let nested_path_len: i64 = node.field1;
+
+            let nested_nodes: i64 = parse_import_file_with_dir(nested_path, nested_path_len, pool,
+                                                                &this_file_dir[0], this_file_dir_len);
+            if nested_nodes > 0 {
+                print("  Imported: ");
+                write(1, nested_path, nested_path_len);
+                print(" (");
+                print_int(nested_nodes);
+                print(" nodes)\n");
+                total_new_nodes = total_new_nodes + nested_nodes;
+            }
+        }
+        i = i + 1;
+    }
+
+    return total_new_nodes;
+}
+
+// Legacy wrapper for backward compatibility (uses global base_dir)
+fn parse_import_file(import_path: *u8, import_path_len: i64, pool: *NodePool) i64 {
+    return parse_import_file_with_dir(import_path, import_path_len, pool,
+                                       &g_base_dir[0], g_base_dir_len);
 }
 
 // Process all imports in the parsed AST (matches src/driver.zig parseFileRecursive)
@@ -490,7 +641,7 @@ fn Driver_parseFileRecursive(pool: *NodePool) {
                 let path_len: i64 = node.field1;
 
                 // Get pointer to path in source
-                let import_path: *u8 = &g_source[path_start];
+                let import_path: *u8 = g_source + path_start;
 
                 // Parse the imported file
                 let new_nodes: i64 = parse_import_file(import_path, path_len, pool);
@@ -528,7 +679,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
     // Initialize type registry (needed for parser)
     g_type_pool.types = &g_types[0];
-    g_type_pool.params = &g_type_params[0];
+    g_type_pool.params = g_type_params;
     g_type_pool.fields = &g_type_fields[0];
     TypeRegistry_init(&g_type_pool);
 
@@ -556,25 +707,27 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     Driver_parseFileRecursive(pool);
     print("  Total nodes after imports: ");
     print_int(pool.count);
+    print(", Children: ");
+    print_int(pool.children.count);
     print("\n");
 
     // Phase 3: Lower to IR
     print("Phase 3: Lowering to IR...\n");
 
     // Update type registry source to combined source buffer (after imports)
-    TypeRegistry_setSource(&g_type_pool, &g_source[0], g_source_len);
+    TypeRegistry_setSource(&g_type_pool, g_source, g_source_len);
 
     var lowerer: Lowerer = undefined;
     Lowerer_init(&lowerer,
                  &g_nodes[0], pool.count,
                  pool.children.items, pool.children.count,
-                 &g_source[0], g_source_len,
+                 g_source, g_source_len,
                  &g_type_pool,
                  &g_ir_nodes[0], MAIN_MAX_IR_NODES,
                  &g_ir_locals[0], MAIN_MAX_IR_LOCALS,
                  &g_ir_funcs[0], MAIN_MAX_IR_FUNCS,
                  &g_constants[0], MAIN_MAX_CONSTANTS,
-                 &g_call_args[0], MAIN_MAX_CALL_ARGS);
+                 g_call_args, MAIN_MAX_CALL_ARGS);
 
     let ir_count: i64 = Lowerer_lowerAll(&lowerer);
     print("  IR nodes: ");
@@ -589,8 +742,8 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     // Initialize code generator state (shared across functions)
     var gs: GenState = undefined;
     GenState_init(&gs, null,  // Will set func for each function
-                  &g_code[0], MAIN_MAX_CODE,
-                  &g_bstart[0], MAIN_MAX_SSA_BLOCKS,
+                  g_code, g_code_cap,
+                  g_bstart, MAIN_MAX_SSA_BLOCKS,
                   &g_branches[0], 1000,
                   &g_call_sites[0], MAIN_MAX_CALL_SITES);
 
@@ -629,8 +782,8 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         SSABuilder_setIR(&builder,
                          &g_ir_nodes[0], ir_func.nodes_start, ir_func.nodes_count,
                          &g_ir_locals[0], ir_func.locals_start, ir_func.locals_count,
-                         &g_source[0], g_source_len,
-                         &g_call_args[0]);
+                         g_source, g_source_len,
+                         g_call_args);
 
         // Build SSA from IR (handles blocks, locals, params, conversion)
         let build_result: i64 = SSABuilder_build(&builder);
@@ -659,6 +812,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
             print("  FAIL: genssa error\n");
             return 2;
         }
+
 
         func_idx = func_idx + 1;
     }
@@ -690,8 +844,8 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 while name_i < cs.func_name_len {
                     // Use g_source (combined buffer) instead of original source
                     // This allows cross-file function calls to work correctly
-                    let src_char: *u8 = &g_source[ir_func.name_start + name_i];
-                    let call_char: *u8 = &g_source[cs.func_name_start + name_i];
+                    let src_char: *u8 = g_source + ir_func.name_start + name_i;
+                    let call_char: *u8 = g_source + cs.func_name_start + name_i;
                     if src_char.* != call_char.* {
                         match = false;
                     }
@@ -709,32 +863,19 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
             // BL offset = (target - call_site) / 4, encoded in bits 25:0
             let call_addr: i64 = cs.code_offset;
             let offset: i64 = (target_offset - call_addr) / 4;
-            print("  Patching call at ");
-            print_int(call_addr);
-            print(" -> target ");
-            print_int(target_offset);
-            print(", offset ");
-            print_int(offset);
-            print("\n");
             // Re-encode BL with correct offset
             let bl_inst: i64 = encode_bl(offset);
             // Patch the code buffer (4 bytes, little endian)
-            let code_ptr: *u8 = &g_code[call_addr];
+            let code_ptr: *u8 = g_code + call_addr;
             code_ptr.* = @intCast(u8, bl_inst & 255);
-            let code_ptr1: *u8 = &g_code[call_addr + 1];
+            let code_ptr1: *u8 = g_code + call_addr + 1;
             code_ptr1.* = @intCast(u8, (bl_inst >> 8) & 255);
-            let code_ptr2: *u8 = &g_code[call_addr + 2];
+            let code_ptr2: *u8 = g_code + call_addr + 2;
             code_ptr2.* = @intCast(u8, (bl_inst >> 16) & 255);
-            let code_ptr3: *u8 = &g_code[call_addr + 3];
+            let code_ptr3: *u8 = g_code + call_addr + 3;
             code_ptr3.* = @intCast(u8, (bl_inst >> 24) & 255);
-        } else {
-            // External function call - will be resolved by linker via relocation
-            print("  External call at offset ");
-            print_int(cs.code_offset);
-            print(" (len ");
-            print_int(cs.func_name_len);
-            print(")\n");
         }
+        // else: External function call - will be resolved by linker via relocation
 
         call_idx = call_idx + 1;
     }
@@ -744,12 +885,12 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
     var writer: MachOWriter = undefined;
     MachOWriter_init(&writer,
-                      &g_code[0], gs.code_count,
-                      &g_data[0], MAIN_MAX_DATA,
+                      g_code, gs.code_count,
+                      g_data, g_data_cap,
                       &g_symbols[0], MAIN_MAX_SYMBOLS,
-                      &g_strings[0], MAIN_MAX_STRINGS,
+                      g_strings, g_strings_cap,
                       &g_relocs[0], MAIN_MAX_RELOCS,
-                      &g_output[0], MAIN_MAX_OUTPUT);
+                      g_output, g_output_cap);
 
     // Copy code from genssa output
     writer.code_count = gs.code_count;
@@ -791,8 +932,8 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
                 var match2: bool = true;
                 var name_i3: i64 = 0;
                 while name_i3 < cs2.func_name_len {
-                    let src_char2: *u8 = &g_source[ir_func2.name_start + name_i3];
-                    let call_char2: *u8 = &g_source[cs2.func_name_start + name_i3];
+                    let src_char2: *u8 = g_source + ir_func2.name_start + name_i3;
+                    let call_char2: *u8 = g_source + cs2.func_name_start + name_i3;
                     if src_char2.* != call_char2.* {
                         match2 = false;
                     }
@@ -811,7 +952,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
             sym_name[0] = 95;  // '_'
             var ext_name_idx: i64 = 0;
             while ext_name_idx < cs2.func_name_len and ext_name_idx < 126 {
-                let src_ptr2: *u8 = &g_source[cs2.func_name_start + ext_name_idx];
+                let src_ptr2: *u8 = g_source + cs2.func_name_start + ext_name_idx;
                 sym_name[1 + ext_name_idx] = src_ptr2.*;
                 ext_name_idx = ext_name_idx + 1;
             }
@@ -822,12 +963,6 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
             // Add relocation for the BL instruction
             MachOWriter_addReloc(&writer, cs2.code_offset, sym_idx, ARM64_RELOC_BRANCH26, true);
-
-            print("  Added external reloc at offset ");
-            print_int(cs2.code_offset);
-            print(" (sym_idx ");
-            print_int(sym_idx);
-            print(")\n");
         }
 
         call_idx = call_idx + 1;
@@ -842,7 +977,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print("Phase 7: Writing output...\n");
 
     if out_path_len > 0 {
-        let written: i64 = write_file(out_path, &g_output[0], macho_bytes);
+        let written: i64 = write_file(out_path, g_output, macho_bytes);
         if written < 0 {
             return 3;
         }
@@ -915,6 +1050,32 @@ fn main(argc: i64, argv: **u8) i64 {
     print("Cot0 Self-Hosting Compiler v0.2\n");
     print("================================\n\n");
 
+    // Allocate dynamic buffers
+    g_source_cap = 1048576;  // Start with 1MB
+    g_source = malloc_u8(g_source_cap);
+    g_code_cap = 1048576;  // Start with 1MB
+    g_code = malloc_u8(g_code_cap);
+    g_output_cap = 1048576;  // Start with 1MB
+    g_output = malloc_u8(g_output_cap);
+    g_data_cap = 65536;  // Start with 64KB
+    g_data = malloc_u8(g_data_cap);
+    g_strings_cap = 32768;  // Start with 32KB
+    g_strings = malloc_u8(g_strings_cap);
+
+    // Allocate i64 arrays
+    g_type_params_cap = 5000;
+    g_type_params = malloc_i64(g_type_params_cap);
+    g_call_args_cap = 10000;
+    g_call_args = malloc_i64(g_call_args_cap);
+    g_bstart_cap = 5000;
+    g_bstart = malloc_i64(g_bstart_cap);
+    g_ir_to_ssa_id_cap = 50000;
+    g_ir_to_ssa_id = malloc_i64(g_ir_to_ssa_id_cap);
+    g_local_to_ssa_id_cap = 5000;
+    g_local_to_ssa_id = malloc_i64(g_local_to_ssa_id_cap);
+    g_import_path_lens_cap = 100;
+    g_import_path_lens = malloc_i64(g_import_path_lens_cap);
+
     // Parse command line arguments
     // Expected: cot0 <source.cot> -o <output>
     if argc < 4 {
@@ -974,7 +1135,7 @@ fn main(argc: i64, argv: **u8) i64 {
     extract_base_dir(source_path, source_path_len);
 
     // Create string view of source
-    let source: string = @string(&g_source[0], g_source_len);
+    let source: string = @string(g_source, g_source_len);
 
     let result: i64 = Driver_compileFile(source, &g_output_path[0], g_output_path_len);
 

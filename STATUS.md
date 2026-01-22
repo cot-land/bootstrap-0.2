@@ -30,7 +30,7 @@ Work through cot0/COMPARISON.md top to bottom. Mark each section complete when A
 | 2.5 | frontend/types.cot | Pending | |
 | 2.6 | frontend/checker.cot | Pending | ScopePool_isDefined added |
 | 2.7 | frontend/ir.cot | **DONE** | FuncBuilder_* renamed to match Zig |
-| 2.8 | frontend/lower.cot | **DONE** | FuncBuilder_* call sites updated, ASTOp_* helpers renamed |
+| 2.8 | frontend/lower.cot | **DONE** | FuncBuilder_* call sites, ASTOp_* helpers, lowerIndex TypeRegistry fix |
 | 3.1 | ssa/op.cot | Pending | Op_isBranch/isCall/isTerminator/numArgs added |
 | 3.2 | ssa/value.cot | Pending | Value_numArgs(), isRematerializable added |
 | 3.3 | ssa/block.cot | **DONE** | Block_* functions already properly named |
@@ -48,6 +48,59 @@ Work through cot0/COMPARISON.md top to bottom. Mark each section complete when A
 ---
 
 ## Recent Changes (2026-01-22)
+
+### Dynamic Array Conversion
+
+Converted fixed-size arrays to dynamic allocation to support self-hosting larger codebases:
+
+**Runtime functions added (cot_runtime.zig):**
+- `malloc_u8`, `realloc_u8`, `free_u8` - u8 array allocation
+- `malloc_i64`, `realloc_i64`, `free_i64` - i64 array allocation
+
+**Converted u8 buffers:**
+- `g_source` - Source code buffer (1MB initial)
+- `g_code` - Generated machine code (1MB initial)
+- `g_output` - Mach-O output buffer (1MB initial)
+- `g_data` - Data section (64KB initial)
+- `g_strings` - String table (32KB initial)
+
+**Converted i64 arrays:**
+- `g_type_params` - Type parameters (5000 initial)
+- `g_call_args` - Call arguments (10000 initial)
+- `g_bstart` - Block start offsets (5000 initial)
+- `g_ir_to_ssa_id` - IR to SSA mapping (50000 initial)
+- `g_local_to_ssa_id` - Local to SSA mapping (5000 initial)
+- `g_import_path_lens` - Import path lengths (100 initial)
+
+**Tracking document:** See [DYNAMIC_ARRAYS.md](DYNAMIC_ARRAYS.md) for full status.
+
+### Known Issue: BlockStmt Corruption During Imports
+
+During self-hosting compilation, some BlockStmt nodes have corrupted `stmts_count` values
+after import processing. This causes functions to be skipped during IR lowering.
+A safety check (bail when stmts_count > 500) prevents infinite loops but results in
+incomplete stage2 compilation. Root cause investigation pending.
+
+### Self-Hosting Test Results
+
+**cot0-stage1 successfully compiles:**
+- Simple programs (return, arithmetic, variables)
+- Function calls (sq(3) + sq(4) = 25 ✓)
+- Recursive functions (factorial(5) = 120 ✓, fib(10) = 55 ✓)
+- The BUG-049 spill workaround for call+call binary ops works correctly
+- **cot0/main.cot** → produces ~155KB object file with 759 functions
+
+**Self-hosting limitation:**
+- Stage2 compiles but crashes at runtime (SIGSEGV)
+- Root cause: BlockStmt corruption causes some functions to be skipped during IR lowering
+- Full self-hosting blocked until corruption bug is fixed
+
+### COMPARISON.md Corrections
+
+Fixed outdated entries:
+- `lowerIndex` - Now correctly uses TypeRegistry (marked Same)
+- Spill/reload handling - GenState_emitSpill/emitReload exist and work (marked Same)
+- getRegForValue/getDestRegForValue - cot0 uses direct v.reg access (marked DIFFERENT, not Missing)
 
 ### Naming Parity Improvements
 
@@ -81,7 +134,7 @@ Work through cot0/COMPARISON.md top to bottom. Mark each section complete when A
 | Component | Status |
 |-----------|--------|
 | Zig compiler (src/*.zig) | **COMPLETE** - 166 tests pass |
-| cot0-stage1 | **WORKING** - Compiles simple programs |
+| cot0-stage1 | **WORKING** - Compiles simple programs, factorial, fibonacci, and itself |
 
 ---
 

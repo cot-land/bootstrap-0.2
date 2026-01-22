@@ -362,7 +362,7 @@ This encoding allows quick type classification without TypeRegistry lookup, but 
 | `Lowerer_lowerBinary(l, node) i64` | `lowerBinary()` | **DIFFERENT - BUG-049** | cot0 has 60-line spill workaround (lines 1150-1210); Zig is 20 lines - proper SSA handles spilling |
 | `Lowerer_lowerUnary(l, node) i64` | `lowerUnary()` | Same | Both handle negation, not, etc. |
 | `Lowerer_lowerCall(l, node) i64` | `lowerCall()` | **DIFFERENT - WORKAROUND** | cot0 has manual 8-arg tracking (MAX_CALL_ARGS_TRACKED=8), two-pass spill logic (~150 lines); Zig uses ArrayList (~50 lines) |
-| `Lowerer_lowerIndex(l, node) i64` | `lowerIndex()` | **DIFFERENT - BUG** | cot0 missing TypeRegistry.isPointer() check; uses PTYPE_PTR_BASE range check which is wrong |
+| `Lowerer_lowerIndex(l, node) i64` | `lowerIndex()` | Same | Both use TypeRegistry to check pointer/array/slice types |
 | `Lowerer_lowerField(l, node) i64` | `lowerField()` | DIFFERENT | cot0 scans source for field names; Zig uses type_reg.getField() |
 | `Lowerer_lowerIf(l, node)` | `lowerIf()` | Same | Both lower if statements |
 | `Lowerer_lowerWhile(l, node)` | `lowerWhile()` | Same | Both lower while loops |
@@ -792,19 +792,19 @@ This encoding allows quick type classification without TypeRegistry lookup, but 
 | `encode_prologue(gs, frame_size)` | `emitPrologue()` | DIFFERENT | cot0 fixed pattern; Zig calculates from frame layout |
 | `encode_epilogue(gs, frame_size)` | `emitEpilogue()` | DIFFERENT | cot0 fixed pattern; Zig matches prologue |
 | `emit_inst(gs, inst)` | inline emit | Same | Both append 32-bit instruction |
-| — | `ensureInReg()` | Missing in cot0 | **CRITICAL** - Zig loads spilled values into regs |
-| — | `getRegForValue()` | Missing in cot0 | **CRITICAL** - Zig tracks which reg holds each value |
-| — | `getDestRegForValue()` | Missing in cot0 | **CRITICAL** - Zig allocates dest reg properly |
+| — | `ensureInReg()` | DIFFERENT | cot0 directly accesses v.reg and uses move instructions |
+| — | `getRegForValue()` | DIFFERENT | cot0 directly accesses v.reg set by regalloc |
+| — | `getDestRegForValue()` | DIFFERENT | cot0 directly accesses v.reg set by regalloc |
 | — | `setupCallArgs()` | Missing in cot0 | Zig uses ABI to place args in correct regs |
 | — | `emitPhiMoves()` | Missing in cot0 | No phi resolution in cot0 |
-| — | `handleSpill()` | Missing in cot0 | **CRITICAL** - cot0 doesn't emit spill stores |
-| — | `handleReload()` | Missing in cot0 | **CRITICAL** - cot0 doesn't emit reload loads |
-| — | `setRegAllocState()` | Missing in cot0 | No regalloc state integration |
+| `GenState_emitSpill(gs, v)` | `handleSpill()` | Same | Both emit store to spill slot |
+| `GenState_emitReload(gs, v)` | `handleReload()` | Same | Both emit load from spill slot |
+| — | `setRegAllocState()` | DIFFERENT | cot0 uses v.reg/v.spill_slot directly |
 | — | `setTypeRegistry()` | Missing in cot0 | No type-aware sizing |
 
-**Key difference:** cot0 genssa.cot is 37% the size because:
-1. **No spill/reload code emission** - genssa assumes all values are in registers
-2. **No register tracking** - doesn't know which value is in which register
+**Key difference:** cot0 genssa.cot is smaller because:
+1. **Simpler register access** - directly uses v.reg instead of getter functions
+2. **Spill/reload handled** - GenState_emitSpill/GenState_emitReload work with v.spill_slot
 3. **No ABI integration** - call args placed manually instead of via ABI module
 4. **No phi resolution** - phi nodes not properly converted to copies
 5. **No fall-through optimization** - always emits explicit branches
