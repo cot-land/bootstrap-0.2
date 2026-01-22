@@ -884,9 +884,9 @@ This encoding allows quick type classification without TypeRegistry lookup, but 
 | `write_symtab_cmd(w, ...)` | — | Missing in Zig (integrated) |
 | `write_reloc(w, r)` | — | Missing in Zig (integrated) |
 | `write_nlist64(w, sym)` | — | Missing in Zig (integrated) |
-| — | `MachOWriter.deinit()` | Missing in cot0 |
-| — | `MachOWriter.addData()` | Missing in cot0 |
-| — | `MachOWriter.addStringLiteral()` | Missing in cot0 |
+| — | `MachOWriter.deinit()` | Missing in cot0 | cot0 uses global arrays |
+| `MachOWriter_addData()` | `MachOWriter.addData()` | Same | Added 2026-01-22 |
+| `MachOWriter_addStringLiteral()` | `MachOWriter.addStringLiteral()` | Same | Added 2026-01-22 |
 | — | `MachOWriter.addDataRelocation()` | Missing in cot0 |
 | — | `MachOWriter.addGlobalVariable()` | Missing in cot0 |
 | — | `MachOWriter.writeToFile()` | Missing in cot0 |
