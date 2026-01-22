@@ -151,6 +151,21 @@ fn ScopePool_lookupType(pool: *ScopePool, scope_idx: i64, source: *u8, name_star
     return -1;  // Not found
 }
 
+// Check if a symbol is already defined in this scope (not parents)
+// Zig ref: Scope.isDefined
+fn ScopePool_isDefined(pool: *ScopePool, scope_idx: i64, source: *u8, name_start: i64, name_len: i64) bool {
+    let s: *Scope = pool.scopes + scope_idx;
+    var i: i64 = 0;
+    while i < s.count {
+        let sym: *Symbol = s.symbols + i;
+        if names_equal(source, sym.name_start, sym.name_len, source, name_start, name_len) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
 // Check if two names are equal
 fn names_equal(src1: *u8, start1: i64, len1: i64, src2: *u8, start2: i64, len2: i64) bool {
     if len1 != len2 { return false; }

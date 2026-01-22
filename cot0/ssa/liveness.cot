@@ -147,6 +147,21 @@ fn LiveMap_remove(lm: *LiveMap, id: i64) {
     lm.count = lm.count - 1;
 }
 
+// Get number of live values (Zig ref: LiveMap.size)
+fn LiveMap_size(lm: *LiveMap) i64 {
+    return lm.count;
+}
+
+// Get full LiveInfo for a value (Zig ref: LiveMap.getInfo)
+// Returns pointer to entry or null if not present
+fn LiveMap_getInfo(lm: *LiveMap, id: i64) *LiveInfo {
+    let idx: i64 = LiveMap_find(lm, id);
+    if idx >= 0 {
+        return lm.entries + idx;
+    }
+    return @ptr(0);
+}
+
 // Add distance delta to all entries
 fn LiveMap_addDistanceAll(lm: *LiveMap, delta: i64) {
     var i: i64 = 0;

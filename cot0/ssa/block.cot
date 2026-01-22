@@ -202,6 +202,15 @@ fn Block_numValues(b: *Block) i64 {
     return b.values_count;
 }
 
+// Get number of control values (1 for If blocks, 0 for others)
+// Reference: Zig's Block.numControls()
+fn Block_numControls(b: *Block) i64 {
+    if b.kind == BlockKind.If {
+        return 1;
+    }
+    return 0;
+}
+
 // ============================================================================
 // Block Pool (arena allocation)
 // ============================================================================
