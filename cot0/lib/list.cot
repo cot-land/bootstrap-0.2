@@ -89,3 +89,13 @@ fn i64list_pop(list: *I64List) i64 {
 fn i64list_clear(list: *I64List) {
     list.count = 0;
 }
+
+// Get number of items in list
+fn i64list_len(list: *I64List) i64 {
+    return list.count;
+}
+
+// Check if list is empty
+fn i64list_isEmpty(list: *I64List) bool {
+    return list.count == 0;
+}
