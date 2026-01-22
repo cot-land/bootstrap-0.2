@@ -30,7 +30,7 @@ struct Local {
     offset: i64,          // Stack frame offset (computed by stackalloc)
 }
 
-fn local_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) Local {
+fn Local_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) Local {
     return Local{
         .name_start = name_start,
         .name_len = name_len,
@@ -44,7 +44,7 @@ fn local_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) Lo
     };
 }
 
-fn local_new_param(name_start: i64, name_len: i64, type_idx: i64, param_idx: i64) Local {
+fn Local_newParam(name_start: i64, name_len: i64, type_idx: i64, param_idx: i64) Local {
     return Local{
         .name_start = name_start,
         .name_len = name_len,
@@ -56,6 +56,27 @@ fn local_new_param(name_start: i64, name_len: i64, type_idx: i64, param_idx: i64
         .align = 8,
         .offset = 0,
     };
+}
+
+// Local accessor functions
+fn Local_getType(l: *Local) i64 {
+    return l.type_idx;
+}
+
+fn Local_getSize(l: *Local) i64 {
+    return l.size;
+}
+
+fn Local_getOffset(l: *Local) i64 {
+    return l.offset;
+}
+
+fn Local_isParam(l: *Local) bool {
+    return l.is_param;
+}
+
+fn Local_isMutable(l: *Local) bool {
+    return l.is_mutable;
 }
 
 // ============================================================================
@@ -212,7 +233,7 @@ fn Func_addLocal(f: *Func, name_start: i64, name_len: i64, type_idx: i64, is_mut
 
     let idx: i64 = f.locals_count;
     let local: *Local = f.locals + idx;
-    local.* = local_new(name_start, name_len, type_idx, is_mutable);
+    local.* = Local_new(name_start, name_len, type_idx, is_mutable);
     f.locals_count = f.locals_count + 1;
 
     return idx;
@@ -225,7 +246,7 @@ fn Func_addParam(f: *Func, name_start: i64, name_len: i64, type_idx: i64) i64 {
     let param_idx: i64 = f.locals_count;
     let idx: i64 = f.locals_count;
     let local: *Local = f.locals + idx;
-    local.* = local_new_param(name_start, name_len, type_idx, param_idx);
+    local.* = Local_newParam(name_start, name_len, type_idx, param_idx);
     f.locals_count = f.locals_count + 1;
 
     return idx;
@@ -255,6 +276,26 @@ fn Func_numValues(f: *Func) i64 {
 // Reference: Zig's Func.numLocals()
 fn Func_numLocals(f: *Func) i64 {
     return f.locals_count;
+}
+
+// Get frame size
+fn Func_getFrameSize(f: *Func) i64 {
+    return f.frame_size;
+}
+
+// Get entry block ID
+fn Func_getEntryBlock(f: *Func) i64 {
+    return f.entry_block;
+}
+
+// Get return type index
+fn Func_getReturnType(f: *Func) i64 {
+    return f.return_type;
+}
+
+// Get current block ID
+fn Func_getCurrentBlock(f: *Func) i64 {
+    return f.current_block;
 }
 
 // ============================================================================

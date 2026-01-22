@@ -402,7 +402,7 @@ struct FuncBuilder {
     next_block_id: i64,       // Next block ID to allocate
 }
 
-fn func_builder_init(fb: *FuncBuilder, name_start: i64, name_len: i64, return_type: i64,
+fn FuncBuilder_init(fb: *FuncBuilder, name_start: i64, name_len: i64, return_type: i64,
                      locals: *IRLocal, locals_cap: i64,
                      nodes: *IRNode, nodes_cap: i64) {
     fb.name_start = name_start;
@@ -419,18 +419,18 @@ fn func_builder_init(fb: *FuncBuilder, name_start: i64, name_len: i64, return_ty
 }
 
 // Create a new block and return its ID
-fn func_builder_new_block(fb: *FuncBuilder) i64 {
+fn FuncBuilder_newBlock(fb: *FuncBuilder) i64 {
     let id: i64 = fb.next_block_id;
     fb.next_block_id = fb.next_block_id + 1;
     return id;
 }
 
 // Set the current block for subsequent nodes
-fn func_builder_set_block(fb: *FuncBuilder, block_id: i64) {
+fn FuncBuilder_setBlock(fb: *FuncBuilder, block_id: i64) {
     fb.current_block = block_id;
 }
 
-fn func_builder_add_local(fb: *FuncBuilder, name_start: i64, name_len: i64,
+fn FuncBuilder_addLocal(fb: *FuncBuilder, name_start: i64, name_len: i64,
                           type_idx: i64, is_mutable: bool) i64 {
     if fb.locals_count >= fb.locals_cap {
         return NULL_LOCAL;
@@ -442,7 +442,7 @@ fn func_builder_add_local(fb: *FuncBuilder, name_start: i64, name_len: i64,
     return idx;
 }
 
-fn func_builder_add_param(fb: *FuncBuilder, name_start: i64, name_len: i64,
+fn FuncBuilder_addParam(fb: *FuncBuilder, name_start: i64, name_len: i64,
                           type_idx: i64, param_idx: i64) i64 {
     if fb.locals_count >= fb.locals_cap {
         return NULL_LOCAL;
@@ -455,13 +455,13 @@ fn func_builder_add_param(fb: *FuncBuilder, name_start: i64, name_len: i64,
 }
 
 // Set the size of a local variable (for arrays)
-fn func_builder_set_local_size(fb: *FuncBuilder, local_idx: i64, size: i64) {
+fn FuncBuilder_setLocalSize(fb: *FuncBuilder, local_idx: i64, size: i64) {
     if local_idx < 0 or local_idx >= fb.locals_count { return; }
     let local: *IRLocal = fb.locals + local_idx;
     local.size = size;
 }
 
-fn func_builder_emit(fb: *FuncBuilder, node: IRNode) i64 {
+fn FuncBuilder_emit(fb: *FuncBuilder, node: IRNode) i64 {
     if fb.nodes_count >= fb.nodes_cap {
         return NULL_IR_NODE;
     }
@@ -473,168 +473,168 @@ fn func_builder_emit(fb: *FuncBuilder, node: IRNode) i64 {
     return idx;
 }
 
-fn func_builder_emit_const_int(fb: *FuncBuilder, value: i64) i64 {
+fn FuncBuilder_emitConstInt(fb: *FuncBuilder, value: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.ConstInt, TYPE_I64);
     node.value = value;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
-fn func_builder_emit_const_bool(fb: *FuncBuilder, value: bool) i64 {
+fn FuncBuilder_emitConstBool(fb: *FuncBuilder, value: bool) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.ConstBool, TYPE_BOOL);
     if value {
         node.value = 1;
     } else {
         node.value = 0;
     }
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
-fn func_builder_emit_const_string(fb: *FuncBuilder, str_start: i64, str_len: i64) i64 {
+fn FuncBuilder_emitConstString(fb: *FuncBuilder, str_start: i64, str_len: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.ConstString, TYPE_STRING);
     node.left = str_start;   // Offset in source text
     node.right = str_len;    // Length of string content
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
-fn func_builder_emit_load_local(fb: *FuncBuilder, local_idx: i64) i64 {
+fn FuncBuilder_emitLoadLocal(fb: *FuncBuilder, local_idx: i64) i64 {
     let local: *IRLocal = fb.locals + local_idx;
     var node: IRNode = IRNode_new(IRNodeKind.LoadLocal, local.type_idx);
     node.left = local_idx;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
-fn func_builder_emit_store_local(fb: *FuncBuilder, local_idx: i64, value: i64) i64 {
+fn FuncBuilder_emitStoreLocal(fb: *FuncBuilder, local_idx: i64, value: i64) i64 {
     let local: *IRLocal = fb.locals + local_idx;
     var node: IRNode = IRNode_new(IRNodeKind.StoreLocal, local.type_idx);
     node.left = local_idx;
     node.right = value;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
-fn func_builder_emit_binary(fb: *FuncBuilder, op: i64, left: i64, right: i64, type_idx: i64) i64 {
+fn FuncBuilder_emitBinary(fb: *FuncBuilder, op: i64, left: i64, right: i64, type_idx: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.Binary, type_idx);
     node.op = op;
     node.left = left;
     node.right = right;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
-fn func_builder_emit_unary(fb: *FuncBuilder, op: i64, operand: i64, type_idx: i64) i64 {
+fn FuncBuilder_emitUnary(fb: *FuncBuilder, op: i64, operand: i64, type_idx: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.Unary, type_idx);
     node.op = op;
     node.left = operand;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // Emit a conditional select (ternary-like): cond ? true_val : false_val
-fn func_builder_emit_select(fb: *FuncBuilder, cond: i64, true_val: i64, false_val: i64, type_idx: i64) i64 {
+fn FuncBuilder_emitSelect(fb: *FuncBuilder, cond: i64, true_val: i64, false_val: i64, type_idx: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.Select, type_idx);
     node.left = cond;
     node.right = true_val;
     node.value = false_val;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
-fn func_builder_emit_return(fb: *FuncBuilder, value: i64) i64 {
+fn FuncBuilder_emitReturn(fb: *FuncBuilder, value: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.Return, TYPE_VOID);
     node.left = value;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
-fn func_builder_emit_return_void(fb: *FuncBuilder) i64 {
+fn FuncBuilder_emitReturnVoid(fb: *FuncBuilder) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.Return, TYPE_VOID);
     node.left = NULL_IR_NODE;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // Emit a conditional branch
 // cond = condition IR node index
 // then_block, else_block = target block IDs
-fn func_builder_emit_branch(fb: *FuncBuilder, cond: i64, then_block: i64, else_block: i64) i64 {
+fn FuncBuilder_emitBranch(fb: *FuncBuilder, cond: i64, then_block: i64, else_block: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.Branch, TYPE_VOID);
     node.left = cond;
     node.right = then_block;
     node.value = else_block;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // Emit an unconditional jump
-fn func_builder_emit_jump(fb: *FuncBuilder, target_block: i64) i64 {
+fn FuncBuilder_emitJump(fb: *FuncBuilder, target_block: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.Jump, TYPE_VOID);
     node.left = target_block;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // Emit a load from pointer (dereference)
 // ptr_expr = IR node index of pointer expression
 // result_type = type of the pointed-to value
-fn func_builder_emit_load(fb: *FuncBuilder, ptr_expr: i64, result_type: i64) i64 {
+fn FuncBuilder_emitLoad(fb: *FuncBuilder, ptr_expr: i64, result_type: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.Load, result_type);
     node.left = ptr_expr;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // Emit a store through pointer (dereference assignment)
 // ptr_expr = IR node index of pointer expression
 // value_expr = IR node index of value to store
-fn func_builder_emit_store(fb: *FuncBuilder, ptr_expr: i64, value_expr: i64) i64 {
+fn FuncBuilder_emitStore(fb: *FuncBuilder, ptr_expr: i64, value_expr: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.Store, TYPE_VOID);
     node.left = ptr_expr;
     node.right = value_expr;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // Emit address of local variable
-fn func_builder_emit_addr_local(fb: *FuncBuilder, local_idx: i64, ptr_type: i64) i64 {
+fn FuncBuilder_emitAddrLocal(fb: *FuncBuilder, local_idx: i64, ptr_type: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.AddrLocal, ptr_type);
     node.left = local_idx;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // Emit field access from local struct
 // local_idx = index of the local struct variable
 // offset = byte offset of field within struct
 // field_type = type of the field
-fn func_builder_emit_field_local(fb: *FuncBuilder, local_idx: i64, offset: i64, field_type: i64) i64 {
+fn FuncBuilder_emitFieldLocal(fb: *FuncBuilder, local_idx: i64, offset: i64, field_type: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.FieldLocal, field_type);
     node.left = local_idx;
     node.right = offset;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // Emit field access from computed address (pointer to struct)
 // base_expr = IR node index of base address expression
 // offset = byte offset of field within struct
 // field_type = type of the field
-fn func_builder_emit_field_value(fb: *FuncBuilder, base_expr: i64, offset: i64, field_type: i64) i64 {
+fn FuncBuilder_emitFieldValue(fb: *FuncBuilder, base_expr: i64, offset: i64, field_type: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.FieldValue, field_type);
     node.left = base_expr;
     node.right = offset;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // Emit store to field of local struct
 // local_idx = index of the local struct variable
 // offset = byte offset of field within struct
 // value_expr = IR node index of value to store
-fn func_builder_emit_store_field_local(fb: *FuncBuilder, local_idx: i64, offset: i64, value_expr: i64) i64 {
+fn FuncBuilder_emitStoreFieldLocal(fb: *FuncBuilder, local_idx: i64, offset: i64, value_expr: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.StoreFieldLocal, TYPE_VOID);
     node.left = local_idx;
     node.right = offset;
     node.value = value_expr;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // Emit store to field via pointer
 // base_expr = IR node index of base address expression
 // offset = byte offset of field within struct
 // value_expr = IR node index of value to store
-fn func_builder_emit_store_field(fb: *FuncBuilder, base_expr: i64, offset: i64, value_expr: i64) i64 {
+fn FuncBuilder_emitStoreField(fb: *FuncBuilder, base_expr: i64, offset: i64, value_expr: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.StoreField, TYPE_VOID);
     node.left = base_expr;
     node.right = offset;
     node.value = value_expr;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // ============================================================================
@@ -646,13 +646,13 @@ fn func_builder_emit_store_field(fb: *FuncBuilder, base_expr: i64, offset: i64, 
 // index_expr = IR node index of the index expression
 // elem_size = size of each element in bytes
 // elem_type = type of the elements
-fn func_builder_emit_index_local(fb: *FuncBuilder, local_idx: i64, index_expr: i64,
+fn FuncBuilder_emitIndexLocal(fb: *FuncBuilder, local_idx: i64, index_expr: i64,
                                   elem_size: i64, elem_type: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.IndexLocal, elem_type);
     node.left = local_idx;
     node.right = index_expr;
     node.value = elem_size;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // Emit index into computed address: ptr[i]
@@ -660,13 +660,13 @@ fn func_builder_emit_index_local(fb: *FuncBuilder, local_idx: i64, index_expr: i
 // index_expr = IR node index of the index expression
 // elem_size = size of each element in bytes
 // elem_type = type of the elements
-fn func_builder_emit_index_value(fb: *FuncBuilder, base_expr: i64, index_expr: i64,
+fn FuncBuilder_emitIndexValue(fb: *FuncBuilder, base_expr: i64, index_expr: i64,
                                   elem_size: i64, elem_type: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.IndexValue, elem_type);
     node.left = base_expr;
     node.right = index_expr;
     node.value = elem_size;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // Emit store to local array element: arr[i] = value
@@ -674,14 +674,14 @@ fn func_builder_emit_index_value(fb: *FuncBuilder, base_expr: i64, index_expr: i
 // index_expr = IR node index of the index expression
 // value_expr = IR node index of value to store
 // elem_size = size of each element in bytes
-fn func_builder_emit_store_index_local(fb: *FuncBuilder, local_idx: i64, index_expr: i64,
+fn FuncBuilder_emitStoreIndexLocal(fb: *FuncBuilder, local_idx: i64, index_expr: i64,
                                         value_expr: i64, elem_size: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.StoreIndexLocal, TYPE_VOID);
     node.left = local_idx;
     node.right = index_expr;
     node.value = value_expr;
     node.op = elem_size;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // Emit store to indexed address: ptr[i] = value
@@ -689,14 +689,14 @@ fn func_builder_emit_store_index_local(fb: *FuncBuilder, local_idx: i64, index_e
 // index_expr = IR node index of the index expression
 // value_expr = IR node index of value to store
 // elem_size = size of each element in bytes
-fn func_builder_emit_store_index_value(fb: *FuncBuilder, base_expr: i64, index_expr: i64,
+fn FuncBuilder_emitStoreIndexValue(fb: *FuncBuilder, base_expr: i64, index_expr: i64,
                                         value_expr: i64, elem_size: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.StoreIndexValue, TYPE_VOID);
     node.left = base_expr;
     node.right = index_expr;
     node.value = value_expr;
     node.op = elem_size;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // ============================================================================
@@ -704,33 +704,33 @@ fn func_builder_emit_store_index_value(fb: *FuncBuilder, base_expr: i64, index_e
 // ============================================================================
 
 // Emit @string(ptr, len) builtin - construct string from pointer and length
-fn func_builder_emit_make_string(fb: *FuncBuilder, ptr_expr: i64, len_expr: i64) i64 {
+fn FuncBuilder_emitMakeString(fb: *FuncBuilder, ptr_expr: i64, len_expr: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.MakeString, TYPE_STRING);
     node.left = ptr_expr;    // Pointer expression
     node.right = len_expr;   // Length expression
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // Emit slice creation: left = pointer to first element, right = length
 // Slice is represented as (ptr, len) tuple like strings
-fn func_builder_emit_make_slice(fb: *FuncBuilder, ptr_expr: i64, len_expr: i64, slice_type: i64) i64 {
+fn FuncBuilder_emitMakeSlice(fb: *FuncBuilder, ptr_expr: i64, len_expr: i64, slice_type: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.MakeSlice, slice_type);
     node.left = ptr_expr;    // Pointer to first element
     node.right = len_expr;   // Length of slice
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // Emit extract pointer from slice (Go: OpSlicePtr)
 // Following src/frontend/ir.zig:1133-1135
-fn func_builder_emit_slice_ptr(fb: *FuncBuilder, slice_expr: i64, ptr_type: i64) i64 {
+fn FuncBuilder_emitSlicePtr(fb: *FuncBuilder, slice_expr: i64, ptr_type: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.SlicePtr, ptr_type);
     node.left = slice_expr;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }
 
 // Emit extract length from slice (Go: OpSliceLen)
-fn func_builder_emit_slice_len(fb: *FuncBuilder, slice_expr: i64) i64 {
+fn FuncBuilder_emitSliceLen(fb: *FuncBuilder, slice_expr: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.SliceLen, TYPE_I64);
     node.left = slice_expr;
-    return func_builder_emit(fb, node);
+    return FuncBuilder_emit(fb, node);
 }

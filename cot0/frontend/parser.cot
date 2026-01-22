@@ -106,14 +106,14 @@ fn Parser_peekNextIsDot(p: *Parser) bool {
 // Operator Helpers (using precedence from ast.cot)
 // ============================================================================
 
-// Get precedence of current token using ast.cot's token_precedence
+// Get precedence of current token using ast.cot's Token_precedence
 fn Parser_prec(p: *Parser) i64 {
     return token_precedence(p.current.kind);
 }
 
-// Get BinaryOp as i64 from current token using ast.cot's token_to_binop
+// Get BinaryOp as i64 from current token using ast.cot's Token_toBinaryOp
 fn Parser_binopInt(p: *Parser) i64 {
-    return token_to_binop(p.current.kind);
+    return Token_toBinaryOp(p.current.kind);
 }
 
 // ============================================================================

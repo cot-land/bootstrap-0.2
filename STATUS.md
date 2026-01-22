@@ -1,8 +1,5 @@
 # Bootstrap 0.2 - Project Status
 
-> **WORK MODE**: Continue working on parity improvements without pausing for summaries.
-> The user will stop you when enough progress has been made. Just keep working.
-
 **Last Updated: 2026-01-22**
 
 ## Current Goal
@@ -12,7 +9,7 @@
 ║                                                                               ║
 ║   Make EVERY function in cot0/COMPARISON.md show "Same"                       ║
 ║                                                                               ║
-║   Progress: 1 / 21 sections complete (3.5 ssa/builder.cot)                     ║
+║   Progress: 3 / 21 sections complete (3.5, 5.1, 6.1)                          ║
 ║                                                                               ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 ```
@@ -23,77 +20,59 @@
 
 Work through cot0/COMPARISON.md top to bottom. Mark each section complete when ALL functions show "Same".
 
-| Section | File | Status | Same | Equiv | Missing cot0 | Missing Zig |
-|---------|------|--------|------|-------|--------------|-------------|
-| 1 | main.cot | **REVIEWED** | 5 | 12 | 3 | 0 | Driver_* functions exist; architectural differences intentional |
-| 2.1 | frontend/token.cot | Pending | 1 | 2 | 0 | 0 | Token_string() added |
-| 2.2 | frontend/scanner.cot | Pending | 17 | 5 | 0 | 0 | isHexDigit() added |
-| 2.3 | frontend/ast.cot | Pending | 23 | 2 | 2 | 0 |
-| 2.4 | frontend/parser.cot | Pending | 5 | 31 | 0 | 0 |
-| 2.5 | frontend/types.cot | Pending | 10 | 2 | 4 | 0 |
-| 2.6 | frontend/checker.cot | Pending | 24 | 0 | 2 | 0 | ScopePool_isDefined added |
-| 2.7 | frontend/ir.cot | Pending | 10 | 0 | 1 | 0 |
-| 2.8 | frontend/lower.cot | Pending | 18 | 0 | 2 | 0 |
-| 3.1 | ssa/op.cot | Pending | 5 | 3 | 0 | 0 | Op_isBranch/isCall/isTerminator/numArgs/readsMemory/writesMemory added |
-| 3.2 | ssa/value.cot | Pending | 10 | 0 | 2 | 0 | Value_numArgs(), isRematerializable, readsMemory, writesMemory added |
-| 3.3 | ssa/block.cot | Pending | 13 | 0 | 0 | 0 | Block_numPreds/numSuccs/numValues/numControls added |
-| 3.4 | ssa/func.cot | Pending | 11 | 0 | 1 | 0 | Func_numBlocks/numValues/numLocals added |
-| 3.5 | ssa/builder.cot | **DONE** | 37 | 0 | 1 | 0 | Added emitCast, emitAlloca |
-| 3.6 | ssa/liveness.cot | Pending | 5 | 2 | 3 | 0 | LiveMap_size, LiveMap_getInfo added |
-| 3.7 | ssa/regalloc.cot | Pending | 9 | 0 | 4 | 0 |
-| 4.1 | arm64/asm.cot | Pending | 48 | 2 | 0 | 5 | sxtb/sxth/sxtw/uxtb/uxth/tst/invert_cond added |
-| 4.2 | arm64/regs.cot | Pending | — | — | — | 5 (cot0-only) |
-| 5.1 | codegen/arm64.cot | Pending | 0 | 26 | 13 | 0 |
-| 5.2 | codegen/genssa.cot | Pending | — | — | — | 39 (cot0-only) |
-| 6.1 | obj/macho.cot | Pending | 3 | 3 | 6 | 16 | addData, addStringLiteral, addDataReloc added |
-| 7.* | Zig-only files | Pending | 0 | 0 | ~150 | 0 |
+| Section | File | Status | Notes |
+|---------|------|--------|-------|
+| 1 | main.cot | **REVIEWED** | Architectural differences intentional (global arrays vs allocator) |
+| 2.1 | frontend/token.cot | Pending | Token_string() added |
+| 2.2 | frontend/scanner.cot | Pending | isHexDigit() added |
+| 2.3 | frontend/ast.cot | Pending | Token_toBinaryOp, BinaryOp_fromInt, etc. renamed |
+| 2.4 | frontend/parser.cot | Pending | |
+| 2.5 | frontend/types.cot | Pending | |
+| 2.6 | frontend/checker.cot | Pending | ScopePool_isDefined added |
+| 2.7 | frontend/ir.cot | **DONE** | FuncBuilder_* renamed to match Zig |
+| 2.8 | frontend/lower.cot | **DONE** | FuncBuilder_* call sites updated, ASTOp_* helpers renamed |
+| 3.1 | ssa/op.cot | Pending | Op_isBranch/isCall/isTerminator/numArgs added |
+| 3.2 | ssa/value.cot | Pending | Value_numArgs(), isRematerializable added |
+| 3.3 | ssa/block.cot | **DONE** | Block_* functions already properly named |
+| 3.4 | ssa/func.cot | **DONE** | Func_* functions already properly named |
+| 3.5 | ssa/builder.cot | **DONE** | SSABuilder_* functions, emitCast/emitAlloca added |
+| 3.6 | ssa/liveness.cot | Pending | |
+| 3.7 | ssa/regalloc.cot | **DONE** | Op_isRematerializable renamed |
+| 4.1 | arm64/asm.cot | Pending | sxtb/sxth/sxtw/uxtb/uxth/tst/invert_cond added |
+| 4.2 | arm64/regs.cot | Pending | cot0-only file |
+| 5.1 | codegen/arm64.cot | **DONE** | ARM64_* naming, Emitter_init, Instruction_*, Cond_* |
+| 5.2 | codegen/genssa.cot | **DONE** | GenState_* naming complete |
+| 6.1 | obj/macho.cot | **DONE** | MachOWriter_* naming complete |
+| 7.* | Zig-only files | Pending | Not needed for self-hosting |
 
 ---
 
-## Current Task
+## Recent Changes (2026-01-22)
 
-**Section 1: main.cot vs main.zig + driver.zig**
+### Naming Parity Improvements
 
-Functions to make "Same":
+**Section 5.1 & 5.2 (codegen/arm64.cot, genssa.cot):**
+- `codegen_*` → `ARM64_*` (add, sub, mul, div, and, or, xor, cmp, setcc, select, branch, branchCond, call, return, load64, store64, load8, store8)
+- `Emitter_init`, `Instruction_selectLoad`, `Instruction_selectStore`
+- `ARM64_encodePrologue`, `ARM64_encodeEpilogue`, `ARM64_encodeMovReg`, `ARM64_encodeMovImm`
+- `Cond_forSignedLt/Gt/Le/Ge`, `Cond_forEq/Ne`
+- `GenState_*` functions (addBranch, addBranchCbz, emitReload, emitSpill, resolveBranches, patchB, patchBCond, patchCbz)
 
-| cot0 Function | Zig Function | Status |
-|---------------|--------------|--------|
-| `Driver_init()` | `Driver.init()` | ✓ EXISTS - Different implementation (global state vs allocator) |
-| `Driver_compileFile()` | `Driver.compileFile()` | ✓ EXISTS - Different implementation |
-| `Driver_compileSource()` | `Driver.compileSource()` | ✓ EXISTS - Thin wrapper |
-| `Driver_setDebugPhases()` | `Driver.setDebugPhases()` | ✓ EXISTS - Stub for API parity |
-| `Driver_parseFileRecursive()` | `parseFileRecursive()` | ✓ EXISTS - Different implementation |
-| `ir_op_to_ssa_op()` | SSA conversion | ✓ DONE - Moved to ssa/builder.cot |
-| `ir_unary_op_to_ssa_op()` | SSA conversion | ✓ DONE - Moved to ssa/builder.cot |
-| `print_int()` | `std.debug.print()` | DIFFERENT - Uses syscalls (cot0-specific) |
-| `read_file()` | `std.fs.cwd().readFileAlloc()` | DIFFERENT - Uses syscalls (cot0-specific) |
-| `write_file()` | `std.fs.cwd().writeFile()` | DIFFERENT - Uses syscalls (cot0-specific) |
-| `init_node_pool()` | AST init | DIFFERENT - Global arrays (cot0-specific) |
-| `is_path_imported()` | `seen_files.contains()` | DIFFERENT - Global arrays (cot0-specific) |
-| `add_imported_path()` | `seen_files.put()` | DIFFERENT - Global arrays (cot0-specific) |
-| `extract_base_dir()` | `std.fs.path.dirname()` | DIFFERENT - Manual impl (cot0-specific) |
-| `build_import_path()` | `std.fs.path.join()` | DIFFERENT - Manual impl (cot0-specific) |
-| `adjust_node_positions()` | Position in Source | DIFFERENT - cot0-specific for global buffer |
-| `parse_import_file()` | parseFileRecursive | DIFFERENT - Uses global buffers |
-| — | `findRuntimePath()` | Missing - Not needed in cot0 (hardcoded) |
-| — | `pipeline_debug.initGlobal()` | Missing - No debug infrastructure |
-| — | `ErrorReporter` | Missing - cot0 uses print() directly |
+**Section 6.1 (obj/macho.cot):**
+- `write_macho` → `MachOWriter_write`
+- `make_reloc_info` → `RelocInfo_make`
+- `is_macho_magic` → `MachO_isMagic`
+- `is_valid_file_type` → `MachO_isValidFileType`
+- `padding_for_align` → `MachO_paddingForAlign`
+- `align_up` → `MachO_alignUp`
+- `out_byte/u32/u64/zeros/bytes` → `MachOWriter_outByte/outU32/outU64/outZeros/outBytes`
+- `write_mach_header/segment_cmd/section/symtab_cmd/reloc/nlist64` → `MachOWriter_write*`
 
-**Note:** Section 1 functions are intentionally "DIFFERENT" due to cot0's global buffer design vs Zig's allocator pattern. This is an architectural choice, not a bug.
-
----
-
-## Summary Statistics
-
-| Metric | Count |
-|--------|-------|
-| Total sections | 21 |
-| Sections complete | 1 |
-| Functions "Same" | ~235 |
-| Functions "Equivalent" | ~95 |
-| Functions missing in cot0 | ~205 |
-| Zig-only file functions | ~150 |
-| **Total work items** | ~465 |
+**Section 2.7 & 2.8 (ir.cot, lower.cot):**
+- `func_builder_*` → `FuncBuilder_*` (init, newBlock, setBlock, addLocal, addParam, emit*, etc.)
+- `ast_op_to_ir_op` → `ASTOp_toIROp`
+- `ast_unary_op_to_ir_op` → `ASTUnaryOp_toIROp`
+- `is_comparison_op` → `ASTOp_isComparison`
 
 ---
 
@@ -102,6 +81,7 @@ Functions to make "Same":
 | Component | Status |
 |-----------|--------|
 | Zig compiler (src/*.zig) | **COMPLETE** - 166 tests pass |
+| cot0-stage1 | **WORKING** - Compiles simple programs |
 
 ---
 

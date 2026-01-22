@@ -209,6 +209,18 @@ fn Value_numArgs(v: *Value) i64 {
     return v.args_count;
 }
 
+// Alias for argsLen to match Zig naming
+// Reference: Zig's Value.argsLen()
+fn Value_argsLen(v: *Value) i64 {
+    return v.args_count;
+}
+
+// Alias for isConst to match Zig naming
+// Reference: Zig's Value.isConst()
+fn Value_isConst(v: *Value) bool {
+    return Op_isConstant(v.op);
+}
+
 // Get assigned register (or -1 if none)
 // Reference: Zig's Value.getReg()
 fn Value_getReg(v: *Value) i64 {

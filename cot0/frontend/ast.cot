@@ -1016,7 +1016,7 @@ fn NodeKind_isDecl(kind: NodeKind) bool {
 // ============================================================================
 
 // Convert token to binary op (returns -1 if not a binary op token)
-fn token_to_binop(tok_kind: TokenType) i64 {
+fn Token_toBinaryOp(tok_kind: TokenType) i64 {
     // Arithmetic
     if tok_kind == TokenType.Plus    { return 0; }   // BinaryOp.Add
     if tok_kind == TokenType.Minus   { return 1; }   // BinaryOp.Sub
@@ -1048,7 +1048,7 @@ fn token_to_binop(tok_kind: TokenType) i64 {
     return -1;
 }
 
-fn binop_from_int(val: i64) BinaryOp {
+fn BinaryOp_fromInt(val: i64) BinaryOp {
     // Arithmetic
     if val == 0 { return BinaryOp.Add; }
     if val == 1 { return BinaryOp.Sub; }
@@ -1079,7 +1079,7 @@ fn binop_from_int(val: i64) BinaryOp {
 }
 
 // Convert token to unary op (returns -1 if not a unary op token)
-fn token_to_unaryop(tok_kind: TokenType) i64 {
+fn Token_toUnaryOp(tok_kind: TokenType) i64 {
     if tok_kind == TokenType.Minus { return 0; }  // UnaryOp.Neg
     if tok_kind == TokenType.Bang  { return 1; }  // UnaryOp.Not
     if tok_kind == TokenType.Not   { return 1; }  // UnaryOp.Not (keyword form)
@@ -1087,7 +1087,7 @@ fn token_to_unaryop(tok_kind: TokenType) i64 {
     return -1;
 }
 
-fn unaryop_from_int(val: i64) UnaryOp {
+fn UnaryOp_fromInt(val: i64) UnaryOp {
     if val == 0 { return UnaryOp.Neg; }
     if val == 1 { return UnaryOp.Not; }
     if val == 2 { return UnaryOp.BitNot; }

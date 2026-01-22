@@ -833,7 +833,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         call_idx = call_idx + 1;
     }
 
-    let macho_bytes: i64 = write_macho(&writer);
+    let macho_bytes: i64 = MachOWriter_write(&writer);
     print("  Mach-O bytes: ");
     print_int(macho_bytes);
     print("\n");

@@ -151,7 +151,7 @@ fn main() i64 {
     let main_idx: i64 = macho_add_symbol(&w, &main_name[0], 5, 0, SECT_TEXT, true);
 
     // Write Mach-O to output buffer
-    let bytes: i64 = write_macho(&w);
+    let bytes: i64 = MachOWriter_write(&w);
 
     print_str("  Created ");
     print_num(bytes);

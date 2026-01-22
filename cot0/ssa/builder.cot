@@ -34,7 +34,7 @@ const IR_NULL_NODE: i64 = -1;
 // ============================================================================
 
 // Map IR binary operation to SSA Op
-fn ir_op_to_ssa_op(ir_op: i64) Op {
+fn Op_fromIRBinaryOp(ir_op: i64) Op {
     // IRBinaryOp enum values (from ir.cot)
     if ir_op == 0 { return Op.Add64; }     // IRBinaryOp.Add
     if ir_op == 1 { return Op.Sub64; }     // IRBinaryOp.Sub
@@ -57,7 +57,7 @@ fn ir_op_to_ssa_op(ir_op: i64) Op {
     return Op.Add64;  // Default fallback
 }
 
-fn ir_unary_op_to_ssa_op(ir_op: i64) Op {
+fn Op_fromIRUnaryOp(ir_op: i64) Op {
     // IR unary ops: Neg=0, Not=1, BitNot=2 (from ir.cot IRUnaryOp enum)
     if ir_op == 0 { return Op.Neg64; }     // IRUnaryOp.Neg
     if ir_op == 1 { return Op.Not64; }     // IRUnaryOp.Not
@@ -735,7 +735,7 @@ fn SSABuilder_convertBinary(b: *SSABuilder, ir_node: *IRNode) i64 {
     // left and right are relative IR indices
     let left_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
     let right_val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
-    let ssa_op: Op = ir_op_to_ssa_op(ir_node.op);
+    let ssa_op: Op = Op_fromIRBinaryOp(ir_node.op);
     let val: *Value = Func_emitBinary(b.func, ssa_op, left_val, right_val, TYPE_I64);
     SSABuilder_assignReg(b, val);
     return val.id;
@@ -744,7 +744,7 @@ fn SSABuilder_convertBinary(b: *SSABuilder, ir_node: *IRNode) i64 {
 fn SSABuilder_convertUnary(b: *SSABuilder, ir_node: *IRNode) i64 {
     // Unary op: left is operand (relative IR index), op is the operator
     let operand_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-    let ssa_op: Op = ir_unary_op_to_ssa_op(ir_node.op);
+    let ssa_op: Op = Op_fromIRUnaryOp(ir_node.op);
     let val: *Value = Func_newValue(b.func, ssa_op, TYPE_I64);
     Value_addArg(val, operand_val);
     SSABuilder_assignReg(b, val);

@@ -40,18 +40,18 @@ fn test_operator_conversion() i64 {
     // In lower.cot, ast ops are: Add=0, Sub=1, Mul=2, Div=3, Mod=4,
     // Equal=5, NotEqual=6, Less=7, LessEq=8, Greater=9, GreaterEq=10,
     // And=11, Or=12
-    if ast_op_to_ir_op(0) != IR_OP_ADD { return 1; }  // Add
-    if ast_op_to_ir_op(1) != IR_OP_SUB { return 2; }  // Sub
-    if ast_op_to_ir_op(2) != IR_OP_MUL { return 3; }  // Mul
-    if ast_op_to_ir_op(5) != IR_OP_EQ { return 4; }   // Equal
-    if ast_op_to_ir_op(7) != IR_OP_LT { return 5; }   // Less
+    if ASTOp_toIROp(0) != IR_OP_ADD { return 1; }  // Add
+    if ASTOp_toIROp(1) != IR_OP_SUB { return 2; }  // Sub
+    if ASTOp_toIROp(2) != IR_OP_MUL { return 3; }  // Mul
+    if ASTOp_toIROp(5) != IR_OP_EQ { return 4; }   // Equal
+    if ASTOp_toIROp(7) != IR_OP_LT { return 5; }   // Less
 
     // Test comparison check
-    if not is_comparison_op(5) { return 10; }   // Equal
-    if not is_comparison_op(6) { return 11; }   // NotEqual
-    if not is_comparison_op(7) { return 12; }   // Less
-    if is_comparison_op(0) { return 13; }       // Add is not comparison
-    if is_comparison_op(2) { return 14; }       // Mul is not comparison
+    if not ASTOp_isComparison(5) { return 10; }   // Equal
+    if not ASTOp_isComparison(6) { return 11; }   // NotEqual
+    if not ASTOp_isComparison(7) { return 12; }   // Less
+    if ASTOp_isComparison(0) { return 13; }       // Add is not comparison
+    if ASTOp_isComparison(2) { return 14; }       // Mul is not comparison
 
     return 0;
 }
@@ -92,7 +92,7 @@ fn test_lower_int_lit() i64 {
 
     // Create a function builder manually for testing
     var fb: FuncBuilder = undefined;
-    func_builder_init(&fb, 0, 4, TYPE_I64,
+    FuncBuilder_init(&fb, 0, 4, TYPE_I64,
                       &g_ir_locals[0], 50,
                       &g_ir_nodes[0], 100);
     l.current_func = &fb;
@@ -168,7 +168,7 @@ fn test_lower_binary() i64 {
 
     // Create function builder
     var fb: FuncBuilder = undefined;
-    func_builder_init(&fb, 0, 4, TYPE_I64,
+    FuncBuilder_init(&fb, 0, 4, TYPE_I64,
                       &g_ir_locals[0], 50,
                       &g_ir_nodes[0], 100);
     l.current_func = &fb;

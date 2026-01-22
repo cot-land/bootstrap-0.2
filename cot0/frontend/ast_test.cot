@@ -146,30 +146,30 @@ fn test_kind_helpers() i64 {
 }
 
 // Test 7: Token to binop conversion
-fn test_token_to_binop() i64 {
+fn test_Token_toBinaryOp() i64 {
     // Arithmetic
-    if token_to_binop(TokenType.Plus) != 0 { return 1; }   // Add
-    if token_to_binop(TokenType.Minus) != 1 { return 2; }  // Sub
-    if token_to_binop(TokenType.Star) != 2 { return 3; }   // Mul
-    if token_to_binop(TokenType.Slash) != 3 { return 4; }  // Div
-    if token_to_binop(TokenType.Percent) != 4 { return 5; } // Mod
+    if Token_toBinaryOp(TokenType.Plus) != 0 { return 1; }   // Add
+    if Token_toBinaryOp(TokenType.Minus) != 1 { return 2; }  // Sub
+    if Token_toBinaryOp(TokenType.Star) != 2 { return 3; }   // Mul
+    if Token_toBinaryOp(TokenType.Slash) != 3 { return 4; }  // Div
+    if Token_toBinaryOp(TokenType.Percent) != 4 { return 5; } // Mod
 
     // Comparison
-    if token_to_binop(TokenType.EqEq) != 5 { return 6; }      // Equal
-    if token_to_binop(TokenType.NotEq) != 6 { return 7; }     // NotEqual
-    if token_to_binop(TokenType.Less) != 7 { return 8; }      // Less
-    if token_to_binop(TokenType.LessEq) != 8 { return 9; }    // LessEq
-    if token_to_binop(TokenType.Greater) != 9 { return 10; }   // Greater
-    if token_to_binop(TokenType.GreaterEq) != 10 { return 11; } // GreaterEq
+    if Token_toBinaryOp(TokenType.EqEq) != 5 { return 6; }      // Equal
+    if Token_toBinaryOp(TokenType.NotEq) != 6 { return 7; }     // NotEqual
+    if Token_toBinaryOp(TokenType.Less) != 7 { return 8; }      // Less
+    if Token_toBinaryOp(TokenType.LessEq) != 8 { return 9; }    // LessEq
+    if Token_toBinaryOp(TokenType.Greater) != 9 { return 10; }   // Greater
+    if Token_toBinaryOp(TokenType.GreaterEq) != 10 { return 11; } // GreaterEq
 
     // Logical (both forms)
-    if token_to_binop(TokenType.And) != 11 { return 12; }       // And keyword
-    if token_to_binop(TokenType.AmpAmp) != 11 { return 13; }    // And symbol
-    if token_to_binop(TokenType.Or) != 12 { return 14; }        // Or keyword
-    if token_to_binop(TokenType.PipePipe) != 12 { return 15; }  // Or symbol
+    if Token_toBinaryOp(TokenType.And) != 11 { return 12; }       // And keyword
+    if Token_toBinaryOp(TokenType.AmpAmp) != 11 { return 13; }    // And symbol
+    if Token_toBinaryOp(TokenType.Or) != 12 { return 14; }        // Or keyword
+    if Token_toBinaryOp(TokenType.PipePipe) != 12 { return 15; }  // Or symbol
 
     // Not a binop
-    if token_to_binop(TokenType.Ident) != -1 { return 16; }
+    if Token_toBinaryOp(TokenType.Ident) != -1 { return 16; }
 
     return 0;
 }
@@ -336,8 +336,8 @@ fn main() i64 {
         failed = failed + 1;
     }
 
-    if test_token_to_binop() != 0 {
-        println("FAIL: test_token_to_binop");
+    if test_Token_toBinaryOp() != 0 {
+        println("FAIL: test_Token_toBinaryOp");
         failed = failed + 1;
     }
 

@@ -227,6 +227,24 @@ fn Block_numControls(b: *Block) i64 {
     return 0;
 }
 
+// Set the control value (for If blocks)
+// Reference: Zig's Block.setControl()
+fn Block_setControl(b: *Block, v_id: i64) {
+    b.control = v_id;
+}
+
+// Get the control value (for If blocks)
+// Reference: Zig's Block.getControl()
+fn Block_getControl(b: *Block) i64 {
+    return b.control;
+}
+
+// Reset all control values
+// Reference: Zig's Block.resetControls()
+fn Block_resetControls(b: *Block) {
+    b.control = INVALID_ID;
+}
+
 // ============================================================================
 // Block Pool (arena allocation)
 // ============================================================================

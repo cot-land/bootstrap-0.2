@@ -143,7 +143,7 @@ const RELOCATION_SIZE: i64 = 8;
 
 // Create relocation info word
 // Format: symbolnum (24 bits) | pcrel (1) | length (2) | extern (1) | type (4)
-fn make_reloc_info(symbolnum: i64, pcrel: bool, length: i64, external: bool, reloc_type: i64) i64 {
+fn RelocInfo_make(symbolnum: i64, pcrel: bool, length: i64, external: bool, reloc_type: i64) i64 {
     var result: i64 = symbolnum & 0xFFFFFF;
     if pcrel { result = result | (1 << 24); }
     result = result | ((length & 3) << 25);
@@ -186,17 +186,17 @@ const PAGE_ALIGN: i64 = 14;
 // ============================================================================
 
 // Check if value is a valid Mach-O magic number
-fn is_macho_magic(magic: i64) bool {
+fn MachO_isMagic(magic: i64) bool {
     return magic == MH_MAGIC_64 or magic == MH_CIGAM_64;
 }
 
 // Check if file type is valid
-fn is_valid_file_type(filetype: i64) bool {
+fn MachO_isValidFileType(filetype: i64) bool {
     return filetype == MH_OBJECT or filetype == MH_EXECUTE or filetype == MH_DYLIB;
 }
 
 // Calculate padding needed for alignment
-fn padding_for_align(offset: i64, align_pow2: i64) i64 {
+fn MachO_paddingForAlign(offset: i64, align_pow2: i64) i64 {
     let alignment: i64 = 1 << align_pow2;
     let remainder: i64 = offset & (alignment - 1);
     if remainder == 0 { return 0; }
@@ -204,8 +204,8 @@ fn padding_for_align(offset: i64, align_pow2: i64) i64 {
 }
 
 // Round up offset to alignment
-fn align_up(offset: i64, align_pow2: i64) i64 {
-    return offset + padding_for_align(offset, align_pow2);
+fn MachO_alignUp(offset: i64, align_pow2: i64) i64 {
+    return offset + MachO_paddingForAlign(offset, align_pow2);
 }
 
 // ============================================================================
@@ -431,7 +431,7 @@ fn MachOWriter_addDataReloc(w: *MachOWriter, offset: i64, symbol_idx: i64,
 // ============================================================================
 
 // Write a single byte to output
-fn out_byte(w: *MachOWriter, b: i64) {
+fn MachOWriter_outByte(w: *MachOWriter, b: i64) {
     if w.output_count < w.output_cap {
         let p: *u8 = w.output + w.output_count;
         p.* = @intCast(u8, b & 255);
@@ -440,34 +440,34 @@ fn out_byte(w: *MachOWriter, b: i64) {
 }
 
 // Write a 32-bit value (little-endian)
-fn out_u32(w: *MachOWriter, val: i64) {
-    out_byte(w, val & 255);
-    out_byte(w, (val >> 8) & 255);
-    out_byte(w, (val >> 16) & 255);
-    out_byte(w, (val >> 24) & 255);
+fn MachOWriter_outU32(w: *MachOWriter, val: i64) {
+    MachOWriter_outByte(w, val & 255);
+    MachOWriter_outByte(w, (val >> 8) & 255);
+    MachOWriter_outByte(w, (val >> 16) & 255);
+    MachOWriter_outByte(w, (val >> 24) & 255);
 }
 
 // Write a 64-bit value (little-endian)
-fn out_u64(w: *MachOWriter, val: i64) {
-    out_u32(w, val & 0xFFFFFFFF);
-    out_u32(w, (val >> 32) & 0xFFFFFFFF);
+fn MachOWriter_outU64(w: *MachOWriter, val: i64) {
+    MachOWriter_outU32(w, val & 0xFFFFFFFF);
+    MachOWriter_outU32(w, (val >> 32) & 0xFFFFFFFF);
 }
 
 // Write n zero bytes
-fn out_zeros(w: *MachOWriter, n: i64) {
+fn MachOWriter_outZeros(w: *MachOWriter, n: i64) {
     var i: i64 = 0;
     while i < n {
-        out_byte(w, 0);
+        MachOWriter_outByte(w, 0);
         i = i + 1;
     }
 }
 
 // Write bytes from buffer
-fn out_bytes(w: *MachOWriter, src: *u8, len: i64) {
+fn MachOWriter_outBytes(w: *MachOWriter, src: *u8, len: i64) {
     var i: i64 = 0;
     while i < len {
         let p: *u8 = src + i;
-        out_byte(w, @intCast(i64, p.*));
+        MachOWriter_outByte(w, @intCast(i64, p.*));
         i = i + 1;
     }
 }
@@ -476,43 +476,43 @@ fn out_bytes(w: *MachOWriter, src: *u8, len: i64) {
 // Mach-O Header Writer
 // ============================================================================
 
-fn write_mach_header(w: *MachOWriter, ncmds: i64, sizeofcmds: i64) {
-    out_u32(w, MH_MAGIC_64);           // magic
-    out_u32(w, CPU_TYPE_ARM64);        // cputype
-    out_u32(w, CPU_SUBTYPE_ARM64_ALL); // cpusubtype
-    out_u32(w, MH_OBJECT);             // filetype
-    out_u32(w, ncmds);                 // ncmds
-    out_u32(w, sizeofcmds);            // sizeofcmds
-    out_u32(w, MH_SUBSECTIONS_VIA_SYMBOLS); // flags
-    out_u32(w, 0);                     // reserved
+fn MachOWriter_writeMachHeader(w: *MachOWriter, ncmds: i64, sizeofcmds: i64) {
+    MachOWriter_outU32(w, MH_MAGIC_64);           // magic
+    MachOWriter_outU32(w, CPU_TYPE_ARM64);        // cputype
+    MachOWriter_outU32(w, CPU_SUBTYPE_ARM64_ALL); // cpusubtype
+    MachOWriter_outU32(w, MH_OBJECT);             // filetype
+    MachOWriter_outU32(w, ncmds);                 // ncmds
+    MachOWriter_outU32(w, sizeofcmds);            // sizeofcmds
+    MachOWriter_outU32(w, MH_SUBSECTIONS_VIA_SYMBOLS); // flags
+    MachOWriter_outU32(w, 0);                     // reserved
 }
 
 // ============================================================================
 // Segment Command Writer
 // ============================================================================
 
-fn write_segment_cmd(w: *MachOWriter, vmsize: i64, fileoff: i64,
+fn MachOWriter_writeSegmentCmd(w: *MachOWriter, vmsize: i64, fileoff: i64,
                      filesize: i64, nsects: i64) {
     let cmdsize: i64 = SEGMENT_COMMAND_64_SIZE + nsects * SECTION_64_SIZE;
 
-    out_u32(w, LC_SEGMENT_64);  // cmd
-    out_u32(w, cmdsize);        // cmdsize
-    out_zeros(w, 16);           // segname (empty)
-    out_u64(w, 0);              // vmaddr
-    out_u64(w, vmsize);         // vmsize
-    out_u64(w, fileoff);        // fileoff
-    out_u64(w, filesize);       // filesize
-    out_u32(w, VM_PROT_ALL);    // maxprot (rwx)
-    out_u32(w, VM_PROT_ALL);    // initprot
-    out_u32(w, nsects);         // nsects
-    out_u32(w, 0);              // flags
+    MachOWriter_outU32(w, LC_SEGMENT_64);  // cmd
+    MachOWriter_outU32(w, cmdsize);        // cmdsize
+    MachOWriter_outZeros(w, 16);           // segname (empty)
+    MachOWriter_outU64(w, 0);              // vmaddr
+    MachOWriter_outU64(w, vmsize);         // vmsize
+    MachOWriter_outU64(w, fileoff);        // fileoff
+    MachOWriter_outU64(w, filesize);       // filesize
+    MachOWriter_outU32(w, VM_PROT_ALL);    // maxprot (rwx)
+    MachOWriter_outU32(w, VM_PROT_ALL);    // initprot
+    MachOWriter_outU32(w, nsects);         // nsects
+    MachOWriter_outU32(w, 0);              // flags
 }
 
 // ============================================================================
 // Section Writer
 // ============================================================================
 
-fn write_section(w: *MachOWriter,
+fn MachOWriter_writeSection(w: *MachOWriter,
                  sectname: *u8, segname: *u8,
                  size: i64, offset: i64,
                  sect_align: i64, flags: i64,
@@ -522,9 +522,9 @@ fn write_section(w: *MachOWriter,
     while i < 16 {
         if i < 6 {
             let p: *u8 = sectname + i;
-            out_byte(w, @intCast(i64, p.*));
+            MachOWriter_outByte(w, @intCast(i64, p.*));
         } else {
-            out_byte(w, 0);
+            MachOWriter_outByte(w, 0);
         }
         i = i + 1;
     }
@@ -534,57 +534,57 @@ fn write_section(w: *MachOWriter,
     while i < 16 {
         if i < 6 {
             let p: *u8 = segname + i;
-            out_byte(w, @intCast(i64, p.*));
+            MachOWriter_outByte(w, @intCast(i64, p.*));
         } else {
-            out_byte(w, 0);
+            MachOWriter_outByte(w, 0);
         }
         i = i + 1;
     }
 
-    out_u64(w, 0);          // addr (0 for object file)
-    out_u64(w, size);       // size
-    out_u32(w, offset);     // offset
-    out_u32(w, sect_align); // align (log2)
-    out_u32(w, reloff);     // reloff
-    out_u32(w, nreloc);     // nreloc
-    out_u32(w, flags);      // flags
-    out_u32(w, 0);          // reserved1
-    out_u32(w, 0);          // reserved2
-    out_u32(w, 0);          // reserved3
+    MachOWriter_outU64(w, 0);          // addr (0 for object file)
+    MachOWriter_outU64(w, size);       // size
+    MachOWriter_outU32(w, offset);     // offset
+    MachOWriter_outU32(w, sect_align); // align (log2)
+    MachOWriter_outU32(w, reloff);     // reloff
+    MachOWriter_outU32(w, nreloc);     // nreloc
+    MachOWriter_outU32(w, flags);      // flags
+    MachOWriter_outU32(w, 0);          // reserved1
+    MachOWriter_outU32(w, 0);          // reserved2
+    MachOWriter_outU32(w, 0);          // reserved3
 }
 
 // ============================================================================
 // Symbol Table Command Writer
 // ============================================================================
 
-fn write_symtab_cmd(w: *MachOWriter, symoff: i64, nsyms: i64,
+fn MachOWriter_writeSymtabCmd(w: *MachOWriter, symoff: i64, nsyms: i64,
                     stroff: i64, strsize: i64) {
-    out_u32(w, LC_SYMTAB);       // cmd
-    out_u32(w, SYMTAB_COMMAND_SIZE);  // cmdsize
-    out_u32(w, symoff);          // symoff
-    out_u32(w, nsyms);           // nsyms
-    out_u32(w, stroff);          // stroff
-    out_u32(w, strsize);         // strsize
+    MachOWriter_outU32(w, LC_SYMTAB);       // cmd
+    MachOWriter_outU32(w, SYMTAB_COMMAND_SIZE);  // cmdsize
+    MachOWriter_outU32(w, symoff);          // symoff
+    MachOWriter_outU32(w, nsyms);           // nsyms
+    MachOWriter_outU32(w, stroff);          // stroff
+    MachOWriter_outU32(w, strsize);         // strsize
 }
 
 // ============================================================================
 // Relocation Entry Writer
 // ============================================================================
 
-fn write_reloc(w: *MachOWriter, r: *Reloc) {
-    out_u32(w, r.offset);  // r_address
+fn MachOWriter_writeReloc(w: *MachOWriter, r: *Reloc) {
+    MachOWriter_outU32(w, r.offset);  // r_address
 
     // Build r_info: symbolnum (24) | pcrel (1) | length (2) | extern (1) | type (4)
-    let info: i64 = make_reloc_info(r.symbol_idx, r.is_pcrel, 2, true, r.reloc_type);
-    out_u32(w, info);
+    let info: i64 = RelocInfo_make(r.symbol_idx, r.is_pcrel, 2, true, r.reloc_type);
+    MachOWriter_outU32(w, info);
 }
 
 // ============================================================================
 // Symbol Entry Writer (nlist64)
 // ============================================================================
 
-fn write_nlist64(w: *MachOWriter, sym: *Symbol) {
-    out_u32(w, sym.name_offset);  // n_strx
+fn MachOWriter_writeNlist64(w: *MachOWriter, sym: *Symbol) {
+    MachOWriter_outU32(w, sym.name_offset);  // n_strx
 
     // n_type: N_SECT | N_EXT for defined external, N_EXT for undefined
     let n_type: i64 = 0;
@@ -598,12 +598,12 @@ fn write_nlist64(w: *MachOWriter, sym: *Symbol) {
             n_type = n_type | N_EXT;
         }
     }
-    out_byte(w, n_type);  // n_type
+    MachOWriter_outByte(w, n_type);  // n_type
 
-    out_byte(w, sym.section);  // n_sect
-    out_byte(w, 0);  // n_desc low byte
-    out_byte(w, 0);  // n_desc high byte
-    out_u64(w, sym.value);  // n_value
+    MachOWriter_outByte(w, sym.section);  // n_sect
+    MachOWriter_outByte(w, 0);  // n_desc low byte
+    MachOWriter_outByte(w, 0);  // n_desc high byte
+    MachOWriter_outU64(w, sym.value);  // n_value
 }
 
 // ============================================================================
@@ -612,7 +612,7 @@ fn write_nlist64(w: *MachOWriter, sym: *Symbol) {
 // Returns bytes written, or negative on error
 // ============================================================================
 
-fn write_macho(w: *MachOWriter) i64 {
+fn MachOWriter_write(w: *MachOWriter) i64 {
     // Calculate layout
     let num_sections: i64 = 2;  // __text and __data
     let load_cmds_size: i64 = SEGMENT_COMMAND_64_SIZE +
@@ -622,13 +622,13 @@ fn write_macho(w: *MachOWriter) i64 {
     let text_offset: i64 = MACH_HEADER_64_SIZE + load_cmds_size;
     let text_size: i64 = w.code_count;
 
-    let data_offset: i64 = align_up(text_offset + text_size, 3);  // 8-byte align
+    let data_offset: i64 = MachO_alignUp(text_offset + text_size, 3);  // 8-byte align
     let data_size: i64 = w.data_count;
 
-    let reloc_offset: i64 = align_up(data_offset + data_size, 2);  // 4-byte align
+    let reloc_offset: i64 = MachO_alignUp(data_offset + data_size, 2);  // 4-byte align
     let reloc_size: i64 = w.relocs_count * RELOCATION_SIZE;
 
-    let symtab_offset: i64 = align_up(reloc_offset + reloc_size, 3);  // 8-byte align
+    let symtab_offset: i64 = MachO_alignUp(reloc_offset + reloc_size, 3);  // 8-byte align
     let symtab_size: i64 = w.symbols_count * NLIST64_SIZE;
 
     let strtab_offset: i64 = symtab_offset + symtab_size;
@@ -637,10 +637,10 @@ fn write_macho(w: *MachOWriter) i64 {
     let segment_filesize: i64 = data_offset + data_size - text_offset;
 
     // Write header
-    write_mach_header(w, 2, load_cmds_size);
+    MachOWriter_writeMachHeader(w, 2, load_cmds_size);
 
     // Write segment command
-    write_segment_cmd(w, segment_filesize, text_offset, segment_filesize, num_sections);
+    MachOWriter_writeSegmentCmd(w, segment_filesize, text_offset, segment_filesize, num_sections);
 
     // Write __text section
     // Note: Using string literals requires passing pointers
@@ -662,7 +662,7 @@ fn write_macho(w: *MachOWriter) i64 {
     text_seg[4] = 88;   // 'X'
     text_seg[5] = 84;   // 'T'
 
-    write_section(w, &text_name[0], &text_seg[0],
+    MachOWriter_writeSection(w, &text_name[0], &text_seg[0],
                   text_size, text_offset,
                   TEXT_ALIGN, text_flags,
                   reloc_offset, w.relocs_count);
@@ -684,51 +684,51 @@ fn write_macho(w: *MachOWriter) i64 {
     data_seg[4] = 84;   // 'T'
     data_seg[5] = 65;   // 'A'
 
-    write_section(w, &data_name[0], &data_seg[0],
+    MachOWriter_writeSection(w, &data_name[0], &data_seg[0],
                   data_size, data_offset,
                   DATA_ALIGN, S_REGULAR,
                   0, 0);
 
     // Write symtab command
-    write_symtab_cmd(w, symtab_offset, w.symbols_count,
+    MachOWriter_writeSymtabCmd(w, symtab_offset, w.symbols_count,
                      strtab_offset, strtab_size);
 
     // Write text section content
-    out_bytes(w, w.code, w.code_count);
+    MachOWriter_outBytes(w, w.code, w.code_count);
 
     // Pad to data section
     let pad1: i64 = data_offset - (text_offset + text_size);
-    out_zeros(w, pad1);
+    MachOWriter_outZeros(w, pad1);
 
     // Write data section content
-    out_bytes(w, w.data, w.data_count);
+    MachOWriter_outBytes(w, w.data, w.data_count);
 
     // Pad to relocation table
     let pad2: i64 = reloc_offset - (data_offset + data_size);
-    out_zeros(w, pad2);
+    MachOWriter_outZeros(w, pad2);
 
     // Write relocations
     var i: i64 = 0;
     while i < w.relocs_count {
         let r: *Reloc = w.relocs + i;
-        write_reloc(w, r);
+        MachOWriter_writeReloc(w, r);
         i = i + 1;
     }
 
     // Pad to symbol table
     let pad3: i64 = symtab_offset - (reloc_offset + reloc_size);
-    out_zeros(w, pad3);
+    MachOWriter_outZeros(w, pad3);
 
     // Write symbol table
     i = 0;
     while i < w.symbols_count {
         let sym: *Symbol = w.symbols + i;
-        write_nlist64(w, sym);
+        MachOWriter_writeNlist64(w, sym);
         i = i + 1;
     }
 
     // Write string table
-    out_bytes(w, w.strings, w.strings_count);
+    MachOWriter_outBytes(w, w.strings, w.strings_count);
 
     return w.output_count;
 }

@@ -196,7 +196,7 @@ fn test_write_macho() i64 {
     // Add a simple return 42 function
     // MOV X0, #42
     var mov_inst: [4]u8;
-    let mov: i64 = encode_mov_imm(X0, 42);
+    let mov: i64 = ARM64_encodeMovImm(X0, 42);
     mov_inst[0] = @intCast(u8, mov & 255);
     mov_inst[1] = @intCast(u8, (mov >> 8) & 255);
     mov_inst[2] = @intCast(u8, (mov >> 16) & 255);
@@ -205,7 +205,7 @@ fn test_write_macho() i64 {
 
     // RET
     var ret_inst: [4]u8;
-    let ret: i64 = codegen_return();
+    let ret: i64 = ARM64_return();
     ret_inst[0] = @intCast(u8, ret & 255);
     ret_inst[1] = @intCast(u8, (ret >> 8) & 255);
     ret_inst[2] = @intCast(u8, (ret >> 16) & 255);
@@ -222,7 +222,7 @@ fn test_write_macho() i64 {
     let main_idx: i64 = macho_add_symbol(&w, &name[0], 5, 0, SECT_TEXT, true);
 
     // Write the Mach-O file
-    let bytes_written: i64 = write_macho(&w);
+    let bytes_written: i64 = MachOWriter_write(&w);
 
     if bytes_written <= 0 {
         print_str("FAIL (no output)\n");

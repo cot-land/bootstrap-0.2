@@ -326,3 +326,21 @@ fn Op_isCall(op: Op) bool {
     if op == Op.ClosureCall { return true; }
     return false;
 }
+
+// Check if operation is a load
+// Reference: Zig's Op.isLoad()
+fn Op_isLoad(op: Op) bool {
+    if op == Op.Load { return true; }
+    if op == Op.LoadReg { return true; }
+    if op == Op.ARM64_LDR { return true; }
+    return false;
+}
+
+// Check if operation is a store
+// Reference: Zig's Op.isStore()
+fn Op_isStore(op: Op) bool {
+    if op == Op.Store { return true; }
+    if op == Op.StoreReg { return true; }
+    if op == Op.ARM64_STR { return true; }
+    return false;
+}

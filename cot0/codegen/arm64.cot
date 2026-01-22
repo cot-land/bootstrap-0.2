@@ -29,7 +29,7 @@ struct Emitter {
     inst_count: i64,
 }
 
-fn emitter_init() Emitter {
+fn Emitter_init() Emitter {
     return Emitter{
         .code_offset = 0,
         .inst_count = 0,
@@ -42,7 +42,7 @@ fn emitter_init() Emitter {
 // Following Go's pattern from arm64/ssa.go
 
 // Select load instruction based on type size
-fn select_load(size: i64, is_signed: bool) i64 {
+fn Instruction_selectLoad(size: i64, is_signed: bool) i64 {
     // Returns an instruction selector code
     // 1 = LDRB, 2 = LDRSB, 3 = LDRH, 4 = LDRSH, 5 = LDR (32), 6 = LDRSW, 7 = LDR (64)
     if size == 1 {
@@ -61,7 +61,7 @@ fn select_load(size: i64, is_signed: bool) i64 {
 }
 
 // Select store instruction based on type size
-fn select_store(size: i64) i64 {
+fn Instruction_selectStore(size: i64) i64 {
     // Returns an instruction selector code
     // 1 = STRB, 2 = STRH, 3 = STR (32), 4 = STR (64)
     if size == 1 { return 1; }  // STRB
@@ -75,7 +75,7 @@ fn select_store(size: i64) i64 {
 // ============================================================================
 
 // Encode a load instruction based on selector and operands
-fn encode_load_by_selector(selector: i64, rd: i64, rn: i64, offset: i64) i64 {
+fn Instruction_encodeLoad(selector: i64, rd: i64, rn: i64, offset: i64) i64 {
     if selector == 1 { return encode_ldrb(rd, rn, offset); }
     // TODO: Add LDRSB, LDRH, LDRSH, etc. as needed
     if selector == 7 { return encode_ldr(rd, rn, offset); }
@@ -84,7 +84,7 @@ fn encode_load_by_selector(selector: i64, rd: i64, rn: i64, offset: i64) i64 {
 }
 
 // Encode a store instruction based on selector and operands
-fn encode_store_by_selector(selector: i64, rt: i64, rn: i64, offset: i64) i64 {
+fn Instruction_encodeStore(selector: i64, rt: i64, rn: i64, offset: i64) i64 {
     if selector == 1 { return encode_strb(rt, rn, offset); }
     // TODO: Add STRH, STR W as needed
     if selector == 4 { return encode_str(rt, rn, offset); }
@@ -119,7 +119,7 @@ fn encode_store_by_selector(selector: i64, rt: i64, rn: i64, offset: i64) i64 {
 
 // Encode function prologue
 // Returns array of instruction words (simplified - returns first instruction)
-fn encode_prologue(frame_size: i64) i64 {
+fn ARM64_encodePrologue(frame_size: i64) i64 {
     // STP X29, X30, [SP, #-frame_size]!
     // For now, use simple SUB SP, SP, #frame_size approach
     // then separate stores
@@ -132,7 +132,7 @@ fn encode_prologue(frame_size: i64) i64 {
 }
 
 // Encode function epilogue (return instruction)
-fn encode_epilogue(frame_size: i64) i64 {
+fn ARM64_encodeEpilogue(frame_size: i64) i64 {
     // For now, just encode RET
     // Full implementation would restore SP first
     return encode_ret(LR);
@@ -148,7 +148,7 @@ fn encode_epilogue(frame_size: i64) i64 {
 // ============================================================================
 
 // Generate a move from one register to another
-fn encode_mov_reg(rd: i64, rm: i64) i64 {
+fn ARM64_encodeMovReg(rd: i64, rm: i64) i64 {
     // MOV Xd, Xm is actually ORR Xd, XZR, Xm
     return encode_orr_reg(rd, XZR, rm);
 }
@@ -156,7 +156,7 @@ fn encode_mov_reg(rd: i64, rm: i64) i64 {
 // Generate loading an immediate value
 // For values that fit in 16 bits, use MOVZ
 // For larger values, need MOVZ + MOVK sequence
-fn encode_mov_imm(rd: i64, imm: i64) i64 {
+fn ARM64_encodeMovImm(rd: i64, imm: i64) i64 {
     // Simple case: 16-bit immediate
     if imm >= 0 and imm <= 65535 {
         return encode_movz(rd, imm, 0);
@@ -178,12 +178,12 @@ fn encode_mov_imm(rd: i64, imm: i64) i64 {
 // LE (13): Signed less or equal (Z=1 or N!=V)
 // GE (10): Signed greater or equal (N=V)
 
-fn get_cond_for_signed_lt() i64 { return COND_LT; }
-fn get_cond_for_signed_gt() i64 { return COND_GT; }
-fn get_cond_for_signed_le() i64 { return COND_LE; }
-fn get_cond_for_signed_ge() i64 { return COND_GE; }
-fn get_cond_for_eq() i64 { return COND_EQ; }
-fn get_cond_for_ne() i64 { return COND_NE; }
+fn Cond_forSignedLt() i64 { return COND_LT; }
+fn Cond_forSignedGt() i64 { return COND_GT; }
+fn Cond_forSignedLe() i64 { return COND_LE; }
+fn Cond_forSignedGe() i64 { return COND_GE; }
+fn Cond_forEq() i64 { return COND_EQ; }
+fn Cond_forNe() i64 { return COND_NE; }
 
 // ============================================================================
 // SSA Operation Handlers
@@ -193,12 +193,12 @@ fn get_cond_for_ne() i64 { return COND_NE; }
 // In the full implementation, these would be called from the main codegen loop.
 
 // Handle SSA add operation
-fn codegen_add(rd: i64, rn: i64, rm: i64) i64 {
+fn ARM64_add(rd: i64, rn: i64, rm: i64) i64 {
     return encode_add_reg(rd, rn, rm);
 }
 
 // Handle SSA add immediate operation
-fn codegen_add_const(rd: i64, rn: i64, imm: i64) i64 {
+fn ARM64_addConst(rd: i64, rn: i64, imm: i64) i64 {
     if imm >= 0 and imm <= 4095 {
         return encode_add_imm(rd, rn, imm);
     }
@@ -208,12 +208,12 @@ fn codegen_add_const(rd: i64, rn: i64, imm: i64) i64 {
 }
 
 // Handle SSA sub operation
-fn codegen_sub(rd: i64, rn: i64, rm: i64) i64 {
+fn ARM64_sub(rd: i64, rn: i64, rm: i64) i64 {
     return encode_sub_reg(rd, rn, rm);
 }
 
 // Handle SSA sub immediate operation
-fn codegen_sub_const(rd: i64, rn: i64, imm: i64) i64 {
+fn ARM64_subConst(rd: i64, rn: i64, imm: i64) i64 {
     if imm >= 0 and imm <= 4095 {
         return encode_sub_imm(rd, rn, imm);
     }
@@ -221,32 +221,32 @@ fn codegen_sub_const(rd: i64, rn: i64, imm: i64) i64 {
 }
 
 // Handle SSA and operation
-fn codegen_and(rd: i64, rn: i64, rm: i64) i64 {
+fn ARM64_and(rd: i64, rn: i64, rm: i64) i64 {
     return encode_and_reg(rd, rn, rm);
 }
 
 // Handle SSA or operation
-fn codegen_or(rd: i64, rn: i64, rm: i64) i64 {
+fn ARM64_or(rd: i64, rn: i64, rm: i64) i64 {
     return encode_orr_reg(rd, rn, rm);
 }
 
 // Handle SSA xor operation
-fn codegen_xor(rd: i64, rn: i64, rm: i64) i64 {
+fn ARM64_xor(rd: i64, rn: i64, rm: i64) i64 {
     return encode_eor_reg(rd, rn, rm);
 }
 
 // Handle SSA comparison (sets flags)
-fn codegen_cmp(rn: i64, rm: i64) i64 {
+fn ARM64_cmp(rn: i64, rm: i64) i64 {
     return encode_cmp_reg(rn, rm);
 }
 
 // Handle conditional set (result = cond ? 1 : 0)
-fn codegen_setcc(rd: i64, cond: i64) i64 {
+fn ARM64_setcc(rd: i64, cond: i64) i64 {
     return encode_cset(rd, cond);
 }
 
 // Handle conditional select
-fn codegen_select(rd: i64, rn: i64, rm: i64, cond: i64) i64 {
+fn ARM64_select(rd: i64, rn: i64, rm: i64, cond: i64) i64 {
     return encode_csel(rd, rn, rm, cond);
 }
 
@@ -255,22 +255,22 @@ fn codegen_select(rd: i64, rn: i64, rm: i64, cond: i64) i64 {
 // ============================================================================
 
 // Generate unconditional branch
-fn codegen_branch(offset_words: i64) i64 {
+fn ARM64_branch(offset_words: i64) i64 {
     return encode_b(offset_words);
 }
 
 // Generate conditional branch (branch if condition is true)
-fn codegen_branch_cond(offset_words: i64, cond: i64) i64 {
+fn ARM64_branchCond(offset_words: i64, cond: i64) i64 {
     return encode_b_cond(offset_words, cond);
 }
 
 // Generate function call
-fn codegen_call(offset_words: i64) i64 {
+fn ARM64_call(offset_words: i64) i64 {
     return encode_bl(offset_words);
 }
 
 // Generate return
-fn codegen_return() i64 {
+fn ARM64_return() i64 {
     return encode_ret(LR);
 }
 
@@ -279,21 +279,21 @@ fn codegen_return() i64 {
 // ============================================================================
 
 // Load from memory (64-bit)
-fn codegen_load64(rd: i64, base: i64, offset_8bytes: i64) i64 {
+fn ARM64_load64(rd: i64, base: i64, offset_8bytes: i64) i64 {
     return encode_ldr(rd, base, offset_8bytes);
 }
 
 // Store to memory (64-bit)
-fn codegen_store64(rt: i64, base: i64, offset_8bytes: i64) i64 {
+fn ARM64_store64(rt: i64, base: i64, offset_8bytes: i64) i64 {
     return encode_str(rt, base, offset_8bytes);
 }
 
 // Load byte from memory
-fn codegen_load8(rd: i64, base: i64, offset_bytes: i64) i64 {
+fn ARM64_load8(rd: i64, base: i64, offset_bytes: i64) i64 {
     return encode_ldrb(rd, base, offset_bytes);
 }
 
 // Store byte to memory
-fn codegen_store8(rt: i64, base: i64, offset_bytes: i64) i64 {
+fn ARM64_store8(rt: i64, base: i64, offset_bytes: i64) i64 {
     return encode_strb(rt, base, offset_bytes);
 }

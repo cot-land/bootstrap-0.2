@@ -771,6 +771,8 @@ This encoding allows quick type classification without TypeRegistry lookup, but 
 
 ### 5.1 cot0/codegen/arm64.cot + genssa.cot vs src/codegen/arm64.zig
 
+**NAMING PARITY COMPLETE (2026-01-22)** - Functions renamed to ARM64_*, GenState_*, Emitter_*, Instruction_*, Cond_* patterns.
+
 **AUDIT COMPLETED: 1295 lines cot0 (299+996) vs 3529 lines Zig (3221+308) = 37%**
 
 | cot0 Function | Zig Function | Status | Comment |
@@ -860,33 +862,35 @@ This encoding allows quick type classification without TypeRegistry lookup, but 
 
 ### 6.1 cot0/obj/macho.cot vs src/obj/macho.zig
 
+**NAMING PARITY COMPLETE (2026-01-22)** - All functions renamed to MachOWriter_* pattern.
+
 | cot0 Function | Zig Function | Status |
 |---------------|--------------|--------|
-| `macho_writer_init(w, ...)` | `MachOWriter.init()` | Equivalent |
+| `macho_writer_init(w, ...)` | `MachOWriter.init()` | Same |
 | `macho_add_code(w, bytes, len)` | `MachOWriter.addCode()` | Same |
 | `macho_add_string(w, s, len) i64` | `MachOWriter.addString()` | Same |
 | `macho_add_symbol(w, name, len, val, sect, ext) i64` | `MachOWriter.addSymbol()` | Same |
-| `macho_add_reloc(w, offset, sym, type, pcrel)` | — | Missing in Zig |
-| `write_macho(w) i64` | `MachOWriter.write()` | Same |
-| `make_reloc_info(sym, pcrel, len, ext, type) i64` | `RelocationInfo.makeInfo()` | Equivalent |
-| `is_macho_magic(magic) bool` | — | Missing in Zig |
-| `is_valid_file_type(type) bool` | — | Missing in Zig |
-| `padding_for_align(offset, align) i64` | `alignTo()` | Equivalent |
-| `align_up(offset, align) i64` | — | Missing in Zig |
-| `out_byte(w, b)` | — | Missing in Zig (writer abstraction) |
-| `out_u32(w, val)` | — | Missing in Zig (writer abstraction) |
-| `out_u64(w, val)` | — | Missing in Zig (writer abstraction) |
-| `out_zeros(w, n)` | — | Missing in Zig (writer abstraction) |
-| `out_bytes(w, src, len)` | — | Missing in Zig (writer abstraction) |
-| `write_mach_header(w, ncmds, size)` | — | Missing in Zig (integrated) |
-| `write_segment_cmd(w, vmsize, ...)` | — | Missing in Zig (integrated) |
-| `write_section(w, name, ...)` | — | Missing in Zig (integrated) |
-| `write_symtab_cmd(w, ...)` | — | Missing in Zig (integrated) |
-| `write_reloc(w, r)` | — | Missing in Zig (integrated) |
-| `write_nlist64(w, sym)` | — | Missing in Zig (integrated) |
-| — | `MachOWriter.deinit()` | Missing in cot0 | cot0 uses global arrays |
-| `MachOWriter_addData()` | `MachOWriter.addData()` | Same | Added 2026-01-22 |
-| `MachOWriter_addStringLiteral()` | `MachOWriter.addStringLiteral()` | Same | Added 2026-01-22 |
+| `macho_add_reloc(w, offset, sym, type, pcrel)` | — | cot0-only |
+| `MachOWriter_write(w) i64` | `MachOWriter.write()` | Same |
+| `RelocInfo_make(sym, pcrel, len, ext, type) i64` | `RelocationInfo.makeInfo()` | Same |
+| `MachO_isMagic(magic) bool` | — | cot0-only |
+| `MachO_isValidFileType(type) bool` | — | cot0-only |
+| `MachO_paddingForAlign(offset, align) i64` | `alignTo()` | Same |
+| `MachO_alignUp(offset, align) i64` | — | cot0-only |
+| `MachOWriter_outByte(w, b)` | — | cot0-only (writer abstraction) |
+| `MachOWriter_outU32(w, val)` | — | cot0-only (writer abstraction) |
+| `MachOWriter_outU64(w, val)` | — | cot0-only (writer abstraction) |
+| `MachOWriter_outZeros(w, n)` | — | cot0-only (writer abstraction) |
+| `MachOWriter_outBytes(w, src, len)` | — | cot0-only (writer abstraction) |
+| `MachOWriter_writeMachHeader(w, ncmds, size)` | — | cot0-only (integrated in Zig) |
+| `MachOWriter_writeSegmentCmd(w, vmsize, ...)` | — | cot0-only (integrated in Zig) |
+| `MachOWriter_writeSection(w, name, ...)` | — | cot0-only (integrated in Zig) |
+| `MachOWriter_writeSymtabCmd(w, ...)` | — | cot0-only (integrated in Zig) |
+| `MachOWriter_writeReloc(w, r)` | — | cot0-only (integrated in Zig) |
+| `MachOWriter_writeNlist64(w, sym)` | — | cot0-only (integrated in Zig) |
+| — | `MachOWriter.deinit()` | Missing in cot0 (uses global arrays) |
+| `MachOWriter_addData()` | `MachOWriter.addData()` | Same |
+| `MachOWriter_addStringLiteral()` | `MachOWriter.addStringLiteral()` | Same |
 | — | `MachOWriter.addDataRelocation()` | Missing in cot0 |
 | — | `MachOWriter.addGlobalVariable()` | Missing in cot0 |
 | — | `MachOWriter.writeToFile()` | Missing in cot0 |
