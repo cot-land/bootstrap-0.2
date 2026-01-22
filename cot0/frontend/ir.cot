@@ -233,6 +233,22 @@ fn IRNode_isConstant(node: *IRNode) bool {
     return false;
 }
 
+// Check if node has side effects (cannot be eliminated)
+// Reference: Zig's Node.hasSideEffects()
+fn IRNode_hasSideEffects(node: *IRNode) bool {
+    if node.kind == IRNodeKind.StoreLocal { return true; }
+    if node.kind == IRNodeKind.Store { return true; }
+    if node.kind == IRNodeKind.StoreFieldLocal { return true; }
+    if node.kind == IRNodeKind.StoreField { return true; }
+    if node.kind == IRNodeKind.StoreIndexLocal { return true; }
+    if node.kind == IRNodeKind.StoreIndexValue { return true; }
+    if node.kind == IRNodeKind.Call { return true; }
+    if node.kind == IRNodeKind.Return { return true; }
+    if node.kind == IRNodeKind.Jump { return true; }
+    if node.kind == IRNodeKind.Branch { return true; }
+    return false;
+}
+
 // ============================================================================
 // IR Node Pool - Arena for IR nodes (pointer-based like ast.cot)
 // NOTE: Named IRNodePool to avoid conflict with ast.cot's NodePool
