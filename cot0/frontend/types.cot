@@ -872,3 +872,59 @@ fn TypeInfo_getPointee(pool: *TypeRegistry, ptr_type_idx: i64) i64 {
     }
     return TYPE_INVALID;
 }
+
+// ============================================================================
+// Type Classification (Reference: Zig's core/types.zig)
+// ============================================================================
+
+// Check if type is a primitive (basic) type
+// Reference: Zig's TypeInfo.isPrimitive()
+fn TypeInfo_isPrimitive(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    if t.kind == TypeKind.Bool { return true; }
+    if t.kind == TypeKind.I8 { return true; }
+    if t.kind == TypeKind.I16 { return true; }
+    if t.kind == TypeKind.I32 { return true; }
+    if t.kind == TypeKind.I64 { return true; }
+    if t.kind == TypeKind.U8 { return true; }
+    if t.kind == TypeKind.U16 { return true; }
+    if t.kind == TypeKind.U32 { return true; }
+    if t.kind == TypeKind.U64 { return true; }
+    if t.kind == TypeKind.F32 { return true; }
+    if t.kind == TypeKind.F64 { return true; }
+    if t.kind == TypeKind.Void { return true; }
+    return false;
+}
+
+// Check if type fits in registers (i.e., <= 16 bytes on ARM64)
+// Reference: Zig's TypeInfo.fitsInRegs()
+fn TypeInfo_fitsInRegs(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.size <= 16;
+}
+
+// Check if type needs a register (non-void, non-memory types)
+// Reference: Zig's TypeInfo.needsReg()
+fn TypeInfo_needsReg(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    if t.kind == TypeKind.Void { return false; }
+    if t.kind == TypeKind.Invalid { return false; }
+    return true;
+}
+
+// Get number of registers needed for type
+// Reference: Zig's TypeInfo.registerCount()
+fn TypeInfo_registerCount(pool: *TypeRegistry, idx: i64) i64 {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    if t.kind == TypeKind.Void { return 0; }
+    if t.kind == TypeKind.Invalid { return 0; }
+    // String/Slice need 2 registers (ptr + len)
+    if t.kind == TypeKind.String { return 2; }
+    if t.kind == TypeKind.Slice { return 2; }
+    // Everything else fits in 1 register (for now)
+    if t.size <= 8 { return 1; }
+    // Larger types need 2 registers
+    if t.size <= 16 { return 2; }
+    // Even larger types would need memory
+    return 0;
+}

@@ -264,6 +264,10 @@ actually compared line-by-line. During a partial audit (2026-01-22), several fun
 | — | `TypeRegistry.deinit()` | Missing in cot0 | cot0 uses global arrays, no cleanup |
 | — | `TypeRegistry.sizeOf()` | Different in cot0 | cot0 uses separate TypeInfo_size taking pool + idx |
 | — | `TypeIndex = u32` | Different in cot0 | cot0 uses i64 everywhere |
+| `TypeInfo_isPrimitive(pool, idx)` | `TypeInfo.isPrimitive()` | Same | Added 2026-01-22 |
+| `TypeInfo_fitsInRegs(pool, idx)` | `TypeInfo.fitsInRegs()` | Same | Added 2026-01-22 |
+| `TypeInfo_needsReg(pool, idx)` | `TypeInfo.needsReg()` | Same | Added 2026-01-22 |
+| `TypeInfo_registerCount(pool, idx)` | `TypeInfo.registerCount()` | Same | Added 2026-01-22 |
 
 **Key architectural difference:** cot0 uses PTYPE encoding where type indices encode information in ranges:
 - 0-9: basic types (i64, bool, void, etc.)
