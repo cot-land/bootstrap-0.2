@@ -280,6 +280,12 @@ fn SSABuilder_newBlock(b: *SSABuilder, kind: BlockKind) i64 {
     return block_id;
 }
 
+// Get current block being built
+// Reference: Zig's SSABuilder.currentBlock()
+fn SSABuilder_currentBlock(b: *SSABuilder) i64 {
+    return b.current_block;
+}
+
 // Set current block
 fn SSABuilder_setBlock(b: *SSABuilder, block_id: i64) {
     b.current_block = block_id;
