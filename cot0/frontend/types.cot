@@ -311,6 +311,16 @@ fn TypeInfo_valid(idx: i64) bool {
     return idx != INVALID_TYPE and idx >= 0;
 }
 
+// Check if type is invalid
+// Reference: Zig's Type.isInvalid()
+fn TypeInfo_isInvalid(pool: *TypeRegistry, idx: i64) bool {
+    if idx == INVALID_TYPE or idx < 0 {
+        return true;
+    }
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.kind == TypeKind.Invalid;
+}
+
 // Find a struct type by name in the pool
 // Returns the type index, or INVALID_TYPE if not found
 fn TypeRegistry_findByName(pool: *TypeRegistry, name_start: i64, name_len: i64) i64 {
