@@ -117,10 +117,15 @@ enum IRNodeKind {
     SlicePtr,     // Extract pointer from slice: left = slice_expr -> ptr
     SliceLen,     // Extract length from slice: left = slice_expr -> len
 
-    // Variable access
+    // Local variable access
     LoadLocal,
     StoreLocal,
     AddrLocal,
+
+    // Global variable access
+    LoadGlobal,   // Load global variable: left = global_idx
+    StoreGlobal,  // Store to global: left = global_idx, right = value
+    AddrGlobal,   // Address of global: left = global_idx
 
     // Pointer operations
     Load,         // Load from pointer: left = ptr_expr
@@ -166,6 +171,7 @@ struct IRNode {
     kind: IRNodeKind,
     type_idx: i64,        // Result type
     block_id: i64,        // Block this node belongs to
+    pos: i64,             // Source position (byte offset in source)
 
     // Fields used depending on kind:
     // ConstInt: value
@@ -206,6 +212,7 @@ fn IRNode_new(kind: IRNodeKind, type_idx: i64) IRNode {
         .kind = kind,
         .type_idx = type_idx,
         .block_id = 0,
+        .pos = 0,
         .value = 0,
         .left = NULL_IR_NODE,
         .right = NULL_IR_NODE,
@@ -215,6 +222,13 @@ fn IRNode_new(kind: IRNodeKind, type_idx: i64) IRNode {
         .args_start = 0,
         .args_count = 0,
     };
+}
+
+// Create a new IR node with source position
+fn IRNode_newWithPos(kind: IRNodeKind, type_idx: i64, pos: i64) IRNode {
+    var node: IRNode = IRNode_new(kind, type_idx);
+    node.pos = pos;
+    return node;
 }
 
 // Check if node is a terminator (ends a basic block)
@@ -348,6 +362,34 @@ fn IRLocal_newParam(name_start: i64, name_len: i64, type_idx: i64, param_idx: i6
 }
 
 // ============================================================================
+// Global Variable
+// ============================================================================
+
+struct IRGlobal {
+    name_start: i64,      // Offset into source for name
+    name_len: i64,        // Length of name
+    type_idx: i64,        // Type index
+    is_mutable: bool,     // var (true) or const (false)
+    is_array: bool,       // Is this an array global?
+    array_len: i64,       // Array length if is_array
+    size: i64,            // Size in bytes
+    data_offset: i64,     // Offset in data section (set during codegen)
+}
+
+fn IRGlobal_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) IRGlobal {
+    return IRGlobal{
+        .name_start = name_start,
+        .name_len = name_len,
+        .type_idx = type_idx,
+        .is_mutable = is_mutable,
+        .is_array = false,
+        .array_len = 0,
+        .size = 8,
+        .data_offset = 0,
+    };
+}
+
+// ============================================================================
 // IR Function Metadata - Tracks function boundaries in IR
 // ============================================================================
 
@@ -400,6 +442,9 @@ struct FuncBuilder {
     // Block tracking
     current_block: i64,       // Currently active block ID
     next_block_id: i64,       // Next block ID to allocate
+
+    // Position tracking for debug info
+    current_pos: i64,         // Source position to tag emitted nodes with
 }
 
 fn FuncBuilder_init(fb: *FuncBuilder, name_start: i64, name_len: i64, return_type: i64,
@@ -416,6 +461,12 @@ fn FuncBuilder_init(fb: *FuncBuilder, name_start: i64, name_len: i64, return_typ
     fb.nodes_cap = nodes_cap;
     fb.current_block = 0;
     fb.next_block_id = 1;  // Block 0 is the entry block
+    fb.current_pos = 0;
+}
+
+// Set the current source position for subsequent emits
+fn FuncBuilder_setPos(fb: *FuncBuilder, pos: i64) {
+    fb.current_pos = pos;
 }
 
 // Create a new block and return its ID
@@ -469,6 +520,7 @@ fn FuncBuilder_emit(fb: *FuncBuilder, node: IRNode) i64 {
     let ptr: *IRNode = fb.nodes + idx;
     ptr.* = node;
     ptr.block_id = fb.current_block;  // Tag node with current block
+    ptr.pos = fb.current_pos;         // Tag node with current source position
     fb.nodes_count = fb.nodes_count + 1;
     return idx;
 }
@@ -588,6 +640,26 @@ fn FuncBuilder_emitStore(fb: *FuncBuilder, ptr_expr: i64, value_expr: i64) i64 {
 fn FuncBuilder_emitAddrLocal(fb: *FuncBuilder, local_idx: i64, ptr_type: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.AddrLocal, ptr_type);
     node.left = local_idx;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Global variable access
+fn FuncBuilder_emitLoadGlobal(fb: *FuncBuilder, global_idx: i64, type_idx: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.LoadGlobal, type_idx);
+    node.left = global_idx;
+    return FuncBuilder_emit(fb, node);
+}
+
+fn FuncBuilder_emitStoreGlobal(fb: *FuncBuilder, global_idx: i64, value: i64, type_idx: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.StoreGlobal, type_idx);
+    node.left = global_idx;
+    node.right = value;
+    return FuncBuilder_emit(fb, node);
+}
+
+fn FuncBuilder_emitAddrGlobal(fb: *FuncBuilder, global_idx: i64, ptr_type: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.AddrGlobal, ptr_type);
+    node.left = global_idx;
     return FuncBuilder_emit(fb, node);
 }
 

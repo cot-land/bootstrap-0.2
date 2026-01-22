@@ -48,7 +48,7 @@ const REG_SP: i64 = 31;
 // Register masks (bit per register)
 // Allocatable: x0-x15, x19-x28
 // Not allocatable: x16-x18 (platform), x29 (fp), x30 (lr), x31 (sp)
-const ALLOCATABLE_MASK: i64 = 0x1FFF0FFFF;  // x0-x15, x19-x28
+const ALLOCATABLE_MASK: i64 = 0x1FF8FFFF;  // x0-x15, x19-x28 (excludes x16-x18, x29-x31)
 const CALLER_SAVED_MASK: i64 = 0x3FFFF;     // x0-x17
 const CALLEE_SAVED_MASK: i64 = 0x1FF80000;  // x19-x28
 

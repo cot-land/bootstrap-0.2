@@ -43,7 +43,8 @@ enum NodeKind {
     FnDecl,         // fn name(params) ret { body }
     ExternFnDecl,   // extern fn name(params) ret;
     ParamDecl,      // name: type
-    VarDecl,        // let/var name: type = expr;
+    VarDecl,        // let/var name: type = expr; (local)
+    GlobalVarDecl,  // var name: type; (top-level global)
     ConstDecl,      // const name = expr;
     StructDecl,     // struct Name { fields }
     EnumDecl,       // enum Name { variants }
@@ -409,6 +410,28 @@ fn Node_varDecl(pool: *NodePool, is_let: i64, name_start: i64, name_len: i64,
     n.field3 = init_expr;       // Init expression (-1 if none)
     n.field4 = type_start;      // Type annotation position (for later resolution)
     n.field5 = type_handle;     // Resolved type (may be placeholder, resolved during lowering)
+
+    return idx;
+}
+
+// Create a global variable declaration (top-level var)
+// Same structure as VarDecl but uses GlobalVarDecl kind
+fn Node_globalVarDecl(pool: *NodePool, name_start: i64, name_len: i64,
+                      type_start: i64, type_handle: i64, init_expr: i64,
+                      start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.GlobalVarDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = 0;               // Always mutable (var, not let)
+    n.field1 = name_start;      // Name offset in source
+    n.field2 = name_len;        // Name length
+    n.field3 = init_expr;       // Init expression (-1 if none)
+    n.field4 = type_start;      // Type annotation position
+    n.field5 = type_handle;     // Resolved type
 
     return idx;
 }

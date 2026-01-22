@@ -1574,7 +1574,7 @@ fn Parser_parseGlobalVarDecl(p: *Parser) i64 {
 
     // Variable name
     let name_start: i64 = p.current.start;
-    let name_len: i64 = p.current.end;
+    let name_len: i64 = p.current.end;  // Token.end is the length
     Parser_want(p, TokenType.Ident);
 
     // Type annotation (required for globals)
@@ -1594,8 +1594,8 @@ fn Parser_parseGlobalVarDecl(p: *Parser) i64 {
     let end: i64 = p.current.start + p.current.end;
     Parser_got(p, TokenType.Semi);  // Optional semicolon
 
-    // Use node_var_decl with is_let=0 (indicating var, not let)
-    return Node_varDecl(p.pool, 0, name_start, name_len, type_start, type_handle, init_expr, start, end);
+    // Use GlobalVarDecl for top-level global variables
+    return Node_globalVarDecl(p.pool, name_start, name_len, type_start, type_handle, init_expr, start, end);
 }
 
 // ============================================================================

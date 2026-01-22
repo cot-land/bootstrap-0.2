@@ -1,0 +1,450 @@
+// =============================================================================
+// Safe Array Access Helpers
+// =============================================================================
+//
+// Provides bounds-checked array access functions that:
+// 1. Check for null pointers
+// 2. Check index bounds
+// 3. Provide clear error messages on failure
+//
+// =============================================================================
+
+import "error.cot"
+
+// =============================================================================
+// Safe i64 Array Access
+// =============================================================================
+
+// Get an i64 value from an array with bounds checking
+fn safe_get_i64(arr: *i64, index: i64, length: i64, name: *u8) i64 {
+    // Null check
+    if arr == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("NULL POINTER: ");
+        stderr_str(name);
+        stderr_str(" is null in safe_get_i64\n");
+        stderr_str("  Attempted to read index ");
+        stderr_int(index);
+        stderr_str(" of ");
+        stderr_int(length);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Bounds check
+    if index < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("BOUNDS ERROR: ");
+        stderr_str(name);
+        stderr_str(" negative index in safe_get_i64\n");
+        stderr_str("  Index: ");
+        stderr_int(index);
+        stderr_str(" (must be >= 0)\n");
+        stderr_str("  Array length: ");
+        stderr_int(length);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    if index >= length {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("BOUNDS ERROR: ");
+        stderr_str(name);
+        stderr_str(" index out of range in safe_get_i64\n");
+        stderr_str("  Index: ");
+        stderr_int(index);
+        stderr_str(" (must be < ");
+        stderr_int(length);
+        stderr_str(")\n");
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    return (arr + index).*;
+}
+
+// Set an i64 value in an array with bounds checking
+fn safe_set_i64(arr: *i64, index: i64, length: i64, value: i64, name: *u8) {
+    // Null check
+    if arr == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("NULL POINTER: ");
+        stderr_str(name);
+        stderr_str(" is null in safe_set_i64\n");
+        stderr_str("  Attempted to write value ");
+        stderr_int(value);
+        stderr_str(" at index ");
+        stderr_int(index);
+        stderr_str(" of ");
+        stderr_int(length);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Bounds check
+    if index < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("BOUNDS ERROR: ");
+        stderr_str(name);
+        stderr_str(" negative index in safe_set_i64\n");
+        stderr_str("  Index: ");
+        stderr_int(index);
+        stderr_str(" (must be >= 0)\n");
+        stderr_str("  Array length: ");
+        stderr_int(length);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    if index >= length {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("BOUNDS ERROR: ");
+        stderr_str(name);
+        stderr_str(" index out of range in safe_set_i64\n");
+        stderr_str("  Index: ");
+        stderr_int(index);
+        stderr_str(" (must be < ");
+        stderr_int(length);
+        stderr_str(")\n");
+        stderr_str("  Attempted to write value: ");
+        stderr_int(value);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    let ptr: *i64 = arr + index;
+    ptr.* = value;
+}
+
+// =============================================================================
+// Safe u8 Array Access
+// =============================================================================
+
+// Get a u8 value from an array with bounds checking
+fn safe_get_u8(arr: *u8, index: i64, length: i64, name: *u8) u8 {
+    // Null check
+    if arr == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("NULL POINTER: ");
+        stderr_str(name);
+        stderr_str(" is null in safe_get_u8\n");
+        stderr_str("  Attempted to read index ");
+        stderr_int(index);
+        stderr_str(" of ");
+        stderr_int(length);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Bounds check
+    if index < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("BOUNDS ERROR: ");
+        stderr_str(name);
+        stderr_str(" negative index in safe_get_u8\n");
+        stderr_str("  Index: ");
+        stderr_int(index);
+        stderr_str(" (must be >= 0)\n");
+        stderr_str("  Array length: ");
+        stderr_int(length);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    if index >= length {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("BOUNDS ERROR: ");
+        stderr_str(name);
+        stderr_str(" index out of range in safe_get_u8\n");
+        stderr_str("  Index: ");
+        stderr_int(index);
+        stderr_str(" (must be < ");
+        stderr_int(length);
+        stderr_str(")\n");
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    return (arr + index).*;
+}
+
+// Set a u8 value in an array with bounds checking
+fn safe_set_u8(arr: *u8, index: i64, length: i64, value: u8, name: *u8) {
+    // Null check
+    if arr == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("NULL POINTER: ");
+        stderr_str(name);
+        stderr_str(" is null in safe_set_u8\n");
+        stderr_str("  Attempted to write at index ");
+        stderr_int(index);
+        stderr_str(" of ");
+        stderr_int(length);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Bounds check
+    if index < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("BOUNDS ERROR: ");
+        stderr_str(name);
+        stderr_str(" negative index in safe_set_u8\n");
+        stderr_str("  Index: ");
+        stderr_int(index);
+        stderr_str(" (must be >= 0)\n");
+        stderr_str("  Array length: ");
+        stderr_int(length);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    if index >= length {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("BOUNDS ERROR: ");
+        stderr_str(name);
+        stderr_str(" index out of range in safe_set_u8\n");
+        stderr_str("  Index: ");
+        stderr_int(index);
+        stderr_str(" (must be < ");
+        stderr_int(length);
+        stderr_str(")\n");
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    let ptr: *u8 = arr + index;
+    ptr.* = value;
+}
+
+// =============================================================================
+// Safe Pointer Array Access (for arrays of pointers stored as i64)
+// =============================================================================
+
+// Note: In cot0, pointers stored in arrays are represented as i64 values.
+// Use safe_get_i64/safe_set_i64 for pointer arrays and cast as needed.
+
+// =============================================================================
+// Safe Memory Copy
+// =============================================================================
+
+// Copy bytes from src to dst with bounds checking
+fn safe_memcpy(dst: *u8, dst_len: i64, dst_offset: i64,
+               src: *u8, src_len: i64, count: i64, name: *u8) {
+    // Null checks
+    if dst == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("NULL POINTER: ");
+        stderr_str(name);
+        stderr_str(" destination is null in safe_memcpy\n");
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    if src == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("NULL POINTER: ");
+        stderr_str(name);
+        stderr_str(" source is null in safe_memcpy\n");
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Validate count
+    if count < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("MEMCPY ERROR: ");
+        stderr_str(name);
+        stderr_str(" negative count\n");
+        stderr_str("  Count: ");
+        stderr_int(count);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    if count == 0 {
+        return;  // Nothing to copy
+    }
+
+    // Check destination bounds
+    if dst_offset < 0 or dst_offset + count > dst_len {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("MEMCPY ERROR: ");
+        stderr_str(name);
+        stderr_str(" destination out of bounds\n");
+        stderr_str("  Dst offset: ");
+        stderr_int(dst_offset);
+        stderr_str(", Count: ");
+        stderr_int(count);
+        stderr_str(", End: ");
+        stderr_int(dst_offset + count);
+        stderr_str("\n");
+        stderr_str("  Dst length: ");
+        stderr_int(dst_len);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Check source bounds
+    if count > src_len {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("MEMCPY ERROR: ");
+        stderr_str(name);
+        stderr_str(" source out of bounds\n");
+        stderr_str("  Count: ");
+        stderr_int(count);
+        stderr_str(", Src length: ");
+        stderr_int(src_len);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Perform the copy
+    var i: i64 = 0;
+    while i < count {
+        (dst + dst_offset + i).* = (src + i).*;
+        i = i + 1;
+    }
+}
+
+// =============================================================================
+// Safe String Operations
+// =============================================================================
+
+// Get string length with maximum limit (prevents infinite loops on non-terminated strings)
+fn safe_strlen(s: *u8, max_len: i64, name: *u8) i64 {
+    if s == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("NULL POINTER: ");
+        stderr_str(name);
+        stderr_str(" is null in safe_strlen\n");
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    var len: i64 = 0;
+    while len < max_len and (s + len).* != 0 {
+        len = len + 1;
+    }
+
+    if len >= max_len {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("STRING ERROR: ");
+        stderr_str(name);
+        stderr_str(" exceeds max length or unterminated\n");
+        stderr_str("  Scanned ");
+        stderr_int(max_len);
+        stderr_str(" bytes without finding null terminator\n");
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    return len;
+}
+
+// Safe string compare (returns 0 if equal, non-zero otherwise)
+fn safe_strcmp(a: *u8, b: *u8, max_len: i64, name: *u8) i64 {
+    if a == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("NULL POINTER: ");
+        stderr_str(name);
+        stderr_str(" first string is null in safe_strcmp\n");
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    if b == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("NULL POINTER: ");
+        stderr_str(name);
+        stderr_str(" second string is null in safe_strcmp\n");
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    var i: i64 = 0;
+    while i < max_len {
+        let ca: u8 = (a + i).*;
+        let cb: u8 = (b + i).*;
+
+        if ca != cb {
+            return @intCast(i64, ca) - @intCast(i64, cb);
+        }
+
+        if ca == 0 {
+            return 0;  // Both strings ended, they're equal
+        }
+
+        i = i + 1;
+    }
+
+    // Reached max_len without finding end
+    stderr_str("\n");
+    stderr_str("================================================================================\n");
+    stderr_str("STRING ERROR: ");
+    stderr_str(name);
+    stderr_str(" comparison exceeded max length\n");
+    stderr_str("  Max: ");
+    stderr_int(max_len);
+    stderr_newline();
+    stderr_str("================================================================================\n");
+    print_error_context_stack();
+    exit(1);
+
+    return -1;  // Unreachable, but compiler needs return
+}
+

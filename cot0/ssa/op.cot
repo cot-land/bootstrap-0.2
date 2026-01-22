@@ -69,6 +69,9 @@ enum Op {
     // Address Operations
     Addr,           // Address of symbol: aux = symbol
     LocalAddr,      // Address of local: aux_int = local index
+    GlobalAddr,     // Address of global: aux_int = global index
+    GlobalLoad,     // Load global: aux_int = global index
+    GlobalStore,    // Store to global: aux_int = global index, arg0 = value
     OffPtr,         // Offset pointer: arg0 + aux_int
     AddPtr,         // Pointer arithmetic: arg0 + arg1 (for computed offsets)
 

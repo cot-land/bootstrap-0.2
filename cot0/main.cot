@@ -4,7 +4,41 @@
 // Usage: cot0 <source.cot> -o <output>
 
 // ============================================================================
+// Syscall Wrappers (libc) - MUST come before any imports
+// ============================================================================
+
+// System calls needed by main (malloc functions declared in lib/list.cot)
+extern fn open(path: *u8, flags: i32, mode: i32) i32;
+extern fn read(fd: i32, buf: *u8, count: i64) i64;
+extern fn write(fd: i32, buf: *u8, count: i64) i64;
+extern fn close(fd: i32) i32;
+
+// ============================================================================
 // Module Imports
+// ============================================================================
+
+// NOTE: Error infrastructure (lib/safe.cot) is available but not yet integrated.
+// The cot0 import system processes imports before extern declarations are visible,
+// so lib/safe.cot cannot see write/exit/malloc externs declared here.
+//
+// To use the error infrastructure, either:
+// 1. Copy needed functions directly into this file
+// 2. Modify the import system to support declaration ordering
+// 3. Have lib files declare their own externs (causes duplicate symbol issues)
+//
+// The error infrastructure files are ready at:
+//   lib/error.cot      - Core error primitives (panic, assert, etc.)
+//   lib/safe_alloc.cot - Safe memory allocation
+//   lib/safe_array.cot - Safe array access
+//   lib/safe_io.cot    - Safe file I/O
+//   lib/debug.cot      - Debug tracing
+//   lib/validate.cot   - Type validation helpers
+//   lib/invariants.cot - Compiler invariant checks
+//   lib/debug_init.cot - Initialization and flag parsing
+//   lib/safe.cot       - Master import (when integration is fixed)
+
+// ============================================================================
+// Compiler Module Imports
 // ============================================================================
 
 // Frontend modules - import in specific order (required for compatibility)
@@ -25,16 +59,6 @@ import "ssa/builder.cot"
 // Object file writer
 import "obj/macho.cot"
 
-// ============================================================================
-// Syscall Wrappers (libc)
-// ============================================================================
-
-extern fn open(path: *u8, flags: i32, mode: i32) i32;
-extern fn read(fd: i32, buf: *u8, count: i64) i64;
-extern fn write(fd: i32, buf: *u8, count: i64) i64;
-extern fn close(fd: i32) i32;
-// malloc_u8, realloc_u8, free_u8 are declared in lib/list.cot
-
 // File flags (macOS)
 const O_RDONLY: i32 = 0;
 const O_WRONLY: i32 = 1;
@@ -51,6 +75,10 @@ const FILE_MODE: i32 = 420;  // 0o644
 var g_source: *u8 = null;
 var g_source_len: i64 = 0;
 var g_source_cap: i64 = 0;
+
+// Source file path (for debug info)
+var g_source_path: *u8 = null;
+var g_source_path_len: i64 = 0;
 
 const MAIN_MAX_OUTPUT_PATH: i64 = 256;
 var g_output_path: [256]u8;
@@ -83,6 +111,10 @@ var g_constants: [2000]ConstEntry;
 var g_call_args: *i64 = null;
 var g_call_args_cap: i64 = 0;
 
+// Global variable storage
+const MAIN_MAX_IR_GLOBALS: i64 = 500;
+var g_ir_globals: [500]IRGlobal;
+
 // SSA storage
 const MAIN_MAX_SSA_BLOCKS: i64 = 10000;
 const MAIN_MAX_SSA_VALUES: i64 = 200000;
@@ -93,23 +125,31 @@ var g_ssa_locals: [5000]Local;
 
 // Codegen storage - g_code is dynamically allocated
 const MAIN_MAX_CALL_SITES: i64 = 5000;
+const MAIN_MAX_LINE_ENTRIES: i64 = 50000;
 var g_code: *u8 = null;
 var g_code_cap: i64 = 0;
 var g_bstart: *i64 = null;
 var g_bstart_cap: i64 = 0;
 var g_branches: [5000]Branch;
 var g_call_sites: [5000]CallSite;
+var g_global_relocs: [5000]GlobalReloc;
+// Line entries stored as raw bytes (each LineEntry is 32 bytes)
+var g_line_entries: *u8 = null;
+var g_line_entries_cap: i64 = 0;
 
 // Mach-O storage - g_data dynamically allocated
-const MAIN_MAX_SYMBOLS: i64 = 1000;
+const MAIN_MAX_SYMBOLS: i64 = 2000;  // 808 functions + many globals
 // g_strings dynamically allocated
 const MAIN_MAX_RELOCS: i64 = 10000;
+const MAIN_MAX_DEBUG_LINE: i64 = 65536;
 var g_data: *u8 = null;
 var g_data_cap: i64 = 0;
-var g_symbols: [1000]Symbol;
+var g_symbols: [2000]Symbol;
 var g_strings: *u8 = null;
 var g_strings_cap: i64 = 0;
 var g_relocs: [10000]Reloc;
+var g_debug_line: *u8 = null;
+var g_debug_line_cap: i64 = 0;
 // g_output is dynamically allocated
 var g_output: *u8 = null;
 var g_output_cap: i64 = 0;
@@ -728,12 +768,15 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
                  &g_ir_funcs[0], MAIN_MAX_IR_FUNCS,
                  &g_constants[0], MAIN_MAX_CONSTANTS,
                  g_call_args, MAIN_MAX_CALL_ARGS);
+    Lowerer_setGlobals(&lowerer, &g_ir_globals[0], MAIN_MAX_IR_GLOBALS);
 
     let ir_count: i64 = Lowerer_lowerAll(&lowerer);
     print("  IR nodes: ");
     print_int(ir_count);
     print(", Functions: ");
     print_int(lowerer.ir_funcs_count);
+    print(", Globals: ");
+    print_int(lowerer.ir_globals_count);
     print("\n");
 
     // Phase 4 & 5: Build SSA and generate code for each function
@@ -746,6 +789,13 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
                   g_bstart, MAIN_MAX_SSA_BLOCKS,
                   &g_branches[0], 1000,
                   &g_call_sites[0], MAIN_MAX_CALL_SITES);
+
+    // Enable line tracking for DWARF debug info
+    GenState_setLineTracking(&gs, g_line_entries, g_line_entries_cap, g_source, g_source_len);
+
+    // Set up globals for codegen (uses lowerer's registered globals)
+    GenState_setGlobals(&gs, &g_ir_globals[0], lowerer.ir_globals_count, g_data, g_data_cap,
+                        &g_global_relocs[0], 5000);
 
     var total_blocks: i64 = 0;
     var total_values: i64 = 0;
@@ -825,6 +875,8 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print_int(gs.code_count);
     print(", Call sites: ");
     print_int(gs.call_sites_count);
+    print(", Global relocs: ");
+    print_int(gs.global_relocs_count);
     print("\n");
 
     // Resolve call sites: patch BL instructions with correct offsets
@@ -968,7 +1020,83 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         call_idx = call_idx + 1;
     }
 
-    let macho_bytes: i64 = MachOWriter_write(&writer);
+    // Add global variable symbols and relocations
+    // First, allocate space in data section for globals (BSS-style, zero-initialized)
+    let globals_base_offset: i64 = writer.data_count;
+    // Track starting symbol index for globals (after function + external symbols)
+    let globals_sym_start: i64 = writer.symbols_count;
+    var global_idx: i64 = 0;
+    while global_idx < lowerer.ir_globals_count {
+        let g: *IRGlobal = &g_ir_globals[global_idx];
+
+        // Build symbol name: "_" + global name from source
+        sym_name[0] = 95;  // '_'
+        var g_name_idx: i64 = 0;
+        while g_name_idx < g.name_len and g_name_idx < 126 {
+            let src_ptr3: *u8 = g_source + g.name_start + g_name_idx;
+            sym_name[1 + g_name_idx] = src_ptr3.*;
+            g_name_idx = g_name_idx + 1;
+        }
+        let g_sym_len: i64 = 1 + g.name_len;
+
+        // Add symbol in data section at the global's offset
+        // Mark as external for PAGE21/PAGEOFF12 relocations to work (per Zig's approach)
+        let g_data_offset: i64 = globals_base_offset + g.data_offset;
+        MachOWriter_addSymbol(&writer, &sym_name[0], g_sym_len, g_data_offset, SECT_DATA, true);
+
+        global_idx = global_idx + 1;
+    }
+
+    // Allocate actual space in data section for all globals
+    // (This extends the data section to hold the globals)
+    let total_globals_size: i64 = lowerer.globals_data_offset;
+    MachOWriter_addDataZeros(&writer, total_globals_size);
+
+    // Add relocations for global address accesses
+    print("  Adding global relocs, count=");
+    print_int(gs.global_relocs_count);
+    print(", writer.relocs before=");
+    print_int(writer.relocs_count);
+    print("\n");
+    var reloc_idx: i64 = 0;
+    while reloc_idx < gs.global_relocs_count {
+        let gr: *GlobalReloc = &g_global_relocs[reloc_idx];
+
+        // Find the symbol index for this global
+        // Global symbols start at globals_sym_start (after function + external symbols)
+        let g_sym_idx: i64 = globals_sym_start + gr.global_idx;
+
+        // ADRP relocation (PAGE21) - at code_offset
+        MachOWriter_addReloc(&writer, gr.code_offset, g_sym_idx, ARM64_RELOC_PAGE21, true);
+
+        // ADD relocation (PAGEOFF12) - at code_offset + 4
+        MachOWriter_addReloc(&writer, gr.code_offset + 4, g_sym_idx, ARM64_RELOC_PAGEOFF12, false);
+
+        reloc_idx = reloc_idx + 1;
+    }
+    print("  After global relocs, writer.relocs=");
+    print_int(writer.relocs_count);
+    print("\n");
+
+    // Generate DWARF debug_line section from line entries
+    MachOWriter_setDebugLine(&writer, g_debug_line, g_debug_line_cap);
+
+    // Generate debug_line content (line_entries is already *u8)
+    // Uses global g_source_path set from main()
+    let debug_bytes: i64 = MachOWriter_generateDebugLine(&writer,
+        g_source_path, g_source_path_len,
+        g_line_entries, gs.line_entries_count,
+        gs.code_count);
+    print("  Debug line bytes: ");
+    print_int(debug_bytes);
+    print(", Line entries: ");
+    print_int(gs.line_entries_count);
+    print(", Total relocs: ");
+    print_int(writer.relocs_count);
+    print("\n");
+
+    // Write Mach-O with debug info
+    let macho_bytes: i64 = MachOWriter_writeWithDebug(&writer);
     print("  Mach-O bytes: ");
     print_int(macho_bytes);
     print("\n");
@@ -1050,6 +1178,9 @@ fn main(argc: i64, argv: **u8) i64 {
     print("Cot0 Self-Hosting Compiler v0.2\n");
     print("================================\n\n");
 
+    // TODO: Initialize debug infrastructure once import integration is fixed
+    // debug_startup(argc, argv);
+
     // Allocate dynamic buffers
     g_source_cap = 1048576;  // Start with 1MB
     g_source = malloc_u8(g_source_cap);
@@ -1057,10 +1188,18 @@ fn main(argc: i64, argv: **u8) i64 {
     g_code = malloc_u8(g_code_cap);
     g_output_cap = 1048576;  // Start with 1MB
     g_output = malloc_u8(g_output_cap);
-    g_data_cap = 65536;  // Start with 64KB
+    g_data_cap = 1048576;  // 1MB for globals (self-hosting needs large arrays)
     g_data = malloc_u8(g_data_cap);
     g_strings_cap = 32768;  // Start with 32KB
     g_strings = malloc_u8(g_strings_cap);
+    g_debug_line_cap = MAIN_MAX_DEBUG_LINE;
+    g_debug_line = malloc_u8(g_debug_line_cap);
+
+    // Allocate line entry array (each LineEntry is 32 bytes = 4 i64 fields)
+    // Stored as raw bytes, accessed via pointer arithmetic
+    g_line_entries_cap = MAIN_MAX_LINE_ENTRIES;
+    let line_entries_bytes: i64 = g_line_entries_cap * 32;
+    g_line_entries = malloc_u8(line_entries_bytes);
 
     // Allocate i64 arrays
     g_type_params_cap = 5000;
@@ -1134,6 +1273,10 @@ fn main(argc: i64, argv: **u8) i64 {
     let source_path_len: i64 = strlen(source_path);
     extract_base_dir(source_path, source_path_len);
 
+    // Store source path globally for debug info
+    g_source_path = source_path;
+    g_source_path_len = source_path_len;
+
     // Create string view of source
     let source: string = @string(g_source, g_source_len);
 
@@ -1146,6 +1289,9 @@ fn main(argc: i64, argv: **u8) i64 {
         print_int(result);
         print("\n");
     }
+
+    // TODO: Print debug summary once import integration is fixed
+    // debug_shutdown();
 
     return result;
 }

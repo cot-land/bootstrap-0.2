@@ -231,10 +231,22 @@ fn SSABuilder_init(b: *SSABuilder, f: *Func,
 
 // Assign a register to a value and increment the counter
 // Returns the assigned register
+// Note: Skips X16-X18 which are reserved on ARM64 (linker scratch + platform)
 fn SSABuilder_assignReg(b: *SSABuilder, v: *Value) i64 {
+    // Skip X16, X17, X18 if we're in that range (reserved: linker scratch + platform)
+    if b.next_reg >= 16 and b.next_reg <= 18 {
+        b.next_reg = 19;  // Skip to X19
+    }
+
     let reg: i64 = b.next_reg;
     v.reg = reg;
+
+    // Advance to next allocatable register
     b.next_reg = b.next_reg + 1;
+    // Skip X16, X17, X18 if we wrap into that range
+    if b.next_reg == 16 {
+        b.next_reg = 19;  // Skip to X19
+    }
     if b.next_reg > b.max_reg {
         b.next_reg = X1;  // Wrap around
     }
@@ -639,6 +651,12 @@ fn SSABuilder_convertNode(b: *SSABuilder, ir_node: *IRNode, ir_idx: i64) i64 {
         result_id = SSABuilder_convertStoreLocal(b, ir_node);
     } else if ir_node.kind == IRNodeKind.AddrLocal {
         result_id = SSABuilder_convertAddrLocal(b, ir_node);
+    } else if ir_node.kind == IRNodeKind.LoadGlobal {
+        result_id = SSABuilder_convertLoadGlobal(b, ir_node);
+    } else if ir_node.kind == IRNodeKind.StoreGlobal {
+        result_id = SSABuilder_convertStoreGlobal(b, ir_node);
+    } else if ir_node.kind == IRNodeKind.AddrGlobal {
+        result_id = SSABuilder_convertAddrGlobal(b, ir_node);
     } else if ir_node.kind == IRNodeKind.Load {
         result_id = SSABuilder_convertLoad(b, ir_node);
     } else if ir_node.kind == IRNodeKind.Store {
@@ -682,9 +700,12 @@ fn SSABuilder_convertNode(b: *SSABuilder, ir_node: *IRNode, ir_idx: i64) i64 {
         result_id = INVALID_ID;
     }
 
-    // Cache the result
+    // Cache the result and set source position for debug info
     if result_id != INVALID_ID {
         SSABuilder_cacheNode(b, ir_idx, result_id);
+        // Copy source position from IR node to SSA value for DWARF line tables
+        let result_val: *Value = Func_getValue(b.func, result_id);
+        result_val.pos = ir_node.pos;
     }
 
     return result_id;
@@ -778,12 +799,44 @@ fn SSABuilder_convertAddrLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
     return addr_val.id;
 }
 
+// --- Global Variable Operations ---
+
+fn SSABuilder_convertLoadGlobal(b: *SSABuilder, ir_node: *IRNode) i64 {
+    // Load global variable: left = global index
+    let global_idx: i64 = ir_node.left;
+    let load_val: *Value = Func_newValue(b.func, Op.GlobalLoad, ir_node.type_idx);
+    load_val.aux_int = global_idx;
+    SSABuilder_assignReg(b, load_val);
+    return load_val.id;
+}
+
+fn SSABuilder_convertStoreGlobal(b: *SSABuilder, ir_node: *IRNode) i64 {
+    // Store to global variable: left = global index, right = value expr
+    let global_idx: i64 = ir_node.left;
+    let val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
+    let store_val: *Value = Func_newValue(b.func, Op.GlobalStore, TYPE_I64);
+    store_val.aux_int = global_idx;
+    Value_addArg(store_val, val);
+    SSABuilder_assignReg(b, store_val);
+    return store_val.id;
+}
+
+fn SSABuilder_convertAddrGlobal(b: *SSABuilder, ir_node: *IRNode) i64 {
+    // Address of global variable: left = global index
+    let global_idx: i64 = ir_node.left;
+    let addr_val: *Value = Func_newValue(b.func, Op.GlobalAddr, TYPE_I64);
+    addr_val.aux_int = global_idx;
+    SSABuilder_assignReg(b, addr_val);
+    return addr_val.id;
+}
+
 // --- Pointer Operations ---
 
 fn SSABuilder_convertLoad(b: *SSABuilder, ir_node: *IRNode) i64 {
     // Load from pointer: left = ptr expr (relative IR index)
+    // Use the IR node's type_idx to preserve byte types (u8, i8)
     let ptr_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-    let load_val: *Value = Func_newValue(b.func, Op.Load, TYPE_I64);
+    let load_val: *Value = Func_newValue(b.func, Op.Load, ir_node.type_idx);
     Value_addArg(load_val, ptr_val);
     SSABuilder_assignReg(b, load_val);
     return load_val.id;

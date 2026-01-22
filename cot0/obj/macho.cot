@@ -16,10 +16,15 @@
 // | __DATA Segment   |
 // |   __data section |  Initialized data
 // +------------------+
+// | __DWARF Segment  |
+// |   __debug_line   |  Line number debug info
+// +------------------+
 // | Symbol Table     |
 // +------------------+
 // | String Table     |
 // +------------------+
+
+import "dwarf.cot"
 
 // ============================================================================
 // Magic Numbers
@@ -261,6 +266,11 @@ struct MachOWriter {
     relocs_count: i64,
     relocs_cap: i64,
 
+    // Debug line section (__debug_line)
+    debug_line: *u8,
+    debug_line_count: i64,
+    debug_line_cap: i64,
+
     // Output buffer
     output: *u8,
     output_count: i64,
@@ -302,9 +312,21 @@ fn MachOWriter_init(w: *MachOWriter,
     w.relocs_count = 0;
     w.relocs_cap = relocs_cap;
 
+    // Debug line section (set via MachOWriter_setDebugLine)
+    w.debug_line = null;
+    w.debug_line_count = 0;
+    w.debug_line_cap = 0;
+
     w.output = output;
     w.output_count = 0;
     w.output_cap = output_cap;
+}
+
+// Set up debug line buffer
+fn MachOWriter_setDebugLine(w: *MachOWriter, debug_line: *u8, debug_line_cap: i64) {
+    w.debug_line = debug_line;
+    w.debug_line_count = 0;
+    w.debug_line_cap = debug_line_cap;
 }
 
 // ============================================================================
@@ -332,6 +354,19 @@ fn MachOWriter_addData(w: *MachOWriter, bytes: *u8, len: i64) i64 {
         let src: *u8 = bytes + i;
         let dst: *u8 = w.data + w.data_count;
         dst.* = src.*;
+        w.data_count = w.data_count + 1;
+        i = i + 1;
+    }
+    return offset;
+}
+
+// Add zero-filled data to data section (for BSS-style globals)
+fn MachOWriter_addDataZeros(w: *MachOWriter, len: i64) i64 {
+    let offset: i64 = w.data_count;
+    var i: i64 = 0;
+    while i < len and w.data_count < w.data_cap {
+        let dst: *u8 = w.data + w.data_count;
+        dst.* = 0;
         w.data_count = w.data_count + 1;
         i = i + 1;
     }
@@ -497,7 +532,7 @@ fn MachOWriter_writeSegmentCmd(w: *MachOWriter, vmsize: i64, fileoff: i64,
 
     MachOWriter_outU32(w, LC_SEGMENT_64);  // cmd
     MachOWriter_outU32(w, cmdsize);        // cmdsize
-    MachOWriter_outZeros(w, 16);           // segname (empty)
+    MachOWriter_outZeros(w, 16);           // segname (empty for relocatable object)
     MachOWriter_outU64(w, 0);              // vmaddr
     MachOWriter_outU64(w, vmsize);         // vmsize
     MachOWriter_outU64(w, fileoff);        // fileoff
@@ -518,10 +553,11 @@ fn MachOWriter_writeSection(w: *MachOWriter,
                  sect_align: i64, flags: i64,
                  reloff: i64, nreloc: i64) {
     // Write 16-byte section name (pad with zeros)
+    // Names are null-terminated, so copy until null or 16 bytes
     var i: i64 = 0;
     while i < 16 {
-        if i < 6 {
-            let p: *u8 = sectname + i;
+        let p: *u8 = sectname + i;
+        if p.* != 0 {
             MachOWriter_outByte(w, @intCast(i64, p.*));
         } else {
             MachOWriter_outByte(w, 0);
@@ -532,8 +568,8 @@ fn MachOWriter_writeSection(w: *MachOWriter,
     // Write 16-byte segment name (pad with zeros)
     i = 0;
     while i < 16 {
-        if i < 6 {
-            let p: *u8 = segname + i;
+        let p: *u8 = segname + i;
+        if p.* != 0 {
             MachOWriter_outByte(w, @intCast(i64, p.*));
         } else {
             MachOWriter_outByte(w, 0);
@@ -604,6 +640,233 @@ fn MachOWriter_writeNlist64(w: *MachOWriter, sym: *Symbol) {
     MachOWriter_outByte(w, 0);  // n_desc low byte
     MachOWriter_outByte(w, 0);  // n_desc high byte
     MachOWriter_outU64(w, sym.value);  // n_value
+}
+
+// ============================================================================
+// Debug Line Generation
+// Generates DWARF __debug_line section content
+// ============================================================================
+
+// Forward declaration for LineEntry (from genssa.cot)
+// struct LineEntry { code_offset, source_pos, line, column }
+// Each field is i64 (8 bytes), total 32 bytes per entry
+
+// Helper: Read i64 value from memory in little-endian format
+fn MachO_readI64(ptr: *u8) i64 {
+    let p0: *u8 = ptr;
+    let p1: *u8 = ptr + 1;
+    let p2: *u8 = ptr + 2;
+    let p3: *u8 = ptr + 3;
+    let p4: *u8 = ptr + 4;
+    let p5: *u8 = ptr + 5;
+    let p6: *u8 = ptr + 6;
+    let p7: *u8 = ptr + 7;
+    var val: i64 = @intCast(i64, p0.*);
+    val = val | (@intCast(i64, p1.*) << 8);
+    val = val | (@intCast(i64, p2.*) << 16);
+    val = val | (@intCast(i64, p3.*) << 24);
+    val = val | (@intCast(i64, p4.*) << 32);
+    val = val | (@intCast(i64, p5.*) << 40);
+    val = val | (@intCast(i64, p6.*) << 48);
+    val = val | (@intCast(i64, p7.*) << 56);
+    return val;
+}
+
+// Generate __debug_line section content
+// filename: source file name (null-terminated string)
+// filename_len: length of filename (not including null)
+// line_entries: array of LineEntry from codegen
+// line_count: number of line entries
+// code_size: total code size (for end_sequence)
+// Returns bytes written to w.debug_line
+fn MachOWriter_generateDebugLine(w: *MachOWriter,
+                                  filename: *u8, filename_len: i64,
+                                  line_entries: *u8, line_count: i64,
+                                  code_size: i64) i64 {
+    if w.debug_line == null or w.debug_line_cap == 0 {
+        return 0;
+    }
+
+    var dw: DebugLineWriter = undefined;
+    DebugLineWriter_init(&dw, w.debug_line, w.debug_line_cap);
+
+    // We need to calculate the header length before writing it
+    // For DWARF v4, the structure is:
+    // - unit_length (4 bytes, not including itself)
+    // - version (2 bytes) = 4
+    // - header_length (4 bytes)
+    // - minimum_instruction_length (1 byte) = 4
+    // - maximum_operations_per_instruction (1 byte) = 1
+    // - default_is_stmt (1 byte) = 1
+    // - line_base (1 byte) = -5
+    // - line_range (1 byte) = 14
+    // - opcode_base (1 byte) = 13
+    // - standard_opcode_lengths (12 bytes for opcodes 1-12)
+    // - include_directories (null-terminated list, we use one empty entry)
+    // - file_names (null-terminated list)
+    // - line number program
+
+    // Header constants (fixed size portion after header_length)
+    // min_inst_len(1) + max_ops(1) + default_is_stmt(1) + line_base(1) +
+    // line_range(1) + opcode_base(1) + std_opcode_lengths(12) = 18 bytes
+    let fixed_header_size: i64 = 18;
+
+    // Include directories: empty list (just null byte)
+    let include_dirs_size: i64 = 1;
+
+    // File names: one file entry + terminating null
+    // File entry: filename (null-terminated) + dir_idx (ULEB128) + mtime (ULEB128) + length (ULEB128)
+    // Simplified: filename + 0 + 0 + 0 + 0 (4 null bytes for the 3 ULEB128 zeros and terminator)
+    let file_entry_size: i64 = filename_len + 1 + 3 + 1;  // filename + null + 3 zeros + terminating null
+
+    // Header length (from after header_length field to end of header)
+    let header_length: i64 = fixed_header_size + include_dirs_size + file_entry_size;
+
+    // Estimate line program size (will write at the end)
+    // We'll calculate actual size after writing
+
+    // Placeholder for unit_length (we'll patch this at the end)
+    let unit_length_pos: i64 = dw.count;
+    DebugLineWriter_writeU32(&dw, 0);  // Placeholder
+
+    // Version
+    DebugLineWriter_writeU16(&dw, DWARF_VERSION);
+
+    // Header length
+    DebugLineWriter_writeU32(&dw, header_length);
+
+    // Minimum instruction length
+    DebugLineWriter_writeByte(&dw, MIN_INST_LENGTH);
+
+    // Maximum operations per instruction (DWARF v4+)
+    DebugLineWriter_writeByte(&dw, MAX_OPS_PER_INST);
+
+    // Default is_stmt
+    DebugLineWriter_writeByte(&dw, DEFAULT_IS_STMT);
+
+    // Line base
+    DebugLineWriter_writeByte(&dw, LINE_BASE & 255);  // Signed, so -5 = 251
+
+    // Line range
+    DebugLineWriter_writeByte(&dw, LINE_RANGE);
+
+    // Opcode base
+    DebugLineWriter_writeByte(&dw, OPCODE_BASE);
+
+    // Standard opcode lengths (for opcodes 1 through opcode_base-1)
+    DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_copy
+    DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_advance_pc
+    DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_advance_line
+    DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_set_file
+    DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_set_column
+    DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_negate_stmt
+    DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_set_basic_block
+    DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_const_add_pc
+    DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_fixed_advance_pc
+    DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_set_prologue_end
+    DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_set_epilogue_begin
+    DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_set_isa
+
+    // Include directories (empty list - just null terminator)
+    DebugLineWriter_writeByte(&dw, 0);
+
+    // File names
+    // Entry format: filename (null-term), directory index (ULEB128), mtime (ULEB128), length (ULEB128)
+    DebugLineWriter_writeString(&dw, filename, filename_len);
+    DebugLineWriter_writeULEB128(&dw, 0);  // Directory index 0
+    DebugLineWriter_writeULEB128(&dw, 0);  // Modification time (unknown)
+    DebugLineWriter_writeULEB128(&dw, 0);  // File length (unknown)
+    // Terminate file name list
+    DebugLineWriter_writeByte(&dw, 0);
+
+    // Line number program
+    // We need to emit the program that maps addresses to lines
+
+    if line_count > 0 {
+        // Each LineEntry is: code_offset(8) + source_pos(8) + line(8) + column(8) = 32 bytes
+        let entry_size: i64 = 32;
+
+        // Set initial address
+        // Read first entry's code_offset (at byte offset 0)
+        let first_addr: i64 = MachO_readI64(line_entries);
+        DebugLineWriter_writeSetAddress(&dw, first_addr);
+
+        // Set initial line (first entry, at byte offset 16)
+        let first_line: i64 = MachO_readI64(line_entries + 16);
+
+        // Advance line from 1 to first_line
+        if first_line > 1 {
+            DebugLineWriter_writeByte(&dw, DW_LNS_advance_line);
+            DebugLineWriter_writeSLEB128(&dw, first_line - 1);
+        }
+
+        // Copy (emit row)
+        DebugLineWriter_writeByte(&dw, DW_LNS_copy);
+
+        // Process remaining entries
+        var prev_addr: i64 = first_addr;
+        var prev_line: i64 = first_line;
+        var i: i64 = 1;
+
+        while i < line_count {
+            let entry_ptr: *u8 = line_entries + (i * entry_size);
+            // code_offset is at byte offset 0 within entry
+            let cur_addr: i64 = MachO_readI64(entry_ptr);
+            // line is at byte offset 16 within entry
+            let cur_line: i64 = MachO_readI64(entry_ptr + 16);
+
+            let addr_delta: i64 = cur_addr - prev_addr;
+            let line_delta: i64 = cur_line - prev_line;
+
+            // Try special opcode if possible
+            if DWARF_canUseSpecialOpcode(line_delta, addr_delta) {
+                let opcode: i64 = DWARF_specialOpcode(line_delta, addr_delta);
+                DebugLineWriter_writeByte(&dw, opcode);
+            } else {
+                // Use standard opcodes
+                if addr_delta > 0 {
+                    DebugLineWriter_writeByte(&dw, DW_LNS_advance_pc);
+                    DebugLineWriter_writeULEB128(&dw, addr_delta / MIN_INST_LENGTH);
+                }
+                if line_delta != 0 {
+                    DebugLineWriter_writeByte(&dw, DW_LNS_advance_line);
+                    DebugLineWriter_writeSLEB128(&dw, line_delta);
+                }
+                DebugLineWriter_writeByte(&dw, DW_LNS_copy);
+            }
+
+            prev_addr = cur_addr;
+            prev_line = cur_line;
+            i = i + 1;
+        }
+
+        // Advance to end of code
+        if code_size > prev_addr {
+            let final_delta: i64 = code_size - prev_addr;
+            DebugLineWriter_writeByte(&dw, DW_LNS_advance_pc);
+            DebugLineWriter_writeULEB128(&dw, final_delta / MIN_INST_LENGTH);
+        }
+    }
+
+    // End sequence
+    DebugLineWriter_writeEndSequence(&dw);
+
+    // Patch unit_length (total size minus the 4-byte length field itself)
+    let total_size: i64 = dw.count;
+    let unit_length: i64 = total_size - 4;
+
+    // Write unit_length at the beginning
+    let p0: *u8 = w.debug_line + unit_length_pos;
+    p0.* = @intCast(u8, unit_length & 255);
+    let p1: *u8 = w.debug_line + unit_length_pos + 1;
+    p1.* = @intCast(u8, (unit_length >> 8) & 255);
+    let p2: *u8 = w.debug_line + unit_length_pos + 2;
+    p2.* = @intCast(u8, (unit_length >> 16) & 255);
+    let p3: *u8 = w.debug_line + unit_length_pos + 3;
+    p3.* = @intCast(u8, (unit_length >> 24) & 255);
+
+    w.debug_line_count = dw.count;
+    return dw.count;
 }
 
 // ============================================================================
@@ -718,6 +981,148 @@ fn MachOWriter_write(w: *MachOWriter) i64 {
     // Pad to symbol table
     let pad3: i64 = symtab_offset - (reloc_offset + reloc_size);
     MachOWriter_outZeros(w, pad3);
+
+    // Write symbol table
+    i = 0;
+    while i < w.symbols_count {
+        let sym: *Symbol = w.symbols + i;
+        MachOWriter_writeNlist64(w, sym);
+        i = i + 1;
+    }
+
+    // Write string table
+    MachOWriter_outBytes(w, w.strings, w.strings_count);
+
+    return w.output_count;
+}
+
+// ============================================================================
+// Write with Debug Info
+// Writes complete Mach-O object file including __DWARF segment
+// Returns bytes written, or negative on error
+// ============================================================================
+
+fn MachOWriter_writeWithDebug(w: *MachOWriter) i64 {
+    // Check if we have debug info
+    let has_debug: bool = w.debug_line != null and w.debug_line_count > 0;
+
+    // If no debug info, use the regular write function
+    if not has_debug {
+        return MachOWriter_write(w);
+    }
+
+    // Calculate layout with single segment containing all sections
+    // Following Zig's approach: one segment with multiple sections
+    let num_sections: i64 = 3;   // __text, __data, __debug_line
+
+    let load_cmds_size: i64 = SEGMENT_COMMAND_64_SIZE + num_sections * SECTION_64_SIZE +
+                              SYMTAB_COMMAND_SIZE;
+
+    let text_offset: i64 = MACH_HEADER_64_SIZE + load_cmds_size;
+    let text_size: i64 = w.code_count;
+
+    let data_offset: i64 = MachO_alignUp(text_offset + text_size, 3);  // 8-byte align
+    let data_size: i64 = w.data_count;
+
+    let debug_offset: i64 = MachO_alignUp(data_offset + data_size, 2);  // 4-byte align
+    let debug_size: i64 = w.debug_line_count;
+
+    let reloc_offset: i64 = MachO_alignUp(debug_offset + debug_size, 2);  // 4-byte align
+    let reloc_size: i64 = w.relocs_count * RELOCATION_SIZE;
+
+    let symtab_offset: i64 = MachO_alignUp(reloc_offset + reloc_size, 3);  // 8-byte align
+    let symtab_size: i64 = w.symbols_count * NLIST64_SIZE;
+
+    let strtab_offset: i64 = symtab_offset + symtab_size;
+    let strtab_size: i64 = w.strings_count;
+
+    // Write header (2 load commands: 1 segment + symtab) - following Zig's approach
+    MachOWriter_writeMachHeader(w, 2, load_cmds_size);
+
+    // Write single segment command containing all sections
+    let segment_filesize: i64 = debug_offset + debug_size - text_offset;
+    MachOWriter_writeSegmentCmd(w, segment_filesize, text_offset, segment_filesize, num_sections);
+
+    // Write __text section
+    let text_flags: i64 = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS;
+    var text_name: [16]u8;
+    text_name[0] = 95; text_name[1] = 95; text_name[2] = 116;
+    text_name[3] = 101; text_name[4] = 120; text_name[5] = 116;
+    var text_seg: [16]u8;
+    text_seg[0] = 95; text_seg[1] = 95; text_seg[2] = 84;
+    text_seg[3] = 69; text_seg[4] = 88; text_seg[5] = 84;
+    MachOWriter_writeSection(w, &text_name[0], &text_seg[0],
+                  text_size, text_offset,
+                  TEXT_ALIGN, text_flags,
+                  reloc_offset, w.relocs_count);
+
+    // Write __data section
+    var data_name: [16]u8;
+    data_name[0] = 95; data_name[1] = 95; data_name[2] = 100;
+    data_name[3] = 97; data_name[4] = 116; data_name[5] = 97;
+    var data_seg: [16]u8;
+    data_seg[0] = 95; data_seg[1] = 95; data_seg[2] = 68;
+    data_seg[3] = 65; data_seg[4] = 84; data_seg[5] = 65;
+    MachOWriter_writeSection(w, &data_name[0], &data_seg[0],
+                  data_size, data_offset,
+                  DATA_ALIGN, S_REGULAR,
+                  0, 0);
+
+    // Write __debug_line section
+    var dbg_name: [16]u8;
+    dbg_name[0] = 95; dbg_name[1] = 95;   // __
+    dbg_name[2] = 100; dbg_name[3] = 101; // de
+    dbg_name[4] = 98; dbg_name[5] = 117;  // bu
+    dbg_name[6] = 103; dbg_name[7] = 95;  // g_
+    dbg_name[8] = 108; dbg_name[9] = 105; // li
+    dbg_name[10] = 110; dbg_name[11] = 101; // ne
+    dbg_name[12] = 0;
+    var dbg_seg: [16]u8;
+    dbg_seg[0] = 95; dbg_seg[1] = 95;   // __
+    dbg_seg[2] = 68; dbg_seg[3] = 87;   // DW
+    dbg_seg[4] = 65; dbg_seg[5] = 82;   // AR
+    dbg_seg[6] = 70; dbg_seg[7] = 0;    // F
+    MachOWriter_writeSection(w, &dbg_name[0], &dbg_seg[0],
+                  debug_size, debug_offset,
+                  0, S_REGULAR,
+                  0, 0);
+
+    // Write symtab command
+    MachOWriter_writeSymtabCmd(w, symtab_offset, w.symbols_count,
+                     strtab_offset, strtab_size);
+
+    // Write text section content
+    MachOWriter_outBytes(w, w.code, w.code_count);
+
+    // Pad to data section
+    let pad1: i64 = data_offset - (text_offset + text_size);
+    MachOWriter_outZeros(w, pad1);
+
+    // Write data section content
+    MachOWriter_outBytes(w, w.data, w.data_count);
+
+    // Pad to debug section
+    let pad2: i64 = debug_offset - (data_offset + data_size);
+    MachOWriter_outZeros(w, pad2);
+
+    // Write debug_line section content
+    MachOWriter_outBytes(w, w.debug_line, w.debug_line_count);
+
+    // Pad to relocation table
+    let pad3: i64 = reloc_offset - (debug_offset + debug_size);
+    MachOWriter_outZeros(w, pad3);
+
+    // Write relocations
+    var i: i64 = 0;
+    while i < w.relocs_count {
+        let r: *Reloc = w.relocs + i;
+        MachOWriter_writeReloc(w, r);
+        i = i + 1;
+    }
+
+    // Pad to symbol table
+    let pad4: i64 = symtab_offset - (reloc_offset + reloc_size);
+    MachOWriter_outZeros(w, pad4);
 
     // Write symbol table
     i = 0;

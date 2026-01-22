@@ -1,0 +1,590 @@
+// =============================================================================
+// Debug Tracing Infrastructure
+// =============================================================================
+//
+// Comprehensive debug tracing for cot0 compiler:
+// 1. Function entry/exit tracing
+// 2. Value inspection
+// 3. Progress markers
+// 4. Phase tracking
+// 5. Memory inspection
+// 6. Conditional debug output
+//
+// =============================================================================
+
+import "error.cot"
+
+// =============================================================================
+// Debug Configuration
+// =============================================================================
+
+// These are declared in error.cot but we reference them here
+// var g_debug_trace: bool = false;
+// var g_debug_verbose: bool = false;
+// var g_trace_depth: i64 = 0;
+
+// Additional debug flags
+var g_debug_phase: bool = false;     // Show phase markers
+var g_debug_memory: bool = false;    // Show memory operations
+var g_debug_ir: bool = false;        // Show IR generation
+var g_debug_ssa: bool = false;       // Show SSA generation
+var g_debug_codegen: bool = false;   // Show code generation
+var g_debug_all: bool = false;       // Enable all debug output
+
+// Statistics
+var g_trace_call_count: i64 = 0;     // Total function calls traced
+var g_max_trace_depth: i64 = 0;      // Maximum call depth reached
+
+// =============================================================================
+// Enable/Disable Debug Modes
+// =============================================================================
+
+fn debug_enable_all() {
+    g_debug_trace = true;
+    g_debug_verbose = true;
+    g_debug_phase = true;
+    g_debug_memory = true;
+    g_debug_ir = true;
+    g_debug_ssa = true;
+    g_debug_codegen = true;
+    g_debug_all = true;
+}
+
+fn debug_enable_trace() {
+    g_debug_trace = true;
+}
+
+fn debug_enable_verbose() {
+    g_debug_verbose = true;
+}
+
+fn debug_enable_phase() {
+    g_debug_phase = true;
+}
+
+fn debug_disable_all() {
+    g_debug_trace = false;
+    g_debug_verbose = false;
+    g_debug_phase = false;
+    g_debug_memory = false;
+    g_debug_ir = false;
+    g_debug_ssa = false;
+    g_debug_codegen = false;
+    g_debug_all = false;
+}
+
+// =============================================================================
+// Value Inspection - Extended Debug Output
+// =============================================================================
+
+// Debug output with string value
+fn debug_str(msg: *u8, value: *u8) {
+    if not g_debug_verbose { return; }
+    stderr_str("[DEBUG] ");
+    stderr_str(msg);
+    stderr_str(": \"");
+    if value != null {
+        stderr_str(value);
+    } else {
+        stderr_str("(null)");
+    }
+    stderr_str("\"\n");
+}
+
+// Debug output with pointer value (hex)
+fn debug_ptr(msg: *u8, ptr: *u8) {
+    if not g_debug_verbose { return; }
+    stderr_str("[DEBUG] ");
+    stderr_str(msg);
+    stderr_str(": ");
+    if ptr == null {
+        stderr_str("null");
+    } else {
+        stderr_hex(@ptrToInt(ptr));
+    }
+    stderr_newline();
+}
+
+// Debug output with two integer values
+fn debug_int2(msg: *u8, label1: *u8, val1: i64, label2: *u8, val2: i64) {
+    if not g_debug_verbose { return; }
+    stderr_str("[DEBUG] ");
+    stderr_str(msg);
+    stderr_str(": ");
+    stderr_str(label1);
+    stderr_str("=");
+    stderr_int(val1);
+    stderr_str(", ");
+    stderr_str(label2);
+    stderr_str("=");
+    stderr_int(val2);
+    stderr_newline();
+}
+
+// Debug output with three integer values
+fn debug_int3(msg: *u8, l1: *u8, v1: i64, l2: *u8, v2: i64, l3: *u8, v3: i64) {
+    if not g_debug_verbose { return; }
+    stderr_str("[DEBUG] ");
+    stderr_str(msg);
+    stderr_str(": ");
+    stderr_str(l1);
+    stderr_str("=");
+    stderr_int(v1);
+    stderr_str(", ");
+    stderr_str(l2);
+    stderr_str("=");
+    stderr_int(v2);
+    stderr_str(", ");
+    stderr_str(l3);
+    stderr_str("=");
+    stderr_int(v3);
+    stderr_newline();
+}
+
+// Debug with boolean value
+fn debug_bool(msg: *u8, value: bool) {
+    if not g_debug_verbose { return; }
+    stderr_str("[DEBUG] ");
+    stderr_str(msg);
+    stderr_str(": ");
+    if value {
+        stderr_str("true");
+    } else {
+        stderr_str("false");
+    }
+    stderr_newline();
+}
+
+// =============================================================================
+// Enhanced Function Tracing
+// =============================================================================
+
+// Trace function entry with an integer argument
+fn trace_enter_int(func_name: *u8, arg_name: *u8, arg_val: i64) {
+    if not g_debug_trace { return; }
+
+    g_trace_call_count = g_trace_call_count + 1;
+
+    var i: i64 = 0;
+    while i < g_trace_depth {
+        stderr_str("  ");
+        i = i + 1;
+    }
+    stderr_str("-> ");
+    stderr_str(func_name);
+    stderr_str("(");
+    stderr_str(arg_name);
+    stderr_str("=");
+    stderr_int(arg_val);
+    stderr_str(")\n");
+
+    g_trace_depth = g_trace_depth + 1;
+    if g_trace_depth > g_max_trace_depth {
+        g_max_trace_depth = g_trace_depth;
+    }
+}
+
+// Trace function entry with two integer arguments
+fn trace_enter_int2(func_name: *u8, n1: *u8, v1: i64, n2: *u8, v2: i64) {
+    if not g_debug_trace { return; }
+
+    g_trace_call_count = g_trace_call_count + 1;
+
+    var i: i64 = 0;
+    while i < g_trace_depth {
+        stderr_str("  ");
+        i = i + 1;
+    }
+    stderr_str("-> ");
+    stderr_str(func_name);
+    stderr_str("(");
+    stderr_str(n1);
+    stderr_str("=");
+    stderr_int(v1);
+    stderr_str(", ");
+    stderr_str(n2);
+    stderr_str("=");
+    stderr_int(v2);
+    stderr_str(")\n");
+
+    g_trace_depth = g_trace_depth + 1;
+    if g_trace_depth > g_max_trace_depth {
+        g_max_trace_depth = g_trace_depth;
+    }
+}
+
+// Trace function entry with string argument
+fn trace_enter_str(func_name: *u8, arg_name: *u8, arg_val: *u8) {
+    if not g_debug_trace { return; }
+
+    g_trace_call_count = g_trace_call_count + 1;
+
+    var i: i64 = 0;
+    while i < g_trace_depth {
+        stderr_str("  ");
+        i = i + 1;
+    }
+    stderr_str("-> ");
+    stderr_str(func_name);
+    stderr_str("(");
+    stderr_str(arg_name);
+    stderr_str("=\"");
+    if arg_val != null {
+        stderr_str(arg_val);
+    } else {
+        stderr_str("(null)");
+    }
+    stderr_str("\")\n");
+
+    g_trace_depth = g_trace_depth + 1;
+    if g_trace_depth > g_max_trace_depth {
+        g_max_trace_depth = g_trace_depth;
+    }
+}
+
+// Trace function exit with return value
+fn trace_exit_int(func_name: *u8, ret_val: i64) {
+    if not g_debug_trace { return; }
+
+    g_trace_depth = g_trace_depth - 1;
+    if g_trace_depth < 0 { g_trace_depth = 0; }
+
+    var i: i64 = 0;
+    while i < g_trace_depth {
+        stderr_str("  ");
+        i = i + 1;
+    }
+    stderr_str("<- ");
+    stderr_str(func_name);
+    stderr_str(" = ");
+    stderr_int(ret_val);
+    stderr_newline();
+}
+
+// Trace function exit with boolean return
+fn trace_exit_bool(func_name: *u8, ret_val: bool) {
+    if not g_debug_trace { return; }
+
+    g_trace_depth = g_trace_depth - 1;
+    if g_trace_depth < 0 { g_trace_depth = 0; }
+
+    var i: i64 = 0;
+    while i < g_trace_depth {
+        stderr_str("  ");
+        i = i + 1;
+    }
+    stderr_str("<- ");
+    stderr_str(func_name);
+    stderr_str(" = ");
+    if ret_val {
+        stderr_str("true");
+    } else {
+        stderr_str("false");
+    }
+    stderr_newline();
+}
+
+// =============================================================================
+// Phase Tracking
+// =============================================================================
+
+var g_current_phase: *u8 = null;
+var g_phase_count: i64 = 0;
+
+fn phase_start(name: *u8) {
+    g_phase_count = g_phase_count + 1;
+    g_current_phase = name;
+
+    if g_debug_phase {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("PHASE ");
+        stderr_int(g_phase_count);
+        stderr_str(": ");
+        stderr_str(name);
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+    }
+}
+
+fn phase_end(name: *u8) {
+    if g_debug_phase {
+        stderr_str("  Completed: ");
+        stderr_str(name);
+        stderr_newline();
+    }
+}
+
+fn phase_progress(msg: *u8) {
+    if g_debug_phase {
+        stderr_str("  ... ");
+        stderr_str(msg);
+        stderr_newline();
+    }
+}
+
+fn phase_progress_int(msg: *u8, value: i64) {
+    if g_debug_phase {
+        stderr_str("  ... ");
+        stderr_str(msg);
+        stderr_str(": ");
+        stderr_int(value);
+        stderr_newline();
+    }
+}
+
+// =============================================================================
+// Subsystem-Specific Debug
+// =============================================================================
+
+fn debug_ir(msg: *u8) {
+    if not g_debug_ir and not g_debug_all { return; }
+    stderr_str("[IR] ");
+    stderr_str(msg);
+    stderr_newline();
+}
+
+fn debug_ir_int(msg: *u8, value: i64) {
+    if not g_debug_ir and not g_debug_all { return; }
+    stderr_str("[IR] ");
+    stderr_str(msg);
+    stderr_str(": ");
+    stderr_int(value);
+    stderr_newline();
+}
+
+fn debug_ssa(msg: *u8) {
+    if not g_debug_ssa and not g_debug_all { return; }
+    stderr_str("[SSA] ");
+    stderr_str(msg);
+    stderr_newline();
+}
+
+fn debug_ssa_int(msg: *u8, value: i64) {
+    if not g_debug_ssa and not g_debug_all { return; }
+    stderr_str("[SSA] ");
+    stderr_str(msg);
+    stderr_str(": ");
+    stderr_int(value);
+    stderr_newline();
+}
+
+fn debug_codegen(msg: *u8) {
+    if not g_debug_codegen and not g_debug_all { return; }
+    stderr_str("[CODEGEN] ");
+    stderr_str(msg);
+    stderr_newline();
+}
+
+fn debug_codegen_int(msg: *u8, value: i64) {
+    if not g_debug_codegen and not g_debug_all { return; }
+    stderr_str("[CODEGEN] ");
+    stderr_str(msg);
+    stderr_str(": ");
+    stderr_int(value);
+    stderr_newline();
+}
+
+fn debug_memory(msg: *u8) {
+    if not g_debug_memory and not g_debug_all { return; }
+    stderr_str("[MEM] ");
+    stderr_str(msg);
+    stderr_newline();
+}
+
+fn debug_memory_int(msg: *u8, value: i64) {
+    if not g_debug_memory and not g_debug_all { return; }
+    stderr_str("[MEM] ");
+    stderr_str(msg);
+    stderr_str(": ");
+    stderr_int(value);
+    stderr_newline();
+}
+
+// =============================================================================
+// Memory Inspection
+// =============================================================================
+
+// Dump a hex view of memory (up to 64 bytes)
+fn debug_hexdump(label: *u8, ptr: *u8, len: i64) {
+    if not g_debug_verbose { return; }
+
+    stderr_str("[HEXDUMP] ");
+    stderr_str(label);
+    stderr_str(" at ");
+    stderr_hex(@ptrToInt(ptr));
+    stderr_str(", ");
+    stderr_int(len);
+    stderr_str(" bytes:\n");
+
+    if ptr == null {
+        stderr_str("  (null pointer)\n");
+        return;
+    }
+
+    // Limit to 64 bytes to avoid spam
+    var max_len: i64 = len;
+    if max_len > 64 {
+        max_len = 64;
+    }
+
+    var i: i64 = 0;
+    while i < max_len {
+        // Print offset at start of each line
+        if i % 16 == 0 {
+            stderr_str("  ");
+            // Print offset as hex (4 digits)
+            if i < 16 { stderr_str("0"); }
+            if i < 256 { stderr_str("0"); }
+            if i < 4096 { stderr_str("0"); }
+            stderr_hex(i);
+            stderr_str(": ");
+        }
+
+        // Print byte as hex
+        let b: u8 = (ptr + i).*;
+        let hi: u8 = b / 16;
+        let lo: u8 = b % 16;
+        if hi < 10 {
+            stderr_char(48 + hi);  // '0' + hi
+        } else {
+            stderr_char(87 + hi);  // 'a' - 10 + hi
+        }
+        if lo < 10 {
+            stderr_char(48 + lo);
+        } else {
+            stderr_char(87 + lo);
+        }
+        stderr_str(" ");
+
+        // Newline after every 16 bytes
+        if (i + 1) % 16 == 0 {
+            stderr_newline();
+        }
+
+        i = i + 1;
+    }
+
+    // Final newline if needed
+    if max_len % 16 != 0 {
+        stderr_newline();
+    }
+
+    if len > 64 {
+        stderr_str("  ... (");
+        stderr_int(len - 64);
+        stderr_str(" more bytes)\n");
+    }
+}
+
+// Dump an array of i64 values
+fn debug_dump_i64_array(label: *u8, arr: *i64, count: i64) {
+    if not g_debug_verbose { return; }
+
+    stderr_str("[DUMP] ");
+    stderr_str(label);
+    stderr_str(" (");
+    stderr_int(count);
+    stderr_str(" elements):\n");
+
+    if arr == null {
+        stderr_str("  (null pointer)\n");
+        return;
+    }
+
+    // Limit to 32 elements
+    var max_count: i64 = count;
+    if max_count > 32 {
+        max_count = 32;
+    }
+
+    var i: i64 = 0;
+    while i < max_count {
+        stderr_str("  [");
+        stderr_int(i);
+        stderr_str("] = ");
+        stderr_int((arr + i).*);
+        stderr_newline();
+        i = i + 1;
+    }
+
+    if count > 32 {
+        stderr_str("  ... (");
+        stderr_int(count - 32);
+        stderr_str(" more elements)\n");
+    }
+}
+
+// =============================================================================
+// Trace Statistics
+// =============================================================================
+
+fn print_trace_stats() {
+    stderr_str("\n");
+    stderr_str("================================================================================\n");
+    stderr_str("TRACE STATISTICS\n");
+    stderr_str("================================================================================\n");
+    stderr_str("  Total function calls: ");
+    stderr_int(g_trace_call_count);
+    stderr_newline();
+    stderr_str("  Max call depth: ");
+    stderr_int(g_max_trace_depth);
+    stderr_newline();
+    stderr_str("  Phases executed: ");
+    stderr_int(g_phase_count);
+    stderr_newline();
+    if g_current_phase != null {
+        stderr_str("  Last phase: ");
+        stderr_str(g_current_phase);
+        stderr_newline();
+    }
+    stderr_str("================================================================================\n");
+}
+
+// =============================================================================
+// Checkpoint System (for tracking progress in long operations)
+// =============================================================================
+
+var g_checkpoint_count: i64 = 0;
+
+fn checkpoint(label: *u8) {
+    g_checkpoint_count = g_checkpoint_count + 1;
+
+    if g_debug_verbose {
+        stderr_str("[CHECKPOINT ");
+        stderr_int(g_checkpoint_count);
+        stderr_str("] ");
+        stderr_str(label);
+        stderr_newline();
+    }
+}
+
+fn checkpoint_int(label: *u8, value: i64) {
+    g_checkpoint_count = g_checkpoint_count + 1;
+
+    if g_debug_verbose {
+        stderr_str("[CHECKPOINT ");
+        stderr_int(g_checkpoint_count);
+        stderr_str("] ");
+        stderr_str(label);
+        stderr_str(": ");
+        stderr_int(value);
+        stderr_newline();
+    }
+}
+
+// Mark that we reached a specific point (unconditional output)
+fn reached(label: *u8) {
+    stderr_str("[REACHED] ");
+    stderr_str(label);
+    stderr_newline();
+}
+
+fn reached_int(label: *u8, value: i64) {
+    stderr_str("[REACHED] ");
+    stderr_str(label);
+    stderr_str(": ");
+    stderr_int(value);
+    stderr_newline();
+}
+

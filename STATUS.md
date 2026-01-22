@@ -49,6 +49,27 @@ Work through cot0/COMPARISON.md top to bottom. Mark each section complete when A
 
 ## Recent Changes (2026-01-22)
 
+### Error Infrastructure (In Progress)
+
+Comprehensive error handling infrastructure created but **not yet integrated** due to import system limitations.
+
+**Files Created:**
+- `lib/error.cot` - Core error primitives (panic, assert, bounds checks, tracing)
+- `lib/safe_alloc.cot` - Safe memory allocation wrappers
+- `lib/safe_array.cot` - Safe array access with bounds checking
+- `lib/safe_io.cot` - Safe file I/O wrappers
+- `lib/debug.cot` - Debug tracing infrastructure
+- `lib/validate.cot` - Type/kind validation helpers
+- `lib/invariants.cot` - Compiler-specific invariant checks
+- `lib/debug_init.cot` - Initialization and flag parsing
+- `lib/safe.cot` - Master import file
+
+**Blocking Issue:** The cot0 import system processes imports before extern declarations become visible. Library code cannot see `write`, `exit`, `malloc_u8` declared in main.cot.
+
+**Next Steps:** Either fix the import ordering or copy needed functions directly into source files.
+
+See [cot0/ERROR_INFRASTRUCTURE_PLAN.md](cot0/ERROR_INFRASTRUCTURE_PLAN.md) for full details.
+
 ### Dynamic Array Conversion
 
 Converted fixed-size arrays to dynamic allocation to support self-hosting larger codebases:

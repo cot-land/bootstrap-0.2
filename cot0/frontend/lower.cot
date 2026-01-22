@@ -85,6 +85,12 @@ struct Lowerer {
     ir_funcs_cap: i64,
     ir_funcs_count: i64,
 
+    // Global variables (externally allocated)
+    ir_globals: *IRGlobal,
+    ir_globals_cap: i64,
+    ir_globals_count: i64,
+    globals_data_offset: i64,  // Running offset for globals in data section
+
     // Compile-time constants
     constants: *ConstEntry,
     constants_count: i64,
@@ -127,6 +133,9 @@ fn Lowerer_init(l: *Lowerer,
     l.ir_funcs = ir_funcs;
     l.ir_funcs_cap = ir_funcs_cap;
     l.ir_funcs_count = 0;
+    l.ir_globals = null;
+    l.ir_globals_cap = 0;
+    l.ir_globals_count = 0;
     l.constants = constants;
     l.constants_count = 0;
     l.constants_cap = constants_cap;
@@ -135,6 +144,75 @@ fn Lowerer_init(l: *Lowerer,
     l.call_args = call_args;
     l.call_args_count = 0;
     l.call_args_cap = call_args_cap;
+}
+
+// Set globals storage (call after Lowerer_init)
+fn Lowerer_setGlobals(l: *Lowerer, globals: *IRGlobal, globals_cap: i64) {
+    l.ir_globals = globals;
+    l.ir_globals_cap = globals_cap;
+    l.ir_globals_count = 0;
+    l.globals_data_offset = 0;  // Start at offset 0 in data section
+}
+
+// Register a global variable, returns its index
+fn Lowerer_registerGlobal(l: *Lowerer, name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) i64 {
+    if l.ir_globals == null or l.ir_globals_count >= l.ir_globals_cap {
+        return -1;  // No space
+    }
+    let idx: i64 = l.ir_globals_count;
+    let g: *IRGlobal = l.ir_globals + idx;
+    g.name_start = name_start;
+    g.name_len = name_len;
+    g.type_idx = type_idx;
+    g.is_mutable = is_mutable;
+    g.is_array = false;
+    g.array_len = 0;
+    g.size = 8;  // 64-bit value
+    g.data_offset = l.globals_data_offset;
+    l.globals_data_offset = l.globals_data_offset + 8;  // Advance by size
+    l.ir_globals_count = l.ir_globals_count + 1;
+    return idx;
+}
+
+// Register an array global variable
+fn Lowerer_registerArrayGlobal(l: *Lowerer, name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool, array_len: i64) i64 {
+    if l.ir_globals == null or l.ir_globals_count >= l.ir_globals_cap {
+        return -1;  // No space
+    }
+    // Align to 8 bytes for arrays
+    let aligned_offset: i64 = (l.globals_data_offset + 7) & (0 - 8);  // Round up to 8
+    let idx: i64 = l.ir_globals_count;
+    let g: *IRGlobal = l.ir_globals + idx;
+    g.name_start = name_start;
+    g.name_len = name_len;
+    g.type_idx = type_idx;
+    g.is_mutable = is_mutable;
+    g.is_array = true;
+    g.array_len = array_len;
+    g.size = array_len;  // For u8 arrays, size = length
+    g.data_offset = aligned_offset;
+    l.globals_data_offset = aligned_offset + array_len;  // Advance by size
+    l.ir_globals_count = l.ir_globals_count + 1;
+    return idx;
+}
+
+// Look up a global by name, returns its index or -1 if not found
+fn Lowerer_lookupGlobal(l: *Lowerer, name_start: i64, name_len: i64) i64 {
+    if l.ir_globals == null { return -1; }
+    var i: i64 = 0;
+    while i < l.ir_globals_count {
+        let g: *IRGlobal = l.ir_globals + i;
+        if names_equal(l.source, g.name_start, g.name_len, name_start, name_len) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;  // Not found
+}
+
+// Get a global by index
+fn Lowerer_getGlobal(l: *Lowerer, idx: i64) *IRGlobal {
+    return l.ir_globals + idx;
 }
 
 // ============================================================================
@@ -243,6 +321,33 @@ fn Lowerer_lowerConstDecl(l: *Lowerer, node: *Node) {
     }
 }
 
+// Register a global variable declaration
+fn Lowerer_registerGlobalVar(l: *Lowerer, node: *Node) {
+    // VarDecl fields (from ast.cot Node_varDecl):
+    // field0 = is_let (1 = let, 0 = var)
+    // field1 = name_start
+    // field2 = name_len
+    // field3 = init_expr node index (-1 if none)
+    // field4 = type_start
+    // field5 = type_handle
+
+    let is_mutable: bool = node.field0 == 0;  // 0 = var (mutable), 1 = let (immutable)
+    let name_start: i64 = node.field1;
+    let name_len: i64 = node.field2;
+    let type_handle: i64 = node.field5;
+
+    // Resolve the type from parser type handle to TypeRegistry index
+    let type_idx: i64 = resolve_type_handle(l.type_pool, l.source, type_handle);
+
+    // Check if this is an array type
+    let type_info: *Type = TypeRegistry_get(l.type_pool, type_idx);
+    if type_info.kind == TypeKind.Array {
+        Lowerer_registerArrayGlobal(l, name_start, name_len, type_idx, is_mutable, type_info.len);
+    } else {
+        Lowerer_registerGlobal(l, name_start, name_len, type_idx, is_mutable);
+    }
+}
+
 // Register a struct type in TypeRegistry (called before lowering)
 // This mirrors Checker_checkStructDecl from checker.cot
 fn Lowerer_registerStructType(l: *Lowerer, node: *Node, node_idx: i64) {
@@ -324,6 +429,16 @@ fn Lowerer_lowerAll(l: *Lowerer) i64 {
         let node: *Node = l.nodes + i;
         if node.kind == NodeKind.ConstDecl {
             Lowerer_lowerConstDecl(l, node);
+        }
+        i = i + 1;
+    }
+
+    // Pass 1.5: Register global variable declarations (top-level var)
+    i = 0;
+    while i < l.nodes_count {
+        let node: *Node = l.nodes + i;
+        if node.kind == NodeKind.GlobalVarDecl {
+            Lowerer_registerGlobalVar(l, node);
         }
         i = i + 1;
     }
@@ -472,6 +587,12 @@ fn Lowerer_lowerBlockCheckTerminated(l: *Lowerer, node: *Node) bool {
 }
 
 fn Lowerer_lowerStmt(l: *Lowerer, node: *Node) {
+    // Set source position for debug info
+    let fb: *FuncBuilder = l.current_func;
+    if fb != null {
+        FuncBuilder_setPos(fb, node.start);
+    }
+
     if node.kind == NodeKind.ReturnStmt {
         Lowerer_lowerReturn(l, node);
     } else if node.kind == NodeKind.VarDecl {
@@ -578,6 +699,9 @@ fn Lowerer_lowerVarDecl(l: *Lowerer, node: *Node) {
         } else if type_info.kind == TypeKind.Struct {
             local_type = type_handle;
             struct_size = type_info.size;
+        } else if type_info.kind == TypeKind.Pointer {
+            // Preserve pointer type for correct byte load/store generation
+            local_type = type_handle;
         }
     }
 
@@ -1185,6 +1309,9 @@ fn Lowerer_lowerExpr(l: *Lowerer, node: *Node) i64 {
         return NULL_NODE;
     }
 
+    // Set source position for debug info (DWARF line tables)
+    FuncBuilder_setPos(fb, node.start);
+
     if node.kind == NodeKind.IntLit {
         return Lowerer_lowerIntLit(l, node);
     } else if node.kind == NodeKind.StringLit {
@@ -1492,8 +1619,64 @@ fn Lowerer_lowerIdent(l: *Lowerer, node: *Node) i64 {
         i = i + 1;
     }
 
+    // Check for global variable
+    let global_idx: i64 = Lowerer_lookupGlobal(l, node.field0, node.field1);
+    if global_idx >= 0 {
+        let g: *IRGlobal = Lowerer_getGlobal(l, global_idx);
+        // Arrays are accessed by address, scalars are loaded
+        if g.is_array {
+            return FuncBuilder_emitAddrGlobal(fb, global_idx, g.type_idx);
+        }
+        return FuncBuilder_emitLoadGlobal(fb, global_idx, g.type_idx);
+    }
+
     // Not found - return null node
     return NULL_NODE;
+}
+
+// Infer the type of an expression (for pointer arithmetic scaling)
+// Returns the type index or TYPE_I64 if unknown
+fn Lowerer_inferExprType(l: *Lowerer, node: *Node) i64 {
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return TYPE_I64; }
+
+    // For identifiers, look up the local variable type
+    if node.kind == NodeKind.Ident {
+        var i: i64 = 0;
+        while i < fb.locals_count {
+            let local: *IRLocal = fb.locals + i;
+            if names_equal(l.source, local.name_start, local.name_len, node.field0, node.field1) {
+                return local.type_idx;
+            }
+            i = i + 1;
+        }
+        // Also check globals
+        let global_idx: i64 = Lowerer_lookupGlobal(l, node.field0, node.field1);
+        if global_idx >= 0 {
+            let g: *IRGlobal = Lowerer_getGlobal(l, global_idx);
+            return g.type_idx;
+        }
+    }
+
+    // For other expressions, default to i64
+    return TYPE_I64;
+}
+
+// Get the element size for pointer arithmetic
+// This matches C/Zig semantics where ptr+n advances by n*sizeof(*ptr)
+fn Lowerer_getPtrElemSize(l: *Lowerer, type_idx: i64) i64 {
+    // Get the pointee type and return its size
+    let pointee_idx: i64 = TypeInfo_getPointee(l.type_pool, type_idx);
+    if pointee_idx <= 0 {
+        // Not a valid pointer type, default to 8
+        return 8;
+    }
+    let pointee_type: *Type = TypeRegistry_get(l.type_pool, pointee_idx);
+    if pointee_type.size > 0 {
+        return pointee_type.size;
+    }
+    // Default to 8 bytes (i64/pointer size)
+    return 8;
 }
 
 fn Lowerer_lowerBinary(l: *Lowerer, node: *Node) i64 {
@@ -1507,6 +1690,14 @@ fn Lowerer_lowerBinary(l: *Lowerer, node: *Node) i64 {
     // Lower left and right operands
     let left_node: *Node = l.nodes + node.field0;
     let right_node: *Node = l.nodes + node.field1;
+
+    // Check if left operand is a pointer type (for pointer arithmetic scaling)
+    // This matches C/Zig semantics: ptr + n = ptr + n * sizeof(*ptr)
+    let left_type: i64 = Lowerer_inferExprType(l, left_node);
+    let is_ptr_arith: bool = TypeInfo_isPointer(l.type_pool, left_type);
+    let ast_op: i64 = node.field2;  // BinaryOp as integer
+    // Only scale for Add (0) or Sub (1) operations
+    let is_add_or_sub: bool = ast_op == 0 or ast_op == 1;
 
     // BUG-049 FIX: If right operand is a call, the left operand must be spilled
     // to stack before the call and loaded after. This is because function calls
@@ -1543,12 +1734,20 @@ fn Lowerer_lowerBinary(l: *Lowerer, node: *Node) i64 {
         right_idx = Lowerer_lowerExpr(l, right_node);
     }
 
+    // Pointer arithmetic scaling: ptr + n -> ptr + n * elem_size
+    // This matches Zig/C semantics for pointer arithmetic
+    if is_ptr_arith and is_add_or_sub {
+        let elem_size: i64 = Lowerer_getPtrElemSize(l, left_type);
+        let size_val: i64 = FuncBuilder_emitConstInt(fb, elem_size);
+        right_idx = FuncBuilder_emitBinary(fb, IR_OP_MUL, right_idx, size_val, TYPE_I64);
+    }
+
     // Convert AST operator to IR operator
-    let ir_op: i64 = ASTOp_toIROp(node.field2);
+    let ir_op: i64 = ASTOp_toIROp(ast_op);
 
     // Determine result type
     let result_type: i64 = TYPE_I64;
-    if ASTOp_isComparison(node.field2) {
+    if ASTOp_isComparison(ast_op) {
         result_type = TYPE_BOOL;
     }
 
@@ -1928,9 +2127,54 @@ fn Lowerer_lowerAddressOf(l: *Lowerer, node: *Node) i64 {
 
     let operand_node: *Node = l.nodes + node.field0;
 
-    // For now, only support address of identifiers (local variables)
+    // Handle address of index expressions: &array[index]
+    // Result = base_addr + index * elem_size
+    if operand_node.kind == NodeKind.IndexExpr {
+        // IndexExpr: field0 = base, field1 = index
+        let base_node: *Node = l.nodes + operand_node.field0;
+        let index_node: *Node = l.nodes + operand_node.field1;
+
+        // Lower the index expression
+        let index_ir: i64 = Lowerer_lowerExpr(l, index_node);
+
+        // For cot0, assume element type is u8/i8 (1 byte) when taking address
+        let elem_size: i64 = 1;
+
+        // Get base address - check local first, then global
+        if base_node.kind == NodeKind.Ident {
+            // Try local variable first
+            var local_idx: i64 = -1;
+            var i: i64 = 0;
+            while i < fb.locals_count {
+                let local: *IRLocal = fb.locals + i;
+                if names_equal(l.source, local.name_start, local.name_len,
+                              base_node.field0, base_node.field1) {
+                    local_idx = i;
+                }
+                i = i + 1;
+            }
+
+            if local_idx >= 0 {
+                let base_addr: i64 = FuncBuilder_emitAddrLocal(fb, local_idx, TYPE_I64);
+                let size_val: i64 = FuncBuilder_emitConstInt(fb, elem_size);
+                let offset_val: i64 = FuncBuilder_emitBinary(fb, IR_OP_MUL, index_ir, size_val, TYPE_I64);
+                return FuncBuilder_emitBinary(fb, IR_OP_ADD, base_addr, offset_val, TYPE_I64);
+            }
+
+            // Try global variable
+            let global_idx: i64 = Lowerer_lookupGlobal(l, base_node.field0, base_node.field1);
+            if global_idx >= 0 {
+                let base_addr: i64 = FuncBuilder_emitAddrGlobal(fb, global_idx, TYPE_I64);
+                let size_val: i64 = FuncBuilder_emitConstInt(fb, elem_size);
+                let offset_val: i64 = FuncBuilder_emitBinary(fb, IR_OP_MUL, index_ir, size_val, TYPE_I64);
+                return FuncBuilder_emitBinary(fb, IR_OP_ADD, base_addr, offset_val, TYPE_I64);
+            }
+        }
+    }
+
+    // Handle address of identifiers (local or global variables)
     if operand_node.kind == NodeKind.Ident {
-        // Look up local variable by name
+        // Look up local variable by name first
         var i: i64 = 0;
         while i < fb.locals_count {
             let local: *IRLocal = fb.locals + i;
@@ -1940,6 +2184,12 @@ fn Lowerer_lowerAddressOf(l: *Lowerer, node: *Node) i64 {
                 return FuncBuilder_emitAddrLocal(fb, i, TYPE_I64);
             }
             i = i + 1;
+        }
+
+        // Try global variable
+        let global_idx: i64 = Lowerer_lookupGlobal(l, operand_node.field0, operand_node.field1);
+        if global_idx >= 0 {
+            return FuncBuilder_emitAddrGlobal(fb, global_idx, TYPE_I64);
         }
     }
 
@@ -1957,8 +2207,30 @@ fn Lowerer_lowerDeref(l: *Lowerer, node: *Node) i64 {
     let operand_node: *Node = l.nodes + node.field0;
     let ptr_idx: i64 = Lowerer_lowerExpr(l, operand_node);
 
-    // Emit load from pointer - result type is i64 for now
-    return FuncBuilder_emitLoad(fb, ptr_idx, TYPE_I64);
+    // Try to determine the pointee type from the pointer expression
+    // Default to TYPE_I64 if we can't determine it
+    var result_type: i64 = TYPE_I64;
+
+    // If operand is an identifier, look up its type and get pointee type
+    if operand_node.kind == NodeKind.Ident {
+        var i: i64 = 0;
+        while i < fb.locals_count {
+            let local: *IRLocal = fb.locals + i;
+            if names_equal(l.source, local.name_start, local.name_len,
+                          operand_node.field0, operand_node.field1) {
+                // Found the local - get its type
+                let ptr_type: *Type = TypeRegistry_get(l.type_pool, local.type_idx);
+                if ptr_type.kind == TypeKind.Pointer {
+                    // Use the pointee type for the load
+                    result_type = ptr_type.elem;
+                }
+            }
+            i = i + 1;
+        }
+    }
+
+    // Emit load from pointer with the correct pointee type
+    return FuncBuilder_emitLoad(fb, ptr_idx, result_type);
 }
 
 fn Lowerer_lowerFieldAccess(l: *Lowerer, node: *Node) i64 {

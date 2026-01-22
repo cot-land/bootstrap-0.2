@@ -1,0 +1,275 @@
+// DWARF Debug Information Format Support
+// Provides constants and helpers for generating DWARF debug sections.
+//
+// Reference: DWARF v4 specification
+// Reference: Apple Mach-O DWARF format
+//
+// This file provides support for __debug_line section generation
+// to enable lldb to show source file:line for crash locations.
+
+// ============================================================================
+// DWARF Version
+// ============================================================================
+
+const DWARF_VERSION: i64 = 4;  // Using DWARF v4
+
+// ============================================================================
+// Line Number Program Opcodes (Standard)
+// ============================================================================
+
+const DW_LNS_copy: i64 = 1;
+const DW_LNS_advance_pc: i64 = 2;
+const DW_LNS_advance_line: i64 = 3;
+const DW_LNS_set_file: i64 = 4;
+const DW_LNS_set_column: i64 = 5;
+const DW_LNS_negate_stmt: i64 = 6;
+const DW_LNS_set_basic_block: i64 = 7;
+const DW_LNS_const_add_pc: i64 = 8;
+const DW_LNS_fixed_advance_pc: i64 = 9;
+const DW_LNS_set_prologue_end: i64 = 10;
+const DW_LNS_set_epilogue_begin: i64 = 11;
+const DW_LNS_set_isa: i64 = 12;
+
+// ============================================================================
+// Line Number Program Extended Opcodes
+// ============================================================================
+
+const DW_LNE_end_sequence: i64 = 1;
+const DW_LNE_set_address: i64 = 2;
+const DW_LNE_define_file: i64 = 3;
+const DW_LNE_set_discriminator: i64 = 4;
+
+// ============================================================================
+// Line Number Program Header Constants
+// ============================================================================
+
+// Default values for line number state machine
+const DEFAULT_IS_STMT: i64 = 1;       // Default is_stmt value
+const LINE_BASE: i64 = -5;            // Line base for special opcodes
+const LINE_RANGE: i64 = 14;           // Line range for special opcodes
+const OPCODE_BASE: i64 = 13;          // First special opcode value
+
+// Minimum instruction length for ARM64 (4 bytes)
+const MIN_INST_LENGTH: i64 = 4;
+// Maximum operations per instruction (1 for non-VLIW)
+const MAX_OPS_PER_INST: i64 = 1;
+
+// ============================================================================
+// LEB128 Encoding Helpers
+// DWARF uses LEB128 (Little Endian Base 128) for variable-length integers
+// ============================================================================
+
+// Write unsigned LEB128 to buffer
+// Returns number of bytes written
+fn DWARF_writeULEB128(buf: *u8, value: i64) i64 {
+    var val: i64 = value;
+    var count: i64 = 0;
+    var more: bool = true;
+
+    while more {
+        var b: i64 = val & 127;  // Low 7 bits
+        val = val >> 7;
+
+        if val != 0 {
+            b = b | 128;  // Set high bit to indicate more bytes
+        } else {
+            more = false;
+        }
+
+        let p: *u8 = buf + count;
+        p.* = @intCast(u8, b);
+        count = count + 1;
+    }
+
+    return count;
+}
+
+// Write signed LEB128 to buffer
+// Returns number of bytes written
+fn DWARF_writeSLEB128(buf: *u8, value: i64) i64 {
+    var val: i64 = value;
+    var count: i64 = 0;
+    var more: bool = true;
+
+    while more {
+        var b: i64 = val & 127;  // Low 7 bits
+        val = val >> 7;  // Arithmetic shift for signed
+
+        // Check if more bytes needed
+        let sign_bit: i64 = b & 64;  // Bit 6 is sign bit
+        if (val == 0 and sign_bit == 0) or (val == -1 and sign_bit != 0) {
+            more = false;
+        } else {
+            b = b | 128;  // Set high bit
+        }
+
+        let p: *u8 = buf + count;
+        p.* = @intCast(u8, b);
+        count = count + 1;
+    }
+
+    return count;
+}
+
+// Calculate bytes needed for unsigned LEB128
+fn DWARF_uleb128Size(value: i64) i64 {
+    var val: i64 = value;
+    var size: i64 = 0;
+    if val == 0 {
+        return 1;
+    }
+    while val != 0 {
+        val = val >> 7;
+        size = size + 1;
+    }
+    return size;
+}
+
+// Calculate bytes needed for signed LEB128
+fn DWARF_sleb128Size(value: i64) i64 {
+    var val: i64 = value;
+    var size: i64 = 0;
+    var more: bool = true;
+
+    while more {
+        var b: i64 = val & 127;
+        val = val >> 7;
+        let sign_bit: i64 = b & 64;
+        if (val == 0 and sign_bit == 0) or (val == -1 and sign_bit != 0) {
+            more = false;
+        }
+        size = size + 1;
+    }
+
+    return size;
+}
+
+// ============================================================================
+// Special Opcode Helpers
+// Special opcodes encode both line and address advances in single byte
+// ============================================================================
+
+// Check if line/address advance can use special opcode
+fn DWARF_canUseSpecialOpcode(line_delta: i64, addr_delta: i64) bool {
+    // Line must be in range [LINE_BASE, LINE_BASE + LINE_RANGE)
+    if line_delta < LINE_BASE or line_delta >= LINE_BASE + LINE_RANGE {
+        return false;
+    }
+
+    // Address advance in instruction units
+    let addr_advance: i64 = addr_delta / MIN_INST_LENGTH;
+
+    // Calculate opcode
+    let opcode: i64 = (line_delta - LINE_BASE) + (LINE_RANGE * addr_advance) + OPCODE_BASE;
+
+    // Must fit in single byte (< 256)
+    return opcode >= OPCODE_BASE and opcode < 256;
+}
+
+// Encode special opcode for line/address advance
+fn DWARF_specialOpcode(line_delta: i64, addr_delta: i64) i64 {
+    let addr_advance: i64 = addr_delta / MIN_INST_LENGTH;
+    return (line_delta - LINE_BASE) + (LINE_RANGE * addr_advance) + OPCODE_BASE;
+}
+
+// ============================================================================
+// Debug Line Writer State
+// ============================================================================
+
+struct DebugLineWriter {
+    buf: *u8,          // Output buffer
+    count: i64,        // Current position
+    cap: i64,          // Buffer capacity
+}
+
+fn DebugLineWriter_init(w: *DebugLineWriter, buf: *u8, cap: i64) {
+    w.buf = buf;
+    w.count = 0;
+    w.cap = cap;
+}
+
+fn DebugLineWriter_writeByte(w: *DebugLineWriter, b: i64) {
+    if w.count < w.cap {
+        let p: *u8 = w.buf + w.count;
+        p.* = @intCast(u8, b & 255);
+        w.count = w.count + 1;
+    }
+}
+
+fn DebugLineWriter_writeU16(w: *DebugLineWriter, val: i64) {
+    DebugLineWriter_writeByte(w, val & 255);
+    DebugLineWriter_writeByte(w, (val >> 8) & 255);
+}
+
+fn DebugLineWriter_writeU32(w: *DebugLineWriter, val: i64) {
+    DebugLineWriter_writeByte(w, val & 255);
+    DebugLineWriter_writeByte(w, (val >> 8) & 255);
+    DebugLineWriter_writeByte(w, (val >> 16) & 255);
+    DebugLineWriter_writeByte(w, (val >> 24) & 255);
+}
+
+fn DebugLineWriter_writeU64(w: *DebugLineWriter, val: i64) {
+    DebugLineWriter_writeU32(w, val & 0xFFFFFFFF);
+    DebugLineWriter_writeU32(w, (val >> 32) & 0xFFFFFFFF);
+}
+
+fn DebugLineWriter_writeULEB128(w: *DebugLineWriter, val: i64) {
+    if w.count + 10 > w.cap {
+        return;
+    }
+    let bytes: i64 = DWARF_writeULEB128(w.buf + w.count, val);
+    w.count = w.count + bytes;
+}
+
+fn DebugLineWriter_writeSLEB128(w: *DebugLineWriter, val: i64) {
+    if w.count + 10 > w.cap {
+        return;
+    }
+    let bytes: i64 = DWARF_writeSLEB128(w.buf + w.count, val);
+    w.count = w.count + bytes;
+}
+
+fn DebugLineWriter_writeString(w: *DebugLineWriter, s: *u8, len: i64) {
+    var i: i64 = 0;
+    while i < len and w.count < w.cap {
+        let src: *u8 = s + i;
+        let dst: *u8 = w.buf + w.count;
+        dst.* = src.*;
+        w.count = w.count + 1;
+        i = i + 1;
+    }
+    // Null terminator
+    if w.count < w.cap {
+        let p: *u8 = w.buf + w.count;
+        p.* = 0;
+        w.count = w.count + 1;
+    }
+}
+
+fn DebugLineWriter_writeZeros(w: *DebugLineWriter, n: i64) {
+    var i: i64 = 0;
+    while i < n {
+        DebugLineWriter_writeByte(w, 0);
+        i = i + 1;
+    }
+}
+
+// ============================================================================
+// Extended Opcode Helpers
+// ============================================================================
+
+// Write DW_LNE_set_address extended opcode
+fn DebugLineWriter_writeSetAddress(w: *DebugLineWriter, addr: i64) {
+    // Extended opcode format: 0, length (ULEB128), opcode, operand
+    DebugLineWriter_writeByte(w, 0);           // Extended opcode marker
+    DebugLineWriter_writeULEB128(w, 9);        // Length: 1 (opcode) + 8 (address)
+    DebugLineWriter_writeByte(w, DW_LNE_set_address);
+    DebugLineWriter_writeU64(w, addr);
+}
+
+// Write DW_LNE_end_sequence extended opcode
+fn DebugLineWriter_writeEndSequence(w: *DebugLineWriter) {
+    DebugLineWriter_writeByte(w, 0);           // Extended opcode marker
+    DebugLineWriter_writeULEB128(w, 1);        // Length: 1 (opcode only)
+    DebugLineWriter_writeByte(w, DW_LNE_end_sequence);
+}

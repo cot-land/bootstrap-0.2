@@ -17,6 +17,9 @@ import "../ssa/abi.cot"
 import "../ssa/stackalloc.cot"
 import "arm64.cot"
 
+// NOTE: IRGlobal is defined in frontend/ir.cot which is imported via lower.cot
+// before genssa.cot in main.cot - no forward declaration needed
+
 // ============================================================================
 // Constants
 // ============================================================================
@@ -55,6 +58,28 @@ struct CallSite {
 }
 
 // ============================================================================
+// Line Entry (for DWARF debug_line)
+// Maps code offsets to source positions
+// ============================================================================
+
+struct LineEntry {
+    code_offset: i64,      // Offset in code buffer
+    source_pos: i64,       // Byte offset in source file
+    line: i64,             // Line number (1-indexed)
+    column: i64,           // Column number (1-indexed)
+}
+
+// ============================================================================
+// Global Address Relocation (for ADRP+ADD pairs)
+// ============================================================================
+
+struct GlobalReloc {
+    code_offset: i64,      // Offset of ADRP instruction in code buffer
+    global_idx: i64,       // Index into globals array
+    // The ADD instruction is at code_offset + 4
+}
+
+// ============================================================================
 // Codegen State
 // Holds state during code generation for a function
 // ============================================================================
@@ -85,6 +110,29 @@ struct GenState {
 
     // Current block being generated
     current_block: i64,
+
+    // Line tracking for DWARF debug info
+    // Stored as raw bytes, each entry is 32 bytes (4 i64 fields)
+    line_entries: *u8,
+    line_entries_count: i64,
+    line_entries_cap: i64,
+    last_line: i64,        // Last recorded line (to avoid duplicates)
+    source: *u8,           // Source text for line:col computation
+    source_len: i64,
+
+    // Global variables (for codegen access)
+    globals: *IRGlobal,
+    globals_count: i64,
+
+    // Data section for global storage
+    data: *u8,
+    data_count: i64,
+    data_cap: i64,
+
+    // Global address relocations
+    global_relocs: *GlobalReloc,
+    global_relocs_count: i64,
+    global_relocs_cap: i64,
 }
 
 // ============================================================================
@@ -109,6 +157,161 @@ fn GenState_init(gs: *GenState, f: *Func,
     gs.call_sites_count = 0;
     gs.call_sites_cap = call_sites_cap;
     gs.current_block = INVALID_BLOCK;
+    // Line tracking (must be set up via GenState_setLineTracking)
+    gs.line_entries = null;
+    gs.line_entries_count = 0;
+    gs.line_entries_cap = 0;
+    gs.last_line = 0;
+    gs.source = null;
+    gs.source_len = 0;
+    // Globals (must be set up via GenState_setGlobals)
+    gs.globals = null;
+    gs.globals_count = 0;
+    gs.data = null;
+    gs.data_count = 0;
+    gs.data_cap = 0;
+    gs.global_relocs = null;
+    gs.global_relocs_count = 0;
+    gs.global_relocs_cap = 0;
+}
+
+// Set up globals tracking for global variable access
+fn GenState_setGlobals(gs: *GenState, globals: *IRGlobal, globals_count: i64,
+                       data: *u8, data_cap: i64,
+                       global_relocs: *GlobalReloc, global_relocs_cap: i64) {
+    gs.globals = globals;
+    gs.globals_count = globals_count;
+    gs.data = data;
+    gs.data_count = 0;
+    gs.data_cap = data_cap;
+    gs.global_relocs = global_relocs;
+    gs.global_relocs_count = 0;
+    gs.global_relocs_cap = global_relocs_cap;
+}
+
+// Set up line tracking for DWARF debug info
+// line_entries is raw bytes, each entry is 32 bytes (4 i64 fields)
+fn GenState_setLineTracking(gs: *GenState,
+                            line_entries: *u8, line_entries_cap: i64,
+                            source: *u8, source_len: i64) {
+    gs.line_entries = line_entries;
+    gs.line_entries_count = 0;
+    gs.line_entries_cap = line_entries_cap;
+    gs.last_line = 0;
+    gs.source = source;
+    gs.source_len = source_len;
+}
+
+// Convert byte offset in source to line number (1-indexed)
+// Counts newlines up to the offset
+fn GenState_posToLine(gs: *GenState, pos: i64) i64 {
+    if gs.source == null or pos < 0 {
+        return 1;
+    }
+    var line: i64 = 1;
+    var i: i64 = 0;
+    while i < pos and i < gs.source_len {
+        let c: *u8 = gs.source + i;
+        if c.* == 10 {  // newline
+            line = line + 1;
+        }
+        i = i + 1;
+    }
+    return line;
+}
+
+// Convert byte offset to column number (1-indexed)
+// Counts characters after last newline
+fn GenState_posToColumn(gs: *GenState, pos: i64) i64 {
+    if gs.source == null or pos < 0 {
+        return 1;
+    }
+    var col: i64 = 1;
+    var i: i64 = 0;
+    while i < pos and i < gs.source_len {
+        let c: *u8 = gs.source + i;
+        if c.* == 10 {  // newline
+            col = 1;
+        } else {
+            col = col + 1;
+        }
+        i = i + 1;
+    }
+    return col;
+}
+
+// Helper: Write i64 value to memory in little-endian format
+fn GenState_writeI64(ptr: *u8, val: i64) {
+    let p0: *u8 = ptr;
+    p0.* = @intCast(u8, val & 255);
+    let p1: *u8 = ptr + 1;
+    p1.* = @intCast(u8, (val >> 8) & 255);
+    let p2: *u8 = ptr + 2;
+    p2.* = @intCast(u8, (val >> 16) & 255);
+    let p3: *u8 = ptr + 3;
+    p3.* = @intCast(u8, (val >> 24) & 255);
+    let p4: *u8 = ptr + 4;
+    p4.* = @intCast(u8, (val >> 32) & 255);
+    let p5: *u8 = ptr + 5;
+    p5.* = @intCast(u8, (val >> 40) & 255);
+    let p6: *u8 = ptr + 6;
+    p6.* = @intCast(u8, (val >> 48) & 255);
+    let p7: *u8 = ptr + 7;
+    p7.* = @intCast(u8, (val >> 56) & 255);
+}
+
+// Helper: Read i64 value from memory in little-endian format
+fn GenState_readI64(ptr: *u8) i64 {
+    let p0: *u8 = ptr;
+    let p1: *u8 = ptr + 1;
+    let p2: *u8 = ptr + 2;
+    let p3: *u8 = ptr + 3;
+    let p4: *u8 = ptr + 4;
+    let p5: *u8 = ptr + 5;
+    let p6: *u8 = ptr + 6;
+    let p7: *u8 = ptr + 7;
+    var val: i64 = @intCast(i64, p0.*);
+    val = val | (@intCast(i64, p1.*) << 8);
+    val = val | (@intCast(i64, p2.*) << 16);
+    val = val | (@intCast(i64, p3.*) << 24);
+    val = val | (@intCast(i64, p4.*) << 32);
+    val = val | (@intCast(i64, p5.*) << 40);
+    val = val | (@intCast(i64, p6.*) << 48);
+    val = val | (@intCast(i64, p7.*) << 56);
+    return val;
+}
+
+// Record a line entry for DWARF debug info
+// Only records if line changed (DWARF optimization)
+// Line entries stored as raw bytes: code_offset(8), source_pos(8), line(8), column(8)
+fn GenState_recordLine(gs: *GenState, source_pos: i64) {
+    if gs.line_entries == null or gs.line_entries_count >= gs.line_entries_cap {
+        return;
+    }
+    if source_pos <= 0 {
+        return;  // No position info
+    }
+
+    let line: i64 = GenState_posToLine(gs, source_pos);
+    // Only record if line changed
+    if line == gs.last_line and gs.line_entries_count > 0 {
+        return;
+    }
+    gs.last_line = line;
+
+    // Calculate entry offset (each entry is 32 bytes)
+    let entry_offset: i64 = gs.line_entries_count * 32;
+    let entry_base: *u8 = gs.line_entries + entry_offset;
+
+    // Write code_offset at offset 0
+    GenState_writeI64(entry_base, gs.code_count);
+    // Write source_pos at offset 8
+    GenState_writeI64(entry_base + 8, source_pos);
+    // Write line at offset 16
+    GenState_writeI64(entry_base + 16, line);
+    // Write column at offset 24
+    GenState_writeI64(entry_base + 24, GenState_posToColumn(gs, source_pos));
+    gs.line_entries_count = gs.line_entries_count + 1;
 }
 
 // ============================================================================
@@ -283,6 +486,9 @@ fn GenState_blockValues(gs: *GenState, block: *Block) {
         let value_id: i64 = block.values_start + i;
         let v: *Value = Func_getValue(f, value_id);
 
+        // Record line entry for DWARF debug info
+        GenState_recordLine(gs, v.pos);
+
         // Reload any spilled arguments before using them
         GenState_reloadSpilledArgs(gs, v);
 
@@ -366,6 +572,12 @@ fn GenState_value(gs: *GenState, v: *Value) {
         GenState_store(gs, v);
     } else if v.op == Op.LocalAddr {
         GenState_localAddr(gs, v);
+    } else if v.op == Op.GlobalAddr {
+        GenState_globalAddr(gs, v);
+    } else if v.op == Op.GlobalLoad {
+        GenState_globalLoad(gs, v);
+    } else if v.op == Op.GlobalStore {
+        GenState_globalStore(gs, v);
     } else if v.op == Op.OffPtr {
         GenState_offPtr(gs, v);
     } else if v.op == Op.AddPtr {
@@ -750,11 +962,18 @@ fn GenState_load(gs: *GenState, v: *Value) {
     let f: *Func = gs.func;
     let addr: *Value = Func_getValue(f, v.args[0]);
 
+    // Check if we need byte-sized load (TYPE_U8 = 6, TYPE_I8 = 2)
+    let is_byte: bool = v.type_idx == 6 or v.type_idx == 2;
+
     // Check if address is LocalAddr - emit SP-relative load directly
     if addr.op == Op.LocalAddr {
         let local_idx: i64 = addr.aux_int;
         let local: *Local = Func_getLocal(f, local_idx);
-        GenState_emitInst(gs, encode_ldr(rd, SP, local.offset));
+        if is_byte {
+            GenState_emitInst(gs, encode_ldrb(rd, SP, local.offset));
+        } else {
+            GenState_emitInst(gs, encode_ldr(rd, SP, local.offset));
+        }
     } else if addr.op == Op.OffPtr {
         // OffPtr: base + offset. Check if base is LocalAddr for direct SP-relative load
         let field_offset: i64 = addr.aux_int;
@@ -764,15 +983,27 @@ fn GenState_load(gs: *GenState, v: *Value) {
                 let local_idx: i64 = base_val.aux_int;
                 let local: *Local = Func_getLocal(f, local_idx);
                 let total_offset: i64 = local.offset + field_offset;
-                GenState_emitInst(gs, encode_ldr(rd, SP, total_offset));
+                if is_byte {
+                    GenState_emitInst(gs, encode_ldrb(rd, SP, total_offset));
+                } else {
+                    GenState_emitInst(gs, encode_ldr(rd, SP, total_offset));
+                }
             } else if base_val.reg >= 0 {
                 // Base is in a register
-                GenState_emitInst(gs, encode_ldr(rd, base_val.reg, field_offset));
+                if is_byte {
+                    GenState_emitInst(gs, encode_ldrb(rd, base_val.reg, field_offset));
+                } else {
+                    GenState_emitInst(gs, encode_ldr(rd, base_val.reg, field_offset));
+                }
             }
         }
     } else {
         // Load from address in register
-        GenState_emitInst(gs, encode_ldr(rd, addr.reg, 0));
+        if is_byte {
+            GenState_emitInst(gs, encode_ldrb(rd, addr.reg, 0));
+        } else {
+            GenState_emitInst(gs, encode_ldr(rd, addr.reg, 0));
+        }
     }
 }
 
@@ -781,11 +1012,18 @@ fn GenState_store(gs: *GenState, v: *Value) {
     let addr: *Value = Func_getValue(f, v.args[0]);
     let val: *Value = Func_getValue(f, v.args[1]);
 
+    // Check if we need byte-sized store (TYPE_U8 = 6, TYPE_I8 = 2)
+    let is_byte: bool = val.type_idx == 6 or val.type_idx == 2;
+
     // Check if address is LocalAddr - emit SP-relative store directly
     if addr.op == Op.LocalAddr {
         let local_idx: i64 = addr.aux_int;
         let local: *Local = Func_getLocal(f, local_idx);
-        GenState_emitInst(gs, encode_str(val.reg, SP, local.offset));
+        if is_byte {
+            GenState_emitInst(gs, encode_strb(val.reg, SP, local.offset));
+        } else {
+            GenState_emitInst(gs, encode_str(val.reg, SP, local.offset));
+        }
     } else if addr.op == Op.OffPtr {
         // OffPtr: base + offset. Check if base is LocalAddr for direct SP-relative store
         let field_offset: i64 = addr.aux_int;
@@ -795,15 +1033,27 @@ fn GenState_store(gs: *GenState, v: *Value) {
                 let local_idx: i64 = base_val.aux_int;
                 let local: *Local = Func_getLocal(f, local_idx);
                 let total_offset: i64 = local.offset + field_offset;
-                GenState_emitInst(gs, encode_str(val.reg, SP, total_offset));
+                if is_byte {
+                    GenState_emitInst(gs, encode_strb(val.reg, SP, total_offset));
+                } else {
+                    GenState_emitInst(gs, encode_str(val.reg, SP, total_offset));
+                }
             } else if base_val.reg >= 0 {
                 // Base is in a register
-                GenState_emitInst(gs, encode_str(val.reg, base_val.reg, field_offset));
+                if is_byte {
+                    GenState_emitInst(gs, encode_strb(val.reg, base_val.reg, field_offset));
+                } else {
+                    GenState_emitInst(gs, encode_str(val.reg, base_val.reg, field_offset));
+                }
             }
         }
     } else {
         // Store to address in register
-        GenState_emitInst(gs, encode_str(val.reg, addr.reg, 0));
+        if is_byte {
+            GenState_emitInst(gs, encode_strb(val.reg, addr.reg, 0));
+        } else {
+            GenState_emitInst(gs, encode_str(val.reg, addr.reg, 0));
+        }
     }
 }
 
@@ -817,6 +1067,78 @@ fn GenState_localAddr(gs: *GenState, v: *Value) {
 
     // Compute address: SP + offset (no FP setup in simple prologue)
     GenState_emitInst(gs, encode_add_imm(rd, SP, local.offset));
+}
+
+// Global variable operations
+// Globals are stored in the data section. We compute their address
+// using the data section base address stored in a special location.
+
+fn GenState_globalAddr(gs: *GenState, v: *Value) {
+    let rd: i64 = v.reg;
+    if rd < 0 { return; }
+
+    let global_idx: i64 = v.aux_int;
+    if gs.globals == null or global_idx >= gs.globals_count {
+        // No globals info - emit a constant 0 as placeholder
+        GenState_emitInst(gs, encode_movz(rd, 0, 0));
+        return;
+    }
+
+    // Record the code offset for relocation
+    let reloc_offset: i64 = gs.code_count;
+
+    // Emit ADRP + ADD pair (placeholders - linker fills in real values)
+    // ADRP Rd, symbol@PAGE
+    GenState_emitInst(gs, encode_adrp(rd, 0));  // Placeholder, linker fills in
+    // ADD Rd, Rd, symbol@PAGEOFF
+    GenState_emitInst(gs, encode_add_imm(rd, rd, 0));  // Placeholder, linker fills in
+
+    // Record relocation for linker to resolve
+    if gs.global_relocs != null and gs.global_relocs_count < gs.global_relocs_cap {
+        let r: *GlobalReloc = gs.global_relocs + gs.global_relocs_count;
+        r.code_offset = reloc_offset;
+        r.global_idx = global_idx;
+        gs.global_relocs_count = gs.global_relocs_count + 1;
+    }
+}
+
+fn GenState_globalLoad(gs: *GenState, v: *Value) {
+    let rd: i64 = v.reg;
+    if rd < 0 { return; }
+
+    let global_idx: i64 = v.aux_int;
+    if gs.globals == null or global_idx >= gs.globals_count {
+        // No globals info - emit a constant 0
+        GenState_emitInst(gs, encode_movz(rd, 0, 0));
+        return;
+    }
+
+    // Get global address, then load from it
+    // For now, compute the address and load in two instructions
+    let g: *IRGlobal = gs.globals + global_idx;
+
+    // Use a temporary to hold the address if needed
+    // For simplicity, load the value as if it were a constant
+    // This is a placeholder - full implementation needs proper addressing
+    GenState_emitInst(gs, encode_movz(rd, 0, 0));
+}
+
+fn GenState_globalStore(gs: *GenState, v: *Value) {
+    // Store to global variable
+    let global_idx: i64 = v.aux_int;
+    if gs.globals == null or global_idx >= gs.globals_count {
+        return;
+    }
+
+    // Get the value to store from arg[0]
+    let f: *Func = gs.func;
+    if v.args_count < 1 { return; }
+    let val: *Value = Func_getValue(f, v.args[0]);
+    let src_reg: i64 = val.reg;
+    if src_reg < 0 { return; }
+
+    // For now, this is a placeholder - full implementation needs proper addressing
+    // We would need to compute the global address and store to it
 }
 
 fn GenState_offPtr(gs: *GenState, v: *Value) {
