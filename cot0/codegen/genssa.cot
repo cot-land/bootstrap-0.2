@@ -116,6 +116,11 @@ fn GenState_init(gs: *GenState, f: *Func,
 // ============================================================================
 
 // Emit a 32-bit instruction word
+// Get current code size in bytes
+fn GenState_codeSize(gs: *GenState) i64 {
+    return gs.code_count;
+}
+
 fn GenState_emitInst(gs: *GenState, inst: i64) {
     if gs.code_count + 4 > gs.code_cap {
         return;  // Buffer full
