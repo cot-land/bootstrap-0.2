@@ -209,6 +209,28 @@ fn Value_numArgs(v: *Value) i64 {
     return v.args_count;
 }
 
+// Get assigned register (or -1 if none)
+// Reference: Zig's Value.getReg()
+fn Value_getReg(v: *Value) i64 {
+    return v.reg;
+}
+
+// Check if value has an assigned register
+// Reference: Zig's Value.hasReg()
+fn Value_hasReg(v: *Value) bool {
+    return v.reg >= 0;
+}
+
+// Get spill slot (or -1 if none)
+fn Value_getSpillSlot(v: *Value) i64 {
+    return v.spill_slot;
+}
+
+// Check if value is spilled
+fn Value_isSpilled(v: *Value) bool {
+    return v.spill_slot >= 0;
+}
+
 // ============================================================================
 // Value Pool (arena allocation)
 // ============================================================================
