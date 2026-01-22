@@ -152,9 +152,27 @@ fn Value_isConstant(v: *Value) bool {
     return Op_isConstant(v.op);
 }
 
+// Check if value is rematerializable (can be recomputed cheaply)
+// Reference: Zig's Value.isRematerializable()
+fn Value_isRematerializable(v: *Value) bool {
+    return Op_isConstant(v.op);
+}
+
 // Check if value has side effects
 fn Value_hasSideEffects(v: *Value) bool {
     return Op_hasSideEffects(v.op);
+}
+
+// Check if value reads memory
+// Reference: Zig's Value.readsMemory()
+fn Value_readsMemory(v: *Value) bool {
+    return Op_readsMemory(v.op);
+}
+
+// Check if value writes memory
+// Reference: Zig's Value.writesMemory()
+fn Value_writesMemory(v: *Value) bool {
+    return Op_writesMemory(v.op);
 }
 
 // Check if value is dead (no uses and no side effects)

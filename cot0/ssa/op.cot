@@ -182,6 +182,33 @@ fn Op_hasSideEffects(op: Op) bool {
     if op == Op.TailCall { return true; }
     if op == Op.ClosureCall { return true; }
     if op == Op.Return { return true; }
+    if op == Op.ARM64_STR { return true; }
+    return false;
+}
+
+// Check if operation reads memory
+// Reference: Zig's OpInfo.reads_memory
+fn Op_readsMemory(op: Op) bool {
+    if op == Op.Load { return true; }
+    if op == Op.LoadReg { return true; }
+    if op == Op.ARM64_LDR { return true; }
+    if op == Op.Call { return true; }
+    if op == Op.TailCall { return true; }
+    if op == Op.ClosureCall { return true; }
+    return false;
+}
+
+// Check if operation writes memory
+// Reference: Zig's OpInfo.writes_memory
+fn Op_writesMemory(op: Op) bool {
+    if op == Op.Store { return true; }
+    if op == Op.Move { return true; }
+    if op == Op.Zero { return true; }
+    if op == Op.StoreReg { return true; }
+    if op == Op.ARM64_STR { return true; }
+    if op == Op.Call { return true; }
+    if op == Op.TailCall { return true; }
+    if op == Op.ClosureCall { return true; }
     return false;
 }
 
