@@ -35,7 +35,7 @@ Work through cot0/COMPARISON.md top to bottom. Mark each section complete when A
 | 3.2 | ssa/value.cot | Pending | 10 | 0 | 2 | 0 | Value_numArgs() added |
 | 3.3 | ssa/block.cot | Pending | 13 | 0 | 0 | 0 | Block_numPreds/numSuccs/numValues added |
 | 3.4 | ssa/func.cot | Pending | 11 | 0 | 1 | 0 | Func_numBlocks/numValues/numLocals added |
-| 3.5 | ssa/builder.cot | **DONE** | 35 | 0 | 3 | 0 |
+| 3.5 | ssa/builder.cot | **DONE** | 37 | 0 | 1 | 0 | Added emitCast, emitAlloca |
 | 3.6 | ssa/liveness.cot | Pending | 5 | 2 | 3 | 0 |
 | 3.7 | ssa/regalloc.cot | Pending | 9 | 0 | 4 | 0 |
 | 4.1 | arm64/asm.cot | Pending | 48 | 2 | 0 | 5 | sxtb/sxth/sxtw/uxtb/uxth/tst/invert_cond added |
