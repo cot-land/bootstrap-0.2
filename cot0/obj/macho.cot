@@ -402,7 +402,7 @@ fn MachOWriter_addSymbol(w: *MachOWriter, name: *u8, name_len: i64,
     return idx;
 }
 
-// Add a relocation
+// Add a relocation (for code section)
 fn MachOWriter_addReloc(w: *MachOWriter, offset: i64, symbol_idx: i64,
                    reloc_type: i64, is_pcrel: bool) {
     if w.relocs_count >= w.relocs_cap {
@@ -416,6 +416,14 @@ fn MachOWriter_addReloc(w: *MachOWriter, offset: i64, symbol_idx: i64,
     r.is_pcrel = is_pcrel;
 
     w.relocs_count = w.relocs_count + 1;
+}
+
+// Add a data section relocation
+// Reference: Zig's MachOWriter.addDataRelocation
+fn MachOWriter_addDataReloc(w: *MachOWriter, offset: i64, symbol_idx: i64,
+                        reloc_type: i64) {
+    // Data relocations are not PC-relative
+    MachOWriter_addReloc(w, offset, symbol_idx, reloc_type, false);
 }
 
 // ============================================================================
