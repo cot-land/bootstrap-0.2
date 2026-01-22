@@ -31,21 +31,21 @@ Work through cot0/COMPARISON.md top to bottom. Mark each section complete when A
 | 2.3 | frontend/ast.cot | Pending | 23 | 2 | 2 | 0 |
 | 2.4 | frontend/parser.cot | Pending | 5 | 31 | 0 | 0 |
 | 2.5 | frontend/types.cot | Pending | 10 | 2 | 4 | 0 |
-| 2.6 | frontend/checker.cot | Pending | 24 | 0 | 2 | 0 |
+| 2.6 | frontend/checker.cot | Pending | 24 | 0 | 2 | 0 | ScopePool_isDefined added |
 | 2.7 | frontend/ir.cot | Pending | 10 | 0 | 1 | 0 |
 | 2.8 | frontend/lower.cot | Pending | 18 | 0 | 2 | 0 |
-| 3.1 | ssa/op.cot | Pending | 5 | 3 | 0 | 0 | Op_isBranch/isCall/isTerminator/numArgs added |
-| 3.2 | ssa/value.cot | Pending | 10 | 0 | 2 | 0 | Value_numArgs() added |
-| 3.3 | ssa/block.cot | Pending | 13 | 0 | 0 | 0 | Block_numPreds/numSuccs/numValues added |
+| 3.1 | ssa/op.cot | Pending | 5 | 3 | 0 | 0 | Op_isBranch/isCall/isTerminator/numArgs/readsMemory/writesMemory added |
+| 3.2 | ssa/value.cot | Pending | 10 | 0 | 2 | 0 | Value_numArgs(), isRematerializable, readsMemory, writesMemory added |
+| 3.3 | ssa/block.cot | Pending | 13 | 0 | 0 | 0 | Block_numPreds/numSuccs/numValues/numControls added |
 | 3.4 | ssa/func.cot | Pending | 11 | 0 | 1 | 0 | Func_numBlocks/numValues/numLocals added |
 | 3.5 | ssa/builder.cot | **DONE** | 37 | 0 | 1 | 0 | Added emitCast, emitAlloca |
-| 3.6 | ssa/liveness.cot | Pending | 5 | 2 | 3 | 0 |
+| 3.6 | ssa/liveness.cot | Pending | 5 | 2 | 3 | 0 | LiveMap_size, LiveMap_getInfo added |
 | 3.7 | ssa/regalloc.cot | Pending | 9 | 0 | 4 | 0 |
 | 4.1 | arm64/asm.cot | Pending | 48 | 2 | 0 | 5 | sxtb/sxth/sxtw/uxtb/uxth/tst/invert_cond added |
 | 4.2 | arm64/regs.cot | Pending | — | — | — | 5 (cot0-only) |
 | 5.1 | codegen/arm64.cot | Pending | 0 | 26 | 13 | 0 |
 | 5.2 | codegen/genssa.cot | Pending | — | — | — | 39 (cot0-only) |
-| 6.1 | obj/macho.cot | Pending | 3 | 3 | 6 | 16 |
+| 6.1 | obj/macho.cot | Pending | 3 | 3 | 6 | 16 | addData, addStringLiteral, addDataReloc added |
 | 7.* | Zig-only files | Pending | 0 | 0 | ~150 | 0 |
 
 ---
