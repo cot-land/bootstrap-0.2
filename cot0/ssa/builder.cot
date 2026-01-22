@@ -401,6 +401,66 @@ fn SSABuilder_emitReturn(b: *SSABuilder, val: *Value) *Value {
     return Func_emitReturn(b.func, val);
 }
 
+// Emit stack allocation (alloca)
+// Reference: Zig's SSABuilder.buildAlloca()
+// Returns pointer to allocated stack space
+fn SSABuilder_emitAlloca(b: *SSABuilder, size: i64, align: i64, type_idx: i64) *Value {
+    // In cot0, we use LocalAddr to get address of a local variable
+    // Add a new local to the function and return its address
+    let local_idx: i64 = Func_addLocal(b.func, 0, 0, type_idx, true);
+    let local: *Local = Func_getLocal(b.func, local_idx);
+    local.size = size;
+    local.align = align;
+
+    let addr: *Value = Func_newValue(b.func, Op.LocalAddr, type_idx);
+    addr.aux_int = local_idx;
+    return addr;
+}
+
+// Emit type cast/conversion
+// Reference: Zig's SSABuilder.buildCast()
+// Selects appropriate conversion op based on source/dest size
+fn SSABuilder_emitCast(b: *SSABuilder, val: *Value, src_size: i64, dst_size: i64, is_signed: bool, dst_type: i64) *Value {
+    // Same size - no conversion needed
+    if src_size == dst_size {
+        return val;
+    }
+
+    // Extension (smaller to larger)
+    if src_size < dst_size {
+        var op: Op = Op.ZeroExt8to64;  // Default
+        if is_signed {
+            if src_size == 1 {
+                op = Op.SignExt8to64;
+            } else if src_size == 2 {
+                op = Op.SignExt16to64;
+            } else if src_size == 4 {
+                op = Op.SignExt32to64;
+            }
+        } else {
+            if src_size == 1 {
+                op = Op.ZeroExt8to64;
+            } else if src_size == 2 {
+                op = Op.ZeroExt16to64;
+            } else if src_size == 4 {
+                op = Op.ZeroExt32to64;
+            }
+        }
+        return Func_emitUnary(b.func, op, val, dst_type);
+    }
+
+    // Truncation (larger to smaller)
+    var op: Op = Op.Trunc64to8;  // Default
+    if dst_size == 1 {
+        op = Op.Trunc64to8;
+    } else if dst_size == 2 {
+        op = Op.Trunc64to16;
+    } else if dst_size == 4 {
+        op = Op.Trunc64to32;
+    }
+    return Func_emitUnary(b.func, op, val, dst_type);
+}
+
 // ============================================================================
 // Control Flow
 // ============================================================================

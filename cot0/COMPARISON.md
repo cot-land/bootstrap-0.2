@@ -530,9 +530,9 @@ This encoding allows quick type classification without TypeRegistry lookup, but 
 | `build_return(b, val)` | `buildReturn()` | Same |
 | `build_local_addr(b, slot) *Value` | `buildLocalAddr()` | Same |
 | `build_off_ptr(b, base, off) *Value` | `buildOffPtr()` | Same |
-| — | `SSABuilder.deinit()` | Missing in cot0 |
-| — | `buildCast()` | Missing in cot0 |
-| — | `buildAlloca()` | Missing in cot0 |
+| — | `SSABuilder.deinit()` | Missing in cot0 | cot0 uses global arrays |
+| `SSABuilder_emitCast()` | `buildCast()` | Same | Added 2026-01-22 |
+| `SSABuilder_emitAlloca()` | `buildAlloca()` | Same | Added 2026-01-22 |
 
 ### 3.6 cot0/ssa/liveness.cot vs src/ssa/liveness.zig
 

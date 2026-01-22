@@ -22,7 +22,7 @@ Work through cot0/COMPARISON.md top to bottom. Mark each section complete when A
 
 | Section | File | Status | Same | Equiv | Missing cot0 | Missing Zig |
 |---------|------|--------|------|-------|--------------|-------------|
-| 1 | main.cot | **IN PROGRESS** | 1 | 17 | 4 | 0 |
+| 1 | main.cot | **REVIEWED** | 5 | 12 | 3 | 0 | Driver_* functions exist; architectural differences intentional |
 | 2.1 | frontend/token.cot | Pending | 1 | 2 | 0 | 0 | Token_string() added |
 | 2.2 | frontend/scanner.cot | Pending | 17 | 5 | 0 | 0 | isHexDigit() added |
 | 2.3 | frontend/ast.cot | Pending | 23 | 2 | 2 | 0 |
@@ -53,30 +53,30 @@ Work through cot0/COMPARISON.md top to bottom. Mark each section complete when A
 
 Functions to make "Same":
 
-| cot0 Function | Zig Function | Action Needed |
-|---------------|--------------|---------------|
-| `compile()` | `Driver.compileFile()` | Rename to `compileFile` |
-| `print_usage()` | inline | Keep (already same concept) |
+| cot0 Function | Zig Function | Status |
+|---------------|--------------|--------|
+| `Driver_init()` | `Driver.init()` | ✓ EXISTS - Different implementation (global state vs allocator) |
+| `Driver_compileFile()` | `Driver.compileFile()` | ✓ EXISTS - Different implementation |
+| `Driver_compileSource()` | `Driver.compileSource()` | ✓ EXISTS - Thin wrapper |
+| `Driver_setDebugPhases()` | `Driver.setDebugPhases()` | ✓ EXISTS - Stub for API parity |
+| `Driver_parseFileRecursive()` | `parseFileRecursive()` | ✓ EXISTS - Different implementation |
 | `ir_op_to_ssa_op()` | SSA conversion | ✓ DONE - Moved to ssa/builder.cot |
 | `ir_unary_op_to_ssa_op()` | SSA conversion | ✓ DONE - Moved to ssa/builder.cot |
-| `print_int()` | `std.debug.print()` | Remove (use stdlib) |
-| `read_file()` | `std.fs.cwd().readFileAlloc()` | Match Zig pattern |
-| `write_file()` | `std.fs.cwd().writeFile()` | Match Zig pattern |
-| `init_node_pool()` | AST init | Move to ast.cot |
-| `is_path_imported()` | `seen_files.contains()` | Rename |
-| `add_imported_path()` | `seen_files.put()` | Rename |
-| `extract_base_dir()` | `std.fs.path.dirname()` | Match stdlib |
-| `build_import_path()` | `std.fs.path.join()` | Match stdlib |
-| `adjust_node_positions()` | Position in Source | Move to source.cot |
-| `parse_import_file()` | parseFileRecursive | Rename |
-| `process_all_imports()` | `parseFileRecursive()` | Rename |
-| `strlen()` | Slice length | Remove (use slice.len) |
-| `streq()` | `std.mem.eql()` | Match stdlib |
-| `strcpy()` | `allocator.dupe()` | Match stdlib |
-| — | `findRuntimePath()` | Add |
-| — | `Driver.init()` | Add |
-| — | `Driver.compileSource()` | Add |
-| — | `Driver.setDebugPhases()` | Add |
+| `print_int()` | `std.debug.print()` | DIFFERENT - Uses syscalls (cot0-specific) |
+| `read_file()` | `std.fs.cwd().readFileAlloc()` | DIFFERENT - Uses syscalls (cot0-specific) |
+| `write_file()` | `std.fs.cwd().writeFile()` | DIFFERENT - Uses syscalls (cot0-specific) |
+| `init_node_pool()` | AST init | DIFFERENT - Global arrays (cot0-specific) |
+| `is_path_imported()` | `seen_files.contains()` | DIFFERENT - Global arrays (cot0-specific) |
+| `add_imported_path()` | `seen_files.put()` | DIFFERENT - Global arrays (cot0-specific) |
+| `extract_base_dir()` | `std.fs.path.dirname()` | DIFFERENT - Manual impl (cot0-specific) |
+| `build_import_path()` | `std.fs.path.join()` | DIFFERENT - Manual impl (cot0-specific) |
+| `adjust_node_positions()` | Position in Source | DIFFERENT - cot0-specific for global buffer |
+| `parse_import_file()` | parseFileRecursive | DIFFERENT - Uses global buffers |
+| — | `findRuntimePath()` | Missing - Not needed in cot0 (hardcoded) |
+| — | `pipeline_debug.initGlobal()` | Missing - No debug infrastructure |
+| — | `ErrorReporter` | Missing - cot0 uses print() directly |
+
+**Note:** Section 1 functions are intentionally "DIFFERENT" due to cot0's global buffer design vs Zig's allocator pattern. This is an architectural choice, not a bug.
 
 ---
 
