@@ -27,6 +27,22 @@ enum BlockKind {
     Exit,         // Function exit (e.g., panic, no successors)
 }
 
+// Check if block kind is a conditional branch
+// Reference: Zig's BlockKind.isConditional()
+fn BlockKind_isConditional(kind: BlockKind) bool {
+    return kind == BlockKind.If;
+}
+
+// Get number of successors for a block kind
+// Reference: Zig's BlockKind.numSuccs()
+fn BlockKind_numSuccs(kind: BlockKind) i64 {
+    if kind == BlockKind.Plain { return 1; }
+    if kind == BlockKind.If { return 2; }
+    if kind == BlockKind.Return { return 0; }
+    if kind == BlockKind.Exit { return 0; }
+    return 0;
+}
+
 // ============================================================================
 // SSA Block
 // ============================================================================
