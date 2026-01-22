@@ -265,6 +265,11 @@ fn IRNodePool_get(pool: *IRNodePool, idx: i64) *IRNode {
     return pool.nodes + idx;
 }
 
+// Get number of IR nodes in pool
+fn IRNodePool_count(pool: *IRNodePool) i64 {
+    return pool.nodes_count;
+}
+
 fn IRNodePool_addConstInt(pool: *IRNodePool, value: i64, type_idx: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.ConstInt, type_idx);
     node.value = value;
