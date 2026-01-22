@@ -1082,7 +1082,7 @@ These files exist in the Zig compiler but have no cot0 counterpart yet.
 | scanner.cot/zig | 338 | 753 | 45% | Missing interpolation, error reporting, block comments |
 | ast.cot/zig | 1131 | 743 | 152% | MORE lines but LESS type safety (generic fields) |
 | parser.cot/zig | 1659 | 1644 | 101% | Similar but missing lookahead, recursion limit |
-| types.cot/zig | 870 | 835 | 104% | Similar but uses PTYPE encoding hack |
+| types.cot/zig | 930 | 835 | 111% | Added TypeInfo_isPrimitive/fitsInRegs/needsReg/registerCount |
 | checker.cot/zig | 745 | 1990 | **37%** | Missing expression caching, validation |
 | ir.cot/zig | 715 | 1705 | **42%** | Missing CFG, phi infrastructure |
 | lower.cot/zig | 2622 | 2684 | 98% | BUT has BUG-049 workaround code |
@@ -1092,7 +1092,7 @@ These files exist in the Zig compiler but have no cot0 counterpart yet.
 | liveness.cot/zig | 590 | 938 | **63%** | Missing interference, live ranges |
 | regalloc.cot/zig | ~500 | 1184 | **42%** | **FIXED**: Now emits spill/reload code via genssa |
 | codegen | ~1350 | 3529 | **38%** | **IMPROVED**: Has emit_reload/emit_spill helpers |
-| macho.cot/zig | 690 | 641 | 108% | Similar |
+| macho.cot/zig | 726 | 641 | 113% | Added addData, addStringLiteral |
 
 **TOTAL cot0: ~12,000 lines vs Zig: ~20,000 lines = 60%**
 
