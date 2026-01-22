@@ -219,6 +219,18 @@ fn ABIParamResultInfo_resultReg(info: *ABIParamResultInfo, n: i64) i64 {
     return i64list_get(&info.out_params, base + 2);  // reg0
 }
 
+// Get number of input parameters
+// Reference: Zig's ABIParamResultInfo.numArgs()
+fn ABIParamResultInfo_numArgs(info: *ABIParamResultInfo) i64 {
+    return info.in_params_count;
+}
+
+// Get number of output results
+// Reference: Zig's ABIParamResultInfo.numResults()
+fn ABIParamResultInfo_numResults(info: *ABIParamResultInfo) i64 {
+    return info.out_params_count;
+}
+
 // ============================================================================
 // ABI Analysis State
 // ============================================================================
