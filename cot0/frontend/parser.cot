@@ -145,6 +145,61 @@ fn Parser_binopInt(p: *Parser) i64 {
 // Type Parsing
 // ============================================================================
 
+// Resolve a type expression node to a TypeRegistry index
+// This is a simplified version of resolve_type_expr from lower.cot,
+// used during parsing to create function types.
+fn Parser_resolveTypeNode(p: *Parser, type_node_idx: i64) i64 {
+    if type_node_idx < 0 { return TYPE_I64; }
+
+    let node: *Node = NodePool_get(p.pool, type_node_idx);
+
+    // TypeExprNamed: resolve by checking name in source
+    if node.kind == NodeKind.TypeExprNamed {
+        let name_start: i64 = node.field0;
+        let name_len: i64 = node.field1;
+
+        // Check built-in types by examining source characters
+        if name_len == 3 {
+            let c0: u8 = p.source[name_start];
+            let c1: u8 = p.source[name_start + 1];
+            let c2: u8 = p.source[name_start + 2];
+            // i64
+            if c0 == 105 and c1 == 54 and c2 == 52 { return TYPE_I64; }
+            // i32
+            if c0 == 105 and c1 == 51 and c2 == 50 { return TYPE_I32; }
+        }
+        if name_len == 2 {
+            let c0: u8 = p.source[name_start];
+            let c1: u8 = p.source[name_start + 1];
+            // u8
+            if c0 == 117 and c1 == 56 { return TYPE_U8; }
+        }
+        if name_len == 4 {
+            let c0: u8 = p.source[name_start];
+            // bool
+            if c0 == 98 { return TYPE_BOOL; }
+            // void
+            if c0 == 118 { return TYPE_VOID; }
+        }
+        // Default to i64 for unknown types
+        return TYPE_I64;
+    }
+
+    // TypeExprPointer: *T
+    if node.kind == NodeKind.TypeExprPointer {
+        let inner_type: i64 = Parser_resolveTypeNode(p, node.field0);
+        return TypeRegistry_makePointer(p.type_registry, inner_type);
+    }
+
+    // TypeExprFunc: already resolved
+    if node.kind == NodeKind.TypeExprFunc {
+        return node.field1;  // Pre-resolved type index
+    }
+
+    // Default to i64
+    return TYPE_I64;
+}
+
 // Parse a type and return a TypeExpr AST node index
 // Types: i64 | i32 | u8 | bool | void | string | *T | [N]T | []T | TypeName
 // Reference: src/frontend/parser.zig parseType()
@@ -249,14 +304,23 @@ fn Parser_parseType(p: *Parser) i64 {
     }
 
     // Function type: fn(params) -> ret
-    // TODO: Create TypeExprFunction node
+    // Following Zig pattern: src/frontend/parser.zig parseType()
     if kind == TokenType.Fn {
         Parser_advance(p);  // consume 'fn'
         Parser_want(p, TokenType.LParen);  // consume '('
 
-        // Parse parameter types (comma-separated) - but don't store yet
-        while not Parser_check(p, TokenType.RParen) and not Parser_check(p, TokenType.Eof) {
-            let param_type: i64 = Parser_parseType(p);
+        // Parse parameter types and resolve them to TypeRegistry indices
+        // Support up to 8 parameters for function types
+        var param_types: [8]i64;
+        var params_count: i64 = 0;
+
+        while not Parser_check(p, TokenType.RParen) and not Parser_check(p, TokenType.Eof) and params_count < 8 {
+            let param_type_node: i64 = Parser_parseType(p);
+            // Resolve parameter type to TypeRegistry index
+            let param_type_idx: i64 = Parser_resolveTypeNode(p, param_type_node);
+            param_types[params_count] = param_type_idx;
+            params_count = params_count + 1;
+
             if not Parser_check(p, TokenType.Comma) {
                 break;
             }
@@ -265,15 +329,25 @@ fn Parser_parseType(p: *Parser) i64 {
 
         Parser_want(p, TokenType.RParen);  // consume ')'
 
-        // Parse return type after '->'
+        // Parse return type
+        var ret_type_node: i64 = -1;
+        var ret_type_idx: i64 = TYPE_VOID;
         if Parser_check(p, TokenType.Arrow) {
             Parser_advance(p);  // consume '->'
-            let ret_type: i64 = Parser_parseType(p);
+            ret_type_node = Parser_parseType(p);
+            ret_type_idx = Parser_resolveTypeNode(p, ret_type_node);
+        } else {
+            // No arrow - return type follows directly (like `fn(i64, i64) i64`)
+            ret_type_node = Parser_parseType(p);
+            ret_type_idx = Parser_resolveTypeNode(p, ret_type_node);
         }
 
-        // TODO: Return TypeExprFunction node
-        // For now, return a placeholder named type
-        return Node_typeExprNamed(p.pool, type_start, 2, type_start, type_start + 2);
+        // Create function type in TypeRegistry
+        let func_type_idx: i64 = TypeRegistry_makeFunc(p.type_registry, 0, params_count, ret_type_idx);
+
+        // Return TypeExprFunc node with pre-resolved type index
+        let end_pos: i64 = p.current.start;
+        return Node_typeExprFunc(p.pool, ret_type_node, func_type_idx, type_start, end_pos);
     }
 
     // Error - unexpected token

@@ -389,6 +389,14 @@ fn Func_emitCall(f: *Func, name_start: i64, name_len: i64, type_idx: i64) *Value
     return v;
 }
 
+// Emit an indirect function call through function pointer (Go: ClosureCall)
+// Following Zig pattern: src/frontend/ir.zig:1168
+// The function pointer will be added as first arg by caller
+fn Func_emitCallIndirect(f: *Func, type_idx: i64) *Value {
+    let v: *Value = Func_newValue(f, Op.ClosureCall, type_idx);
+    return v;
+}
+
 // ============================================================================
 // Control Flow
 // ============================================================================

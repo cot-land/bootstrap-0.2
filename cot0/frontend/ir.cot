@@ -127,6 +127,10 @@ enum IRNodeKind {
     StoreGlobal,  // Store to global: left = global_idx, right = value
     AddrGlobal,   // Address of global: left = global_idx
 
+    // Function address (for function pointers)
+    // Following Zig: src/frontend/ir.zig:1025-1028 emitFuncAddr
+    FuncAddr,     // Address of function: func_name_start, func_name_len
+
     // Pointer operations
     Load,         // Load from pointer: left = ptr_expr
     Store,        // Store to pointer: left = ptr_expr, right = value
@@ -149,6 +153,7 @@ enum IRNodeKind {
 
     // Control flow
     Call,
+    CallIndirect,  // Indirect call through function pointer: left = fn_ptr_expr
     Return,
     Jump,
     Branch,
@@ -191,6 +196,8 @@ struct IRNode {
     // StoreIndexLocal: left (local_idx), right (index_expr), value (stored_expr), op (elem_size)
     // StoreIndexValue: left (base_expr), right (index_expr), value (stored_expr), op (elem_size)
     // Call: func_name_start, func_name_len, args_start, args_count
+    // CallIndirect: left (fn_ptr_expr), args_start, args_count
+    // FuncAddr: func_name_start, func_name_len (address of named function)
     // Return: left (value), or -1 for void
     // Jump: left (target_block)
     // Branch: left (condition), right (then_block), value (else_block)
@@ -257,6 +264,7 @@ fn IRNode_hasSideEffects(node: *IRNode) bool {
     if node.kind == IRNodeKind.StoreIndexLocal { return true; }
     if node.kind == IRNodeKind.StoreIndexValue { return true; }
     if node.kind == IRNodeKind.Call { return true; }
+    if node.kind == IRNodeKind.CallIndirect { return true; }
     if node.kind == IRNodeKind.Return { return true; }
     if node.kind == IRNodeKind.Jump { return true; }
     if node.kind == IRNodeKind.Branch { return true; }
@@ -663,6 +671,15 @@ fn FuncBuilder_emitAddrGlobal(fb: *FuncBuilder, global_idx: i64, ptr_type: i64) 
     return FuncBuilder_emit(fb, node);
 }
 
+// Emit function address (for function pointers)
+// Following Zig: src/frontend/ir.zig:1025-1028 emitFuncAddr
+fn FuncBuilder_emitFuncAddr(fb: *FuncBuilder, name_start: i64, name_len: i64, type_idx: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.FuncAddr, type_idx);
+    node.func_name_start = name_start;
+    node.func_name_len = name_len;
+    return FuncBuilder_emit(fb, node);
+}
+
 // Emit field access from local struct
 // local_idx = index of the local struct variable
 // offset = byte offset of field within struct
@@ -804,5 +821,15 @@ fn FuncBuilder_emitSlicePtr(fb: *FuncBuilder, slice_expr: i64, ptr_type: i64) i6
 fn FuncBuilder_emitSliceLen(fb: *FuncBuilder, slice_expr: i64) i64 {
     var node: IRNode = IRNode_new(IRNodeKind.SliceLen, TYPE_I64);
     node.left = slice_expr;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit indirect function call through function pointer (Go: ClosureCall)
+// Following Zig pattern: src/frontend/ir.zig:1168
+fn FuncBuilder_emitCallIndirect(fb: *FuncBuilder, fn_ptr_expr: i64, args_start: i64, args_count: i64, return_type: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.CallIndirect, return_type);
+    node.left = fn_ptr_expr;        // The loaded function pointer value
+    node.args_start = args_start;   // Index into call_args array
+    node.args_count = args_count;   // Number of arguments
     return FuncBuilder_emit(fb, node);
 }

@@ -76,6 +76,7 @@ enum NodeKind {
     TypeExprArray,      // Array type: [N]T (field0=size node, field1=elem type node)
     TypeExprSlice,      // Slice type: []T (field0=elem type node)
     TypeExprOptional,   // Optional type: ?T (field0=inner type node)
+    TypeExprFunc,       // Function type: fn(params) -> ret (field0=ret type node, field1=resolved type_idx)
 
     // Special
     BadNode,        // Error placeholder
@@ -1087,6 +1088,24 @@ fn Node_typeExprOptional(pool: *NodePool, inner: i64, start: i64, end: i64) i64 
     n.end = end;
     n.field0 = inner;
     n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Function type: fn(params) -> ret
+// field0 = return type node, field1 = resolved type_idx from TypeRegistry
+fn Node_typeExprFunc(pool: *NodePool, ret_type_node: i64, type_idx: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.TypeExprFunc;
+    n.start = start;
+    n.end = end;
+    n.field0 = ret_type_node;
+    n.field1 = type_idx;  // Pre-resolved TypeRegistry index
     n.field2 = 0;
     n.field3 = 0;
 

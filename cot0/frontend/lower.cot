@@ -157,6 +157,12 @@ fn resolve_type_expr(l: *Lowerer, type_expr_idx: i64) i64 {
         return inner_type;
     }
 
+    // TypeExprFunc: fn(params) -> ret
+    // The type was pre-resolved during parsing and stored in field1
+    if node.kind == NodeKind.TypeExprFunc {
+        return node.field1;  // Pre-resolved TypeRegistry index
+    }
+
     return TYPE_INVALID;
 }
 
@@ -361,6 +367,21 @@ fn Lowerer_lookupGlobal(l: *Lowerer, name_start: i64, name_len: i64) i64 {
     while i < l.ir_globals_count {
         let g: *IRGlobal = l.ir_globals + i;
         if names_equal(l.source, g.name_start, g.name_len, name_start, name_len) {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;  // Not found
+}
+
+// Look up a function by name, returns its index or -1 if not found
+// Following Zig: src/frontend/lower.zig:1446-1449 (function pointer lookup)
+fn Lowerer_lookupFunc(l: *Lowerer, name_start: i64, name_len: i64) i64 {
+    if l.ir_funcs == null { return -1; }
+    var i: i64 = 0;
+    while i < l.ir_funcs_count {
+        let f: *IRFunc = l.ir_funcs + i;
+        if names_equal(l.source, f.name_start, f.name_len, name_start, name_len) {
             return i;
         }
         i = i + 1;
@@ -893,6 +914,10 @@ fn Lowerer_lowerVarDecl(l: *Lowerer, node: *Node) {
             local_type = type_idx;
             struct_size = type_info.size;
         } else if type_info.kind == TypeKind.Pointer {
+            local_type = type_idx;
+        } else if type_info.kind == TypeKind.Func {
+            // Function pointer - preserve the function type index
+            // This enables indirect call detection in Lowerer_lowerCall
             local_type = type_idx;
         }
     }
@@ -1811,6 +1836,14 @@ fn Lowerer_lowerIdent(l: *Lowerer, node: *Node) i64 {
         return FuncBuilder_emitLoadGlobal(fb, global_idx, g.type_idx);
     }
 
+    // Check if it's a function name (for function pointers)
+    // Following Zig: src/frontend/lower.zig:1446-1449
+    let func_idx: i64 = Lowerer_lookupFunc(l, node.field0, node.field1);
+    if func_idx >= 0 {
+        // Emit function address
+        return FuncBuilder_emitFuncAddr(fb, node.field0, node.field1, TYPE_I64);
+    }
+
     // Not found - return null node
     return NULL_NODE;
 }
@@ -2222,6 +2255,29 @@ fn Lowerer_lowerCall(l: *Lowerer, node: *Node) i64 {
         // Fall through to regular call if write not in source
     }
 
+    // Determine direct vs indirect call (Go: ClosureCall vs OCALL)
+    // Following Zig pattern: src/frontend/lower.zig:1867-1884
+    // - Direct call: callee is a function name
+    // - Indirect call: callee is a local variable holding a function pointer
+    var is_indirect_call: bool = false;
+    var fn_ptr_local_idx: i64 = -1;
+    var fn_ptr_return_type: i64 = TYPE_I64;
+
+    // Check if callee identifier is a local variable with function type
+    var local_check_idx: i64 = 0;
+    while local_check_idx < fb.locals_count {
+        let local: *IRLocal = fb.locals + local_check_idx;
+        if names_equal(l.source, local.name_start, local.name_len, func_name_start, func_name_len) {
+            // Found as a local variable - check if it's a function pointer type
+            if TypeInfo_isFunc(l.type_pool, local.type_idx) {
+                is_indirect_call = true;
+                fn_ptr_local_idx = local_check_idx;
+                fn_ptr_return_type = TypeInfo_ret(l.type_pool, local.type_idx);
+            }
+        }
+        local_check_idx = local_check_idx + 1;
+    }
+
     // NOTE: Do NOT capture call_args_start here! Inner calls will modify l.call_args_count.
     // We capture it AFTER Pass 1, just before Pass 2.
 
@@ -2333,7 +2389,17 @@ fn Lowerer_lowerCall(l: *Lowerer, node: *Node) i64 {
         i = i + 1;
     }
 
-    // Emit Call IR node
+    // Emit Call or CallIndirect IR node
+    // Following Zig pattern: src/frontend/lower.zig:1867-1906
+    if is_indirect_call {
+        // Indirect call through function pointer
+        // Load the function pointer from local variable
+        let fn_ptr_expr: i64 = FuncBuilder_emitLoadLocal(fb, fn_ptr_local_idx);
+        // Emit indirect call
+        return FuncBuilder_emitCallIndirect(fb, fn_ptr_expr, call_args_start, args_count, fn_ptr_return_type);
+    }
+
+    // Direct call to named function
     // args_start now points to offset in call_args array, not IR nodes
     var call_node: IRNode = IRNode_new(IRNodeKind.Call, TYPE_I64);
     call_node.func_name_start = func_name_start;

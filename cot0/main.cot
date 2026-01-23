@@ -188,6 +188,7 @@ extern fn malloc_Local(count: i64) *Local;
 extern fn malloc_Branch(count: i64) *Branch;
 extern fn malloc_CallSite(count: i64) *CallSite;
 extern fn malloc_GlobalReloc(count: i64) *GlobalReloc;
+extern fn malloc_FuncAddrReloc(count: i64) *FuncAddrReloc;
 extern fn malloc_Symbol(count: i64) *Symbol;
 extern fn malloc_Reloc(count: i64) *Reloc;
 extern fn malloc_BlockDefs(count: i64) *BlockDefs;
@@ -289,6 +290,8 @@ var g_call_sites: *CallSite = null;
 var g_call_sites_cap: i64 = 0;
 var g_global_relocs: *GlobalReloc = null;
 var g_global_relocs_cap: i64 = 0;
+var g_func_addr_relocs: *FuncAddrReloc = null;
+var g_func_addr_relocs_cap: i64 = 0;
 // Line entries stored as raw bytes (each LineEntry is 32 bytes)
 var g_line_entries: *u8 = null;
 var g_line_entries_cap: i64 = 0;
@@ -972,6 +975,9 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     GenState_setGlobals(&gs, g_ir_globals, lowerer.ir_globals_count, g_data, g_data_cap,
                         g_global_relocs, 5000);
 
+    // Set up function address relocations for function pointers
+    GenState_setFuncAddrRelocs(&gs, g_func_addr_relocs, g_func_addr_relocs_cap);
+
     var total_blocks: i64 = 0;
     var total_values: i64 = 0;
 
@@ -1260,6 +1266,61 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print_int(writer.relocs_count);
     print("\n");
 
+    // Add relocations for function address accesses (function pointers)
+    // Following Zig: func_addr relocations use ADRP/PAGEOFF12 like globals
+    var func_addr_idx: i64 = 0;
+    while func_addr_idx < gs.func_addr_relocs_count {
+        let far: *FuncAddrReloc = g_func_addr_relocs + (func_addr_idx);
+
+        // Find function by name - first check internal functions
+        var found_sym_idx: i64 = -1;
+        var func_search_idx: i64 = 0;
+
+        // Search through internal functions
+        while func_search_idx < lowerer.ir_funcs_count {
+            let ir_func: *IRFunc = g_ir_funcs + (func_search_idx);
+            if ir_func.name_len == far.func_name_len {
+                var name_match: bool = true;
+                var cmp_idx: i64 = 0;
+                while cmp_idx < far.func_name_len {
+                    let src_char: *u8 = g_source + ir_func.name_start + cmp_idx;
+                    let far_char: *u8 = g_source + far.func_name_start + cmp_idx;
+                    if src_char.* != far_char.* {
+                        name_match = false;
+                    }
+                    cmp_idx = cmp_idx + 1;
+                }
+                if name_match {
+                    // Found internal function - symbol index is func_search_idx
+                    found_sym_idx = func_search_idx;
+                }
+            }
+            func_search_idx = func_search_idx + 1;
+        }
+
+        // If not found internally, add as external symbol
+        if found_sym_idx < 0 {
+            // Build external symbol name: "_" + function name
+            sym_name[0] = 95;  // '_'
+            var far_name_idx: i64 = 0;
+            while far_name_idx < far.func_name_len and far_name_idx < 126 {
+                let src_ptr: *u8 = g_source + far.func_name_start + far_name_idx;
+                sym_name[1 + far_name_idx] = src_ptr.*;
+                far_name_idx = far_name_idx + 1;
+            }
+            let far_sym_len: i64 = 1 + far.func_name_len;
+            found_sym_idx = MachOWriter_addSymbol(&writer, &sym_name[0], far_sym_len, 0, 0, true);
+        }
+
+        // Add ADRP relocation (PAGE21) - at code_offset
+        MachOWriter_addReloc(&writer, far.code_offset, found_sym_idx, ARM64_RELOC_PAGE21, true);
+
+        // ADD relocation (PAGEOFF12) - at code_offset + 4
+        MachOWriter_addReloc(&writer, far.code_offset + 4, found_sym_idx, ARM64_RELOC_PAGEOFF12, false);
+
+        func_addr_idx = func_addr_idx + 1;
+    }
+
     // Generate DWARF debug_line section from line entries
     MachOWriter_setDebugLine(&writer, g_debug_line, g_debug_line_cap);
     MachOWriter_setDebugLineRelocs(&writer, g_debug_line_relocs, 16);
@@ -1482,6 +1543,8 @@ fn main(argc: i64, argv: **u8) i64 {
     g_call_sites = malloc_CallSite(g_call_sites_cap);
     g_global_relocs_cap = 5000;
     g_global_relocs = malloc_GlobalReloc(g_global_relocs_cap);
+    g_func_addr_relocs_cap = 1000;
+    g_func_addr_relocs = malloc_FuncAddrReloc(g_func_addr_relocs_cap);
 
     // Mach-O storage
     g_symbols_cap = 2000;

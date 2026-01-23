@@ -80,6 +80,18 @@ struct GlobalReloc {
 }
 
 // ============================================================================
+// Function Address Relocation (for ADRP+ADD pairs loading function addresses)
+// Following Zig: src/codegen/arm64.zig (function pointer address loading)
+// ============================================================================
+
+struct FuncAddrReloc {
+    code_offset: i64,      // Offset of ADRP instruction in code buffer
+    func_name_start: i64,  // Start of function name in source
+    func_name_len: i64,    // Length of function name
+    // The ADD instruction is at code_offset + 4
+}
+
+// ============================================================================
 // Codegen State
 // Holds state during code generation for a function
 // ============================================================================
@@ -133,6 +145,11 @@ struct GenState {
     global_relocs: *GlobalReloc,
     global_relocs_count: i64,
     global_relocs_cap: i64,
+
+    // Function address relocations (for function pointers)
+    func_addr_relocs: *FuncAddrReloc,
+    func_addr_relocs_count: i64,
+    func_addr_relocs_cap: i64,
 }
 
 // ============================================================================
@@ -173,6 +190,16 @@ fn GenState_init(gs: *GenState, f: *Func,
     gs.global_relocs = null;
     gs.global_relocs_count = 0;
     gs.global_relocs_cap = 0;
+    gs.func_addr_relocs = null;
+    gs.func_addr_relocs_count = 0;
+    gs.func_addr_relocs_cap = 0;
+}
+
+// Set up function address relocations tracking
+fn GenState_setFuncAddrRelocs(gs: *GenState, relocs: *FuncAddrReloc, cap: i64) {
+    gs.func_addr_relocs = relocs;
+    gs.func_addr_relocs_count = 0;
+    gs.func_addr_relocs_cap = cap;
 }
 
 // Set up globals tracking for global variable access
@@ -580,6 +607,8 @@ fn GenState_value(gs: *GenState, v: *Value) {
         GenState_globalLoad(gs, v);
     } else if v.op == Op.GlobalStore {
         GenState_globalStore(gs, v);
+    } else if v.op == Op.Addr {
+        GenState_funcAddr(gs, v);
     } else if v.op == Op.OffPtr {
         GenState_offPtr(gs, v);
     } else if v.op == Op.AddPtr {
@@ -587,6 +616,8 @@ fn GenState_value(gs: *GenState, v: *Value) {
         GenState_add(gs, v);
     } else if v.op == Op.Call {
         GenState_call(gs, v);
+    } else if v.op == Op.ClosureCall {
+        GenState_callIndirect(gs, v);
     } else if v.op == Op.Return {
         GenState_return(gs, v);
     } else if v.op == Op.Copy {
@@ -1154,6 +1185,32 @@ fn GenState_localAddr(gs: *GenState, v: *Value) {
     GenState_emitInst(gs, encode_add_imm(rd, SP, local.offset));
 }
 
+// Function address for function pointers
+// Following Zig: src/codegen/arm64.zig (function pointer address loading)
+fn GenState_funcAddr(gs: *GenState, v: *Value) {
+    let rd: i64 = v.reg;
+    if rd < 0 { return; }
+
+    // Record the code offset for relocation
+    let reloc_offset: i64 = gs.code_count;
+
+    // Emit ADRP + ADD pair (placeholders - linker fills in real values)
+    // ADRP Rd, function@PAGE
+    GenState_emitInst(gs, encode_adrp(rd, 0));  // Placeholder
+    // ADD Rd, Rd, function@PAGEOFF
+    GenState_emitInst(gs, encode_add_imm(rd, rd, 0));  // Placeholder
+
+    // Record relocation for linker to resolve
+    // v.aux_int = func_name_start, v.aux_ptr = func_name_len
+    if gs.func_addr_relocs != null and gs.func_addr_relocs_count < gs.func_addr_relocs_cap {
+        let r: *FuncAddrReloc = gs.func_addr_relocs + gs.func_addr_relocs_count;
+        r.code_offset = reloc_offset;
+        r.func_name_start = v.aux_int;
+        r.func_name_len = v.aux_ptr;
+        gs.func_addr_relocs_count = gs.func_addr_relocs_count + 1;
+    }
+}
+
 // Global variable operations
 // Globals are stored in the data section. We compute their address
 // using the data section base address stored in a special location.
@@ -1373,6 +1430,82 @@ fn GenState_call(gs: *GenState, v: *Value) {
 
     // Move call result from X0 to the assigned register
     // This preserves call results across nested calls
+    let dest_reg: i64 = v.reg;
+    if dest_reg >= 0 and dest_reg != X0 {
+        GenState_emitInst(gs, ARM64_encodeMovReg(dest_reg, X0));
+    }
+
+    // Clean up ABI info
+    ABIParamResultInfo_deinit(&abi_info);
+}
+
+// Indirect function call through function pointer (Go: ClosureCall)
+// Following Zig pattern: src/codegen/arm64.zig:2134-2178
+fn GenState_callIndirect(gs: *GenState, v: *Value) {
+    let f: *Func = gs.func;
+
+    // First argument is the function pointer, rest are actual call arguments
+    if v.args_count < 1 { return; }
+
+    let fn_ptr_id: i64 = v.args[0];
+    let fn_ptr_val: *Value = Func_getValue(f, fn_ptr_id);
+    let fn_ptr_reg: i64 = fn_ptr_val.reg;
+
+    // Use ABI module for proper parameter assignment (skip first arg which is fn_ptr)
+    var param_types: [32]i64;
+    var i: i64 = 1;  // Start from 1 to skip function pointer
+    while i < v.args_count and i < 32 {
+        let arg_id: i64 = v.args[i];
+        let arg_val: *Value = Func_getValue(f, arg_id);
+        param_types[i - 1] = arg_val.type_idx;
+        i = i + 1;
+    }
+
+    let actual_arg_count: i64 = v.args_count - 1;  // Exclude function pointer
+
+    // Analyze call ABI
+    var abi_info: ABIParamResultInfo = undefined;
+    ABI_analyzeFunc(&abi_info, &param_types[0], actual_arg_count, v.type_idx);
+
+    // Pass arguments according to ABI assignment (skip first arg)
+    i = 1;
+    while i < v.args_count and (i - 1) < abi_info.in_params_count {
+        let arg_id: i64 = v.args[i];
+        let arg_val: *Value = Func_getValue(f, arg_id);
+
+        var assignment: ABIParamAssignment = undefined;
+        ABIParamResultInfo_getInParam(&abi_info, i - 1, &assignment);
+
+        if assignment.location == ParamLocation.Register {
+            let target_reg: i64 = assignment.reg0;
+            if target_reg >= 0 and arg_val.reg != target_reg and arg_val.reg >= 0 {
+                GenState_emitInst(gs, ARM64_encodeMovReg(target_reg, arg_val.reg));
+            }
+        } else if assignment.location == ParamLocation.Stack {
+            if arg_val.reg >= 0 {
+                GenState_emitInst(gs, encode_str(arg_val.reg, SP, assignment.offset));
+            }
+        }
+
+        i = i + 1;
+    }
+
+    // Allocate stack space for stack-passed arguments
+    if abi_info.arg_stack_size > 0 {
+        GenState_emitInst(gs, encode_sub_imm(SP, SP, abi_info.arg_stack_size));
+    }
+
+    // Emit BLR instruction with function pointer register
+    if fn_ptr_reg >= 0 {
+        GenState_emitInst(gs, encode_blr(fn_ptr_reg));
+    }
+
+    // Restore stack if we allocated for args
+    if abi_info.arg_stack_size > 0 {
+        GenState_emitInst(gs, encode_add_imm(SP, SP, abi_info.arg_stack_size));
+    }
+
+    // Move call result from X0 to the assigned register
     let dest_reg: i64 = v.reg;
     if dest_reg >= 0 and dest_reg != X0 {
         GenState_emitInst(gs, ARM64_encodeMovReg(dest_reg, X0));

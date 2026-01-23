@@ -1019,6 +1019,8 @@ fn SSABuilder_convertNode(b: *SSABuilder, ir_node: *IRNode, ir_idx: i64) i64 {
         result_id = SSABuilder_convertStoreGlobal(b, ir_node);
     } else if ir_node.kind == IRNodeKind.AddrGlobal {
         result_id = SSABuilder_convertAddrGlobal(b, ir_node);
+    } else if ir_node.kind == IRNodeKind.FuncAddr {
+        result_id = SSABuilder_convertFuncAddr(b, ir_node);
     } else if ir_node.kind == IRNodeKind.Load {
         result_id = SSABuilder_convertLoad(b, ir_node);
     } else if ir_node.kind == IRNodeKind.Store {
@@ -1049,6 +1051,8 @@ fn SSABuilder_convertNode(b: *SSABuilder, ir_node: *IRNode, ir_idx: i64) i64 {
         result_id = SSABuilder_convertSliceLen(b, ir_node);
     } else if ir_node.kind == IRNodeKind.Call {
         result_id = SSABuilder_convertCall(b, ir_node);
+    } else if ir_node.kind == IRNodeKind.CallIndirect {
+        result_id = SSABuilder_convertCallIndirect(b, ir_node);
     } else if ir_node.kind == IRNodeKind.Select {
         result_id = SSABuilder_convertSelect(b, ir_node);
     } else if ir_node.kind == IRNodeKind.Branch {
@@ -1223,6 +1227,18 @@ fn SSABuilder_convertAddrGlobal(b: *SSABuilder, ir_node: *IRNode) i64 {
     let global_idx: i64 = ir_node.left;
     let addr_val: *Value = Func_newValue(b.func, Op.GlobalAddr, TYPE_I64);
     addr_val.aux_int = global_idx;
+    SSABuilder_assignReg(b, addr_val);
+    return addr_val.id;
+}
+
+// Convert function address (for function pointers)
+// Following Zig: src/frontend/ssa_builder.zig (FuncAddr handling)
+fn SSABuilder_convertFuncAddr(b: *SSABuilder, ir_node: *IRNode) i64 {
+    // Address of function: func_name_start, func_name_len
+    let addr_val: *Value = Func_newValue(b.func, Op.Addr, TYPE_I64);
+    // Store function name position in aux fields (same as Call)
+    addr_val.aux_int = ir_node.func_name_start;
+    addr_val.aux_ptr = ir_node.func_name_len;
     SSABuilder_assignReg(b, addr_val);
     return addr_val.id;
 }
@@ -1533,6 +1549,29 @@ fn SSABuilder_convertCall(b: *SSABuilder, ir_node: *IRNode) i64 {
         // call_args contains the actual IR node indices for each argument
         let call_args_slot: *i64 = b.call_args + ir_node.args_start + arg_idx;
         let arg_ir_rel: i64 = call_args_slot.*;  // Relative IR index within function
+        let arg_val: *Value = SSABuilder_getOperandValue(b, arg_ir_rel);
+        Value_addArg(val, arg_val);
+        arg_idx = arg_idx + 1;
+    }
+    SSABuilder_assignReg(b, val);
+    return val.id;
+}
+
+// Convert indirect call through function pointer (Go: ClosureCall)
+// Following Zig pattern: src/frontend/ssa_builder.zig:930-945
+fn SSABuilder_convertCallIndirect(b: *SSABuilder, ir_node: *IRNode) i64 {
+    // Create ClosureCall value
+    let val: *Value = Func_emitCallIndirect(b.func, TYPE_I64);
+
+    // First argument is the function pointer (ir_node.left)
+    let fn_ptr_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
+    Value_addArg(val, fn_ptr_val);
+
+    // Add remaining arguments from call_args array
+    var arg_idx: i64 = 0;
+    while arg_idx < ir_node.args_count {
+        let call_args_slot: *i64 = b.call_args + ir_node.args_start + arg_idx;
+        let arg_ir_rel: i64 = call_args_slot.*;
         let arg_val: *Value = SSABuilder_getOperandValue(b, arg_ir_rel);
         Value_addArg(val, arg_val);
         arg_idx = arg_idx + 1;
