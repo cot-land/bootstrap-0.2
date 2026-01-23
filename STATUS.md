@@ -35,6 +35,7 @@ The cot0 compiler crashes during SSA building when compiling itself. The crash o
 
 ## Recent Milestones
 
+- **2026-01-24**: Added SSABuilder_verify() for SSA validation/debugging
 - **2026-01-24**: Added parser nesting depth protection (Parser_incNest/decNest)
 - **2026-01-24**: Added node index validation in lowerBlockCheckTerminated
 - **2026-01-24**: Added BlockStmt handling in lowerStmt (nested blocks as statements)
