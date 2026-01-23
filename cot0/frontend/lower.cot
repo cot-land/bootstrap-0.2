@@ -866,9 +866,24 @@ fn Lowerer_lowerReturn(l: *Lowerer, node: *Node) {
         value_idx = Lowerer_lowerExpr(l, expr);
     }
 
+    // If we have deferred expressions and a return value, save to temp local
+    // This ensures the return value survives calls in deferred expressions
+    // Bug fix: defer calls can clobber x0 where return value might be
+    var saved_local_idx: i64 = -1;
+    if l.defer_stack_count > 0 and value_idx != NULL_NODE {
+        // Create temporary local for return value
+        saved_local_idx = FuncBuilder_addLocal(fb, 0, 0, TYPE_I64, true);
+        FuncBuilder_emitStoreLocal(fb, saved_local_idx, value_idx);
+    }
+
     // Emit all deferred expressions in LIFO order (Zig semantics)
     // Reference: Zig lower.zig:334 emitDeferredExprs(0)
     Lowerer_emitDeferredExprs(l, 0);
+
+    // Load back the saved return value if we saved it
+    if saved_local_idx >= 0 {
+        value_idx = FuncBuilder_emitLoadLocal(fb, saved_local_idx);
+    }
 
     // Now emit the return with the pre-computed value
     var ret_node: IRNode = IRNode_new(IRNodeKind.Return, TYPE_VOID);
