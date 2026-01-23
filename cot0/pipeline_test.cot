@@ -182,8 +182,8 @@ fn main() i64 {
     SSABuilder_init(&builder, &ssa_func,
                  &g_all_defs[0], 50,
                  &g_block_map[0], 50,
-                 &g_node_values[0], 500,
-                 &g_var_storage[0], 2000);
+                 &g_node_values[0], 500);
+    SSABuilder_initStorage(&builder, &g_var_storage[0], 2000);
 
     // Create entry block
     let ssa_result: i64 = SSABuilder_convert(&builder);

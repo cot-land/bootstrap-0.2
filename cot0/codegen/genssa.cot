@@ -570,6 +570,8 @@ fn GenState_value(gs: *GenState, v: *Value) {
         GenState_load(gs, v);
     } else if v.op == Op.Store {
         GenState_store(gs, v);
+    } else if v.op == Op.Move {
+        GenState_move(gs, v);
     } else if v.op == Op.LocalAddr {
         GenState_localAddr(gs, v);
     } else if v.op == Op.GlobalAddr {
@@ -1057,6 +1059,89 @@ fn GenState_store(gs: *GenState, v: *Value) {
     }
 }
 
+// Op.Move: Bulk memory copy for struct assignment
+// Following Zig arm64.zig:2680-2776
+// args[0] = dest addr, args[1] = src addr
+// aux_int = size in bytes
+fn GenState_move(gs: *GenState, v: *Value) {
+    let f: *Func = gs.func;
+    if v.args_count < 2 { return; }
+
+    let dest_val: *Value = Func_getValue(f, v.args[0]);
+    let src_val: *Value = Func_getValue(f, v.args[1]);
+    let copy_size: i64 = v.aux_int;
+
+    // Get dest register - could be LocalAddr or computed address
+    // ALWAYS regenerate address for LocalAddr since registers may be reused
+    var dest_reg: i64 = X16;  // Use X16 for dest
+    if dest_val.op == Op.LocalAddr {
+        // Compute local address into X16
+        let local_idx: i64 = dest_val.aux_int;
+        let local: *Local = Func_getLocal(f, local_idx);
+        GenState_emitInst(gs, encode_add_imm(X16, SP, local.offset));
+    } else if dest_val.reg >= 0 {
+        // Use assigned register (may need to reload if stale)
+        dest_reg = dest_val.reg;
+    }
+
+    // Get src register - ALWAYS regenerate for AddPtr since registers may be reused
+    // The AddPtr comes from index_value: base_addr + (index * elem_size)
+    var src_reg: i64 = X17;  // Use X17 for source
+    if src_val.op == Op.AddPtr and src_val.args_count >= 2 {
+        // AddPtr: args[0]=base, args[1]=offset
+        // We need to regenerate the address calculation
+        let base_v: *Value = Func_getValue(f, src_val.args[0]);
+        let off_v: *Value = Func_getValue(f, src_val.args[1]);
+
+        // Get base address into X17
+        if base_v.op == Op.GlobalAddr {
+            // Global address - emit ADRP + ADD sequence into X17
+            let global_idx: i64 = base_v.aux_int;
+            let reloc_offset: i64 = gs.code_count;
+            // Record relocation for linker
+            if gs.global_relocs != null and gs.global_relocs_count < gs.global_relocs_cap {
+                let r: *GlobalReloc = gs.global_relocs + gs.global_relocs_count;
+                r.code_offset = reloc_offset;
+                r.global_idx = global_idx;
+                gs.global_relocs_count = gs.global_relocs_count + 1;
+            }
+            GenState_emitInst(gs, encode_adrp(X17, 0));
+            GenState_emitInst(gs, encode_add_imm(X17, X17, 0));
+        } else if base_v.reg >= 0 {
+            // Copy base register to X17
+            GenState_emitInst(gs, encode_add_imm(X17, base_v.reg, 0));
+        }
+
+        // Add offset (off_v should be Mul64 result with a register)
+        if off_v.reg >= 0 {
+            GenState_emitInst(gs, encode_add_reg(X17, X17, off_v.reg));
+        }
+    } else if src_val.reg >= 0 {
+        // Direct register use
+        src_reg = src_val.reg;
+    }
+
+    // Copy in 8-byte chunks using LDR/STR with X19 as temp
+    // Following Zig pattern but simpler (no LDP/STP for now)
+    var copy_off: i64 = 0;
+    while copy_off + 8 <= copy_size {
+        // LDR X19, [src_reg, #copy_off]
+        GenState_emitInst(gs, encode_ldr(X19, src_reg, copy_off));
+        // STR X19, [dest_reg, #copy_off]
+        GenState_emitInst(gs, encode_str(X19, dest_reg, copy_off));
+        copy_off = copy_off + 8;
+    }
+
+    // Handle remaining bytes (< 8)
+    while copy_off < copy_size {
+        // LDRB X19, [src_reg, #copy_off]
+        GenState_emitInst(gs, encode_ldrb(X19, src_reg, copy_off));
+        // STRB X19, [dest_reg, #copy_off]
+        GenState_emitInst(gs, encode_strb(X19, dest_reg, copy_off));
+        copy_off = copy_off + 1;
+    }
+}
+
 fn GenState_localAddr(gs: *GenState, v: *Value) {
     let rd: i64 = v.reg;
     if rd < 0 { return; }
@@ -1103,28 +1188,45 @@ fn GenState_globalAddr(gs: *GenState, v: *Value) {
 }
 
 fn GenState_globalLoad(gs: *GenState, v: *Value) {
+    // Load from global variable
+    // Pattern from Zig: ADRP + ADD to compute address, then LDR
     let rd: i64 = v.reg;
     if rd < 0 { return; }
 
     let global_idx: i64 = v.aux_int;
     if gs.globals == null or global_idx >= gs.globals_count {
-        // No globals info - emit a constant 0
         GenState_emitInst(gs, encode_movz(rd, 0, 0));
         return;
     }
 
-    // Get global address, then load from it
-    // For now, compute the address and load in two instructions
-    let g: *IRGlobal = gs.globals + global_idx;
+    // Use x16 (IP0, intra-procedure scratch) for address calculation
+    let addr_reg: i64 = 16;
 
-    // Use a temporary to hold the address if needed
-    // For simplicity, load the value as if it were a constant
-    // This is a placeholder - full implementation needs proper addressing
-    GenState_emitInst(gs, encode_movz(rd, 0, 0));
+    // Record the code offset for relocation
+    let reloc_offset: i64 = gs.code_count;
+
+    // Emit ADRP + ADD pair to compute global address (placeholders - linker fills in)
+    // ADRP addr_reg, symbol@PAGE
+    GenState_emitInst(gs, encode_adrp(addr_reg, 0));
+    // ADD addr_reg, addr_reg, symbol@PAGEOFF
+    GenState_emitInst(gs, encode_add_imm(addr_reg, addr_reg, 0));
+
+    // Emit LDR to load the value from the global address
+    // LDR rd, [addr_reg]
+    GenState_emitInst(gs, encode_ldr(rd, addr_reg, 0));
+
+    // Record relocation for linker to resolve
+    if gs.global_relocs != null and gs.global_relocs_count < gs.global_relocs_cap {
+        let r: *GlobalReloc = gs.global_relocs + gs.global_relocs_count;
+        r.code_offset = reloc_offset;
+        r.global_idx = global_idx;
+        gs.global_relocs_count = gs.global_relocs_count + 1;
+    }
 }
 
 fn GenState_globalStore(gs: *GenState, v: *Value) {
     // Store to global variable
+    // Pattern from Zig: arm64.zig global_addr + store
     let global_idx: i64 = v.aux_int;
     if gs.globals == null or global_idx >= gs.globals_count {
         return;
@@ -1137,8 +1239,33 @@ fn GenState_globalStore(gs: *GenState, v: *Value) {
     let src_reg: i64 = val.reg;
     if src_reg < 0 { return; }
 
-    // For now, this is a placeholder - full implementation needs proper addressing
-    // We would need to compute the global address and store to it
+    // Use v.reg as scratch register for the address
+    let addr_reg: i64 = v.reg;
+    if addr_reg < 0 {
+        // No scratch register - use x16 (IP0, intra-procedure scratch)
+        addr_reg = 16;
+    }
+
+    // Record the code offset for relocation
+    let reloc_offset: i64 = gs.code_count;
+
+    // Emit ADRP + ADD pair to compute global address (placeholders - linker fills in)
+    // ADRP addr_reg, symbol@PAGE
+    GenState_emitInst(gs, encode_adrp(addr_reg, 0));
+    // ADD addr_reg, addr_reg, symbol@PAGEOFF
+    GenState_emitInst(gs, encode_add_imm(addr_reg, addr_reg, 0));
+
+    // Emit STR to store the value
+    // STR src_reg, [addr_reg]
+    GenState_emitInst(gs, encode_str(src_reg, addr_reg, 0));
+
+    // Record relocation for linker to resolve
+    if gs.global_relocs != null and gs.global_relocs_count < gs.global_relocs_cap {
+        let r: *GlobalReloc = gs.global_relocs + gs.global_relocs_count;
+        r.code_offset = reloc_offset;
+        r.global_idx = global_idx;
+        gs.global_relocs_count = gs.global_relocs_count + 1;
+    }
 }
 
 fn GenState_offPtr(gs: *GenState, v: *Value) {

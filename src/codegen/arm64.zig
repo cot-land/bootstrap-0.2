@@ -591,17 +591,10 @@ pub const ARM64CodeGen = struct {
         debug.log(.codegen, "  Emitting prologue", .{});
         try self.emitPrologue();
 
-        // For main function, call install_crash_handler at the start
-        if (std.mem.eql(u8, name, "main")) {
-            debug.log(.codegen, "  Emitting call to install_crash_handler for main()", .{});
-            // BL _install_crash_handler (relocation will be applied by linker)
-            const bl_offset = self.offset();
-            try self.emit(asm_mod.encodeBL(0)); // Placeholder offset, will be fixed by linker
-            try self.relocations.append(self.allocator, .{
-                .offset = bl_offset,
-                .target = "_install_crash_handler",
-            });
-        }
+        // NOTE: Do not auto-insert install_crash_handler here.
+        // The cot0 source code (cot0/main.cot) calls it explicitly as the first statement.
+        // Auto-inserting it here causes a bug: the call happens before argc/argv are
+        // saved from x0/x1 to the stack, so they get clobbered by the function call.
 
         // Generate code for each block, recording offsets
         for (f.blocks.items) |block| {

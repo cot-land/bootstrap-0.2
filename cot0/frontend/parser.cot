@@ -120,79 +120,89 @@ fn Parser_binopInt(p: *Parser) i64 {
 // Type Parsing
 // ============================================================================
 
-// Parse a type and return a TypeRegistry index
+// Parse a type and return a TypeExpr AST node index
 // Types: i64 | i32 | u8 | bool | void | string | *T | [N]T | []T | TypeName
-// Returns TypeRegistry index (not PTYPE encoding)
+// Reference: src/frontend/parser.zig parseType()
+// Returns AST node index (TypeExpr node), NOT a TypeRegistry index
 fn Parser_parseType(p: *Parser) i64 {
     let kind: TokenType = p.current.kind;
+    let type_start: i64 = p.current.start;
 
-    // Built-in types - return predefined TypeRegistry indices
+    // Built-in types - create TypeExprNamed node with type name
+    // The checker will resolve "i64" -> TYPE_I64, etc.
     if kind == TokenType.I64 {
         Parser_advance(p);
-        return TYPE_I64;
+        return Node_typeExprNamed(p.pool, type_start, 3, type_start, type_start + 3);  // "i64"
     }
     if kind == TokenType.I32 {
         Parser_advance(p);
-        return TYPE_I32;
+        return Node_typeExprNamed(p.pool, type_start, 3, type_start, type_start + 3);  // "i32"
     }
     if kind == TokenType.U8 {
         Parser_advance(p);
-        return TYPE_U8;
+        return Node_typeExprNamed(p.pool, type_start, 2, type_start, type_start + 2);  // "u8"
     }
     if kind == TokenType.Bool {
         Parser_advance(p);
-        return TYPE_BOOL;
+        return Node_typeExprNamed(p.pool, type_start, 4, type_start, type_start + 4);  // "bool"
     }
     if kind == TokenType.Void {
         Parser_advance(p);
-        return TYPE_VOID;
+        return Node_typeExprNamed(p.pool, type_start, 4, type_start, type_start + 4);  // "void"
     }
     if kind == TokenType.String {
         Parser_advance(p);
-        return TYPE_STRING;
+        return Node_typeExprNamed(p.pool, type_start, 6, type_start, type_start + 6);  // "string"
     }
 
     // Pointer type: *T
+    // Reference: parser.zig line 554-560
     if kind == TokenType.Star {
         Parser_advance(p);
-        let pointee: i64 = Parser_parseType(p);
-        return TypeRegistry_makePointer(p.type_registry, pointee);
+        let inner: i64 = Parser_parseType(p);
+        return Node_typeExprPointer(p.pool, inner, type_start, p.current.start);
     }
 
     // Array type: [size]T or slice type: []T
+    // Reference: parser.zig line 563-580
     if kind == TokenType.LBracket {
         Parser_advance(p);  // consume '['
 
         // Check for slice type []T (empty brackets)
         if Parser_check(p, TokenType.RBracket) {
             Parser_advance(p);  // consume ']'
-            let elem_type: i64 = Parser_parseType(p);
-            return TypeRegistry_makeSlice(p.type_registry, elem_type);
+            let elem: i64 = Parser_parseType(p);
+            return Node_typeExprSlice(p.pool, elem, type_start, p.current.start);
         }
 
-        // Array type [size]T - parse size (must be integer literal)
-        var array_size: i64 = 0;
+        // Array type [size]T - parse size as integer literal node
+        var size_node: i64 = NULL_NODE;
         if Parser_check(p, TokenType.Int) {
-            let arr_start: i64 = p.current.start;
-            let arr_end: i64 = p.current.end;
-            var arr_i: i64 = arr_start;
-            while arr_i < arr_start + arr_end {
+            // Create IntLit node for the size
+            let size_start: i64 = p.current.start;
+            let size_end: i64 = p.current.end;
+            // Parse the integer value
+            var array_size: i64 = 0;
+            var arr_i: i64 = size_start;
+            while arr_i < size_start + size_end {
                 let arr_c: u8 = p.source[arr_i];
                 if arr_c >= 48 and arr_c <= 57 {
                     array_size = array_size * 10 + (arr_c - 48);
                 }
                 arr_i = arr_i + 1;
             }
+            size_node = Node_intLit(p.pool, array_size, size_start, size_end);
             Parser_advance(p);
         } else {
             p.had_error = true;
         }
         Parser_want(p, TokenType.RBracket);  // consume ']'
-        let elem_type: i64 = Parser_parseType(p);
-        return TypeRegistry_makeArray(p.type_registry, elem_type, array_size);
+        let elem: i64 = Parser_parseType(p);
+        return Node_typeExprArray(p.pool, size_node, elem, type_start, p.current.start);
     }
 
-    // User-defined type (struct/enum name) - look up in TypeRegistry
+    // User-defined type (struct/enum name) - create TypeExprNamed
+    // Reference: parser.zig line 583-616
     if kind == TokenType.Ident {
         let name_start: i64 = p.current.start;
         // Calculate name length
@@ -209,22 +219,17 @@ fn Parser_parseType(p: *Parser) i64 {
             }
         }
         Parser_advance(p);
-        // Look up type by name in TypeRegistry
-        // Struct types are registered by checker before lowering
-        let type_idx: i64 = TypeRegistry_findByName(p.type_registry, name_start, name_len);
-        if type_idx >= 0 {
-            return type_idx;
-        }
-        // Type not found yet - will be resolved after checker runs
-        return TYPE_I64;
+        // Create TypeExprNamed - will be resolved by checker after all types are registered
+        return Node_typeExprNamed(p.pool, name_start, name_len, name_start, name_start + name_len);
     }
 
     // Function type: fn(params) -> ret
+    // TODO: Create TypeExprFunction node
     if kind == TokenType.Fn {
         Parser_advance(p);  // consume 'fn'
         Parser_want(p, TokenType.LParen);  // consume '('
 
-        // Parse parameter types (comma-separated)
+        // Parse parameter types (comma-separated) - but don't store yet
         while not Parser_check(p, TokenType.RParen) and not Parser_check(p, TokenType.Eof) {
             let param_type: i64 = Parser_parseType(p);
             if not Parser_check(p, TokenType.Comma) {
@@ -236,19 +241,20 @@ fn Parser_parseType(p: *Parser) i64 {
         Parser_want(p, TokenType.RParen);  // consume ')'
 
         // Parse return type after '->'
-        var ret_type: i64 = TYPE_VOID;
         if Parser_check(p, TokenType.Arrow) {
             Parser_advance(p);  // consume '->'
-            ret_type = Parser_parseType(p);
+            let ret_type: i64 = Parser_parseType(p);
         }
 
-        // TODO: Create proper function type in registry
-        return TYPE_I64;  // Placeholder
+        // TODO: Return TypeExprFunction node
+        // For now, return a placeholder named type
+        return Node_typeExprNamed(p.pool, type_start, 2, type_start, type_start + 2);
     }
 
     // Error - unexpected token
     p.had_error = true;
-    return TYPE_I64;
+    // Return a placeholder void type
+    return Node_typeExprNamed(p.pool, 0, 4, 0, 4);  // "void"
 }
 
 // Helper to check if type is a pointer type

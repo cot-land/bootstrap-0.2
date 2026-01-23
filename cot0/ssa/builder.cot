@@ -178,6 +178,10 @@ struct SSABuilder {
     source_len: i64,
     call_args: *i64,          // Global call args array
 
+    // === Type Registry (for struct checks) ===
+    // Following Zig ssa_builder.zig line 49: type_registry: *TypeRegistry
+    type_registry: *TypeRegistry,
+
     // === Register allocation state ===
     // Simple round-robin allocation matching original main.cot behavior
     next_reg: i64,            // Next register to assign (X1-X28)
@@ -188,11 +192,11 @@ struct SSABuilder {
 // Builder Initialization
 // ============================================================================
 
+// Split into two functions to avoid >8 arguments (ARM64 ABI limitation)
 fn SSABuilder_init(b: *SSABuilder, f: *Func,
                 all_defs: *BlockDefs, all_defs_cap: i64,
                 block_map: *BlockMapping, block_map_cap: i64,
-                node_values: *VarDef, node_values_cap: i64,
-                var_storage: *VarDef, var_storage_cap: i64) {
+                node_values: *VarDef, node_values_cap: i64) {
     b.func = f;
     b.current_block = INVALID_BLOCK;
     b.current_defs = null;
@@ -209,11 +213,12 @@ fn SSABuilder_init(b: *SSABuilder, f: *Func,
     b.node_values_count = 0;
     b.node_values_cap = node_values_cap;
 
-    b.var_storage = var_storage;
+    // Initialize remaining fields to defaults
+    b.var_storage = null;
     b.var_storage_used = 0;
-    b.var_storage_cap = var_storage_cap;
+    b.var_storage_cap = 0;
 
-    // IR references (set later via SSABuilder_setIR)
+    // IR references (set later via SSABuilder_setIRNodes/Locals/Source)
     b.ir_nodes = null;
     b.ir_nodes_start = 0;
     b.ir_nodes_end = 0;
@@ -223,10 +228,24 @@ fn SSABuilder_init(b: *SSABuilder, f: *Func,
     b.source = null;
     b.source_len = 0;
     b.call_args = null;
+    b.type_registry = null;
 
     // Register allocation - simple round-robin matching original main.cot
     b.next_reg = X1;          // Start at X1 (X0 is reserved for return value)
     b.max_reg = 28;           // Max is X28 (29=FP, 30=LR, 31=SP/XZR)
+}
+
+// Second part of init - set var_storage (split for ARM64 ABI)
+fn SSABuilder_initStorage(b: *SSABuilder, var_storage: *VarDef, var_storage_cap: i64) {
+    b.var_storage = var_storage;
+    b.var_storage_used = 0;
+    b.var_storage_cap = var_storage_cap;
+}
+
+// Set type registry for struct type checks
+// Following Zig ssa_builder.zig:49 - type_registry field
+fn SSABuilder_setTypeRegistry(b: *SSABuilder, reg: *TypeRegistry) {
+    b.type_registry = reg;
 }
 
 // Assign a register to a value and increment the counter
@@ -255,17 +274,24 @@ fn SSABuilder_assignReg(b: *SSABuilder, v: *Value) i64 {
 
 // Set IR references before calling build()
 // Matches Zig's SSABuilder.init() which takes ir_func
-fn SSABuilder_setIR(b: *SSABuilder,
-                    ir_nodes: *IRNode, ir_nodes_start: i64, ir_nodes_count: i64,
-                    ir_locals: *IRLocal, ir_locals_start: i64, ir_locals_count: i64,
-                    source: *u8, source_len: i64,
-                    call_args: *i64) {
+// Set IR nodes for the SSA builder
+fn SSABuilder_setIRNodes(b: *SSABuilder,
+                    ir_nodes: *IRNode, ir_nodes_start: i64, ir_nodes_count: i64) {
     b.ir_nodes = ir_nodes;
     b.ir_nodes_start = ir_nodes_start;
     b.ir_nodes_end = ir_nodes_start + ir_nodes_count;
+}
+
+// Set IR locals for the SSA builder
+fn SSABuilder_setIRLocals(b: *SSABuilder,
+                    ir_locals: *IRLocal, ir_locals_start: i64, ir_locals_count: i64) {
     b.ir_locals = ir_locals;
     b.ir_locals_start = ir_locals_start;
     b.ir_locals_count = ir_locals_count;
+}
+
+// Set source and call args for the SSA builder
+fn SSABuilder_setSource(b: *SSABuilder, source: *u8, source_len: i64, call_args: *i64) {
     b.source = source;
     b.source_len = source_len;
     b.call_args = call_args;
@@ -785,6 +811,41 @@ fn SSABuilder_convertStoreLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
     let loc_idx: i64 = ir_node.left;
     // right is relative IR index of value to store
     let value_val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
+
+    // BUG-019 FIX: For struct types, use Op.Move to copy the data
+    // Following Zig ssa_builder.zig:228-233:
+    //   const is_large_struct = (local_type_info == .struct_type) and (type_size > 16);
+    //   if (is_large_struct) { const move_val = try func.newValue(.move, ...); }
+    //
+    // When the value is an address of a struct (from index_value, field_value, etc.),
+    // we need to copy the struct data to the local, not just store the address.
+    let local: *Local = Func_getLocal(b.func, loc_idx);
+    var is_struct: bool = false;
+    var struct_size: i64 = 0;
+    if b.type_registry != null and local.type_idx > 0 {
+        let local_type: *Type = TypeRegistry_get(b.type_registry, local.type_idx);
+        if local_type.kind == TypeKind.Struct {
+            is_struct = true;
+            struct_size = local.size;
+        }
+    }
+
+    if is_struct and struct_size > 8 {
+        // Struct type: emit Op.Move to copy data from source to dest
+        // dest = address of local
+        let dest_addr: *Value = Func_newValue(b.func, Op.LocalAddr, TYPE_I64);
+        dest_addr.aux_int = loc_idx;
+        SSABuilder_assignReg(b, dest_addr);
+
+        // source = value_val (which should be an address for struct types)
+        // Move: (dest, source) with aux_int = size
+        let move_val: *Value = Func_newValue(b.func, Op.Move, TYPE_VOID);
+        move_val.aux_int = struct_size;
+        Value_addArg2(move_val, dest_addr, value_val);
+        return move_val.id;
+    }
+
+    // Non-struct: use normal store
     let store_val: *Value = Func_emitStoreLocal(b.func, loc_idx, value_val);
     // Stores don't need registers (they write to memory)
     return store_val.id;
@@ -965,6 +1026,7 @@ fn SSABuilder_convertIndexLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
 
 fn SSABuilder_convertIndexValue(b: *SSABuilder, ir_node: *IRNode) i64 {
     // Index via computed address: left = base_expr, right = index_expr, value = elem_size
+    // Following Zig ssa_builder.zig:1308-1346
     let base_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
     let idx_val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
     let elem_size: i64 = ir_node.value;
@@ -979,7 +1041,19 @@ fn SSABuilder_convertIndexValue(b: *SSABuilder, ir_node: *IRNode) i64 {
     let ptr_val: *Value = Func_emitBinary(b.func, Op.AddPtr, base_val, offset_val, TYPE_I64);
     SSABuilder_assignReg(b, ptr_val);
 
-    // 3. Load the element value
+    // 3. For struct types, return address without loading
+    // Following Zig ssa_builder.zig:1333-1337:
+    //   const elem_type = self.type_registry.get(node.type_idx);
+    //   if (elem_type == .struct_type) { break :blk elem_addr; }
+    // Structs need address for field access, not loaded value
+    if b.type_registry != null and ir_node.type_idx > 0 {
+        let elem_type: *Type = TypeRegistry_get(b.type_registry, ir_node.type_idx);
+        if elem_type.kind == TypeKind.Struct {
+            return ptr_val.id;
+        }
+    }
+
+    // 4. Load the element value for primitives
     let load_val: *Value = Func_newValue(b.func, Op.Load, ir_node.type_idx);
     Value_addArg(load_val, ptr_val);
     SSABuilder_assignReg(b, load_val);

@@ -68,6 +68,14 @@ enum NodeKind {
     SwitchExpr,     // switch x { 1 => a, 2 => b, else => c }
     SwitchCase,     // pattern => body (or else => body)
 
+    // Type expressions (like Zig's TypeExpr - resolved by checker)
+    // Reference: src/frontend/ast.zig TypeExpr, TypeKind
+    TypeExprNamed,      // Named type: Point, i64 (field0=name_start, field1=name_len)
+    TypeExprPointer,    // Pointer type: *T (field0=inner type node)
+    TypeExprArray,      // Array type: [N]T (field0=size node, field1=elem type node)
+    TypeExprSlice,      // Slice type: []T (field0=elem type node)
+    TypeExprOptional,   // Optional type: ?T (field0=inner type node)
+
     // Special
     BadNode,        // Error placeholder
 }
@@ -965,6 +973,101 @@ fn Node_switchCase(pool: *NodePool, patterns_start: i64, patterns_count: i64,
     n.field0 = patterns_start;
     n.field1 = patterns_count;
     n.field2 = body;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// ============================================================================
+// Type Expression Nodes (like Zig's TypeExpr)
+// Reference: src/frontend/ast.zig TypeExpr, TypeKind
+// ============================================================================
+
+// Named type: Point, i64, bool, etc.
+// field0 = name_start (source position), field1 = name_len
+fn Node_typeExprNamed(pool: *NodePool, name_start: i64, name_len: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.TypeExprNamed;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;
+    n.field1 = name_len;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Pointer type: *T
+// field0 = inner type node index
+fn Node_typeExprPointer(pool: *NodePool, inner: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.TypeExprPointer;
+    n.start = start;
+    n.end = end;
+    n.field0 = inner;
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Array type: [N]T
+// field0 = size (integer literal node), field1 = element type node
+fn Node_typeExprArray(pool: *NodePool, size_node: i64, elem_node: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.TypeExprArray;
+    n.start = start;
+    n.end = end;
+    n.field0 = size_node;
+    n.field1 = elem_node;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Slice type: []T
+// field0 = element type node
+fn Node_typeExprSlice(pool: *NodePool, elem_node: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.TypeExprSlice;
+    n.start = start;
+    n.end = end;
+    n.field0 = elem_node;
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Optional type: ?T
+// field0 = inner type node
+fn Node_typeExprOptional(pool: *NodePool, inner: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.TypeExprOptional;
+    n.start = start;
+    n.end = end;
+    n.field0 = inner;
+    n.field1 = 0;
+    n.field2 = 0;
     n.field3 = 0;
 
     return idx;

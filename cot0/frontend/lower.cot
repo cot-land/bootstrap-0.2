@@ -17,23 +17,6 @@ import "parser.cot"  // For parse_* functions
 
 
 // ============================================================================
-// Type Resolution
-// ============================================================================
-// PTYPE_* constants are defined in types.cot
-
-// Resolve parser type handle to TypeRegistry type index
-// Type handle resolution - now mostly a pass-through since parser returns TypeRegistry indices
-fn resolve_type_handle(pool: *TypeRegistry, source: *u8, type_handle: i64) i64 {
-    // Parser now returns TypeRegistry indices directly, so just return the handle
-    // Valid TypeRegistry indices are >= 0 and < pool.count
-    // The basic types (0-13) and any compound types are valid indices
-    if type_handle >= 0 {
-        return type_handle;
-    }
-    return TYPE_INVALID;
-}
-
-// ============================================================================
 // Lowerer Context
 // ============================================================================
 
@@ -104,6 +87,119 @@ struct Lowerer {
     call_args: *i64,
     call_args_count: i64,
     call_args_cap: i64,
+}
+
+// ============================================================================
+// Type Resolution - TypeExpr AST Node to TypeRegistry Index
+// ============================================================================
+// Reference: src/frontend/checker.zig resolveTypeExpr(), resolveType()
+
+// Resolve a TypeExpr AST node to a TypeRegistry index
+// This is called by the lowerer when it needs to know the actual type
+fn resolve_type_expr(l: *Lowerer, type_expr_idx: i64) i64 {
+    if type_expr_idx < 0 {
+        return TYPE_INVALID;
+    }
+
+    let node: *Node = l.nodes + type_expr_idx;
+
+    // TypeExprNamed: look up type by name
+    if node.kind == NodeKind.TypeExprNamed {
+        let name_start: i64 = node.field0;
+        let name_len: i64 = node.field1;
+        return resolve_named_type(l.type_pool, l.source, name_start, name_len);
+    }
+
+    // TypeExprPointer: *T
+    if node.kind == NodeKind.TypeExprPointer {
+        let inner_idx: i64 = node.field0;
+        let inner_type: i64 = resolve_type_expr(l, inner_idx);
+        return TypeRegistry_makePointer(l.type_pool, inner_type);
+    }
+
+    // TypeExprArray: [N]T
+    if node.kind == NodeKind.TypeExprArray {
+        let size_node_idx: i64 = node.field0;
+        let elem_node_idx: i64 = node.field1;
+        // Get array size from IntLit node
+        var array_size: i64 = 0;
+        if size_node_idx >= 0 {
+            let size_node: *Node = l.nodes + size_node_idx;
+            if size_node.kind == NodeKind.IntLit {
+                array_size = size_node.field0;  // IntLit stores value in field0
+            }
+        }
+        let elem_type: i64 = resolve_type_expr(l, elem_node_idx);
+        return TypeRegistry_makeArray(l.type_pool, elem_type, array_size);
+    }
+
+    // TypeExprSlice: []T
+    if node.kind == NodeKind.TypeExprSlice {
+        let elem_node_idx: i64 = node.field0;
+        let elem_type: i64 = resolve_type_expr(l, elem_node_idx);
+        return TypeRegistry_makeSlice(l.type_pool, elem_type);
+    }
+
+    // TypeExprOptional: ?T
+    if node.kind == NodeKind.TypeExprOptional {
+        let inner_idx: i64 = node.field0;
+        let inner_type: i64 = resolve_type_expr(l, inner_idx);
+        // TODO: TypeRegistry_makeOptional
+        return inner_type;
+    }
+
+    return TYPE_INVALID;
+}
+
+// Resolve a named type by looking up in source and TypeRegistry
+// Handles both built-in types (i64, bool) and user types (Point, MyStruct)
+fn resolve_named_type(pool: *TypeRegistry, source: *u8, name_start: i64, name_len: i64) i64 {
+    // Check built-in types first (compare name in source)
+    if name_len == 3 {
+        // i64, i32
+        if (source + name_start).* == 105 {  // 'i'
+            if (source + name_start + 1).* == 54 and (source + name_start + 2).* == 52 {  // '6', '4'
+                return TYPE_I64;
+            }
+            if (source + name_start + 1).* == 51 and (source + name_start + 2).* == 50 {  // '3', '2'
+                return TYPE_I32;
+            }
+        }
+    }
+    if name_len == 2 {
+        // u8
+        if (source + name_start).* == 117 and (source + name_start + 1).* == 56 {  // 'u', '8'
+            return TYPE_U8;
+        }
+    }
+    if name_len == 4 {
+        // bool, void
+        if (source + name_start).* == 98 {  // 'b'
+            return TYPE_BOOL;
+        }
+        if (source + name_start).* == 118 {  // 'v'
+            return TYPE_VOID;
+        }
+    }
+    if name_len == 6 {
+        // string
+        if (source + name_start).* == 115 {  // 's'
+            return TYPE_STRING;
+        }
+    }
+
+    // Look up user-defined type in TypeRegistry
+    return TypeRegistry_findByName(pool, name_start, name_len);
+}
+
+// Legacy function for backwards compatibility during transition
+// This is for code that still uses old-style type handles
+fn resolve_type_handle(pool: *TypeRegistry, source: *u8, type_handle: i64) i64 {
+    // If it's a valid TypeRegistry index, return it directly
+    if type_handle >= 0 and type_handle < 100 {
+        return type_handle;
+    }
+    return TYPE_INVALID;
 }
 
 fn Lowerer_init(l: *Lowerer,
@@ -328,16 +424,19 @@ fn Lowerer_registerGlobalVar(l: *Lowerer, node: *Node) {
     // field1 = name_start
     // field2 = name_len
     // field3 = init_expr node index (-1 if none)
-    // field4 = type_start
-    // field5 = type_handle
+    // field4 = type_start (legacy)
+    // field5 = type_expr (TypeExpr AST node index)
 
     let is_mutable: bool = node.field0 == 0;  // 0 = var (mutable), 1 = let (immutable)
     let name_start: i64 = node.field1;
     let name_len: i64 = node.field2;
-    let type_handle: i64 = node.field5;
+    let type_expr_idx: i64 = node.field5;
 
-    // Resolve the type from parser type handle to TypeRegistry index
-    let type_idx: i64 = resolve_type_handle(l.type_pool, l.source, type_handle);
+    // Resolve TypeExpr AST node to TypeRegistry index
+    var type_idx: i64 = resolve_type_expr(l, type_expr_idx);
+    if type_idx < 0 {
+        type_idx = TYPE_I64;  // Fallback
+    }
 
     // Check if this is an array type
     let type_info: *Type = TypeRegistry_get(l.type_pool, type_idx);
@@ -371,16 +470,21 @@ fn Lowerer_registerStructType(l: *Lowerer, node: *Node, node_idx: i64) {
         let field_node_idx: i64 = child_ptr.*;
         let field_node: *Node = l.nodes + field_node_idx;
 
-        // FieldDecl: field0=name_start, field1=name_len, field2=type_start, field3=type_handle
+        // FieldDecl: field0=name_start, field1=name_len, field2=type_start, field3=type_expr
         let fname_start: i64 = field_node.field0;
         let fname_len: i64 = field_node.field1;
-        let type_handle: i64 = field_node.field3;
+        let type_expr_idx: i64 = field_node.field3;
 
-        // Resolve field type - for now assume i64 (8 bytes, 8 align) for simplicity
-        // TODO: Use type_handle to get proper size/alignment from TypeRegistry
-        let field_type: i64 = TYPE_I64;
-        let field_size: i64 = 8;
-        let field_align: i64 = 8;
+        // Resolve field type using TypeExpr AST node
+        var field_type: i64 = resolve_type_expr(l, type_expr_idx);
+        if field_type < 0 {
+            field_type = TYPE_I64;  // Fallback
+        }
+
+        // Get size and alignment from resolved type
+        let field_type_info: *Type = TypeRegistry_get(l.type_pool, field_type);
+        let field_size: i64 = field_type_info.size;
+        let field_align: i64 = field_type_info.align;
 
         // Align offset to field alignment
         if field_align > 0 {
@@ -498,8 +602,11 @@ fn Lowerer_lowerFnDecl(l: *Lowerer, node: *Node) {
         let param_node_idx: i64 = child_ptr.*;
         let param_node: *Node = l.nodes + param_node_idx;
 
-        // ParamDecl: field0=name_start, field1=name_len, field2=type_start, field3=type_handle
-        let param_type: i64 = resolve_type_handle(l.type_pool, l.source, param_node.field3);
+        // ParamDecl: field0=name_start, field1=name_len, field2=type_start, field3=type_expr
+        var param_type: i64 = resolve_type_expr(l, param_node.field3);
+        if param_type < 0 {
+            param_type = TYPE_I64;  // Fallback
+        }
         FuncBuilder_addParam(&fb,
                                param_node.field0, param_node.field1,
                                param_type, param_idx);
@@ -649,8 +756,8 @@ fn Lowerer_lowerVarDecl(l: *Lowerer, node: *Node) {
     // field1 = name_start
     // field2 = name_len
     // field3 = init_expr node index
-    // field4 = type_start (position of type annotation in source)
-    // field5 = type_handle (resolved type, may be placeholder)
+    // field4 = type_start (legacy, not used with TypeExpr)
+    // field5 = type_expr (TypeExpr AST node index)
 
     let fb: *FuncBuilder = l.current_func;
     if fb == null {
@@ -659,49 +766,36 @@ fn Lowerer_lowerVarDecl(l: *Lowerer, node: *Node) {
 
     // is_mutable = NOT is_let (var = mutable, let = immutable)
     let is_mutable: bool = node.field0 == 0;
-    let type_start: i64 = node.field4;
-    var type_handle: i64 = node.field5;
+    let type_expr_idx: i64 = node.field5;
 
-    // If type_handle is a placeholder (TYPE_I64), try to resolve from type_start
-    // This handles struct types that weren't registered during parsing
-    if type_handle == TYPE_I64 and type_start > 0 {
-        // Calculate type name length by scanning identifier chars
-        var type_len: i64 = 0;
-        var pos: i64 = type_start;
-        while pos < l.source_len {
-            let c: u8 = (l.source + pos).*;
-            if (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or
-               (c >= 48 and c <= 57) or c == 95 {
-                type_len = type_len + 1;
-                pos = pos + 1;
-            } else {
-                break;
-            }
-        }
-        // Look up the now-registered struct type
-        let resolved_idx: i64 = TypeRegistry_findByName(l.type_pool, type_start, type_len);
-        if resolved_idx >= 0 {
-            type_handle = resolved_idx;
-        }
+    // Resolve TypeExpr AST node to TypeRegistry index
+    // Reference: Zig's checker.zig resolveTypeExpr()
+    var type_idx: i64 = resolve_type_expr(l, type_expr_idx);
+    if type_idx < 0 {
+        type_idx = TYPE_I64;  // Fallback
     }
 
-    // Determine local type based on type_handle (TypeRegistry index)
+    // Determine local type and size based on resolved type
     var local_type: i64 = TYPE_I64;
     var array_len: i64 = 0;
+    var array_elem_size: i64 = 8;
     var struct_size: i64 = 0;
-    if type_handle > 0 {
-        let type_info: *Type = TypeRegistry_get(l.type_pool, type_handle);
+
+    if type_idx > 0 {
+        let type_info: *Type = TypeRegistry_get(l.type_pool, type_idx);
         if type_info.kind == TypeKind.Slice {
             local_type = TYPE_SLICE;
         } else if type_info.kind == TypeKind.Array {
-            local_type = type_handle;
+            local_type = type_idx;
             array_len = type_info.len;
+            // Get element size from element type
+            let elem_type_info: *Type = TypeRegistry_get(l.type_pool, type_info.elem);
+            array_elem_size = elem_type_info.size;
         } else if type_info.kind == TypeKind.Struct {
-            local_type = type_handle;
+            local_type = type_idx;
             struct_size = type_info.size;
         } else if type_info.kind == TypeKind.Pointer {
-            // Preserve pointer type for correct byte load/store generation
-            local_type = type_handle;
+            local_type = type_idx;
         }
     }
 
@@ -712,9 +806,9 @@ fn Lowerer_lowerVarDecl(l: *Lowerer, node: *Node) {
         FuncBuilder_setLocalSize(fb, local_idx, 16);
     }
 
-    // Set array local size based on array length
+    // Set array local size based on array length and element size
     if array_len > 0 {
-        let array_size: i64 = array_len * 8;  // 8 bytes per i64 element
+        let array_size: i64 = array_len * array_elem_size;
         FuncBuilder_setLocalSize(fb, local_idx, array_size);
     }
 
@@ -723,94 +817,35 @@ fn Lowerer_lowerVarDecl(l: *Lowerer, node: *Node) {
         FuncBuilder_setLocalSize(fb, local_idx, struct_size);
     }
 
-    // Check for type annotation indicating a struct type
-    // Handles both direct struct (Point) and pointer-to-struct (*Point)
-    // First try TypeRegistry to identify struct types (after refactoring)
+    // Set struct type info on the local for struct and pointer-to-struct types
+    // This is used later for field access resolution
     var struct_name_start: i64 = -1;
-    var TypeInfo_isPointer_to_struct: bool = false;
+    var struct_name_len: i64 = 0;
+    var is_pointer_to_struct: bool = false;
 
-    // Check if type_handle is a valid TypeRegistry index for a struct type
-    if type_handle > 0 {
-        let type_info: *Type = TypeRegistry_get(l.type_pool, type_handle);
+    if type_idx > 0 {
+        let type_info: *Type = TypeRegistry_get(l.type_pool, type_idx);
         if type_info != null {
             if type_info.kind == TypeKind.Struct {
                 struct_name_start = type_info.name_start;
+                struct_name_len = type_info.name_len;
             } else if type_info.kind == TypeKind.Pointer {
                 // Check if it's a pointer to a struct
                 let pointee: *Type = TypeRegistry_get(l.type_pool, type_info.elem);
-                if pointee != null {
-                    if pointee.kind == TypeKind.Struct {
-                        struct_name_start = pointee.name_start;
-                        TypeInfo_isPointer_to_struct = true;
-                    }
+                if pointee != null and pointee.kind == TypeKind.Struct {
+                    struct_name_start = pointee.name_start;
+                    struct_name_len = pointee.name_len;
+                    is_pointer_to_struct = true;
                 }
             }
         }
     }
 
-    // Fallback: PTYPE encoding for compatibility (will be removed eventually)
-    if struct_name_start < 0 and type_handle >= PTYPE_USER_BASE and type_handle < PTYPE_ARRAY_BASE {
-        let direct_offset: i64 = type_handle - PTYPE_USER_BASE;
-        let ptr_offset: i64 = type_handle - PTYPE_PTR_BASE - PTYPE_USER_BASE;
-
-        // Check for pointer-to-struct: look for '*' before ptr_offset position
-        var found_star: bool = false;
-        if ptr_offset > 0 {
-            var scan_pos: i64 = ptr_offset - 1;
-            while scan_pos >= 0 {
-                let c: u8 = (l.source + scan_pos).*;
-                // Skip whitespace (space=32, tab=9, newline=10, cr=13)
-                if c == 32 or c == 9 or c == 10 or c == 13 {
-                    scan_pos = scan_pos - 1;
-                } else if c == 42 {  // '*'
-                    found_star = true;
-                    break;
-                } else {
-                    break;
-                }
-            }
-        }
-
-        if found_star and ptr_offset >= 0 {
-            // Pointer-to-struct: store the pointee struct's position
-            struct_name_start = ptr_offset;
-            TypeInfo_isPointer_to_struct = true;
-        } else {
-            // Direct struct type
-            struct_name_start = direct_offset;
-        }
-    }
-
-    // If we found a struct type, scan for its name and store
+    // Store struct type info on the local
     if struct_name_start >= 0 {
-        // Scan for identifier length
-        var type_name_len: i64 = 0;
-        var pos: i64 = struct_name_start;
-        while pos < l.source_len {
-            let c: u8 = (l.source + pos).*;
-            // Check if alphanumeric or underscore (a-z: 97-122, A-Z: 65-90, 0-9: 48-57, _: 95)
-            let is_ident_char: bool = (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or
-                                       (c >= 48 and c <= 57) or c == 95;
-            if not is_ident_char {
-                break;
-            }
-            pos = pos + 1;
-        }
-        type_name_len = pos - struct_name_start;
-
-        // Set struct type info on the local (for both struct and ptr-to-struct)
         let local: *IRLocal = fb.locals + local_idx;
         local.struct_type_start = struct_name_start;
-        local.struct_type_len = type_name_len;
-
-        // For direct struct types (not pointers), compute and set the struct size
-        // so that the local gets enough stack space allocated
-        if not TypeInfo_isPointer_to_struct {
-            let struct_size: i64 = get_TypeInfo_size_from_ast(l, struct_name_start, type_name_len);
-            if struct_size > 8 {
-                FuncBuilder_setLocalSize(fb, local_idx, struct_size);
-            }
-        }
+        local.struct_type_len = struct_name_len;
     }
 
     // If there's an initializer, emit store
@@ -2422,7 +2457,63 @@ fn Lowerer_lowerFieldAccess(l: *Lowerer, node: *Node) i64 {
         return FuncBuilder_emitFieldValue(fb, base_val, 0, TYPE_I64);
     }
 
-    // Case 4: Other expressions - lower them and access field
+    // Case 4: Base is an IndexExpr (arr[i].field)
+    // Need to compute element address and load at field offset
+    if base_node.kind == NodeKind.IndexExpr {
+        let array_node: *Node = l.nodes + base_node.field0;
+        let index_node: *Node = l.nodes + base_node.field1;
+
+        // Lower the index expression
+        let index_ir: i64 = Lowerer_lowerExpr(l, index_node);
+
+        if array_node.kind == NodeKind.Ident {
+            // Look up the array local
+            var local_idx: i64 = -1;
+            var local_type_idx: i64 = TYPE_I64;
+            var i: i64 = 0;
+            while i < fb.locals_count {
+                let local: *IRLocal = fb.locals + i;
+                if names_equal(l.source, local.name_start, local.name_len,
+                              array_node.field0, array_node.field1) {
+                    local_idx = i;
+                    local_type_idx = local.type_idx;
+                }
+                i = i + 1;
+            }
+
+            if local_idx >= 0 {
+                // Get array element type and size from TypeRegistry
+                var elem_size: i64 = 8;  // Default to i64
+                var elem_type_idx: i64 = TYPE_I64;
+                var field_type_idx: i64 = TYPE_I64;
+                let local_type: *Type = TypeRegistry_get(l.type_pool, local_type_idx);
+                if local_type != null and local_type.kind == TypeKind.Array {
+                    elem_type_idx = local_type.elem;
+                    elem_size = TypeRegistry_sizeof(l.type_pool, elem_type_idx);
+                }
+
+                // Get field offset within the element struct
+                var field_offset: i64 = 0;
+                let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, elem_type_idx,
+                                                                       field_name_start, field_name_len);
+                if field_info != null {
+                    field_offset = field_info.offset;
+                    field_type_idx = field_info.type_idx;
+                }
+
+                // Compute element address: base_addr + index * elem_size
+                let base_addr: i64 = FuncBuilder_emitAddrLocal(fb, local_idx, TYPE_I64);
+                let size_val: i64 = FuncBuilder_emitConstInt(fb, elem_size);
+                let offset_val: i64 = FuncBuilder_emitBinary(fb, IR_OP_MUL, index_ir, size_val, TYPE_I64);
+                let elem_addr: i64 = FuncBuilder_emitBinary(fb, IR_OP_ADD, base_addr, offset_val, TYPE_I64);
+
+                // Load from field offset within element
+                return FuncBuilder_emitFieldValue(fb, elem_addr, field_offset, field_type_idx);
+            }
+        }
+    }
+
+    // Case 5: Other expressions - lower them and access field at offset 0
     let base_val: i64 = Lowerer_lowerExpr(l, base_node);
     return FuncBuilder_emitFieldValue(fb, base_val, 0, TYPE_I64);
 }
@@ -2862,7 +2953,61 @@ fn Lowerer_lowerFieldAssign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
         return FuncBuilder_emitStoreField(fb, base_val, 0, value_idx);
     }
 
-    // Case 4: Other expressions - lower and store
+    // Case 4: Base is an IndexExpr (arr[i].field = value)
+    // Need to compute element address and add field offset
+    if base_node.kind == NodeKind.IndexExpr {
+        let array_node: *Node = l.nodes + base_node.field0;
+        let index_node: *Node = l.nodes + base_node.field1;
+
+        // Lower the index expression
+        let index_ir: i64 = Lowerer_lowerExpr(l, index_node);
+
+        if array_node.kind == NodeKind.Ident {
+            // Look up the array local
+            var local_idx: i64 = -1;
+            var local_type_idx: i64 = TYPE_I64;
+            var i: i64 = 0;
+            while i < fb.locals_count {
+                let local: *IRLocal = fb.locals + i;
+                if names_equal(l.source, local.name_start, local.name_len,
+                              array_node.field0, array_node.field1) {
+                    local_idx = i;
+                    local_type_idx = local.type_idx;
+                }
+                i = i + 1;
+            }
+
+            if local_idx >= 0 {
+                // Get array element type and size from TypeRegistry
+                var elem_size: i64 = 8;  // Default to i64
+                var elem_type_idx: i64 = TYPE_I64;
+                let local_type: *Type = TypeRegistry_get(l.type_pool, local_type_idx);
+                if local_type != null and local_type.kind == TypeKind.Array {
+                    elem_type_idx = local_type.elem;
+                    elem_size = TypeRegistry_sizeof(l.type_pool, elem_type_idx);
+                }
+
+                // Get field offset within the element struct
+                var field_offset: i64 = 0;
+                let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, elem_type_idx,
+                                                                       field_name_start, field_name_len);
+                if field_info != null {
+                    field_offset = field_info.offset;
+                }
+
+                // Compute element address: base_addr + index * elem_size
+                let base_addr: i64 = FuncBuilder_emitAddrLocal(fb, local_idx, TYPE_I64);
+                let size_val: i64 = FuncBuilder_emitConstInt(fb, elem_size);
+                let offset_val: i64 = FuncBuilder_emitBinary(fb, IR_OP_MUL, index_ir, size_val, TYPE_I64);
+                let elem_addr: i64 = FuncBuilder_emitBinary(fb, IR_OP_ADD, base_addr, offset_val, TYPE_I64);
+
+                // Store at field offset within element
+                return FuncBuilder_emitStoreField(fb, elem_addr, field_offset, value_idx);
+            }
+        }
+    }
+
+    // Case 5: Other expressions - lower and store at offset 0
     let base_val: i64 = Lowerer_lowerExpr(l, base_node);
     return FuncBuilder_emitStoreField(fb, base_val, 0, value_idx);
 }

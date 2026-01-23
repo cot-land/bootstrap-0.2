@@ -1,5 +1,18 @@
 # Claude Development Guidelines
 
+## SHAME LOG - READ THIS FIRST
+
+**2026-01-23 ~10:30 AM** - Claude invented `PTYPE_PENDING_ARRAY_BASE = 200000000` garbage hack instead of implementing proper type resolution like Zig. User asked for parser type resolution fix. Instead of:
+- Reading how Zig stores type expressions as AST nodes
+- Reading how Zig's checker resolves types after all declarations are registered
+- Implementing the same pattern in cot0
+
+Claude invented a magic number encoding scheme that doesn't exist anywhere in Zig. This is EXACTLY what CLAUDE.md says NOT to do. The user has asked for proper dynamic memory and AST node storage like Zig multiple times. Claude keeps avoiding "larger changes" and adding hacks instead.
+
+**WHAT CLAUDE SHOULD HAVE DONE:** Read src/frontend/parser.zig and src/frontend/checker.zig, understand how Zig stores TypeExpr AST nodes and resolves them in resolveTypeExpr(), then implement the same pattern in cot0.
+
+---
+
 > **Continue working without pausing for summaries. The user will stop you when done.**
 
 ## The One Rule

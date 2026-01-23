@@ -629,6 +629,39 @@ fn TypeInfo_alignment(pool: *TypeRegistry, idx: i64) i64 {
     return t.align;
 }
 
+// Get size of type in bytes (matches Zig's TypeRegistry.sizeOf)
+// Reference: src/frontend/types.zig sizeOf()
+fn TypeRegistry_sizeof(pool: *TypeRegistry, idx: i64) i64 {
+    if idx < 0 { return 0; }
+
+    let t: *Type = TypeRegistry_get(pool, idx);
+    if t == null { return 0; }
+
+    // For types with explicit size field, use it
+    if t.size > 0 { return t.size; }
+
+    // Handle by kind
+    if t.kind == TypeKind.Pointer { return 8; }  // 64-bit pointer
+    if t.kind == TypeKind.Slice { return 16; }   // ptr + len
+    if t.kind == TypeKind.Func { return 8; }     // function pointer
+    if t.kind == TypeKind.String { return 16; }  // ptr + len
+
+    // Array: element size * length
+    if t.kind == TypeKind.Array {
+        let elem_size: i64 = TypeRegistry_sizeof(pool, t.elem);
+        return elem_size * t.len;
+    }
+
+    // Struct: use stored size
+    if t.kind == TypeKind.Struct { return t.size; }
+
+    // Enum: use stored size (usually i64)
+    if t.kind == TypeKind.Enum { return t.size; }
+
+    // Default to 8 for unknown types
+    return 8;
+}
+
 // ============================================================================
 // Type Equality
 // ============================================================================

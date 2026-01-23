@@ -948,3 +948,31 @@ export fn realloc_i64(ptr: ?[*]i64, old_count: i64, new_count: i64) ?[*]i64 {
 export fn free_i64(ptr: ?[*]i64) void {
     _ = ptr;
 }
+
+// Struct allocation functions - allocate count * struct_size bytes
+fn malloc_struct(count: i64, struct_size: i64) ?*anyopaque {
+    const allocator = std.heap.c_allocator;
+    const total: usize = @intCast(count * struct_size);
+    const result = allocator.alloc(u8, total) catch return null;
+    return @ptrCast(result.ptr);
+}
+
+export fn malloc_Node(count: i64) ?*anyopaque { return malloc_struct(count, 72); }
+export fn malloc_Type(count: i64) ?*anyopaque { return malloc_struct(count, 80); }  // Type: kind(4) + pad(4) + 9*i64 = 80
+export fn malloc_FieldInfo(count: i64) ?*anyopaque { return malloc_struct(count, 40); }
+export fn malloc_IRNode(count: i64) ?*anyopaque { return malloc_struct(count, 96); }  // IRNode: 12 fields * 8 = 96
+export fn malloc_IRLocal(count: i64) ?*anyopaque { return malloc_struct(count, 32); }
+export fn malloc_IRFunc(count: i64) ?*anyopaque { return malloc_struct(count, 64); }
+export fn malloc_ConstEntry(count: i64) ?*anyopaque { return malloc_struct(count, 24); }
+export fn malloc_IRGlobal(count: i64) ?*anyopaque { return malloc_struct(count, 40); }
+export fn malloc_Block(count: i64) ?*anyopaque { return malloc_struct(count, 80); }
+export fn malloc_Value(count: i64) ?*anyopaque { return malloc_struct(count, 128); }
+export fn malloc_Local(count: i64) ?*anyopaque { return malloc_struct(count, 32); }
+export fn malloc_Branch(count: i64) ?*anyopaque { return malloc_struct(count, 24); }
+export fn malloc_CallSite(count: i64) ?*anyopaque { return malloc_struct(count, 16); }
+export fn malloc_GlobalReloc(count: i64) ?*anyopaque { return malloc_struct(count, 16); }
+export fn malloc_Symbol(count: i64) ?*anyopaque { return malloc_struct(count, 40); }
+export fn malloc_Reloc(count: i64) ?*anyopaque { return malloc_struct(count, 24); }
+export fn malloc_BlockDefs(count: i64) ?*anyopaque { return malloc_struct(count, 24); }
+export fn malloc_BlockMapping(count: i64) ?*anyopaque { return malloc_struct(count, 16); }
+export fn malloc_VarDef(count: i64) ?*anyopaque { return malloc_struct(count, 24); }
