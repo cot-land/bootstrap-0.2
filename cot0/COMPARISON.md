@@ -195,6 +195,7 @@
 | `SSABuilder.init()` | `SSABuilder_init()` | Same |
 | `SSABuilder.build()` | `SSABuilder_build()` | Same |
 | `SSABuilder.convertNode()` | `SSABuilder_convertNode()` | Same |
+| `SSABuilder.verify()` | `SSABuilder_verify()` | Same | SSA verification for debugging |
 
 ### 3.6-3.7 liveness.cot, regalloc.cot
 

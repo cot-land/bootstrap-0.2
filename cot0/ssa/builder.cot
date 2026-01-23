@@ -1609,3 +1609,74 @@ fn SSABuilder_copyDefs(b: *SSABuilder, from_block: i64, to_block: i64) {
         i = i + 1;
     }
 }
+
+// ============================================================================
+// SSA Verification (following Zig ssa_builder.zig:1826-1875)
+// ============================================================================
+
+// Verify the SSA function is well-formed.
+// Returns true if valid, false if errors found.
+// Checks:
+// 1. Phi placement - phis must be at start of block
+// 2. Phi arg count - must match predecessor count
+// 3. No unresolved FwdRefs
+// 4. Block termination - ret has no successors, if has 2 successors and control
+fn SSABuilder_verify(b: *SSABuilder) bool {
+    let f: *Func = b.func;
+    var errors_found: bool = false;
+
+    var block_idx: i64 = 0;
+    while block_idx < f.blocks_count {
+        let block: *Block = f.blocks + block_idx;
+
+        // Check values in this block
+        var seen_non_phi: bool = false;
+        var val_idx: i64 = block.values_start;
+        while val_idx < block.values_start + block.values_count {
+            let v: *Value = f.values + val_idx;
+
+            // Check 1: Phi placement
+            if v.op == Op.Phi {
+                if seen_non_phi {
+                    // Error: phi after non-phi value
+                    errors_found = true;
+                }
+                // Check 2: Phi arg count matches predecessors
+                if v.args_count != block.preds_count {
+                    errors_found = true;
+                }
+            } else {
+                seen_non_phi = true;
+            }
+
+            // Check 3: No unresolved FwdRefs
+            if v.op == Op.FwdRef {
+                errors_found = true;
+            }
+
+            val_idx = val_idx + 1;
+        }
+
+        // Check 4: Block termination
+        if block.kind == BlockKind.Return {
+            // Return blocks should have no successors
+            if block.succs_count != 0 {
+                errors_found = true;
+            }
+        } else if block.kind == BlockKind.If {
+            // If blocks must have exactly 2 successors
+            if block.succs_count != 2 {
+                errors_found = true;
+            }
+            // Must have a control value (condition)
+            if block.control < 0 {
+                errors_found = true;
+            }
+        }
+        // Plain blocks: allow 0 or 1 successors (single-block functions, etc.)
+
+        block_idx = block_idx + 1;
+    }
+
+    return not errors_found;
+}
