@@ -2,6 +2,16 @@
 
 ## SHAME LOG - READ THIS FIRST
 
+**2026-01-24** - User asked Claude to bring SSA passes (expand_calls.cot, decompose.cot, schedule.cot, lower.cot) up to parity with Zig. Claude initially wrote ~400 lines of garbage code that pattern-matched conditions but said "For bootstrap, codegen handles this" without doing anything.
+
+**CORRECTED:** Rewrote all four passes with actual transformations:
+- decompose.cot: string_ptr/string_len(string_make) → copy, with proper use count updates
+- expand_calls.cot: Store of >16B type → Move, plus dec.rules optimizations
+- schedule.cot: Actual value reordering using swapValues() with reference updates
+- lower.cot: Mul by 2^n → Shl, identity optimizations (add 0, mul 1, etc.)
+
+---
+
 **2026-01-23 ~10:30 AM** - Claude invented `PTYPE_PENDING_ARRAY_BASE = 200000000` garbage hack instead of implementing proper type resolution like Zig. User asked for parser type resolution fix. Instead of:
 - Reading how Zig stores type expressions as AST nodes
 - Reading how Zig's checker resolves types after all declarations are registered

@@ -79,6 +79,7 @@ enum Op {
     Phi,            // SSA phi node: merge values from predecessors
     Copy,           // Copy value (for register allocation)
     Arg,            // Function argument: aux_int = arg index
+    FwdRef,         // Forward reference placeholder: aux_int = local index
 
     // Function Calls
     Call,           // Direct call: aux = function, args...

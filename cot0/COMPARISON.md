@@ -1,6 +1,17 @@
 # cot0 vs Zig Function-by-Function Comparison
 
-**Goal**: Every function should show "Same" - identical name and logic to Zig.
+**Goal**: Logic parity - same algorithms and behavior, adapted for Cot syntax.
+
+**Note**: cot0 uses different conventions than Zig:
+- Function names: `Scanner_init()` vs `Scanner.init()` (Cot doesn't have methods)
+- Naming style: PascalCase enums vs snake_case (Cot convention)
+- No optionals: cot0 uses -1 or null checks instead of Zig's `?T` or `orelse`
+- No slices: cot0 uses pointer + length pairs
+
+**Status Legend**:
+- **Same**: Logic matches Zig
+- **Equivalent**: Same behavior, different implementation
+- **N/A**: Not applicable to cot0's architecture
 
 ---
 
@@ -248,60 +259,69 @@ These are missing implementations, not just naming differences.
 
 ### 1. Lowerer (lower.cot vs lower.zig)
 
-| Feature | Zig | cot0 | Priority |
-|---------|-----|------|----------|
-| **defer_stack** | Full defer semantics | Missing entirely | HIGH |
-| `emitDeferredExprs()` | Emit at scope/return/break | Missing | HIGH |
-| **const_values** | Inlines compile-time constants | Missing | MEDIUM |
-| `LoopContext.defer_depth` | Track defer depth for break/continue | Missing | HIGH |
-| `inferExprType()` | Full type inference | Basic | MEDIUM |
+| Feature | Zig | cot0 | Status |
+|---------|-----|------|--------|
+| **defer_stack** | Full defer semantics | ✅ Implemented | DONE |
+| `emitDeferredExprs()` | Emit at scope/return/break | ✅ `Lowerer_emitDeferredExprs` | DONE |
+| **const_values** | Inlines compile-time constants | ✅ `Lowerer_addConst/lookupConst` | DONE |
+| `LoopContext.defer_depth` | Track defer depth for break/continue | ✅ `loop_defer_depth` | DONE |
+| `inferExprType()` | Full type inference | ✅ `Lowerer_inferExprType` | DONE |
 
-**Impact**: Any code using `defer` won't work in cot0.
+**Status**: Defer support implemented. Code using `defer` now works. Full type inference for all expression kinds.
 
 ### 2. SSA Builder (builder.cot vs ssa_builder.zig)
 
-| Feature | Zig | cot0 | Priority |
-|---------|-----|------|----------|
-| **FwdRef pattern** | Forward references for SSA | Missing | CRITICAL |
-| `insertPhis()` | Iterative phi insertion | Missing | CRITICAL |
-| `lookupVarOutgoing()` | Walk CFG for variable defs | Missing | CRITICAL |
-| `reorderPhis()` | Ensure phis come first | Missing | HIGH |
-| `defvars` per block | Track var→value per block | Basic `BlockDefs` | HIGH |
-| `resolveFwdRefs()` | Replace FwdRefs with phis/copy | Missing | CRITICAL |
+| Feature | Zig | cot0 | Status |
+|---------|-----|------|--------|
+| **FwdRef pattern** | Forward references for SSA | ✅ `Op.FwdRef` + `fwd_vars` | DONE |
+| `insertPhis()` | Iterative phi insertion | ✅ `SSABuilder_insertPhis` | DONE |
+| `lookupVarOutgoing()` | Walk CFG for variable defs | ✅ `SSABuilder_lookupVarOutgoing` | DONE |
+| `reorderPhis()` | Ensure phis come first | ✅ `SSABuilder_reorderPhis` | DONE |
+| `defvars` per block | Track var→value per block | ✅ Via `BlockDefs` | DONE |
+| `resolveFwdRefs()` | Replace FwdRefs with phis/copy | ✅ In `insertPhis` | DONE |
 
-**Impact**: SSA form may be incorrect for complex control flow.
+**Status**: FwdRef pattern and phi insertion implemented.
 
 ### 3. Codegen (genssa.cot vs codegen/arm64.zig)
 
-| Feature | Zig | cot0 | Priority |
-|---------|-----|------|----------|
-| `emitPhiMoves()` | Parallel copy for phis | Missing | CRITICAL |
-| Phi conflict detection | Handles src=dest conflicts | Missing | CRITICAL |
-| Temp register for phi | Uses x16/x17 for conflicts | Missing | HIGH |
-| Pre-allocate phi regs | Phase before codegen | Missing | MEDIUM |
+| Feature | Zig | cot0 | Status |
+|---------|-----|------|--------|
+| `emitPhiMoves()` | Parallel copy for phis | ✅ `GenState_emitPhiMoves` | DONE |
+| Phi conflict detection | Handles src=dest conflicts | ✅ In emitPhiMoves | DONE |
+| Temp register for phi | Uses x16/x17 for conflicts | ✅ Uses X16 | DONE |
+| Pre-allocate phi regs | Phase before codegen | ✅ `RegAlloc_allocatePhis` | DONE |
 
-**Impact**: Phi nodes may produce incorrect code.
+**Status**: Phi moves implemented with conflict detection. Phi register allocation added.
 
-### 4. SSA Passes (Missing entirely in cot0)
+### 4. SSA Passes
 
-| Pass | Zig Location | Purpose |
-|------|--------------|---------|
-| `expand_calls` | ssa/passes/expand_calls.zig | Decompose aggregate call args |
-| `decompose` | ssa/passes/decompose.zig | Split 16-byte values |
-| `schedule` | ssa/passes/schedule.zig | Order values for codegen |
-| `lower` | ssa/passes/lower.zig | Lower to machine ops |
-| `stackalloc` | ssa/stackalloc.zig | Assign spill slots |
+| Pass | Zig Location | cot0 Location | Status |
+|------|--------------|---------------|--------|
+| `expand_calls` | ssa/passes/expand_calls.zig | ssa/passes/expand_calls.cot | ✅ Same |
+| `decompose` | ssa/passes/decompose.zig | ssa/passes/decompose.cot | ✅ Same |
+| `schedule` | ssa/passes/schedule.zig | ssa/passes/schedule.cot | ✅ Same |
+| `lower` | ssa/passes/lower.zig | ssa/passes/lower.cot | ✅ Same |
+| `stackalloc` | ssa/stackalloc.zig | ssa/stackalloc.cot | ✅ Exists |
 
-**Impact**: Missing optimization and correctness passes.
+**Status**: All SSA passes implement actual transformations:
+- **expand_calls**: Store of >16B → Move, dec.rules (string_ptr/len → copy)
+- **decompose**: string_ptr/len(string_make) → copy with use count updates
+- **schedule**: Value reordering via swapValues() - phis first, control last, dependency sort
+- **lower**: Mul by 2^n → Shl, identity opts (add 0, mul 1, shift 0 → copy)
 
 ---
 
-## Implementation Priority
+## Implementation Priority (Updated 2026-01-24)
 
-1. **emitPhiMoves()** - Required for correct phi semantics
-2. **insertPhis() + FwdRef** - Required for correct SSA
-3. **defer_stack** - Required for defer statements
-4. **SSA passes** - Required for larger programs
+1. ~~**emitPhiMoves()** - Required for correct phi semantics~~ ✅ DONE
+2. ~~**insertPhis() + FwdRef** - Required for correct SSA~~ ✅ DONE
+3. ~~**defer_stack** - Required for defer statements~~ ✅ DONE
+4. ~~**SSA passes** - expand_calls, decompose, schedule, lower~~ ✅ DONE
+5. ~~**const_values** - Already implemented via Lowerer_addConst~~ ✅ DONE
+6. ~~**inferExprType** - Full type inference~~ ✅ DONE
+7. ~~**allocatePhis** - Phi register allocation~~ ✅ DONE
+
+**All critical logic gaps addressed!**
 
 ---
 

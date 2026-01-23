@@ -357,6 +357,129 @@ fn Value_needsReg(op: Op) bool {
 }
 
 // ============================================================================
+// Phi Allocation
+// Reference: Zig regalloc.zig:614-680 allocatePhis
+// ============================================================================
+
+// Allocate registers for phi nodes in a block
+// This is called at the start of processing each block
+fn RegAlloc_allocatePhis(ra: *RegAllocState, f: *Func, block: *Block, primary_pred_idx: i64) {
+    // Collect phi nodes (they should be first in the block)
+    var phi_count: i64 = 0;
+    var phi_ids: [32]i64 = undefined;  // Up to 32 phis per block
+
+    var vi: i64 = 0;
+    while vi < block.values_count and phi_count < 32 {
+        let v: *Value = Func_getValue(f, block.values_start + vi);
+        if v.op == Op.Phi {
+            phi_ids[phi_count] = v.id;
+            phi_count = phi_count + 1;
+        } else {
+            break;  // Phis are always first
+        }
+        vi = vi + 1;
+    }
+
+    if phi_count == 0 { return; }
+
+    // Track which registers are used by phis
+    var phi_used: i64 = 0;
+
+    // Array for phi register assignments (-1 means not yet assigned)
+    var phi_regs: [32]i64 = undefined;
+    var i: i64 = 0;
+    while i < phi_count {
+        phi_regs[i] = -1;
+        i = i + 1;
+    }
+
+    // Pass 1: Try to reuse primary predecessor's register
+    i = 0;
+    while i < phi_count {
+        let phi: *Value = Func_getValue(f, phi_ids[i]);
+        if primary_pred_idx >= 0 and primary_pred_idx < phi.args_count {
+            let arg_id: i64 = phi.args[primary_pred_idx];
+            if arg_id >= 0 and arg_id < ra.val_states_count {
+                let arg_vs: *ValState = ra.val_states + arg_id;
+                // Check if arg has a register that's not already used by a phi
+                let arg_regs: i64 = arg_vs.regs & (~phi_used) & ALLOCATABLE_MASK;
+                if arg_regs != 0 {
+                    // Use the first available register from arg
+                    let reg: i64 = ValState_firstReg_mask(arg_regs);
+                    if reg >= 0 {
+                        phi_regs[i] = reg;
+                        phi_used = phi_used | (1 << reg);
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    // Pass 2: Allocate fresh registers for remaining phis
+    i = 0;
+    while i < phi_count {
+        if phi_regs[i] >= 0 {
+            i = i + 1;
+            continue;  // Already assigned in pass 1
+        }
+
+        let available: i64 = ALLOCATABLE_MASK & (~phi_used);
+        let reg: i64 = RegAlloc_findFreeReg_mask(ra, available);
+        if reg >= 0 {
+            phi_regs[i] = reg;
+            phi_used = phi_used | (1 << reg);
+        }
+        i = i + 1;
+    }
+
+    // Pass 3: Actually assign registers to phis
+    i = 0;
+    while i < phi_count {
+        if phi_regs[i] >= 0 {
+            let reg: i64 = phi_regs[i];
+            // Free the register first if occupied
+            let rs: *RegState = ra.reg_states + reg;
+            if not RegState_isFree(rs) {
+                RegAlloc_freeReg(ra, reg);
+            }
+            RegAlloc_assignReg(ra, phi_ids[i], reg);
+        }
+        i = i + 1;
+    }
+}
+
+// Helper: find first set bit in a mask
+fn ValState_firstReg_mask(mask: i64) i64 {
+    if mask == 0 { return -1; }
+    var m: i64 = mask;
+    var reg: i64 = 0;
+    while (m & 1) == 0 {
+        m = m >> 1;
+        reg = reg + 1;
+        if reg >= NUM_REGS { return -1; }
+    }
+    return reg;
+}
+
+// Find a free register from a specific mask
+fn RegAlloc_findFreeReg_mask(ra: *RegAllocState, mask: i64) i64 {
+    var m: i64 = mask;
+    var reg: i64 = 0;
+    while m != 0 {
+        if (m & 1) != 0 {
+            let rs: *RegState = ra.reg_states + reg;
+            if RegState_isFree(rs) {
+                return reg;
+            }
+        }
+        m = m >> 1;
+        reg = reg + 1;
+    }
+    return -1;
+}
+
+// ============================================================================
 // Main Register Allocation
 // ============================================================================
 
@@ -411,10 +534,25 @@ fn RegAlloc_processValue(ra: *RegAllocState, f: *Func, v: *Value, block_id: i64)
 
 // Process a single block
 fn RegAlloc_processBlock(ra: *RegAllocState, f: *Func, block: *Block) {
-    // Process values in order
+    // Determine primary predecessor (first one with smallest ID)
+    var primary_pred_idx: i64 = -1;
+    if block.preds_count > 0 {
+        primary_pred_idx = 0;  // Use first predecessor as primary
+    }
+
+    // Allocate registers for phi nodes first
+    // Reference: Zig regalloc.zig:723
+    RegAlloc_allocatePhis(ra, f, block, primary_pred_idx);
+
+    // Process remaining values in order
     var vi: i64 = 0;
     while vi < block.values_count {
         let v: *Value = Func_getValue(f, block.values_start + vi);
+        // Skip phis - already processed by allocatePhis
+        if v.op == Op.Phi {
+            vi = vi + 1;
+            continue;
+        }
         RegAlloc_processValue(ra, f, v, block.id);
         vi = vi + 1;
     }

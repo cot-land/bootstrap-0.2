@@ -38,6 +38,7 @@ enum NodeKind {
     ForStmt,        // for item in array { body }
     BreakStmt,      // break;
     ContinueStmt,   // continue;
+    DeferStmt,      // defer expr; (field0=expr node index)
 
     // Declarations
     FnDecl,         // fn name(params) ret { body }
@@ -536,6 +537,25 @@ fn Node_continueStmt(pool: *NodePool, start: i64, end: i64) i64 {
     n.start = start;
     n.end = end;
     n.field0 = 0;
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a defer statement node
+// field0: expression node index to defer
+// Reference: Zig lower.zig defer_stmt handling
+fn Node_deferStmt(pool: *NodePool, expr_idx: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.DeferStmt;
+    n.start = start;
+    n.end = end;
+    n.field0 = expr_idx;
     n.field1 = 0;
     n.field2 = 0;
     n.field3 = 0;

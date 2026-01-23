@@ -6,54 +6,56 @@
 |-------|--------|-------------|
 | Stage 0 | ✅ Complete | Zig compiler (`src/*.zig`) - 166 tests pass |
 | Stage 1 | ✅ Complete | Zig compiles cot0 → `cot0-stage1` works |
-| Stage 2 | ⚠️ Blocked | Stage1 compiles cot0 → crashes at runtime |
+| Stage 2 | ⚠️ Blocked | Stage1 compiles cot0 → crashes in SSABuilder_build |
 | Stage 3+ | Pending | Self-hosting achieved when stageN = stageN+1 |
 
-**Blocker**: Stage 2 crashes with SIGSEGV. Root cause: BlockStmt corruption during import processing causes some functions to be skipped during IR lowering.
+**Blocker**: Stage 2 crashes with SIGBUS during SSA building. The crash occurs when processing the large cot0 codebase (861 functions, 64k+ nodes).
+
+## What Works
+
+- All 166 end-to-end tests pass
+- Simple and nested struct field access
+- Array indexing with struct fields
+- Defer statements with scope handling
+- Control flow (if/else, while, for, break, continue)
+- Function calls with multiple arguments
+- String literals and global variables
+- DWARF debug info in crash reports
 
 ## The Path Forward
 
-### Phase 1: Function Parity (Current)
+### Phase 1: Logic Parity (Current)
 
-Make every function in [cot0/COMPARISON.md](cot0/COMPARISON.md) show "Same".
+Copy algorithms and patterns from Zig compiler to cot0, adapting for Cot syntax.
 
-**Why this matters**: Bugs exist because cot0 is missing patterns from Zig. Achieving parity eliminates these bugs systematically.
-
-**Progress**: 7 of 21 sections marked "DONE"
+**Approach**: Focus on logic, not syntax. cot0 uses different naming conventions (PascalCase vs snake_case) and doesn't have all Zig language features. The goal is equivalent behavior.
 
 | Section | File | Status |
 |---------|------|--------|
-| 1 | main.cot | Reviewed (architectural diff OK) |
-| 2.1 | frontend/token.cot | Pending |
-| 2.2 | frontend/scanner.cot | Pending |
-| 2.3 | frontend/ast.cot | Pending |
-| 2.4 | frontend/parser.cot | Pending |
-| 2.5 | frontend/types.cot | Pending |
-| 2.6 | frontend/checker.cot | Pending |
-| 2.7 | frontend/ir.cot | **DONE** |
-| 2.8 | frontend/lower.cot | **DONE** |
-| 3.1 | ssa/op.cot | Pending |
-| 3.2 | ssa/value.cot | Pending |
-| 3.3 | ssa/block.cot | **DONE** |
-| 3.4 | ssa/func.cot | **DONE** |
-| 3.5 | ssa/builder.cot | **DONE** |
-| 3.6 | ssa/liveness.cot | Pending |
-| 3.7 | ssa/regalloc.cot | **DONE** |
-| 4.1 | arm64/asm.cot | Pending |
-| 5.1 | codegen/arm64.cot | **DONE** |
-| 5.2 | codegen/genssa.cot | **DONE** |
-| 6.1 | obj/macho.cot | **DONE** |
+| 1 | main.cot | ✅ Complete |
+| 2.7 | frontend/ir.cot | ✅ Complete |
+| 2.8 | frontend/lower.cot | ✅ Complete |
+| 3.3 | ssa/block.cot | ✅ Complete |
+| 3.4 | ssa/func.cot | ✅ Complete |
+| 3.5 | ssa/builder.cot | ✅ Complete |
+| 3.7 | ssa/regalloc.cot | ✅ Complete |
+| 5.1 | codegen/arm64.cot | ✅ Complete |
+| 5.2 | codegen/genssa.cot | ✅ Complete |
+| 6.1 | obj/macho.cot | ✅ Complete |
 
 ### Phase 2: Fix the Stage 2 Crash
 
-Once parity is complete, the crash should either:
-1. Be fixed (missing pattern was the cause)
-2. Be obvious (clear which remaining difference causes it)
+The crash occurs in `SSABuilder_build` with a SIGBUS error (address 0x0000000ae4000029 - corrupted pointer).
 
 **Debug tools available**:
 - DWARF debug info shows crash source location
 - Runtime crash handler shows registers and stack trace
 - lldb works with source code
+
+**Theories**:
+1. Import processing corrupts node/children indices when merging multiple files
+2. Large codebase exceeds some internal limit
+3. Missing validation in SSA builder for edge cases
 
 ### Phase 3: Verify Self-Hosting
 
@@ -75,25 +77,10 @@ diff /tmp/cot0-stage2 /tmp/cot0-stage3
 
 After self-hosting is achieved:
 
-1. **ARC Memory Management**
-   - Replace global arrays with ARC
-   - Compiler inserts retain/release
-   - No manual memory management
-
-2. **Language Features**
-   - Generics
-   - Interfaces/Traits
-   - Better error handling
-
-3. **Additional Targets**
-   - x86-64 backend
-   - Linux support
-   - Windows support
-
-4. **Standard Library**
-   - I/O
-   - Collections
-   - Networking
+1. **ARC Memory Management** - Replace global arrays with automatic reference counting
+2. **Language Features** - Generics, interfaces, better error handling
+3. **Additional Targets** - x86-64, Linux, Windows
+4. **Standard Library** - I/O, collections, networking
 
 ## Key Milestones
 
@@ -104,21 +91,6 @@ After self-hosting is achieved:
 | Stage 1 compiles cot0 | Produces executable | ✅ |
 | Stage 2 runs | No crash | ⚠️ Blocked |
 | Stage 2 = Stage 3 | Self-hosting | Pending |
-| ARC implemented | No globals | Planned |
-
-## Current Blockers
-
-### 1. BlockStmt Corruption
-
-During import processing, some `BlockStmt` nodes have corrupted `stmts_count` values. This causes functions to be skipped during IR lowering.
-
-**Symptoms**:
-- Stage 2 crashes (SIGSEGV)
-- Some functions have 0 IR nodes
-
-**Likely cause**: Missing or incorrect pattern in import handling that exists in Zig but not cot0.
-
-**Fix approach**: Compare import handling in cot0 vs Zig line by line.
 
 ## Verification Commands
 
@@ -132,18 +104,27 @@ echo 'fn main() i64 { return 42 }' > /tmp/test.cot
 /tmp/cot0-stage1 /tmp/test.cot -o /tmp/test.o
 zig cc /tmp/test.o -o /tmp/test && /tmp/test
 
+# Test nested struct (should return 20)
+echo 'struct Inner { x: i64, y: i64 }
+struct Outer { inner: Inner }
+fn main() i64 { var o: Outer; o.inner.x = 10; o.inner.y = 20; return o.inner.y; }' > /tmp/nested.cot
+/tmp/cot0-stage1 /tmp/nested.cot -o /tmp/nested.o
+zig cc /tmp/nested.o -o /tmp/nested && /tmp/nested
+
 # Attempt stage2 (currently crashes)
 /tmp/cot0-stage1 cot0/main.cot -o /tmp/cot0-stage2
 ```
 
 ## Recent Progress
 
+### 2026-01-24
+- Fixed nested struct field assignment (TypeRegistry-based lookup)
+- Added BlockStmt handling in lowerStmt
+- Added node index validation in lowerBlockCheckTerminated
+- SSA passes with full logic
+
 ### 2026-01-23
 - DWARF debug info implementation complete
-- Crash handler shows source locations
-- lldb integration working
-
-### 2026-01-22
-- Dynamic array conversion
-- Runtime malloc/realloc functions
-- Function naming parity improvements
+- Defer statement support
+- FwdRef pattern in SSA builder
+- emitPhiMoves for phi semantics

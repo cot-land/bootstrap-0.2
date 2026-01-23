@@ -82,6 +82,15 @@ struct Lowerer {
     // Loop context for break/continue (block indices, -1 if not in loop)
     loop_continue_block: i64,
     loop_break_block: i64,
+    loop_defer_depth: i64,        // defer_stack depth at loop entry
+
+    // Defer stack for pending defer expressions (Zig-style scope tracking)
+    // When entering a block, record the current depth. On block exit, emit
+    // defers from current depth down to recorded depth in LIFO order.
+    // Reference: Zig lower.zig:59 defer_stack
+    defer_stack: *i64,            // Array of node indices for deferred expressions
+    defer_stack_count: i64,
+    defer_stack_cap: i64,
 
     // Call argument indices (for non-consecutive args)
     call_args: *i64,
@@ -237,9 +246,62 @@ fn Lowerer_init(l: *Lowerer,
     l.constants_cap = constants_cap;
     l.loop_continue_block = 0 - 1;  // -1 means not in a loop
     l.loop_break_block = 0 - 1;
+    l.loop_defer_depth = 0;
+    l.defer_stack = null;
+    l.defer_stack_count = 0;
+    l.defer_stack_cap = 0;
     l.call_args = call_args;
     l.call_args_count = 0;
     l.call_args_cap = call_args_cap;
+}
+
+// Set defer stack storage (separate function due to ARM64 ABI argument limit)
+// Reference: Zig lower.zig:59 defer_stack
+fn Lowerer_initDeferStack(l: *Lowerer, defer_stack: *i64, defer_stack_cap: i64) {
+    l.defer_stack = defer_stack;
+    l.defer_stack_count = 0;
+    l.defer_stack_cap = defer_stack_cap;
+}
+
+// Get current defer stack depth
+// Reference: Zig lower.zig:286 defer_depth
+fn Lowerer_getDeferDepth(l: *Lowerer) i64 {
+    return l.defer_stack_count;
+}
+
+// Push a deferred expression onto the stack
+// Reference: Zig lower.zig:316 defer_stmt handling
+fn Lowerer_pushDefer(l: *Lowerer, expr_idx: i64) {
+    if l.defer_stack == null or l.defer_stack_count >= l.defer_stack_cap {
+        return;
+    }
+    let slot: *i64 = l.defer_stack + l.defer_stack_count;
+    slot.* = expr_idx;
+    l.defer_stack_count = l.defer_stack_count + 1;
+}
+
+// Emit deferred expressions from current stack depth down to target depth.
+// Emits in LIFO order (last defer first) and pops the stack.
+// Reference: Zig lower.zig:342-348 emitDeferredExprs
+fn Lowerer_emitDeferredExprs(l: *Lowerer, target_depth: i64) {
+    while l.defer_stack_count > target_depth {
+        // Pop from stack
+        l.defer_stack_count = l.defer_stack_count - 1;
+        let slot: *i64 = l.defer_stack + l.defer_stack_count;
+        let defer_expr_idx: i64 = slot.*;
+
+        // Lower the deferred expression
+        if defer_expr_idx >= 0 {
+            let expr: *Node = l.nodes + defer_expr_idx;
+            Lowerer_lowerExpr(l, expr);
+        }
+    }
+}
+
+// Clear defer stack for new function scope
+// Reference: Zig lower.zig:148 clear defer stack
+fn Lowerer_clearDeferStack(l: *Lowerer) {
+    l.defer_stack_count = 0;
 }
 
 // Set globals storage (call after Lowerer_init)
@@ -672,20 +734,25 @@ fn Lowerer_lowerBlockCheckTerminated(l: *Lowerer, node: *Node) bool {
     var terminated: bool = false;
 
     // Iterate over statements in the block
+    // Following Zig's pattern at lower.zig:288-296 with index validation
     var i: i64 = 0;
     while i < stmts_count {
         // Get statement node index from children array
         let child_ptr: *i64 = l.children + stmts_start + i;
         let stmt_idx: i64 = child_ptr.*;
-        let stmt_node: *Node = l.nodes + stmt_idx;
 
-        // Check if this is a terminator
-        if stmt_node.kind == NodeKind.ReturnStmt {
-            terminated = true;
+        // Validate node index - skip invalid indices (like Zig's getNode() orelse continue)
+        if stmt_idx >= 0 {
+            let stmt_node: *Node = l.nodes + stmt_idx;
+
+            // Check if this is a terminator
+            if stmt_node.kind == NodeKind.ReturnStmt {
+                terminated = true;
+            }
+
+            // Lower the statement
+            Lowerer_lowerStmt(l, stmt_node);
         }
-
-        // Lower the statement
-        Lowerer_lowerStmt(l, stmt_node);
 
         i = i + 1;
     }
@@ -714,8 +781,34 @@ fn Lowerer_lowerStmt(l: *Lowerer, node: *Node) {
         Lowerer_lowerBreak(l);
     } else if node.kind == NodeKind.ContinueStmt {
         Lowerer_lowerContinue(l);
+    } else if node.kind == NodeKind.DeferStmt {
+        // Push deferred expression onto stack - will be emitted at scope exit
+        // Reference: Zig lower.zig:314-318
+        // DeferStmt fields: field0 = expression node index
+        Lowerer_pushDefer(l, node.field0);
     } else if node.kind == NodeKind.ExprStmt {
         Lowerer_lowerExprStmt(l, node);
+    } else if node.kind == NodeKind.BlockStmt {
+        // Handle nested block as statement - copy from Zig lower.zig:284-300
+        // Track defer depth for block scope
+        let defer_depth: i64 = l.defer_stack_count;
+
+        // Process block statements
+        let stmts_start: i64 = node.field0;
+        let stmts_count: i64 = node.field1;
+        var i: i64 = 0;
+        while i < stmts_count {
+            let child_ptr: *i64 = l.children + stmts_start + i;
+            let stmt_idx: i64 = child_ptr.*;
+            if stmt_idx >= 0 {  // Validation like Zig's getNode() orelse continue
+                let stmt_node: *Node = l.nodes + stmt_idx;
+                Lowerer_lowerStmt(l, stmt_node);
+            }
+            i = i + 1;
+        }
+
+        // Emit block-scoped defers on normal exit
+        Lowerer_emitDeferredExprs(l, defer_depth);
     }
 }
 
@@ -737,14 +830,19 @@ fn Lowerer_lowerReturn(l: *Lowerer, node: *Node) {
         return;
     }
 
-    // Lower return value expression
+    // Lower return value expression FIRST (before defers modify state)
+    // Reference: Zig lower.zig:329-334
     var value_idx: i64 = NULL_NODE;
     if node.field0 >= 0 {
         let expr: *Node = l.nodes + node.field0;
         value_idx = Lowerer_lowerExpr(l, expr);
     }
 
-    // Emit return node
+    // Emit all deferred expressions in LIFO order (Zig semantics)
+    // Reference: Zig lower.zig:334 emitDeferredExprs(0)
+    Lowerer_emitDeferredExprs(l, 0);
+
+    // Now emit the return with the pre-computed value
     var ret_node: IRNode = IRNode_new(IRNodeKind.Return, TYPE_VOID);
     ret_node.left = value_idx;
     FuncBuilder_emit(fb, ret_node);
@@ -1142,10 +1240,13 @@ fn Lowerer_lowerWhile(l: *Lowerer, node: *Node) {
     let exit_block: i64 = FuncBuilder_newBlock(fb);
 
     // Save outer loop context and set new one
+    // Reference: Zig lower.zig:944-948
     let saved_continue: i64 = l.loop_continue_block;
     let saved_break: i64 = l.loop_break_block;
+    let saved_defer_depth: i64 = l.loop_defer_depth;
     l.loop_continue_block = header_block;
     l.loop_break_block = exit_block;
+    l.loop_defer_depth = Lowerer_getDeferDepth(l);
 
     // Jump from current block to header
     FuncBuilder_emitJump(fb, header_block);
@@ -1171,6 +1272,7 @@ fn Lowerer_lowerWhile(l: *Lowerer, node: *Node) {
     // Restore outer loop context
     l.loop_continue_block = saved_continue;
     l.loop_break_block = saved_break;
+    l.loop_defer_depth = saved_defer_depth;
 
     // Continue in exit block
     FuncBuilder_setBlock(fb, exit_block);
@@ -1258,10 +1360,13 @@ fn Lowerer_lowerFor(l: *Lowerer, node: *Node) {
 
     // Save outer loop context and set new one
     // Note: continue goes to incr_block (increment then check), break goes to exit_block
+    // Reference: Zig lower.zig:1052-1056
     let saved_continue: i64 = l.loop_continue_block;
     let saved_break: i64 = l.loop_break_block;
+    let saved_defer_depth: i64 = l.loop_defer_depth;
     l.loop_continue_block = incr_block;
     l.loop_break_block = exit_block;
+    l.loop_defer_depth = Lowerer_getDeferDepth(l);
 
     // Jump to header
     FuncBuilder_emitJump(fb, header_block);
@@ -1315,6 +1420,7 @@ fn Lowerer_lowerFor(l: *Lowerer, node: *Node) {
     // Restore outer loop context
     l.loop_continue_block = saved_continue;
     l.loop_break_block = saved_break;
+    l.loop_defer_depth = saved_defer_depth;
 
     // Continue in exit block
     FuncBuilder_setBlock(fb, exit_block);
@@ -1324,6 +1430,11 @@ fn Lowerer_lowerBreak(l: *Lowerer) {
     let fb: *FuncBuilder = l.current_func;
     if fb == null { return; }
     if l.loop_break_block < 0 { return; }  // Not in a loop
+
+    // Emit defers from current depth down to loop entry
+    // Reference: Zig lower.zig:1125
+    Lowerer_emitDeferredExprs(l, l.loop_defer_depth);
+
     FuncBuilder_emitJump(fb, l.loop_break_block);
 }
 
@@ -1331,6 +1442,11 @@ fn Lowerer_lowerContinue(l: *Lowerer) {
     let fb: *FuncBuilder = l.current_func;
     if fb == null { return; }
     if l.loop_continue_block < 0 { return; }  // Not in a loop
+
+    // Emit defers from current depth down to loop entry
+    // Reference: Zig lower.zig:1135
+    Lowerer_emitDeferredExprs(l, l.loop_defer_depth);
+
     FuncBuilder_emitJump(fb, l.loop_continue_block);
 }
 
@@ -1545,6 +1661,8 @@ struct FieldLookupResult {
     offset: i64,           // Field offset in bytes (-1 if not found)
     type_start: i64,       // Start of field's type name in source (-1 if not found)
     type_len: i64,         // Length of field's type name
+    type_idx: i64,         // Resolved TypeRegistry index (-1 if not found)
+    found: bool,           // Whether the field was found
 }
 
 // Look up field info by searching struct declarations in the AST
@@ -1556,6 +1674,8 @@ fn lookup_struct_field_info(l: *Lowerer, struct_name_start: i64, struct_name_len
     result.offset = -1;
     result.type_start = -1;
     result.type_len = 0;
+    result.type_idx = TYPE_I64;  // Default to i64
+    result.found = false;
 
     // Search through all AST nodes for StructDecl with matching name
     var n: i64 = 0;
@@ -1596,6 +1716,9 @@ fn lookup_struct_field_info(l: *Lowerer, struct_name_start: i64, struct_name_len
                             result.offset = offset;
                             result.type_start = ftype_start;
                             result.type_len = ftype_len;
+                            result.found = true;
+                            // Resolve type from name
+                            result.type_idx = resolve_named_type(l.type_pool, l.source, ftype_start, ftype_len);
                             return result;
                         }
 
@@ -1623,6 +1746,29 @@ fn lookup_struct_field_offset(l: *Lowerer, struct_name_start: i64, struct_name_l
     let info: FieldLookupResult = lookup_struct_field_info(l, struct_name_start, struct_name_len,
                                                             field_name_start, field_name_len);
     return info.offset;
+}
+
+// Look up field type by struct type index
+// Reference: Zig checker.zig lookupField
+fn Lowerer_lookupFieldType(l: *Lowerer, struct_type_idx: i64, field_name_start: i64, field_name_len: i64) FieldLookupResult {
+    var result: FieldLookupResult = undefined;
+    result.offset = -1;
+    result.type_start = -1;
+    result.type_len = 0;
+    result.type_idx = TYPE_I64;
+    result.found = false;
+
+    // Get struct type info from TypeRegistry
+    let struct_type: *Type = TypeRegistry_get(l.type_pool, struct_type_idx);
+    if struct_type == null { return result; }
+    if struct_type.kind != TypeKind.Struct { return result; }
+
+    // Get struct name from type's name_start/name_len
+    let struct_name_start: i64 = struct_type.name_start;
+    let struct_name_len: i64 = struct_type.name_len;
+
+    // Delegate to lookup_struct_field_info
+    return lookup_struct_field_info(l, struct_name_start, struct_name_len, field_name_start, field_name_len);
 }
 
 fn Lowerer_lowerIdent(l: *Lowerer, node: *Node) i64 {
@@ -1671,19 +1817,33 @@ fn Lowerer_lowerIdent(l: *Lowerer, node: *Node) i64 {
 
 // Infer the type of an expression (for pointer arithmetic scaling)
 // Returns the type index or TYPE_I64 if unknown
+// Infer the type of an expression node.
+// Reference: Zig checker.zig expr_types + lower.zig inferExprType
 fn Lowerer_inferExprType(l: *Lowerer, node: *Node) i64 {
     let fb: *FuncBuilder = l.current_func;
-    if fb == null { return TYPE_I64; }
 
-    // For identifiers, look up the local variable type
+    // Literals
+    if node.kind == NodeKind.IntLit {
+        return TYPE_I64;
+    }
+    if node.kind == NodeKind.StringLit {
+        return TYPE_STRING;
+    }
+
+    // Boolean literals (True/False are parsed as IntLit with value 1/0)
+    // If we need to distinguish, check the token - for now treat as i64
+
+    // Identifiers: look up local or global variable type
     if node.kind == NodeKind.Ident {
-        var i: i64 = 0;
-        while i < fb.locals_count {
-            let local: *IRLocal = fb.locals + i;
-            if names_equal(l.source, local.name_start, local.name_len, node.field0, node.field1) {
-                return local.type_idx;
+        if fb != null {
+            var i: i64 = 0;
+            while i < fb.locals_count {
+                let local: *IRLocal = fb.locals + i;
+                if names_equal(l.source, local.name_start, local.name_len, node.field0, node.field1) {
+                    return local.type_idx;
+                }
+                i = i + 1;
             }
-            i = i + 1;
         }
         // Also check globals
         let global_idx: i64 = Lowerer_lookupGlobal(l, node.field0, node.field1);
@@ -1691,9 +1851,99 @@ fn Lowerer_inferExprType(l: *Lowerer, node: *Node) i64 {
             let g: *IRGlobal = Lowerer_getGlobal(l, global_idx);
             return g.type_idx;
         }
+        return TYPE_I64;
     }
 
-    // For other expressions, default to i64
+    // Binary expressions
+    if node.kind == NodeKind.BinaryExpr {
+        let ast_op: i64 = node.field2;
+        // Comparison operators return bool
+        // BinaryOp enum: Equal=4, NotEqual=5, Less=6, LessEq=7, Greater=8, GreaterEq=9
+        if ast_op >= 4 and ast_op <= 9 {
+            return TYPE_BOOL;
+        }
+        // And=10, Or=11 also return bool
+        if ast_op == 10 or ast_op == 11 {
+            return TYPE_BOOL;
+        }
+        // Arithmetic/bitwise: use left operand type
+        let left_node: *Node = l.nodes + node.field0;
+        return Lowerer_inferExprType(l, left_node);
+    }
+
+    // Unary expressions
+    if node.kind == NodeKind.UnaryExpr {
+        let unary_op: i64 = node.field1;
+        // UnaryOp::Not (logical not) returns bool
+        if unary_op == 1 {  // Not = 1
+            return TYPE_BOOL;
+        }
+        // Neg, BitNot: follow operand type
+        let operand_node: *Node = l.nodes + node.field0;
+        return Lowerer_inferExprType(l, operand_node);
+    }
+
+    // Address-of: return pointer to operand type
+    if node.kind == NodeKind.AddressOf {
+        let operand_node: *Node = l.nodes + node.field0;
+        let operand_type: i64 = Lowerer_inferExprType(l, operand_node);
+        return TypeRegistry_makePointer(l.type_pool, operand_type);
+    }
+
+    // Dereference: return pointee type
+    if node.kind == NodeKind.DerefExpr {
+        let operand_node: *Node = l.nodes + node.field0;
+        let ptr_type: i64 = Lowerer_inferExprType(l, operand_node);
+        return TypeInfo_getPointee(l.type_pool, ptr_type);
+    }
+
+    // Call expression: look up function return type
+    if node.kind == NodeKind.CallExpr {
+        let callee_node: *Node = l.nodes + node.field0;
+        if callee_node.kind == NodeKind.Ident {
+            let ret_type: i64 = Lowerer_findFuncRetType(l, callee_node.field0, callee_node.field1);
+            if ret_type >= 0 {
+                return ret_type;
+            }
+        }
+        return TYPE_I64;
+    }
+
+    // Field access: look up field type
+    if node.kind == NodeKind.FieldAccess {
+        let base_node: *Node = l.nodes + node.field0;
+        let base_type: i64 = Lowerer_inferExprType(l, base_node);
+        let field_name_start: i64 = node.field1;
+        let field_name_len: i64 = node.field2;
+
+        // Get struct type (dereference if pointer)
+        var struct_type_idx: i64 = base_type;
+        if TypeInfo_isPointer(l.type_pool, base_type) {
+            struct_type_idx = TypeInfo_getPointee(l.type_pool, base_type);
+        }
+
+        // Look up field type
+        let field_info: FieldLookupResult = Lowerer_lookupFieldType(l, struct_type_idx, field_name_start, field_name_len);
+        if field_info.found {
+            return field_info.type_idx;
+        }
+        return TYPE_I64;
+    }
+
+    // Index expression: return element type
+    if node.kind == NodeKind.IndexExpr {
+        let base_node: *Node = l.nodes + node.field0;
+        let base_type: i64 = Lowerer_inferExprType(l, base_node);
+
+        // For arrays/slices, get element type
+        let elem_type: i64 = TypeInfo_elem(l.type_pool, base_type);
+        if elem_type > 0 {
+            return elem_type;
+        }
+        return TYPE_I64;
+    }
+
+    // Default to i64 for unknown expressions
     return TYPE_I64;
 }
 
@@ -2207,6 +2457,65 @@ fn Lowerer_lowerAddressOf(l: *Lowerer, node: *Node) i64 {
         }
     }
 
+    // Handle address of field access: &outer.inner
+    // Result = address_of(base) + field_offset
+    if operand_node.kind == NodeKind.FieldAccess {
+        // FieldAccess: field0 = base, field1 = field_name_start, field2 = field_name_len
+        let base_node: *Node = l.nodes + operand_node.field0;
+        let field_name_start: i64 = operand_node.field1;
+        let field_name_len: i64 = operand_node.field2;
+
+        // Base must be an identifier (local variable)
+        if base_node.kind == NodeKind.Ident {
+            // Look up the local variable
+            var local_idx: i64 = -1;
+            var local_type_idx: i64 = TYPE_I64;
+            var i: i64 = 0;
+            while i < fb.locals_count {
+                let local: *IRLocal = fb.locals + i;
+                if names_equal(l.source, local.name_start, local.name_len,
+                              base_node.field0, base_node.field1) {
+                    local_idx = i;
+                    local_type_idx = local.type_idx;
+                }
+                i = i + 1;
+            }
+
+            if local_idx >= 0 {
+                // Look up field offset in the struct type
+                let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, local_type_idx,
+                                                               field_name_start, field_name_len);
+                if field_info != null {
+                    // Get address of local + field offset
+                    let base_addr: i64 = FuncBuilder_emitAddrLocal(fb, local_idx, TYPE_I64);
+                    if field_info.offset == 0 {
+                        return base_addr;
+                    }
+                    let offset_val: i64 = FuncBuilder_emitConstInt(fb, field_info.offset);
+                    return FuncBuilder_emitBinary(fb, IR_OP_ADD, base_addr, offset_val, TYPE_I64);
+                }
+
+                // Fallback: use struct type info from the local variable if available
+                let local: *IRLocal = fb.locals + local_idx;
+                if local.struct_type_start >= 0 {
+                    let field_offset: i64 = lookup_struct_field_offset(l, local.struct_type_start, local.struct_type_len,
+                                                                        field_name_start, field_name_len);
+                    if field_offset >= 0 {
+                        let base_addr: i64 = FuncBuilder_emitAddrLocal(fb, local_idx, TYPE_I64);
+                        if field_offset == 0 {
+                            return base_addr;
+                        }
+                        let offset_val: i64 = FuncBuilder_emitConstInt(fb, field_offset);
+                        return FuncBuilder_emitBinary(fb, IR_OP_ADD, base_addr, offset_val, TYPE_I64);
+                    }
+                }
+
+                // Last resort: return base address without offset (field at offset 0)
+                return FuncBuilder_emitAddrLocal(fb, local_idx, TYPE_I64);
+            }
+        }
+    }
+
     // Handle address of identifiers (local or global variables)
     if operand_node.kind == NodeKind.Ident {
         // Look up local variable by name first
@@ -2349,13 +2658,20 @@ fn Lowerer_lowerFieldAccess(l: *Lowerer, node: *Node) i64 {
         }
 
         // Fallback: use struct type info from the local variable if available
+        // Following Zig pattern: use lookup_struct_field_info to get offset AND type
         let local: *IRLocal = fb.locals + local_idx;
         if local.struct_type_start >= 0 {
-            // Look up field offset from struct declaration
-            let field_offset: i64 = lookup_struct_field_offset(l, local.struct_type_start, local.struct_type_len,
-                                                                field_name_start, field_name_len);
-            if field_offset >= 0 {
-                return FuncBuilder_emitFieldLocal(fb, local_idx, field_offset, TYPE_I64);
+            // Look up field info from struct declaration (includes offset and type)
+            let field_info_ast: FieldLookupResult = lookup_struct_field_info(l,
+                local.struct_type_start, local.struct_type_len,
+                field_name_start, field_name_len);
+            if field_info_ast.offset >= 0 {
+                // Use the resolved type_idx from AST lookup, falling back to TYPE_I64
+                var field_type: i64 = field_info_ast.type_idx;
+                if field_type < 0 {
+                    field_type = TYPE_I64;
+                }
+                return FuncBuilder_emitFieldLocal(fb, local_idx, field_info_ast.offset, field_type);
             }
         }
         // Last resort fallback: offset 0 (should rarely happen now)
@@ -2452,9 +2768,44 @@ fn Lowerer_lowerFieldAccess(l: *Lowerer, node: *Node) i64 {
             }
         }
 
-        // Fallback: lower base and use offset 0 (original behavior)
+        // Fallback: Zig-style approach - lower base and look up field in base's type
+        // First, try to infer the base's struct type from AST
+        var base_struct_type_start: i64 = -1;
+        var base_struct_type_len: i64 = 0;
+
+        // Walk the base field access to find its type
+        // base_node is FieldAccess, so field1/field2 is the field name being accessed
+        // We need to find what type that field has
+        if walk_node.kind == NodeKind.Ident and root_local_idx >= 0 {
+            let local: *IRLocal = fb.locals + root_local_idx;
+            if local.struct_type_start >= 0 {
+                // Look up the base field (e.g., "inner" in outer.inner)
+                let base_field_name_start: i64 = base_node.field1;
+                let base_field_name_len: i64 = base_node.field2;
+                let base_info: FieldLookupResult = lookup_struct_field_info(l,
+                    local.struct_type_start, local.struct_type_len,
+                    base_field_name_start, base_field_name_len);
+                if base_info.type_start >= 0 {
+                    base_struct_type_start = base_info.type_start;
+                    base_struct_type_len = base_info.type_len;
+                }
+            }
+        }
+
+        // Now look up the final field in the base's struct type
+        var final_offset: i64 = 0;
+        if base_struct_type_start >= 0 {
+            let final_info: FieldLookupResult = lookup_struct_field_info(l,
+                base_struct_type_start, base_struct_type_len,
+                field_name_start, field_name_len);
+            if final_info.offset >= 0 {
+                final_offset = final_info.offset;
+            }
+        }
+
+        // Lower the base expression and access the field at computed offset
         let base_val: i64 = Lowerer_lowerFieldAccess(l, base_node);
-        return FuncBuilder_emitFieldValue(fb, base_val, 0, TYPE_I64);
+        return FuncBuilder_emitFieldValue(fb, base_val, final_offset, TYPE_I64);
     }
 
     // Case 4: Base is an IndexExpr (arr[i].field)
@@ -2895,11 +3246,12 @@ fn Lowerer_lowerFieldAssign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
     }
 
     // Case 3: Base is another field access (chained: a.b.c = value)
-    // BUG-051 FIX: Use AST-based lookup (no checker/type pool dependency)
-    // For o.inner.a: base_node is o.inner, field_name is "a"
+    // Following Zig lower.zig:731-738 pattern
+    // For o.inner.x: base_node is o.inner, field_name is "x"
     if base_node.kind == NodeKind.FieldAccess {
         var total_offset: i64 = 0;
         var root_local_idx: i64 = -1;
+        var root_type_idx: i64 = TYPE_I64;
 
         // Walk up the field access chain to find root local
         var walk_node: *Node = base_node;
@@ -2917,13 +3269,32 @@ fn Lowerer_lowerFieldAssign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
                 if names_equal(l.source, local.name_start, local.name_len,
                               walk_node.field0, walk_node.field1) {
                     root_local_idx = i;
+                    root_type_idx = local.type_idx;
 
-                    // Use AST-based lookup with struct_type_start/len
+                    // FIRST: Try TypeRegistry-based lookup (like Case 1)
+                    // This is more reliable than AST-based lookup
+                    let base_field_name_start: i64 = base_node.field1;
+                    let base_field_name_len: i64 = base_node.field2;
+
+                    // Look up base field (e.g., "inner") in root's struct type
+                    let base_field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, root_type_idx,
+                        base_field_name_start, base_field_name_len);
+
+                    if base_field_info != null {
+                        total_offset = base_field_info.offset;
+
+                        // Look up final field (e.g., "x") in base field's type
+                        let final_field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, base_field_info.type_idx,
+                            field_name_start, field_name_len);
+
+                        if final_field_info != null {
+                            total_offset = total_offset + final_field_info.offset;
+                            return FuncBuilder_emitStoreFieldLocal(fb, root_local_idx, total_offset, value_idx);
+                        }
+                    }
+
+                    // FALLBACK: Use AST-based lookup with struct_type_start/len
                     if local.struct_type_start >= 0 {
-                        // Get base field info (e.g., "inner" in o.inner)
-                        let base_field_name_start: i64 = base_node.field1;
-                        let base_field_name_len: i64 = base_node.field2;
-
                         // Look up base field in root's struct type (AST-based)
                         let base_info: FieldLookupResult = lookup_struct_field_info(l,
                             local.struct_type_start, local.struct_type_len,
@@ -2948,9 +3319,39 @@ fn Lowerer_lowerFieldAssign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
             }
         }
 
-        // Fallback: lower base and store at offset 0 (original behavior)
+        // Fallback: lower base and store with proper field offset
+        // Following Zig lower.zig:731-738
         let base_val: i64 = Lowerer_lowerFieldAccess(l, base_node);
-        return FuncBuilder_emitStoreField(fb, base_val, 0, value_idx);
+
+        // Look up the final field offset in the base's struct type
+        // base_node is the intermediate field access (e.g., o.inner)
+        // We need to find what type that field has, then look up field_name in it
+        var final_field_offset: i64 = 0;
+
+        // Try to find the base field's type using AST-based lookup
+        if walk_node.kind == NodeKind.Ident and root_local_idx >= 0 {
+            let local: *IRLocal = fb.locals + root_local_idx;
+            if local.struct_type_start >= 0 {
+                // Look up the intermediate field (e.g., "inner")
+                let base_field_name_start: i64 = base_node.field1;
+                let base_field_name_len: i64 = base_node.field2;
+                let base_info: FieldLookupResult = lookup_struct_field_info(l,
+                    local.struct_type_start, local.struct_type_len,
+                    base_field_name_start, base_field_name_len);
+
+                if base_info.type_start >= 0 {
+                    // Now look up the final field in the base's type
+                    let final_info: FieldLookupResult = lookup_struct_field_info(l,
+                        base_info.type_start, base_info.type_len,
+                        field_name_start, field_name_len);
+                    if final_info.offset >= 0 {
+                        final_field_offset = final_info.offset;
+                    }
+                }
+            }
+        }
+
+        return FuncBuilder_emitStoreField(fb, base_val, final_field_offset, value_idx);
     }
 
     // Case 4: Base is an IndexExpr (arr[i].field = value)

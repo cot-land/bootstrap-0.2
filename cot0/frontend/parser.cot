@@ -1250,6 +1250,16 @@ fn Parser_parseStmt(p: *Parser) i64 {
         return Node_continueStmt(p.pool, start, p.current.start);
     }
 
+    // Defer statement: defer expr;
+    // Reference: Zig lower.zig:314-318 defer_stmt
+    if kind == TokenType.Defer {
+        let start: i64 = p.current.start;
+        Parser_advance(p);
+        let expr: i64 = Parser_parseExpr(p);
+        Parser_got(p, TokenType.Semi);  // Optional semicolon
+        return Node_deferStmt(p.pool, expr, start, p.current.start);
+    }
+
     // Standalone block: { stmt* }
     if kind == TokenType.LBrace {
         return Parser_parseBlock(p);

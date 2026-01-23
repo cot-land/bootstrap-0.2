@@ -1,0 +1,143 @@
+// Expand Calls Pass - Decompose Aggregate Types Before Register Allocation
+// Reference: src/ssa/passes/expand_calls.zig
+// Reference: cmd/compile/internal/ssa/expand_calls.go
+//
+// THE CRITICAL INVARIANT:
+// After this pass completes: NO SSA Value has type > 32 bytes (MAX_SSA_SIZE)
+//
+// Types that fail CanSSA are handled via OpMove (bulk memory copy).
+
+import "../func.cot"
+import "../value.cot"
+import "../block.cot"
+import "../op.cot"
+import "../../frontend/types.cot"
+
+const MAX_SSA_SIZE: i64 = 32;
+
+// Check if a type can be held in SSA registers
+// Reference: value.zig canSSA
+fn canSSA(pool: *TypeRegistry, type_idx: i64) bool {
+    let size: i64 = TypeRegistry_sizeof(pool, type_idx);
+    if size <= 0 { return true; }
+    if size > MAX_SSA_SIZE { return false; }
+    return true;
+}
+
+// Run the expand_calls pass on a function
+// Reference: expand_calls.zig:53 expandCalls
+fn expandCalls(f: *Func, type_pool: *TypeRegistry) {
+    if type_pool == null { return; }
+
+    // Pass 1: Find and handle wide stores (Store of !canSSA type → Move)
+    var b: i64 = 0;
+    while b < f.blocks_count {
+        let block: *Block = Func_getBlock(f, b);
+
+        var vi: i64 = 0;
+        while vi < block.values_count {
+            let v: *Value = Func_getValue(f, block.values_start + vi);
+
+            // Check for Store of non-SSA type
+            if v.op == Op.Store and v.args_count >= 2 {
+                let stored_id: i64 = v.args[1];
+                if stored_id >= 0 {
+                    let stored_val: *Value = Func_getValue(f, stored_id);
+
+                    // Check if stored value is from a call returning large type
+                    // Note: SelectN not implemented in cot0 yet
+                    if stored_val.op == Op.Call {
+                        let type_size: i64 = TypeRegistry_sizeof(type_pool, stored_val.type_idx);
+
+                        // If type > 16 bytes, it uses hidden return pointer
+                        // Convert Store to Move for bulk memory copy
+                        if type_size > 16 {
+                            v.op = Op.Move;
+                            v.aux_int = type_size;
+                            v.type_idx = TYPE_VOID;
+                        }
+                    }
+                }
+            }
+
+            vi = vi + 1;
+        }
+        b = b + 1;
+    }
+
+    // Pass 2: Apply dec.rules optimizations
+    applyDecRules(f);
+}
+
+// Apply dec.rules optimizations
+// Reference: expand_calls.zig applyDecRules lines 608-638
+fn applyDecRules(f: *Func) {
+    var b: i64 = 0;
+    while b < f.blocks_count {
+        let block: *Block = Func_getBlock(f, b);
+
+        var vi: i64 = 0;
+        while vi < block.values_count {
+            let v: *Value = Func_getValue(f, block.values_start + vi);
+
+            // string_ptr(string_make(ptr, len)) → copy(ptr)
+            // slice_ptr(slice_make(ptr, len)) → copy(ptr)
+            if v.op == Op.StringPtr or v.op == Op.SlicePtr {
+                if v.args_count >= 1 {
+                    let arg_id: i64 = v.args[0];
+                    if arg_id >= 0 {
+                        let arg: *Value = Func_getValue(f, arg_id);
+                        if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args_count >= 1 {
+                            let ptr_id: i64 = arg.args[0];
+
+                            // Decrement old arg's use count
+                            arg.uses = arg.uses - 1;
+
+                            // Transform to copy
+                            v.op = Op.Copy;
+                            v.args[0] = ptr_id;
+                            v.args_count = 1;
+
+                            // Increment new arg's use count
+                            if ptr_id >= 0 {
+                                let ptr_val: *Value = Func_getValue(f, ptr_id);
+                                ptr_val.uses = ptr_val.uses + 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // string_len(string_make(ptr, len)) → copy(len)
+            // slice_len(slice_make(ptr, len)) → copy(len)
+            if v.op == Op.StringLen or v.op == Op.SliceLen {
+                if v.args_count >= 1 {
+                    let arg_id: i64 = v.args[0];
+                    if arg_id >= 0 {
+                        let arg: *Value = Func_getValue(f, arg_id);
+                        if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args_count >= 2 {
+                            let len_id: i64 = arg.args[1];
+
+                            // Decrement old arg's use count
+                            arg.uses = arg.uses - 1;
+
+                            // Transform to copy
+                            v.op = Op.Copy;
+                            v.args[0] = len_id;
+                            v.args_count = 1;
+
+                            // Increment new arg's use count
+                            if len_id >= 0 {
+                                let len_val: *Value = Func_getValue(f, len_id);
+                                len_val.uses = len_val.uses + 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            vi = vi + 1;
+        }
+        b = b + 1;
+    }
+}

@@ -32,6 +32,7 @@ enum TokenType {
     In,         // in
     Break,      // break
     Continue,   // continue
+    Defer,      // defer
     Switch,     // switch
 
     // Keywords - types
@@ -247,6 +248,7 @@ fn Token_lookup(text: string) TokenType {
         if text[0] == 98 and text[1] == 114 and text[2] == 101 and text[3] == 97 and text[4] == 107 { return TokenType.Break; }     // break
         if text[0] == 99 and text[1] == 111 and text[2] == 110 and text[3] == 115 and text[4] == 116 { return TokenType.Const; }    // const
         if text[0] == 102 and text[1] == 97 and text[2] == 108 and text[3] == 115 and text[4] == 101 { return TokenType.False; }    // false
+        if text[0] == 100 and text[1] == 101 and text[2] == 102 and text[3] == 101 and text[4] == 114 { return TokenType.Defer; }    // defer
     }
 
     // Length 6 keywords
@@ -331,6 +333,7 @@ fn Token_string(t: TokenType) string {
     if t == TokenType.Null { return "null"; }
     if t == TokenType.Break { return "break"; }
     if t == TokenType.Continue { return "continue"; }
+    if t == TokenType.Defer { return "defer"; }
     if t == TokenType.Switch { return "switch"; }
     return "UNKNOWN";
 }

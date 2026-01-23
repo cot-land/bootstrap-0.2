@@ -1,0 +1,175 @@
+// Schedule Pass - Order Values Within Blocks for Codegen
+// Reference: src/ssa/passes/schedule.zig
+// Reference: cmd/compile/internal/ssa/schedule.go
+//
+// Purpose: Establish deterministic value order BEFORE regalloc.
+// After this pass, block values order is the final emission order.
+//
+// Algorithm:
+// 1. Assign priority scores to each value (lower = earlier)
+// 2. Build dependency edges (args must come before users)
+// 3. Verify ordering satisfies dependencies
+// 4. Reorder if necessary using swaps
+
+import "../func.cot"
+import "../value.cot"
+import "../block.cot"
+import "../op.cot"
+
+// Priority scores - lower numbers scheduled earlier (Go's pattern)
+// Reference: schedule.zig Score enum
+const SCORE_PHI: i64 = 0;         // Phis must be first
+const SCORE_ARG: i64 = 1;         // Arguments early (entry block)
+const SCORE_MEMORY: i64 = 2;      // Stores early (reduces register pressure)
+const SCORE_DEFAULT: i64 = 3;     // Normal instructions
+const SCORE_CONTROL: i64 = 4;     // Branch/return last
+
+// Get scheduling score for a value
+// Reference: schedule.zig getScore
+fn getScore(v: *Value, is_control: bool) i64 {
+    if is_control { return SCORE_CONTROL; }
+    if v.op == Op.Phi { return SCORE_PHI; }
+    if v.op == Op.Arg { return SCORE_ARG; }
+    if v.op == Op.Store { return SCORE_MEMORY; }
+    if v.op == Op.StoreReg { return SCORE_MEMORY; }
+    return SCORE_DEFAULT;
+}
+
+// Run the schedule pass on a function
+// Reference: schedule.zig:47 schedule
+fn schedule(f: *Func) {
+    var b: i64 = 0;
+    while b < f.blocks_count {
+        let block: *Block = Func_getBlock(f, b);
+        scheduleBlock(f, block);
+        b = b + 1;
+    }
+}
+
+// Schedule values within a single block
+// Reference: schedule.zig:59 scheduleBlock
+fn scheduleBlock(f: *Func, block: *Block) {
+    if block.values_count <= 1 { return; }
+
+    // Pass 1: Bubble phis to the front
+    // Phis MUST be first in block
+    var phi_end: i64 = 0;
+    var i: i64 = 0;
+    while i < block.values_count {
+        let v: *Value = Func_getValue(f, block.values_start + i);
+        if v.op == Op.Phi {
+            // Swap this phi to position phi_end
+            if i != phi_end {
+                swapValues(f, block.values_start + phi_end, block.values_start + i);
+            }
+            phi_end = phi_end + 1;
+        }
+        i = i + 1;
+    }
+
+    // Pass 2: Bubble control flow to the end
+    // Return/Jump/Branch MUST be last
+    var ctrl_start: i64 = block.values_count;
+    i = block.values_count - 1;
+    while i >= phi_end {
+        let v: *Value = Func_getValue(f, block.values_start + i);
+        if v.op == Op.Return {
+            ctrl_start = ctrl_start - 1;
+            if i != ctrl_start {
+                swapValues(f, block.values_start + i, block.values_start + ctrl_start);
+            }
+        }
+        i = i - 1;
+    }
+
+    // Pass 3: Sort middle values by dependencies
+    // Use simple bubble sort to ensure uses come after defs
+    var sorted: bool = false;
+    var iterations: i64 = 0;
+    while not sorted and iterations < 100 {
+        sorted = true;
+        iterations = iterations + 1;
+
+        i = phi_end;
+        while i < ctrl_start - 1 {
+            let v1: *Value = Func_getValue(f, block.values_start + i);
+            let v2: *Value = Func_getValue(f, block.values_start + i + 1);
+
+            // Check if v2 should come before v1
+            // v2 should come before v1 if v1 uses v2
+            if valueUsesValue(v1, v2.id) {
+                swapValues(f, block.values_start + i, block.values_start + i + 1);
+                sorted = false;
+            }
+
+            i = i + 1;
+        }
+    }
+}
+
+// Check if value v uses value with given id
+fn valueUsesValue(v: *Value, used_id: i64) bool {
+    var i: i64 = 0;
+    while i < v.args_count {
+        if v.args[i] == used_id {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Swap two values in the function's value array
+// This swaps the actual Value structs, keeping IDs matched to positions
+fn swapValues(f: *Func, idx1: i64, idx2: i64) {
+    if idx1 == idx2 { return; }
+    if idx1 < 0 or idx1 >= f.values_count { return; }
+    if idx2 < 0 or idx2 >= f.values_count { return; }
+
+    let v1: *Value = f.values + idx1;
+    let v2: *Value = f.values + idx2;
+
+    // Swap the entire Value structs
+    var temp: Value = v1.*;
+    v1.* = v2.*;
+    v2.* = temp;
+
+    // Update IDs to match new positions
+    v1.id = idx1;
+    v2.id = idx2;
+
+    // Update any references to these values in other values
+    // This is expensive but necessary for correctness
+    updateValueReferences(f, idx2, idx1);  // Old idx2 is now at idx1
+    updateValueReferences(f, idx1, idx2);  // Old idx1 is now at idx2
+}
+
+// Update all references from old_id to new_id
+fn updateValueReferences(f: *Func, old_id: i64, new_id: i64) {
+    var i: i64 = 0;
+    while i < f.values_count {
+        let v: *Value = f.values + i;
+        var j: i64 = 0;
+        while j < v.args_count {
+            if v.args[j] == old_id {
+                v.args[j] = new_id;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+
+    // Also update block controls
+    var b: i64 = 0;
+    while b < f.blocks_count {
+        let block: *Block = Func_getBlock(f, b);
+        var c: i64 = 0;
+        while c < block.control_count {
+            if block.controls[c] == old_id {
+                block.controls[c] = new_id;
+            }
+            c = c + 1;
+        }
+        b = b + 1;
+    }
+}
