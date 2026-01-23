@@ -911,6 +911,9 @@ fn Lowerer_lowerVarDecl(l: *Lowerer, node: *Node) {
         let type_info: *Type = TypeRegistry_get(l.type_pool, type_idx);
         if type_info.kind == TypeKind.Slice {
             local_type = TYPE_SLICE;
+        } else if type_info.kind == TypeKind.String {
+            // BUG-055 fix: Handle string type (16 bytes: ptr + len)
+            local_type = TYPE_STRING;
         } else if type_info.kind == TypeKind.Array {
             local_type = type_idx;
             array_len = type_info.len;
@@ -931,8 +934,9 @@ fn Lowerer_lowerVarDecl(l: *Lowerer, node: *Node) {
 
     let local_idx: i64 = FuncBuilder_addLocal(fb, node.field1, node.field2, local_type, is_mutable);
 
-    // Set slice local size to 16 bytes (ptr + len)
-    if local_type == TYPE_SLICE {
+    // Set slice/string local size to 16 bytes (ptr + len)
+    // BUG-055 fix: Also handle TYPE_STRING
+    if local_type == TYPE_SLICE or local_type == TYPE_STRING {
         FuncBuilder_setLocalSize(fb, local_idx, 16);
     }
 
@@ -1003,8 +1007,9 @@ fn Lowerer_lowerVarDecl(l: *Lowerer, node: *Node) {
             let len_ir: i64 = FuncBuilder_emitSliceLen(fb, call_ir);
             FuncBuilder_emitStoreFieldLocal(fb, local_idx, 0, ptr_ir);
             FuncBuilder_emitStoreFieldLocal(fb, local_idx, 8, len_ir);
-        } else if init_expr.kind == NodeKind.StringLit and local_type == TYPE_SLICE {
-            // String literal to slice - decompose into ptr and len
+        } else if init_expr.kind == NodeKind.StringLit and (local_type == TYPE_SLICE or local_type == TYPE_STRING) {
+            // String literal to string/slice - decompose into ptr and len
+            // BUG-055 fix: Handle both TYPE_SLICE and TYPE_STRING
             // Following Zig: src/frontend/ssa_builder.zig:586-648 (store_local slice handling)
             // StringLit: field0 = str_start, field1 = str_len
             let str_start: i64 = init_expr.field0;

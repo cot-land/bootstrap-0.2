@@ -1402,23 +1402,44 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         let sr2: *StringReloc = g_string_relocs + (str_idx);
 
         // Build symbol name: "_str_N" format
+        // BUG-055 fix: Handle string indices up to 9999 (was only 0-9)
         sym_name[0] = 95;   // '_'
         sym_name[1] = 115;  // 's'
         sym_name[2] = 116;  // 't'
         sym_name[3] = 114;  // 'r'
         sym_name[4] = 95;   // '_'
-        // Convert str_idx to string (simple approach for small numbers)
-        if str_idx < 10 {
-            sym_name[5] = @intCast(u8, 48 + str_idx);  // '0' + idx
-            sym_name[6] = 0;
-            let str_sym_idx: i64 = MachOWriter_addSymbol(&writer, &sym_name[0], 6, str_data_offset, SECT_DATA, false);
 
-            // Add ADRP relocation (PAGE21) - at code_offset
-            MachOWriter_addReloc(&writer, sr2.code_offset, str_sym_idx, ARM64_RELOC_PAGE21, true);
-
-            // ADD relocation (PAGEOFF12) - at code_offset + 4
-            MachOWriter_addReloc(&writer, sr2.code_offset + 4, str_sym_idx, ARM64_RELOC_PAGEOFF12, false);
+        // Convert str_idx to string (handles up to 9999)
+        var sym_name_len: i64 = 5;
+        var temp_idx: i64 = str_idx;
+        if temp_idx < 10 {
+            sym_name[5] = @intCast(u8, 48 + temp_idx);
+            sym_name_len = 6;
+        } else if temp_idx < 100 {
+            sym_name[5] = @intCast(u8, 48 + temp_idx / 10);
+            sym_name[6] = @intCast(u8, 48 + temp_idx % 10);
+            sym_name_len = 7;
+        } else if temp_idx < 1000 {
+            sym_name[5] = @intCast(u8, 48 + temp_idx / 100);
+            sym_name[6] = @intCast(u8, 48 + (temp_idx / 10) % 10);
+            sym_name[7] = @intCast(u8, 48 + temp_idx % 10);
+            sym_name_len = 8;
+        } else {
+            sym_name[5] = @intCast(u8, 48 + temp_idx / 1000);
+            sym_name[6] = @intCast(u8, 48 + (temp_idx / 100) % 10);
+            sym_name[7] = @intCast(u8, 48 + (temp_idx / 10) % 10);
+            sym_name[8] = @intCast(u8, 48 + temp_idx % 10);
+            sym_name_len = 9;
         }
+        sym_name[sym_name_len] = 0;
+
+        let str_sym_idx: i64 = MachOWriter_addSymbol(&writer, &sym_name[0], sym_name_len, str_data_offset, SECT_DATA, false);
+
+        // Add ADRP relocation (PAGE21) - at code_offset
+        MachOWriter_addReloc(&writer, sr2.code_offset, str_sym_idx, ARM64_RELOC_PAGE21, true);
+
+        // ADD relocation (PAGEOFF12) - at code_offset + 4
+        MachOWriter_addReloc(&writer, sr2.code_offset + 4, str_sym_idx, ARM64_RELOC_PAGEOFF12, false)
 
         // Move to next string position (string len + null + alignment)
         str_data_offset = str_data_offset + sr2.str_len + 1;
