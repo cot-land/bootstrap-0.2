@@ -96,6 +96,9 @@
 | `Parser.expect()` | `Parser_expect()` | Same | |
 | `Parser.check()` | `Parser_check()` | Same | |
 | `Parser.advance()` | `Parser_advance()` | Same | |
+| `Parser.nest_lev` field | `Parser.nest_lev` field | Same | Nesting depth tracking |
+| `Parser.incNest()` | `Parser_incNest()` | Same | Recursion limit protection |
+| `Parser.decNest()` | `Parser_decNest()` | Same | |
 
 ### 2.5 types.cot vs types.zig
 

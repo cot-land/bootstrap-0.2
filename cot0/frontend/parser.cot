@@ -25,7 +25,11 @@ struct Parser {
     pool: *NodePool,          // AST node pool for allocation
     type_registry: *TypeRegistry,  // Type registry for type creation
     had_error: bool,          // Error flag
+    nest_lev: i64,            // Nesting depth for recursion limit (follows Zig parser.zig:50)
 }
+
+// Maximum nesting level (Zig uses 10000, following parser.zig:53)
+const MAX_NEST_LEV: i64 = 10000;
 
 // ============================================================================
 // Parser Initialization
@@ -38,6 +42,7 @@ fn Parser_init(source: string, pool: *NodePool, type_registry: *TypeRegistry) Pa
     p.pool = pool;
     p.type_registry = type_registry;
     p.had_error = false;
+    p.nest_lev = 0;  // Initialize nesting depth (follows Zig parser.zig:70)
     // Prime the parser with first token
     p.current = Scanner_next(&p.scanner);
     return p;
@@ -78,6 +83,26 @@ fn Parser_want(p: *Parser, expected: TokenType) bool {
 // Check for end of file
 fn Parser_atEnd(p: *Parser) bool {
     return p.current.kind == TokenType.Eof;
+}
+
+// ============================================================================
+// Nesting Depth Protection (following Zig parser.zig:166-179)
+// ============================================================================
+
+// Increment nesting level with overflow protection
+// Returns true if OK, false if exceeded maximum (sets had_error)
+fn Parser_incNest(p: *Parser) bool {
+    p.nest_lev = p.nest_lev + 1;
+    if p.nest_lev > MAX_NEST_LEV {
+        p.had_error = true;
+        return false;  // Exceeded maximum nesting depth
+    }
+    return true;
+}
+
+// Decrement nesting level
+fn Parser_decNest(p: *Parser) {
+    p.nest_lev = p.nest_lev - 1;
 }
 
 // Peek ahead to check if token AFTER current is a dot (for struct literal detection)
@@ -861,7 +886,14 @@ fn Parser_parseUnary(p: *Parser) i64 {
 
 // Parse binary expression with precedence climbing
 // Following Go's binaryExpr pattern from parser.go:865-882
+// Nesting check follows Zig parser.zig:661-663
 fn Parser_parseBinaryExpr(p: *Parser, left: i64, min_prec: i64) i64 {
+    // Nesting depth protection (follows Zig parser.zig:662-663)
+    if not Parser_incNest(p) {
+        return left;  // Exceeded max depth, return what we have
+    }
+    defer Parser_decNest(p);
+
     var x: i64 = left;
     var bin_cur_prec: i64 = Parser_prec(p);
 
