@@ -178,11 +178,6 @@ pub const Driver = struct {
         var global_scope = checker_mod.Scope.init(self.allocator, null);
         defer global_scope.deinit();
 
-        // Create a dummy source for error reporting
-        var dummy_src = source_mod.Source.init(self.allocator, path, "");
-        defer dummy_src.deinit();
-        var err_reporter = errors_mod.ErrorReporter.init(&dummy_src, null);
-
         // Store checkers to keep them alive (they reference types)
         var checkers = std.ArrayListUnmanaged(checker_mod.Checker){};
         defer {
@@ -195,6 +190,9 @@ pub const Driver = struct {
         // Check all files in order (imports first, main file last)
         for (parsed_files.items) |*pf| {
             debug.log(.check, "Type checking: {s}", .{pf.path});
+
+            // Use the actual source for this file so errors show correct file:line:col
+            var err_reporter = errors_mod.ErrorReporter.init(&pf.source, null);
 
             var chk = checker_mod.Checker.init(self.allocator, &pf.tree, &type_reg, &err_reporter, &global_scope);
 
@@ -243,14 +241,17 @@ pub const Driver = struct {
         for (parsed_files.items, 0..) |*pf, i| {
             debug.log(.lower, "Lowering: {s}", .{pf.path});
 
-            var lowerer = lower_mod.Lowerer.init(self.allocator, &pf.tree, &type_reg, &err_reporter, &checkers.items[i]);
+            // Use the actual source for this file so errors show correct file:line:col
+            var lower_err_reporter = errors_mod.ErrorReporter.init(&pf.source, null);
+
+            var lowerer = lower_mod.Lowerer.init(self.allocator, &pf.tree, &type_reg, &lower_err_reporter, &checkers.items[i]);
 
             var ir = lowerer.lower() catch |e| {
                 lowerer.deinit();
                 return e;
             };
 
-            if (err_reporter.hasErrors()) {
+            if (lower_err_reporter.hasErrors()) {
                 debug.log(.lower, "Lower failed for {s}", .{pf.path});
                 lowerer.deinit();
                 ir.deinit();

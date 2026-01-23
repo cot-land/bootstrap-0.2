@@ -7,7 +7,7 @@
 | Component | Status |
 |-----------|--------|
 | Zig compiler | ✅ 166 tests pass |
-| Stage 1 (Zig → cot0) | ⚠️ Most tests pass, 4 features broken |
+| Stage 1 (Zig → cot0) | ⚠️ 21+ tests pass, 2 features broken |
 | Stage 2 (cot0 → cot0) | ⏸️ Blocked (awaiting Stage 1 fixes) |
 | Self-hosting | In progress |
 
@@ -24,33 +24,25 @@ See [cot0/STAGE1_TEST_PLAN.md](cot0/STAGE1_TEST_PLAN.md) for detailed execution 
 | Basic return, arithmetic, locals | ✅ PASS |
 | Function calls | ✅ PASS |
 | If/else, while, break, continue | ✅ PASS |
-| Structs, nested structs | ✅ PASS |
+| Small structs (≤16 bytes) | ✅ PASS |
 | Arrays | ✅ PASS |
-| Pointer dereference | ✅ PASS |
-| Defer | ✅ PASS |
+| Pointer dereference/write | ✅ PASS |
 | Comparisons, bitwise ops | ✅ PASS |
-| **Function pointers** | ❌ FAIL (link error: undefined `_f`) |
-| **Global variables** | ❌ FAIL (returns 0) |
-| **String literals** | ❌ FAIL (`s.len` returns 0) |
-| **For loops** | ❌ FAIL (parser error) |
+| Global variables | ✅ PASS |
+| Crash handler integration | ✅ PASS |
+| **Large struct returns (>16B)** | ❌ FAIL (SIGSEGV - BUG-054) |
+| **String literals** | ❌ FAIL (garbled output - BUG-055) |
 
 ### Known Issues (Priority Order)
 
-1. **Function Pointers** (CRITICAL)
-   - Symptom: Linker error "undefined symbol: _f"
-   - Cause: Generates direct call instead of indirect call through register
+1. **Large Struct Returns** (CRITICAL - BUG-054)
+   - Symptom: SIGSEGV crash in programs returning structs >16 bytes
+   - Cause: ARM64 ABI requires hidden pointer in x8 for large struct returns, not implemented in cot0
+   - First failure: test_bug004_large_struct_return (line 1901 in all_tests.cot)
 
-2. **Global Variables** (HIGH)
-   - Symptom: Returns 0 instead of initialized value
-   - Cause: Global data relocation issue
-
-3. **String Literals** (MEDIUM)
-   - Symptom: `s.len` returns 0 instead of string length
-   - Cause: String slice construction issue
-
-4. **For Loops** (LOW)
-   - Symptom: Parser error on `for i in 0..7` syntax
-   - Cause: Parser doesn't recognize range syntax
+2. **String Literals** (HIGH - BUG-055)
+   - Symptom: String content is garbled/wrong
+   - Cause: String data relocation or slice construction issue in cot0
 
 ## What Works (with Zig Compiler)
 
@@ -66,6 +58,9 @@ See [cot0/STAGE1_TEST_PLAN.md](cot0/STAGE1_TEST_PLAN.md) for detailed execution 
 
 ## Recent Milestones
 
+- **2026-01-24**: Crash handler works in cot0-compiled programs (DWARF parsing, source location display)
+- **2026-01-24**: Error reporting shows file:line:column with source context
+- **2026-01-24**: 21+ basic tests verified passing (arithmetic, bitwise, control flow, functions, pointers, arrays, globals, small structs)
 - **2026-01-24**: Identified Stage1 test failures, created test plan
 - **2026-01-24**: Added SSABuilder_verify() for SSA validation/debugging
 - **2026-01-24**: Added parser nesting depth protection (Parser_incNest/decNest)

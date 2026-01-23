@@ -91,6 +91,15 @@ struct FuncAddrReloc {
     // The ADD instruction is at code_offset + 4
 }
 
+// String literal relocation - for const_string values
+// Following Zig: src/codegen/arm64.zig string_refs (StringRef struct)
+struct StringReloc {
+    code_offset: i64,      // Offset of ADRP instruction in code buffer
+    str_start: i64,        // Start of string content in source (after opening quote)
+    str_len: i64,          // Length of string content
+    // The ADD instruction is at code_offset + 4
+}
+
 // ============================================================================
 // Codegen State
 // Holds state during code generation for a function
@@ -150,6 +159,16 @@ struct GenState {
     func_addr_relocs: *FuncAddrReloc,
     func_addr_relocs_count: i64,
     func_addr_relocs_cap: i64,
+
+    // String literal relocations
+    // Following Zig: src/codegen/arm64.zig string_refs
+    string_relocs: *StringReloc,
+    string_relocs_count: i64,
+    string_relocs_cap: i64,
+
+    // Crash handler call offset (-1 if not needed)
+    // Set during codegen if this is the main function
+    crash_handler_offset: i64,
 }
 
 // ============================================================================
@@ -193,6 +212,10 @@ fn GenState_init(gs: *GenState, f: *Func,
     gs.func_addr_relocs = null;
     gs.func_addr_relocs_count = 0;
     gs.func_addr_relocs_cap = 0;
+    gs.string_relocs = null;
+    gs.string_relocs_count = 0;
+    gs.string_relocs_cap = 0;
+    gs.crash_handler_offset = -1;
 }
 
 // Set up function address relocations tracking
@@ -200,6 +223,14 @@ fn GenState_setFuncAddrRelocs(gs: *GenState, relocs: *FuncAddrReloc, cap: i64) {
     gs.func_addr_relocs = relocs;
     gs.func_addr_relocs_count = 0;
     gs.func_addr_relocs_cap = cap;
+}
+
+// Set up string literal relocations tracking
+// Following Zig: src/codegen/arm64.zig string_refs pattern
+fn GenState_setStringRelocs(gs: *GenState, relocs: *StringReloc, cap: i64) {
+    gs.string_relocs = relocs;
+    gs.string_relocs_count = 0;
+    gs.string_relocs_cap = cap;
 }
 
 // Set up globals tracking for global variable access
@@ -470,6 +501,24 @@ fn GenState_generate(gs: *GenState) i64 {
         GenState_emitInst(gs, encode_sub_imm(SP, SP, frame_size));
     }
 
+    // If this is the main function, emit call to install_crash_handler
+    // Check if function name is "main" (length 4)
+    // Following pattern from lower.cot:190-198 for checking type names
+    if f.name_len == 4 and gs.source != null {
+        // Check "main": m=109, a=97, i=105, n=110
+        if (gs.source + f.name_start).* == 109 {  // 'm'
+            if (gs.source + f.name_start + 1).* == 97 {  // 'a'
+                if (gs.source + f.name_start + 2).* == 105 {  // 'i'
+                    if (gs.source + f.name_start + 3).* == 110 {  // 'n'
+                        // This is "main" - emit BL instruction placeholder
+                        gs.crash_handler_offset = gs.code_count;
+                        GenState_emitInst(gs, encode_bl(0));  // Offset will be patched
+                    }
+                }
+            }
+        }
+    }
+
     // Process each block
     var block_id: i64 = 0;
     while block_id < f.blocks_count {
@@ -686,11 +735,33 @@ fn GenState_constBool(gs: *GenState, v: *Value) {
 
 fn GenState_constString(gs: *GenState, v: *Value) {
     // String literal: aux_int=str_start, aux_ptr=str_len
-    // TODO: Properly emit string address from data section
-    // For now, just load 0 as a placeholder
+    // Following Zig: src/codegen/arm64.zig:1138-1182 (.const_string handling)
+    // Emit ADRP + ADD to load the string address
+    // The actual address is filled in by the linker via relocations
     let rd: i64 = v.reg;
     if rd < 0 { return; }
-    GenState_emitInst(gs, ARM64_encodeMovImm(rd, 0));
+
+    let str_start: i64 = v.aux_int;
+    let str_len: i64 = v.aux_ptr;
+
+    // Record the code offset for relocation
+    let reloc_offset: i64 = gs.code_count;
+
+    // Emit ADRP + ADD pair (placeholders - linker fills in addresses)
+    // ADRP rd, symbol@PAGE
+    GenState_emitInst(gs, encode_adrp(rd, 0));
+    // ADD rd, rd, symbol@PAGEOFF
+    GenState_emitInst(gs, encode_add_imm(rd, rd, 0));
+
+    // Record string relocation for later processing
+    // Following Zig: arm64.zig:1165-1169 (string_refs.append)
+    if gs.string_relocs != null and gs.string_relocs_count < gs.string_relocs_cap {
+        let r: *StringReloc = gs.string_relocs + gs.string_relocs_count;
+        r.code_offset = reloc_offset;
+        r.str_start = str_start;
+        r.str_len = str_len;
+        gs.string_relocs_count = gs.string_relocs_count + 1;
+    }
 }
 
 fn GenState_stringMake(gs: *GenState, v: *Value) {

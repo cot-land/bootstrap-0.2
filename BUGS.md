@@ -9,11 +9,10 @@
 ```
 
 **Current blockers:**
-- Function type variables (`var f: fn(...) -> T`)
-- External function calls (println) - need relocations
-- ~~Switch statements~~ (FIXED)
+- Large struct returns (>16 bytes) - ARM64 ABI hidden pointer (BUG-054)
+- String literals - garbled output (BUG-055)
 
-**Current status:** 35 tests pass (31 basic + 4 switch)
+**Current status:** 21+ tests verified passing (arithmetic, bitwise, control flow, functions, pointers, arrays, globals, small structs)
 
 ---
 
@@ -47,6 +46,82 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 ---
 
 ## Open Bugs
+
+### BUG-055: String literals produce garbled output in cot0-stage1
+
+**Status:** OPEN
+**Priority:** P0 (blocking string tests)
+**Discovered:** 2026-01-24
+
+**Symptoms:**
+- String content appears garbled when printed or compared
+- Tests using string literals fail with wrong content
+
+**Root Cause:**
+Unknown - likely string data relocation or slice construction issue in cot0.
+
+**Next Steps:**
+1. Compare string relocation handling in Zig compiler vs cot0
+2. Check if string data is correctly placed in __cstring section
+3. Verify slice construction (ptr + len) is correct
+
+**Location:** cot0/main.cot (string relocation handling)
+
+---
+
+### BUG-054: Large struct returns (>16 bytes) crash in cot0-stage1
+
+**Status:** OPEN
+**Priority:** P0 (blocking many tests)
+**Discovered:** 2026-01-24
+
+**Symptoms:**
+- Programs returning structs > 16 bytes crash with SIGSEGV
+- First failure at test_bug004_large_struct_return (line 1901 in all_tests.cot)
+- Crash handler shows NULL pointer dereference
+
+**Root Cause:**
+ARM64 AAPCS64 ABI requires structs > 16 bytes to be returned via a hidden pointer:
+1. Caller allocates space and passes address in x8
+2. Callee copies result to [x8]
+3. Caller retrieves result from that address
+
+cot0 does NOT implement this. The callee returns the first field value (e.g., 10) in x0 instead of using the hidden pointer mechanism.
+
+**Test File:** `/tmp/test_big_struct.cot`
+```cot
+struct BigStruct {
+    a: i64,
+    b: i64,
+    c: i64,
+}
+
+fn make_big() BigStruct {
+    var s: BigStruct = undefined;
+    s.a = 10;
+    s.b = 20;
+    s.c = 12;
+    return s;
+}
+
+fn test_big_return() i64 {
+    let s: BigStruct = make_big();
+    return s.a + s.b + s.c;  // Should be 42
+}
+```
+
+**Zig Reference:**
+The Zig compiler (src/codegen/arm64.zig) handles this in:
+- `setupCallArgsWithVariadic()` - Sets x8 for hidden return
+- Callee side copies to [x8] on return
+
+**Fix Approach:**
+1. Detect return type > 16 bytes in cot0/codegen/genssa.cot
+2. At call sites: allocate stack space, put address in x8
+3. In callee: save x8, copy result to [x8] on return
+4. After call: load result from allocated space
+
+---
 
 ### BUG-048: cot0 parser crashes on large files
 

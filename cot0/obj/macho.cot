@@ -461,6 +461,15 @@ fn MachOWriter_addData(w: *MachOWriter, bytes: *u8, len: i64) i64 {
     return offset;
 }
 
+// Add a single byte to data section
+fn MachOWriter_addDataByte(w: *MachOWriter, b: i64) {
+    if w.data_count < w.data_cap {
+        let dst: *u8 = w.data + w.data_count;
+        dst.* = @intCast(u8, b);
+        w.data_count = w.data_count + 1;
+    }
+}
+
 // Add zero-filled data to data section (for BSS-style globals)
 fn MachOWriter_addDataZeros(w: *MachOWriter, len: i64) i64 {
     let offset: i64 = w.data_count;
