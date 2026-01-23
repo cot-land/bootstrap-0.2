@@ -1438,6 +1438,119 @@ fn GenState_copy(gs: *GenState, v: *Value) {
 }
 
 // ============================================================================
+// Phi Move Emission (Reference: src/codegen/arm64.zig emitPhiMoves)
+// ============================================================================
+
+// Emit phi moves for an edge from current block to target block.
+// For each phi in target block, find this block's corresponding argument
+// and move it to the phi's register.
+// Uses parallel copy algorithm to handle conflicts.
+fn GenState_emitPhiMoves(gs: *GenState, current_block: *Block, target_block_id: i64) {
+    let f: *Func = gs.func;
+    // Get target block directly from func's block array
+    if target_block_id < 0 or target_block_id >= f.blocks_count { return; }
+    let target_block: *Block = f.blocks + target_block_id;
+
+    // Find which predecessor index we are in target's predecessor list
+    var pred_idx: i64 = -1;
+    var i: i64 = 0;
+    while i < target_block.preds_count {
+        if target_block.preds[i] == current_block.id {
+            pred_idx = i;
+        }
+        i = i + 1;
+    }
+    if pred_idx < 0 { return; }  // Not a predecessor
+
+    // Collect phi moves: up to 16 moves max
+    // PhiMove: src_reg, dest_reg, needs_temp, temp_reg
+    var src_regs: [16]i64 = undefined;
+    var dest_regs: [16]i64 = undefined;
+    var needs_temp: [16]bool = undefined;
+    var temp_regs: [16]i64 = undefined;
+    var moves_count: i64 = 0;
+
+    // Walk values in target block looking for phis
+    i = 0;
+    while i < target_block.values_count and moves_count < 16 {
+        let value_id: i64 = target_block.values_start + i;
+        let v: *Value = Func_getValue(f, value_id);
+
+        if v.op == Op.Phi {
+            // Get the argument for this predecessor
+            if pred_idx < v.args_count {
+                let src_id: i64 = v.args[pred_idx];
+                let src_val: *Value = Func_getValue(f, src_id);
+
+                let phi_reg: i64 = v.reg;
+                let src_reg: i64 = src_val.reg;
+
+                if phi_reg >= 0 {
+                    src_regs[moves_count] = src_reg;
+                    dest_regs[moves_count] = phi_reg;
+                    needs_temp[moves_count] = false;
+                    temp_regs[moves_count] = 0;
+                    moves_count = moves_count + 1;
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    if moves_count == 0 { return; }
+
+    // Detect conflicts: source reg will be overwritten before read
+    var temp_counter: i64 = 16;  // Use x16, x17 as scratch
+    i = 0;
+    while i < moves_count {
+        let src: i64 = src_regs[i];
+        if src >= 0 {
+            // Check if this source will be clobbered by an earlier move
+            var j: i64 = 0;
+            while j < i {
+                if dest_regs[j] == src {
+                    needs_temp[i] = true;
+                    temp_regs[i] = temp_counter;
+                    temp_counter = temp_counter + 1;
+                    if temp_counter > 17 {
+                        temp_counter = 9;  // Fall back to x9-x15
+                    }
+                }
+                j = j + 1;
+            }
+        }
+        i = i + 1;
+    }
+
+    // Phase 1: Save conflicting sources to temp registers
+    i = 0;
+    while i < moves_count {
+        if needs_temp[i] and src_regs[i] >= 0 {
+            // MOV temp, src (encoded as ADD temp, src, #0)
+            GenState_emitInst(gs, ARM64_encodeMovReg(temp_regs[i], src_regs[i]));
+        }
+        i = i + 1;
+    }
+
+    // Phase 2: Emit actual moves
+    i = 0;
+    while i < moves_count {
+        if needs_temp[i] {
+            if src_regs[i] >= 0 {
+                // Source was saved to temp
+                GenState_emitInst(gs, ARM64_encodeMovReg(dest_regs[i], temp_regs[i]));
+            }
+        } else {
+            // No conflict, emit directly
+            if src_regs[i] >= 0 and src_regs[i] != dest_regs[i] {
+                GenState_emitInst(gs, ARM64_encodeMovReg(dest_regs[i], src_regs[i]));
+            }
+        }
+        i = i + 1;
+    }
+}
+
+// ============================================================================
 // Block Control Flow
 // ============================================================================
 
@@ -1451,6 +1564,8 @@ fn GenState_blockControl(gs: *GenState, block: *Block, next_block: i64) {
         // Unconditional jump - only emit if not falling through
         if block.succs_count > 0 {
             let target: i64 = block.succs[0];
+            // Emit phi moves before branch/fallthrough
+            GenState_emitPhiMoves(gs, block, target);
             if target != next_block {
                 GenState_emitInst(gs, encode_b(0));  // Placeholder offset
                 GenState_addBranch(gs, target, false, 0);
@@ -1471,16 +1586,28 @@ fn GenState_blockControl(gs: *GenState, block: *Block, next_block: i64) {
 
         if then_block == next_block {
             // Fall through to then, branch to else if condition is false (zero)
+            // Emit phi moves for else (the branch target)
+            GenState_emitPhiMoves(gs, block, else_block);
             GenState_emitInst(gs, encode_cbz(cond_reg, 0));  // CBZ - branch if zero
             GenState_addBranchCbz(gs, else_block, cond_reg, false);
+            // Emit phi moves for then (fallthrough)
+            GenState_emitPhiMoves(gs, block, then_block);
         } else if else_block == next_block {
             // Fall through to else, branch to then if condition is true (non-zero)
+            // Emit phi moves for then (the branch target)
+            GenState_emitPhiMoves(gs, block, then_block);
             GenState_emitInst(gs, encode_cbnz(cond_reg, 0));  // CBNZ - branch if non-zero
             GenState_addBranchCbz(gs, then_block, cond_reg, true);
+            // Emit phi moves for else (fallthrough)
+            GenState_emitPhiMoves(gs, block, else_block);
         } else {
             // Neither is next, emit both branches
+            // Emit phi moves for then
+            GenState_emitPhiMoves(gs, block, then_block);
             GenState_emitInst(gs, encode_cbnz(cond_reg, 0));  // CBNZ - branch to then if true
             GenState_addBranchCbz(gs, then_block, cond_reg, true);
+            // Emit phi moves for else
+            GenState_emitPhiMoves(gs, block, else_block);
             GenState_emitInst(gs, encode_b(0));  // Unconditional to else
             GenState_addBranch(gs, else_block, false, 0);
         }

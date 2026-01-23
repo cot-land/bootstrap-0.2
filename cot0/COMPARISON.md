@@ -240,11 +240,68 @@
    - Added `TypeRegistry_sizeof()` to types.cot
    - Test passes: `var points: [2]Point; points[0].x = 10; points[0].y = 20;` returns 30
 
-### Remaining Work (Lower Priority)
+---
 
-1. Complete checker phase (copy from checker.zig) - not critical for bootstrap
-2. Add SSA passes (lower, schedule, expand_calls, decompose) - optional optimizations
-3. Add error infrastructure (copy from errors.zig) - optional for better errors
+## CRITICAL LOGIC GAPS (2026-01-23)
+
+These are missing implementations, not just naming differences.
+
+### 1. Lowerer (lower.cot vs lower.zig)
+
+| Feature | Zig | cot0 | Priority |
+|---------|-----|------|----------|
+| **defer_stack** | Full defer semantics | Missing entirely | HIGH |
+| `emitDeferredExprs()` | Emit at scope/return/break | Missing | HIGH |
+| **const_values** | Inlines compile-time constants | Missing | MEDIUM |
+| `LoopContext.defer_depth` | Track defer depth for break/continue | Missing | HIGH |
+| `inferExprType()` | Full type inference | Basic | MEDIUM |
+
+**Impact**: Any code using `defer` won't work in cot0.
+
+### 2. SSA Builder (builder.cot vs ssa_builder.zig)
+
+| Feature | Zig | cot0 | Priority |
+|---------|-----|------|----------|
+| **FwdRef pattern** | Forward references for SSA | Missing | CRITICAL |
+| `insertPhis()` | Iterative phi insertion | Missing | CRITICAL |
+| `lookupVarOutgoing()` | Walk CFG for variable defs | Missing | CRITICAL |
+| `reorderPhis()` | Ensure phis come first | Missing | HIGH |
+| `defvars` per block | Track var→value per block | Basic `BlockDefs` | HIGH |
+| `resolveFwdRefs()` | Replace FwdRefs with phis/copy | Missing | CRITICAL |
+
+**Impact**: SSA form may be incorrect for complex control flow.
+
+### 3. Codegen (genssa.cot vs codegen/arm64.zig)
+
+| Feature | Zig | cot0 | Priority |
+|---------|-----|------|----------|
+| `emitPhiMoves()` | Parallel copy for phis | Missing | CRITICAL |
+| Phi conflict detection | Handles src=dest conflicts | Missing | CRITICAL |
+| Temp register for phi | Uses x16/x17 for conflicts | Missing | HIGH |
+| Pre-allocate phi regs | Phase before codegen | Missing | MEDIUM |
+
+**Impact**: Phi nodes may produce incorrect code.
+
+### 4. SSA Passes (Missing entirely in cot0)
+
+| Pass | Zig Location | Purpose |
+|------|--------------|---------|
+| `expand_calls` | ssa/passes/expand_calls.zig | Decompose aggregate call args |
+| `decompose` | ssa/passes/decompose.zig | Split 16-byte values |
+| `schedule` | ssa/passes/schedule.zig | Order values for codegen |
+| `lower` | ssa/passes/lower.zig | Lower to machine ops |
+| `stackalloc` | ssa/stackalloc.zig | Assign spill slots |
+
+**Impact**: Missing optimization and correctness passes.
+
+---
+
+## Implementation Priority
+
+1. **emitPhiMoves()** - Required for correct phi semantics
+2. **insertPhis() + FwdRef** - Required for correct SSA
+3. **defer_stack** - Required for defer statements
+4. **SSA passes** - Required for larger programs
 
 ---
 
