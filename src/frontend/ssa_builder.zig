@@ -14,6 +14,7 @@ const std = @import("std");
 const ir = @import("ir.zig");
 const types = @import("types.zig");
 const source = @import("source.zig");
+const core_types = @import("../core/types.zig");
 const ssa = @import("../ssa/func.zig");
 const ssa_block = @import("../ssa/block.zig");
 const ssa_value = @import("../ssa/value.zig");
@@ -76,6 +77,10 @@ pub const SSABuilder = struct {
 
     /// Stack of (continue_block, break_block) for nested loops
     loop_stack: std.ArrayListUnmanaged(LoopContext),
+
+    /// Current source position for debug info (set by convertNode)
+    /// Uses line/col format for SSA value positions
+    cur_pos: core_types.Pos,
 
     const LoopContext = struct {
         continue_block: *Block,
@@ -252,6 +257,7 @@ pub const SSABuilder = struct {
             .block_map = block_map,
             .node_values = std.AutoHashMap(ir.NodeIndex, *Value).init(allocator),
             .loop_stack = .{},
+            .cur_pos = .{},
         };
     }
 
@@ -364,7 +370,7 @@ pub const SSABuilder = struct {
         // variables used before definition, which will be caught in verification)
 
         // 4. Create forward reference - will be resolved later
-        const fwd_ref = try self.func.newValue(.fwd_ref, type_idx, self.cur_block.?, .{});
+        const fwd_ref = try self.func.newValue(.fwd_ref, type_idx, self.cur_block.?, self.cur_pos);
         fwd_ref.aux_int = @intCast(local_idx); // Remember which variable
         try self.cur_block.?.addValue(self.allocator, fwd_ref);
 
@@ -478,10 +484,14 @@ pub const SSABuilder = struct {
         const node = self.ir_func.getNode(node_idx);
         const cur = self.cur_block orelse return error.NoCurrentBlock;
 
+        // Set current position for debug info (DWARF line tables)
+        // Store byte offset in line field - DWARF generator converts to line/col
+        self.cur_pos = .{ .line = node.span.start.offset, .col = 0, .file = 0 };
+
         const result: ?*Value = switch (node.data) {
             // === Constants ===
             .const_int => |c| blk: {
-                const val = try self.func.newValue(.const_int, node.type_idx, cur, .{});
+                const val = try self.func.newValue(.const_int, node.type_idx, cur, self.cur_pos);
                 val.aux_int = c.value;
                 try cur.addValue(self.allocator, val);
                 debug.log(.ssa, "    n{} -> v{} const_int {}", .{ node_idx, val.id, c.value });
@@ -489,28 +499,28 @@ pub const SSABuilder = struct {
             },
 
             .const_float => |c| blk: {
-                const val = try self.func.newValue(.const_float, node.type_idx, cur, .{});
+                const val = try self.func.newValue(.const_float, node.type_idx, cur, self.cur_pos);
                 val.aux_int = @bitCast(c.value);
                 try cur.addValue(self.allocator, val);
                 break :blk val;
             },
 
             .const_bool => |c| blk: {
-                const val = try self.func.newValue(.const_bool, node.type_idx, cur, .{});
+                const val = try self.func.newValue(.const_bool, node.type_idx, cur, self.cur_pos);
                 val.aux_int = if (c.value) 1 else 0;
                 try cur.addValue(self.allocator, val);
                 break :blk val;
             },
 
             .const_null => blk: {
-                const val = try self.func.newValue(.const_nil, node.type_idx, cur, .{});
+                const val = try self.func.newValue(.const_nil, node.type_idx, cur, self.cur_pos);
                 try cur.addValue(self.allocator, val);
                 break :blk val;
             },
 
             .const_slice => |c| blk: {
                 // String literal: store index in aux_int, string data stored separately
-                const val = try self.func.newValue(.const_string, node.type_idx, cur, .{});
+                const val = try self.func.newValue(.const_string, node.type_idx, cur, self.cur_pos);
                 val.aux_int = c.string_index;
                 try cur.addValue(self.allocator, val);
                 debug.log(.ssa, "    n{} -> v{} const_string idx={}", .{ node_idx, val.id, c.string_index });
@@ -524,7 +534,7 @@ pub const SSABuilder = struct {
                 // TODO: Add escape analysis to use SSA variables when safe.
 
                 // Get address of local
-                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, self.cur_pos);
                 addr_val.aux_int = @intCast(l.local_idx);
                 try cur.addValue(self.allocator, addr_val);
 
@@ -533,23 +543,23 @@ pub const SSABuilder = struct {
                 const load_type = self.type_registry.get(node.type_idx);
                 if (load_type == .slice) {
                     // Load ptr from offset 0
-                    const ptr_load = try self.func.newValue(.load, TypeRegistry.I64, cur, .{});
+                    const ptr_load = try self.func.newValue(.load, TypeRegistry.I64, cur, self.cur_pos);
                     ptr_load.addArg(addr_val);
                     try cur.addValue(self.allocator, ptr_load);
 
                     // Compute address for len (offset 8)
-                    const len_addr = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, .{});
+                    const len_addr = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, self.cur_pos);
                     len_addr.aux_int = 8;
                     len_addr.addArg(addr_val);
                     try cur.addValue(self.allocator, len_addr);
 
                     // Load len from offset 8
-                    const len_load = try self.func.newValue(.load, TypeRegistry.I64, cur, .{});
+                    const len_load = try self.func.newValue(.load, TypeRegistry.I64, cur, self.cur_pos);
                     len_load.addArg(len_addr);
                     try cur.addValue(self.allocator, len_load);
 
                     // Combine into slice_make
-                    const slice_val = try self.func.newValue(.slice_make, node.type_idx, cur, .{});
+                    const slice_val = try self.func.newValue(.slice_make, node.type_idx, cur, self.cur_pos);
                     slice_val.addArg2(ptr_load, len_load);
                     try cur.addValue(self.allocator, slice_val);
 
@@ -558,7 +568,7 @@ pub const SSABuilder = struct {
                 }
 
                 // Regular load for non-slice types
-                const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
+                const load_val = try self.func.newValue(.load, node.type_idx, cur, self.cur_pos);
                 load_val.addArg(addr_val);
                 try cur.addValue(self.allocator, load_val);
 
@@ -601,33 +611,33 @@ pub const SSABuilder = struct {
                         // IMPORTANT: Extract len (x1) FIRST before ptr (x0)
                         // because slice_ptr might move x0 to another register
                         // and the regalloc could assign that register to x1's location
-                        len_val = try self.func.newValue(.slice_len, TypeRegistry.I64, cur, .{});
+                        len_val = try self.func.newValue(.slice_len, TypeRegistry.I64, cur, self.cur_pos);
                         len_val.addArg(value);
                         try cur.addValue(self.allocator, len_val);
 
-                        ptr_val = try self.func.newValue(.slice_ptr, TypeRegistry.I64, cur, .{});
+                        ptr_val = try self.func.newValue(.slice_ptr, TypeRegistry.I64, cur, self.cur_pos);
                         ptr_val.addArg(value);
                         try cur.addValue(self.allocator, ptr_val);
                     }
 
                     // Get address of local (after extracting call result components)
-                    const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                    const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, self.cur_pos);
                     addr_val.aux_int = @intCast(s.local_idx);
                     try cur.addValue(self.allocator, addr_val);
 
                     // Store ptr at offset 0
-                    const ptr_store = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                    const ptr_store = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
                     ptr_store.addArg2(addr_val, ptr_val);
                     try cur.addValue(self.allocator, ptr_store);
 
                     // Compute address for len (offset 8)
-                    const len_addr = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, .{});
+                    const len_addr = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, self.cur_pos);
                     len_addr.aux_int = 8;
                     len_addr.addArg(addr_val);
                     try cur.addValue(self.allocator, len_addr);
 
                     // Store len at offset 8
-                    const len_store = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                    const len_store = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
                     len_store.addArg2(len_addr, len_val);
                     try cur.addValue(self.allocator, len_store);
 
@@ -639,12 +649,12 @@ pub const SSABuilder = struct {
                 }
 
                 // Get address of local
-                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, self.cur_pos);
                 addr_val.aux_int = @intCast(s.local_idx);
                 try cur.addValue(self.allocator, addr_val);
 
                 // Regular store for non-slice types
-                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
                 store_val.addArg2(addr_val, value);
                 try cur.addValue(self.allocator, store_val);
 
@@ -659,7 +669,7 @@ pub const SSABuilder = struct {
             // Reference: ~/learning/go/src/cmd/compile/internal/ssagen/ssa.go:5239
             .global_ref => |g| blk: {
                 // Get address of global using symbol name
-                const addr_val = try self.func.newValue(.global_addr, TypeRegistry.VOID, cur, .{});
+                const addr_val = try self.func.newValue(.global_addr, TypeRegistry.VOID, cur, self.cur_pos);
                 addr_val.aux = .{ .string = g.name };
                 try cur.addValue(self.allocator, addr_val);
 
@@ -669,23 +679,23 @@ pub const SSABuilder = struct {
                 // Check if loading a slice type - need to decompose into (ptr, len)
                 if (load_type == .slice) {
                     // Load ptr from offset 0
-                    const ptr_load = try self.func.newValue(.load, TypeRegistry.I64, cur, .{});
+                    const ptr_load = try self.func.newValue(.load, TypeRegistry.I64, cur, self.cur_pos);
                     ptr_load.addArg(addr_val);
                     try cur.addValue(self.allocator, ptr_load);
 
                     // Compute address for len (offset 8)
-                    const len_addr = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, .{});
+                    const len_addr = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, self.cur_pos);
                     len_addr.aux_int = 8;
                     len_addr.addArg(addr_val);
                     try cur.addValue(self.allocator, len_addr);
 
                     // Load len from offset 8
-                    const len_load = try self.func.newValue(.load, TypeRegistry.I64, cur, .{});
+                    const len_load = try self.func.newValue(.load, TypeRegistry.I64, cur, self.cur_pos);
                     len_load.addArg(len_addr);
                     try cur.addValue(self.allocator, len_load);
 
                     // Combine into slice_make
-                    const slice_val = try self.func.newValue(.slice_make, node.type_idx, cur, .{});
+                    const slice_val = try self.func.newValue(.slice_make, node.type_idx, cur, self.cur_pos);
                     slice_val.addArg2(ptr_load, len_load);
                     try cur.addValue(self.allocator, slice_val);
 
@@ -702,7 +712,7 @@ pub const SSABuilder = struct {
                 }
 
                 // For scalar types <= 8 bytes: load the value
-                const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
+                const load_val = try self.func.newValue(.load, node.type_idx, cur, self.cur_pos);
                 load_val.addArg(addr_val);
                 try cur.addValue(self.allocator, load_val);
 
@@ -727,33 +737,33 @@ pub const SSABuilder = struct {
                         len_val = value.args[1];
                     } else {
                         // For call results, extract x1 first then x0
-                        len_val = try self.func.newValue(.slice_len, TypeRegistry.I64, cur, .{});
+                        len_val = try self.func.newValue(.slice_len, TypeRegistry.I64, cur, self.cur_pos);
                         len_val.addArg(value);
                         try cur.addValue(self.allocator, len_val);
 
-                        ptr_val = try self.func.newValue(.slice_ptr, TypeRegistry.I64, cur, .{});
+                        ptr_val = try self.func.newValue(.slice_ptr, TypeRegistry.I64, cur, self.cur_pos);
                         ptr_val.addArg(value);
                         try cur.addValue(self.allocator, ptr_val);
                     }
 
                     // Get address of global
-                    const addr_val = try self.func.newValue(.global_addr, TypeRegistry.VOID, cur, .{});
+                    const addr_val = try self.func.newValue(.global_addr, TypeRegistry.VOID, cur, self.cur_pos);
                     addr_val.aux = .{ .string = g.name };
                     try cur.addValue(self.allocator, addr_val);
 
                     // Store ptr at offset 0
-                    const ptr_store = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                    const ptr_store = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
                     ptr_store.addArg2(addr_val, ptr_val);
                     try cur.addValue(self.allocator, ptr_store);
 
                     // Compute address for len (offset 8)
-                    const len_addr = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, .{});
+                    const len_addr = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, self.cur_pos);
                     len_addr.aux_int = 8;
                     len_addr.addArg(addr_val);
                     try cur.addValue(self.allocator, len_addr);
 
                     // Store len at offset 8
-                    const len_store = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                    const len_store = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
                     len_store.addArg2(len_addr, len_val);
                     try cur.addValue(self.allocator, len_store);
 
@@ -762,12 +772,12 @@ pub const SSABuilder = struct {
                 }
 
                 // Get address of global
-                const addr_val = try self.func.newValue(.global_addr, TypeRegistry.VOID, cur, .{});
+                const addr_val = try self.func.newValue(.global_addr, TypeRegistry.VOID, cur, self.cur_pos);
                 addr_val.aux = .{ .string = g.name };
                 try cur.addValue(self.allocator, addr_val);
 
                 // Regular store for non-slice types
-                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
                 store_val.addArg2(addr_val, value);
                 try cur.addValue(self.allocator, store_val);
 
@@ -803,16 +813,16 @@ pub const SSABuilder = struct {
                     const elem_size = self.type_registry.sizeOf(elem_type);
 
                     // Scale offset: offset_scaled = right * elem_size
-                    const size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                    const size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, self.cur_pos);
                     size_val.aux_int = @intCast(elem_size);
                     try cur.addValue(self.allocator, size_val);
 
-                    const scaled_offset = try self.func.newValue(.mul, TypeRegistry.I64, cur, .{});
+                    const scaled_offset = try self.func.newValue(.mul, TypeRegistry.I64, cur, self.cur_pos);
                     scaled_offset.addArg2(right, size_val);
                     try cur.addValue(self.allocator, scaled_offset);
 
                     // Now do pointer arithmetic with scaled offset
-                    const val = try self.func.newValue(ptr_op, node.type_idx, cur, .{});
+                    const val = try self.func.newValue(ptr_op, node.type_idx, cur, self.cur_pos);
                     val.addArg2(left, scaled_offset);
                     try cur.addValue(self.allocator, val);
                     debug.log(.ssa, "    n{} -> v{} {s} (ptr arith, elem_size={d})", .{ node_idx, val.id, @tagName(ptr_op), elem_size });
@@ -820,7 +830,7 @@ pub const SSABuilder = struct {
                 }
 
                 const op = binaryOpToSSA(b.op);
-                const val = try self.func.newValue(op, node.type_idx, cur, .{});
+                const val = try self.func.newValue(op, node.type_idx, cur, self.cur_pos);
                 val.addArg2(left, right);
                 try cur.addValue(self.allocator, val);
                 debug.log(.ssa, "    n{} -> v{} {} v{} v{}", .{ node_idx, val.id, @intFromEnum(op), left.id, right.id });
@@ -831,7 +841,7 @@ pub const SSABuilder = struct {
             .unary => |u| blk: {
                 const operand = try self.convertNode(u.operand) orelse return error.MissingValue;
                 const op = unaryOpToSSA(u.op);
-                const val = try self.func.newValue(op, node.type_idx, cur, .{});
+                const val = try self.func.newValue(op, node.type_idx, cur, self.cur_pos);
                 val.addArg(operand);
                 try cur.addValue(self.allocator, val);
                 break :blk val;
@@ -842,7 +852,7 @@ pub const SSABuilder = struct {
                 const left_val = try self.convertNode(sc.left) orelse return error.MissingValue;
                 const right_val = try self.convertNode(sc.right) orelse return error.MissingValue;
 
-                const concat_val = try self.func.newValue(.string_concat, node.type_idx, cur, .{});
+                const concat_val = try self.func.newValue(.string_concat, node.type_idx, cur, self.cur_pos);
                 concat_val.addArg2(left_val, right_val);
                 try cur.addValue(self.allocator, concat_val);
                 debug.log(.ssa, "    n{} -> v{} string_concat", .{ node_idx, concat_val.id });
@@ -856,7 +866,7 @@ pub const SSABuilder = struct {
                 const ptr_val = try self.convertNode(sh.ptr) orelse return error.MissingValue;
                 const len_val = try self.convertNode(sh.len) orelse return error.MissingValue;
 
-                const string_val = try self.func.newValue(.string_make, node.type_idx, cur, .{});
+                const string_val = try self.func.newValue(.string_make, node.type_idx, cur, self.cur_pos);
                 string_val.addArg2(ptr_val, len_val);
                 try cur.addValue(self.allocator, string_val);
                 debug.log(.ssa, "    n{} -> v{} string_make (from string_header)", .{ node_idx, string_val.id });
@@ -899,7 +909,7 @@ pub const SSABuilder = struct {
 
             // === Function Calls ===
             .call => |c| blk: {
-                const call_val = try self.func.newValue(.static_call, node.type_idx, cur, .{});
+                const call_val = try self.func.newValue(.static_call, node.type_idx, cur, self.cur_pos);
                 // Set function name in aux.string
                 call_val.aux = .{ .string = c.func_name };
 
@@ -919,7 +929,7 @@ pub const SSABuilder = struct {
 
             // Indirect call through function pointer (Go: ClosureCall)
             .call_indirect => |c| blk: {
-                const call_val = try self.func.newValue(.closure_call, node.type_idx, cur, .{});
+                const call_val = try self.func.newValue(.closure_call, node.type_idx, cur, self.cur_pos);
 
                 // First arg is the function pointer (callee)
                 const callee_val = try self.convertNode(c.callee) orelse return error.MissingValue;
@@ -938,7 +948,7 @@ pub const SSABuilder = struct {
 
             // === Address Operations ===
             .addr_local => |l| blk: {
-                const val = try self.func.newValue(.local_addr, node.type_idx, cur, .{});
+                const val = try self.func.newValue(.local_addr, node.type_idx, cur, self.cur_pos);
                 val.aux_int = @intCast(l.local_idx);
                 try cur.addValue(self.allocator, val);
                 break :blk val;
@@ -946,7 +956,7 @@ pub const SSABuilder = struct {
 
             .addr_global => |g| blk: {
                 // Get address of global variable - produces pointer to global
-                const val = try self.func.newValue(.global_addr, node.type_idx, cur, .{});
+                const val = try self.func.newValue(.global_addr, node.type_idx, cur, self.cur_pos);
                 val.aux = .{ .string = g.name };
                 try cur.addValue(self.allocator, val);
                 debug.log(.ssa, "    n{} -> v{} addr_global '{s}'", .{ node_idx, val.id, g.name });
@@ -956,7 +966,7 @@ pub const SSABuilder = struct {
             .addr_offset => |ao| blk: {
                 // Address offset: base address + constant offset
                 const base_val = try self.convertNode(ao.base) orelse return error.MissingValue;
-                const val = try self.func.newValue(.off_ptr, node.type_idx, cur, .{});
+                const val = try self.func.newValue(.off_ptr, node.type_idx, cur, self.cur_pos);
                 val.addArg(base_val);
                 val.aux_int = ao.offset;
                 try cur.addValue(self.allocator, val);
@@ -966,7 +976,7 @@ pub const SSABuilder = struct {
 
             .func_addr => |f| blk: {
                 // Function address: use addr op with function name in aux
-                const val = try self.func.newValue(.addr, node.type_idx, cur, .{});
+                const val = try self.func.newValue(.addr, node.type_idx, cur, self.cur_pos);
                 val.aux = .{ .string = f.name };
                 try cur.addValue(self.allocator, val);
                 debug.log(.ssa, "    n{} -> v{} func_addr '{s}'", .{ node_idx, val.id, f.name });
@@ -977,7 +987,7 @@ pub const SSABuilder = struct {
             .ptr_load => |p| blk: {
                 // Load through pointer stored in local
                 const ptr_val = try self.variable(p.ptr_local, node.type_idx);
-                const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
+                const load_val = try self.func.newValue(.load, node.type_idx, cur, self.cur_pos);
                 load_val.addArg(ptr_val);
                 try cur.addValue(self.allocator, load_val);
                 break :blk load_val;
@@ -986,7 +996,7 @@ pub const SSABuilder = struct {
             .ptr_store => |p| blk: {
                 const ptr_val = try self.variable(p.ptr_local, node.type_idx);
                 const value = try self.convertNode(p.value) orelse return error.MissingValue;
-                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
                 store_val.addArg2(ptr_val, value);
                 try cur.addValue(self.allocator, store_val);
                 break :blk store_val;
@@ -994,7 +1004,7 @@ pub const SSABuilder = struct {
 
             .ptr_load_value => |p| blk: {
                 const ptr_val = try self.convertNode(p.ptr) orelse return error.MissingValue;
-                const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
+                const load_val = try self.func.newValue(.load, node.type_idx, cur, self.cur_pos);
                 load_val.addArg(ptr_val);
                 try cur.addValue(self.allocator, load_val);
                 break :blk load_val;
@@ -1004,7 +1014,7 @@ pub const SSABuilder = struct {
                 // Store through computed pointer: ptr.* = value
                 const ptr_val = try self.convertNode(p.ptr) orelse return error.MissingValue;
                 const value = try self.convertNode(p.value) orelse return error.MissingValue;
-                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
                 store_val.addArg2(ptr_val, value);
                 try cur.addValue(self.allocator, store_val);
                 break :blk store_val;
@@ -1020,11 +1030,11 @@ pub const SSABuilder = struct {
                 // 2. Add field offset (off_ptr)
                 // 3. If field is a struct, return address; otherwise load
                 const local = self.ir_func.locals[f.local_idx];
-                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, self.cur_pos);
                 addr_val.aux_int = @intCast(f.local_idx);
                 try cur.addValue(self.allocator, addr_val);
 
-                const off_val = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, .{});
+                const off_val = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, self.cur_pos);
                 off_val.addArg(addr_val);
                 off_val.aux_int = f.offset;
                 try cur.addValue(self.allocator, off_val);
@@ -1041,7 +1051,7 @@ pub const SSABuilder = struct {
                 }
 
                 // Primitive type - load the value
-                const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
+                const load_val = try self.func.newValue(.load, node.type_idx, cur, self.cur_pos);
                 load_val.addArg(off_val);
                 try cur.addValue(self.allocator, load_val);
 
@@ -1057,16 +1067,16 @@ pub const SSABuilder = struct {
                 // 3. Store value to that address (store)
                 const value = try self.convertNode(f.value) orelse return error.MissingValue;
 
-                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, self.cur_pos);
                 addr_val.aux_int = @intCast(f.local_idx);
                 try cur.addValue(self.allocator, addr_val);
 
-                const off_val = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, .{});
+                const off_val = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, self.cur_pos);
                 off_val.addArg(addr_val);
                 off_val.aux_int = f.offset;
                 try cur.addValue(self.allocator, off_val);
 
-                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
                 store_val.addArg2(off_val, value);
                 try cur.addValue(self.allocator, store_val);
 
@@ -1082,12 +1092,12 @@ pub const SSABuilder = struct {
                 const base_val = try self.convertNode(f.base) orelse return error.MissingValue;
                 const value = try self.convertNode(f.value) orelse return error.MissingValue;
 
-                const off_val = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, .{});
+                const off_val = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, self.cur_pos);
                 off_val.addArg(base_val);
                 off_val.aux_int = f.offset;
                 try cur.addValue(self.allocator, off_val);
 
-                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
                 store_val.addArg2(off_val, value);
                 try cur.addValue(self.allocator, store_val);
 
@@ -1100,7 +1110,7 @@ pub const SSABuilder = struct {
                 // Base is already a pointer/address to a struct
                 const base_val = try self.convertNode(f.base) orelse return error.MissingValue;
 
-                const off_val = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, .{});
+                const off_val = try self.func.newValue(.off_ptr, TypeRegistry.VOID, cur, self.cur_pos);
                 off_val.addArg(base_val);
                 off_val.aux_int = f.offset;
                 try cur.addValue(self.allocator, off_val);
@@ -1116,7 +1126,7 @@ pub const SSABuilder = struct {
                 }
 
                 // Primitive type - load the value
-                const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
+                const load_val = try self.func.newValue(.load, node.type_idx, cur, self.cur_pos);
                 load_val.addArg(off_val);
                 try cur.addValue(self.allocator, load_val);
 
@@ -1206,7 +1216,7 @@ pub const SSABuilder = struct {
                     @tagName(conv_op),
                 });
 
-                const val = try self.func.newValue(conv_op, c.to_type, cur, .{});
+                const val = try self.func.newValue(conv_op, c.to_type, cur, self.cur_pos);
                 val.addArg(operand);
                 try cur.addValue(self.allocator, val);
                 break :blk val;
@@ -1229,27 +1239,27 @@ pub const SSABuilder = struct {
                 const index_val = try self.convertNode(i.index) orelse return error.MissingValue;
 
                 // Get base address of the array local
-                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, self.cur_pos);
                 addr_val.aux_int = @intCast(i.local_idx);
                 try cur.addValue(self.allocator, addr_val);
 
                 // Create constant for element size
-                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, self.cur_pos);
                 elem_size_val.aux_int = @intCast(i.elem_size);
                 try cur.addValue(self.allocator, elem_size_val);
 
                 // Compute offset: index * elem_size
-                const offset_val = try self.func.newValue(.mul, TypeRegistry.I64, cur, .{});
+                const offset_val = try self.func.newValue(.mul, TypeRegistry.I64, cur, self.cur_pos);
                 offset_val.addArg2(index_val, elem_size_val);
                 try cur.addValue(self.allocator, offset_val);
 
                 // Compute element address: base + offset
-                const elem_addr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, .{});
+                const elem_addr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, self.cur_pos);
                 elem_addr.addArg2(addr_val, offset_val);
                 try cur.addValue(self.allocator, elem_addr);
 
                 // Load the value from the element address
-                const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
+                const load_val = try self.func.newValue(.load, node.type_idx, cur, self.cur_pos);
                 load_val.addArg(elem_addr);
                 try cur.addValue(self.allocator, load_val);
 
@@ -1267,27 +1277,27 @@ pub const SSABuilder = struct {
                 const value = try self.convertNode(s.value) orelse return error.MissingValue;
 
                 // Get base address of the array local
-                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                const addr_val = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, self.cur_pos);
                 addr_val.aux_int = @intCast(s.local_idx);
                 try cur.addValue(self.allocator, addr_val);
 
                 // Create constant for element size
-                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, self.cur_pos);
                 elem_size_val.aux_int = @intCast(s.elem_size);
                 try cur.addValue(self.allocator, elem_size_val);
 
                 // Compute offset: index * elem_size
-                const offset_val = try self.func.newValue(.mul, TypeRegistry.I64, cur, .{});
+                const offset_val = try self.func.newValue(.mul, TypeRegistry.I64, cur, self.cur_pos);
                 offset_val.addArg2(index_val, elem_size_val);
                 try cur.addValue(self.allocator, offset_val);
 
                 // Compute element address: base + offset
-                const elem_addr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, .{});
+                const elem_addr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, self.cur_pos);
                 elem_addr.addArg2(addr_val, offset_val);
                 try cur.addValue(self.allocator, elem_addr);
 
                 // Store the value to the element address
-                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
                 store_val.addArg2(elem_addr, value);
                 try cur.addValue(self.allocator, store_val);
 
@@ -1305,17 +1315,17 @@ pub const SSABuilder = struct {
                 const index_val = try self.convertNode(i.index) orelse return error.MissingValue;
 
                 // Create constant for element size
-                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, self.cur_pos);
                 elem_size_val.aux_int = @intCast(i.elem_size);
                 try cur.addValue(self.allocator, elem_size_val);
 
                 // Compute offset: index * elem_size
-                const offset_val = try self.func.newValue(.mul, TypeRegistry.I64, cur, .{});
+                const offset_val = try self.func.newValue(.mul, TypeRegistry.I64, cur, self.cur_pos);
                 offset_val.addArg2(index_val, elem_size_val);
                 try cur.addValue(self.allocator, offset_val);
 
                 // Compute element address: base + offset
-                const elem_addr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, .{});
+                const elem_addr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, self.cur_pos);
                 elem_addr.addArg2(base_val, offset_val);
                 try cur.addValue(self.allocator, elem_addr);
 
@@ -1328,7 +1338,7 @@ pub const SSABuilder = struct {
                 }
 
                 // Load the value from the element address
-                const load_val = try self.func.newValue(.load, node.type_idx, cur, .{});
+                const load_val = try self.func.newValue(.load, node.type_idx, cur, self.cur_pos);
                 load_val.addArg(elem_addr);
                 try cur.addValue(self.allocator, load_val);
 
@@ -1347,22 +1357,22 @@ pub const SSABuilder = struct {
                 const value = try self.convertNode(s.value) orelse return error.MissingValue;
 
                 // Create constant for element size
-                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, self.cur_pos);
                 elem_size_val.aux_int = @intCast(s.elem_size);
                 try cur.addValue(self.allocator, elem_size_val);
 
                 // Compute offset: index * elem_size
-                const offset_val = try self.func.newValue(.mul, TypeRegistry.I64, cur, .{});
+                const offset_val = try self.func.newValue(.mul, TypeRegistry.I64, cur, self.cur_pos);
                 offset_val.addArg2(index_val, elem_size_val);
                 try cur.addValue(self.allocator, offset_val);
 
                 // Compute element address: base + offset
-                const elem_addr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, .{});
+                const elem_addr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, self.cur_pos);
                 elem_addr.addArg2(base_val, offset_val);
                 try cur.addValue(self.allocator, elem_addr);
 
                 // Store the value to the element address
-                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, .{});
+                const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
                 store_val.addArg2(elem_addr, value);
                 try cur.addValue(self.allocator, store_val);
 
@@ -1377,18 +1387,18 @@ pub const SSABuilder = struct {
                 const index_val = try self.convertNode(i.index) orelse return error.MissingValue;
 
                 // Create constant for element size
-                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, self.cur_pos);
                 elem_size_val.aux_int = @intCast(i.elem_size);
                 try cur.addValue(self.allocator, elem_size_val);
 
                 // Compute offset: index * elem_size
-                const offset_val = try self.func.newValue(.mul, TypeRegistry.I64, cur, .{});
+                const offset_val = try self.func.newValue(.mul, TypeRegistry.I64, cur, self.cur_pos);
                 offset_val.addArg2(index_val, elem_size_val);
                 try cur.addValue(self.allocator, offset_val);
 
                 // Compute element address: base + offset
                 // Use the node's type (pointer to element) for the result
-                const elem_addr = try self.func.newValue(.add_ptr, node.type_idx, cur, .{});
+                const elem_addr = try self.func.newValue(.add_ptr, node.type_idx, cur, self.cur_pos);
                 elem_addr.addArg2(base_val, offset_val);
                 try cur.addValue(self.allocator, elem_addr);
 
@@ -1415,19 +1425,19 @@ pub const SSABuilder = struct {
                     debug.log(.ssa, "    slice_local: slicing a slice (e.g., string)", .{});
 
                     // Get address of the local (slice struct)
-                    const local_addr = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                    const local_addr = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, self.cur_pos);
                     local_addr.aux_int = @intCast(s.local_idx);
                     try cur.addValue(self.allocator, local_addr);
 
                     // Load ptr from offset 0 of the slice struct
-                    const ptr_load = try self.func.newValue(.load, TypeRegistry.I64, cur, .{});
+                    const ptr_load = try self.func.newValue(.load, TypeRegistry.I64, cur, self.cur_pos);
                     ptr_load.addArg(local_addr);
                     try cur.addValue(self.allocator, ptr_load);
 
                     break :slice_ptr_blk ptr_load;
                 } else arr_addr_blk: {
                     // For arrays: get address of inline array data
-                    const arr_addr = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, .{});
+                    const arr_addr = try self.func.newValue(.local_addr, TypeRegistry.VOID, cur, self.cur_pos);
                     arr_addr.aux_int = @intCast(s.local_idx);
                     try cur.addValue(self.allocator, arr_addr);
                     break :arr_addr_blk arr_addr;
@@ -1438,23 +1448,23 @@ pub const SSABuilder = struct {
                     break :start_blk try self.convertNode(start_idx) orelse return error.MissingValue;
                 } else zero_blk: {
                     // Default start is 0
-                    const zero = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                    const zero = try self.func.newValue(.const_int, TypeRegistry.I64, cur, self.cur_pos);
                     zero.aux_int = 0;
                     try cur.addValue(self.allocator, zero);
                     break :zero_blk zero;
                 };
 
                 // Compute offset = start * elem_size
-                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, self.cur_pos);
                 elem_size_val.aux_int = @intCast(s.elem_size);
                 try cur.addValue(self.allocator, elem_size_val);
 
-                const offset = try self.func.newValue(.mul, TypeRegistry.I64, cur, .{});
+                const offset = try self.func.newValue(.mul, TypeRegistry.I64, cur, self.cur_pos);
                 offset.addArg2(start_val, elem_size_val);
                 try cur.addValue(self.allocator, offset);
 
                 // Compute slice pointer = base_ptr + offset
-                const slice_ptr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, .{});
+                const slice_ptr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, self.cur_pos);
                 slice_ptr.addArg2(base_ptr, offset);
                 try cur.addValue(self.allocator, slice_ptr);
 
@@ -1464,7 +1474,7 @@ pub const SSABuilder = struct {
                 // - End defaults to len(base) (computed as compile-time constant for arrays)
                 const len_val: *Value = if (s.end) |end_idx| len_blk: {
                     const end_val = try self.convertNode(end_idx) orelse return error.MissingValue;
-                    const len = try self.func.newValue(.sub, TypeRegistry.I64, cur, .{});
+                    const len = try self.func.newValue(.sub, TypeRegistry.I64, cur, self.cur_pos);
                     len.addArg2(end_val, start_val);
                     try cur.addValue(self.allocator, len);
                     break :len_blk len;
@@ -1476,7 +1486,7 @@ pub const SSABuilder = struct {
                 };
 
                 // Create slice value using slice_make(ptr, len)
-                const slice_val = try self.func.newValue(.slice_make, node.type_idx, cur, .{});
+                const slice_val = try self.func.newValue(.slice_make, node.type_idx, cur, self.cur_pos);
                 slice_val.addArg2(slice_ptr, len_val);
                 try cur.addValue(self.allocator, slice_val);
 
@@ -1493,30 +1503,30 @@ pub const SSABuilder = struct {
                     break :start_blk try self.convertNode(start_idx) orelse return error.MissingValue;
                 } else zero_blk: {
                     // Default start is 0
-                    const zero = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                    const zero = try self.func.newValue(.const_int, TypeRegistry.I64, cur, self.cur_pos);
                     zero.aux_int = 0;
                     try cur.addValue(self.allocator, zero);
                     break :zero_blk zero;
                 };
 
                 // Compute offset = start * elem_size
-                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, .{});
+                const elem_size_val = try self.func.newValue(.const_int, TypeRegistry.I64, cur, self.cur_pos);
                 elem_size_val.aux_int = @intCast(s.elem_size);
                 try cur.addValue(self.allocator, elem_size_val);
 
-                const offset = try self.func.newValue(.mul, TypeRegistry.I64, cur, .{});
+                const offset = try self.func.newValue(.mul, TypeRegistry.I64, cur, self.cur_pos);
                 offset.addArg2(start_val, elem_size_val);
                 try cur.addValue(self.allocator, offset);
 
                 // Compute slice pointer = base_val + offset
-                const slice_ptr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, .{});
+                const slice_ptr = try self.func.newValue(.add_ptr, TypeRegistry.VOID, cur, self.cur_pos);
                 slice_ptr.addArg2(base_val, offset);
                 try cur.addValue(self.allocator, slice_ptr);
 
                 // Compute length
                 const len_val: *Value = if (s.end) |end_idx| len_blk: {
                     const end_val = try self.convertNode(end_idx) orelse return error.MissingValue;
-                    const len = try self.func.newValue(.sub, TypeRegistry.I64, cur, .{});
+                    const len = try self.func.newValue(.sub, TypeRegistry.I64, cur, self.cur_pos);
                     len.addArg2(end_val, start_val);
                     try cur.addValue(self.allocator, len);
                     break :len_blk len;
@@ -1527,7 +1537,7 @@ pub const SSABuilder = struct {
                 };
 
                 // Create slice value using slice_make(ptr, len)
-                const slice_val = try self.func.newValue(.slice_make, node.type_idx, cur, .{});
+                const slice_val = try self.func.newValue(.slice_make, node.type_idx, cur, self.cur_pos);
                 slice_val.addArg2(slice_ptr, len_val);
                 try cur.addValue(self.allocator, slice_val);
 
@@ -1550,7 +1560,7 @@ pub const SSABuilder = struct {
                 }
 
                 // General case: emit slice_ptr operation
-                const ptr_val = try self.func.newValue(.slice_ptr, node.type_idx, cur, .{});
+                const ptr_val = try self.func.newValue(.slice_ptr, node.type_idx, cur, self.cur_pos);
                 ptr_val.addArg(slice_val);
                 try cur.addValue(self.allocator, ptr_val);
 
@@ -1568,7 +1578,7 @@ pub const SSABuilder = struct {
                 }
 
                 // General case: emit slice_len operation
-                const len_val = try self.func.newValue(.slice_len, TypeRegistry.I64, cur, .{});
+                const len_val = try self.func.newValue(.slice_len, TypeRegistry.I64, cur, self.cur_pos);
                 len_val.addArg(slice_val);
                 try cur.addValue(self.allocator, len_val);
 
@@ -1583,7 +1593,7 @@ pub const SSABuilder = struct {
                 const then_val = try self.convertNode(s.then_value) orelse return error.MissingValue;
                 const else_val = try self.convertNode(s.else_value) orelse return error.MissingValue;
 
-                const val = try self.func.newValue(.cond_select, node.type_idx, cur, .{});
+                const val = try self.func.newValue(.cond_select, node.type_idx, cur, self.cur_pos);
                 val.addArg(cond);
                 val.addArg(then_val);
                 val.addArg(else_val);
@@ -1791,7 +1801,7 @@ pub const SSABuilder = struct {
         }
 
         // Create a new FwdRef for this variable in the current block
-        const new_fwd = try self.func.newValue(.fwd_ref, type_idx, cur, .{});
+        const new_fwd = try self.func.newValue(.fwd_ref, type_idx, cur, self.cur_pos);
         new_fwd.aux_int = @intCast(local_idx);
         try cur.addValue(self.allocator, new_fwd);
 
@@ -2165,7 +2175,7 @@ pub const SSABuilder = struct {
         // Block: short-circuit value (false for AND, true for OR)
         self.cur_block = short_circuit_block;
         const short_val_cur = self.cur_block orelse return error.NoCurrentBlock;
-        const short_val = try self.func.newValue(.const_bool, result_type, short_val_cur, .{});
+        const short_val = try self.func.newValue(.const_bool, result_type, short_val_cur, self.cur_pos);
         short_val.aux_int = if (is_and) 0 else 1;
         try short_val_cur.addValue(self.allocator, short_val);
         try short_val_cur.addEdgeTo(self.allocator, merge_block);
@@ -2178,7 +2188,7 @@ pub const SSABuilder = struct {
         // Create phi with 2 arguments.
         // Preds order is always: [eval_right_block, short_circuit_block]
         // (because eval_right jumps to merge first, then short_circuit)
-        const phi_val = try self.func.newValue(.phi, result_type, merge_cur, .{});
+        const phi_val = try self.func.newValue(.phi, result_type, merge_cur, self.cur_pos);
         // pred0 = eval_right_block -> result is right operand
         // pred1 = short_circuit_block -> result is short_val (false for AND, true for OR)
         phi_val.addArg(right);
@@ -2218,7 +2228,7 @@ pub const SSABuilder = struct {
             left.args[1]
         else blk: {
             // Fallback to slice_len if not slice_make
-            const v = try self.func.newValue(.slice_len, TypeRegistry.I64, cur, .{});
+            const v = try self.func.newValue(.slice_len, TypeRegistry.I64, cur, self.cur_pos);
             v.addArg(left);
             try cur.addValue(self.allocator, v);
             break :blk v;
@@ -2227,14 +2237,14 @@ pub const SSABuilder = struct {
         const right_len = if (right.op == .slice_make and right.args.len >= 2)
             right.args[1]
         else blk: {
-            const v = try self.func.newValue(.slice_len, TypeRegistry.I64, cur, .{});
+            const v = try self.func.newValue(.slice_len, TypeRegistry.I64, cur, self.cur_pos);
             v.addArg(right);
             try cur.addValue(self.allocator, v);
             break :blk v;
         };
 
         // Compare lengths: left_len == right_len
-        const len_eq = try self.func.newValue(.eq, TypeRegistry.BOOL, cur, .{});
+        const len_eq = try self.func.newValue(.eq, TypeRegistry.BOOL, cur, self.cur_pos);
         len_eq.addArg2(left_len, right_len);
         try cur.addValue(self.allocator, len_eq);
 
@@ -2256,7 +2266,7 @@ pub const SSABuilder = struct {
         // Block: lengths differ - result is false (eq) / true (ne)
         self.cur_block = len_differ_block;
         const len_differ_cur = self.cur_block orelse return error.NoCurrentBlock;
-        const len_differ_val = try self.func.newValue(.const_bool, result_type, len_differ_cur, .{});
+        const len_differ_val = try self.func.newValue(.const_bool, result_type, len_differ_cur, self.cur_pos);
         len_differ_val.aux_int = if (is_eq) 0 else 1; // false for ==, true for !=
         try len_differ_cur.addValue(self.allocator, len_differ_val);
         try len_differ_cur.addEdgeTo(self.allocator, merge_block);
@@ -2270,7 +2280,7 @@ pub const SSABuilder = struct {
         const left_ptr = if (left.op == .slice_make and left.args.len >= 1)
             left.args[0]
         else blk: {
-            const v = try self.func.newValue(.slice_ptr, TypeRegistry.I64, compare_cur, .{});
+            const v = try self.func.newValue(.slice_ptr, TypeRegistry.I64, compare_cur, self.cur_pos);
             v.addArg(left);
             try compare_cur.addValue(self.allocator, v);
             break :blk v;
@@ -2279,7 +2289,7 @@ pub const SSABuilder = struct {
         const right_ptr = if (right.op == .slice_make and right.args.len >= 1)
             right.args[0]
         else blk: {
-            const v = try self.func.newValue(.slice_ptr, TypeRegistry.I64, compare_cur, .{});
+            const v = try self.func.newValue(.slice_ptr, TypeRegistry.I64, compare_cur, self.cur_pos);
             v.addArg(right);
             try compare_cur.addValue(self.allocator, v);
             break :blk v;
@@ -2287,7 +2297,7 @@ pub const SSABuilder = struct {
 
         // Compare pointers: for eq, pointers equal means true; for ne, pointers equal means false
         const ptr_cmp_op: Op = if (is_eq) .eq else .ne;
-        const ptr_eq = try self.func.newValue(ptr_cmp_op, result_type, compare_cur, .{});
+        const ptr_eq = try self.func.newValue(ptr_cmp_op, result_type, compare_cur, self.cur_pos);
         ptr_eq.addArg2(left_ptr, right_ptr);
         try compare_cur.addValue(self.allocator, ptr_eq);
         try compare_cur.addEdgeTo(self.allocator, merge_block);
@@ -2296,7 +2306,7 @@ pub const SSABuilder = struct {
         // Merge block: phi node for result
         self.cur_block = merge_block;
         const merge_cur = self.cur_block orelse return error.NoCurrentBlock;
-        const phi_val = try self.func.newValue(.phi, result_type, merge_cur, .{});
+        const phi_val = try self.func.newValue(.phi, result_type, merge_cur, self.cur_pos);
         // Predecessor order is: [len_differ_block, compare_ptrs_block]
         // (len_differ adds edge first, compare_ptrs adds second)
         // phi args must match this order:

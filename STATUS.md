@@ -1,6 +1,6 @@
 # Bootstrap 0.2 - Project Status
 
-**Last Updated: 2026-01-22**
+**Last Updated: 2026-01-23**
 
 ## Current Goal
 
@@ -47,28 +47,56 @@ Work through cot0/COMPARISON.md top to bottom. Mark each section complete when A
 
 ---
 
+## Recent Changes (2026-01-23)
+
+### DWARF Debug Info Implementation ✅
+
+**Problem:** When cot0-stage2 crashes, we see only `Exit: 139` with no crash location, registers, or stack trace.
+
+**Solution Implemented:** Full DWARF debug info generation and runtime crash handler:
+
+1. **DWARF Generation (Zig compiler - src/dwarf.zig)**
+   - New `DwarfBuilder` module matching Go's DWARF architecture
+   - Generates `__debug_line` section with DWARF v4 line table
+   - Generates `__debug_abbrev` and `__debug_info` sections
+   - Uses Go's efficient `putpclcdelta` algorithm for line/address encoding
+   - Proper relocations for code addresses
+
+2. **MachO Integration (src/obj/macho.zig)**
+   - `__DWARF` segment with debug sections
+   - Correct section layout and relocations
+   - Line entries passed from codegen to MachO writer
+
+3. **Runtime Crash Handler (runtime/cot_runtime.zig)**
+   - Signal handler for SIGSEGV/SIGBUS/SIGFPE/SIGILL
+   - Full register dump (PC, LR, SP, FP, x0-x28)
+   - Stack trace via frame pointer walking
+   - Symbol lookup with sorted symbol table
+   - DWARF line table parsing for source locations
+   - Handles Mach-O rebase fixups (addresses already slide-adjusted)
+
+**Verification:**
+```
+# Crash test output:
+Source Location:
+  crash_test.cot:3
+
+# lldb also works:
+* frame #0: crash_test.o`crash at crash_test.cot:3
+   1    fn crash() i64 {
+   2        let p: *i64 = null
+-> 3        return p.*
+```
+
+**Key Implementation Details:**
+- Mach-O loader applies rebase fixups to DWARF addresses at load time
+- Runtime parser does NOT add ASLR slide (already applied)
+- Line table lookup tracks emitted rows, not state machine state
+- Special opcodes advance-then-emit (DWARF v4 semantics)
+
+---
+
 ## Recent Changes (2026-01-22)
-
-### Error Infrastructure (In Progress)
-
-Comprehensive error handling infrastructure created but **not yet integrated** due to import system limitations.
-
-**Files Created:**
-- `lib/error.cot` - Core error primitives (panic, assert, bounds checks, tracing)
-- `lib/safe_alloc.cot` - Safe memory allocation wrappers
-- `lib/safe_array.cot` - Safe array access with bounds checking
-- `lib/safe_io.cot` - Safe file I/O wrappers
-- `lib/debug.cot` - Debug tracing infrastructure
-- `lib/validate.cot` - Type/kind validation helpers
-- `lib/invariants.cot` - Compiler-specific invariant checks
-- `lib/debug_init.cot` - Initialization and flag parsing
-- `lib/safe.cot` - Master import file
-
-**Blocking Issue:** The cot0 import system processes imports before extern declarations become visible. Library code cannot see `write`, `exit`, `malloc_u8` declared in main.cot.
-
-**Next Steps:** Either fix the import ordering or copy needed functions directly into source files.
-
-See [cot0/ERROR_INFRASTRUCTURE_PLAN.md](cot0/ERROR_INFRASTRUCTURE_PLAN.md) for full details.
 
 ### Dynamic Array Conversion
 

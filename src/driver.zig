@@ -136,7 +136,7 @@ pub const Driver = struct {
         self.debug.afterLower(&ir);
 
         // Phase 4: Generate code for each function
-        return try self.generateCode(ir.funcs, ir.globals, &type_reg);
+        return try self.generateCode(ir.funcs, ir.globals, &type_reg, "<input>", source_text);
     }
 
     /// Compile a source file (supports imports).
@@ -279,7 +279,14 @@ pub const Driver = struct {
         // =====================================================================
         // Phase 4: Generate code
         // =====================================================================
-        return try self.generateCode(all_funcs.items, all_globals.items, &type_reg);
+        // Use main file (last in parsed_files) for debug info
+        const main_file = if (parsed_files.items.len > 0) parsed_files.items[parsed_files.items.len - 1] else ParsedFile{
+            .path = path,
+            .source_text = "",
+            .source = undefined,
+            .tree = undefined,
+        };
+        return try self.generateCode(all_funcs.items, all_globals.items, &type_reg, main_file.path, main_file.source_text);
     }
 
     /// Recursively parse a file and all its imports.
@@ -358,7 +365,7 @@ pub const Driver = struct {
     }
 
     /// Generate machine code for all IR functions.
-    fn generateCode(self: *Driver, funcs: []const ir_mod.Func, globals: []const ir_mod.Global, type_reg: *types_mod.TypeRegistry) ![]u8 {
+    fn generateCode(self: *Driver, funcs: []const ir_mod.Func, globals: []const ir_mod.Global, type_reg: *types_mod.TypeRegistry, source_file: []const u8, source_text: []const u8) ![]u8 {
         var codegen = arm64_codegen.ARM64CodeGen.init(self.allocator);
         defer codegen.deinit();
 
@@ -367,6 +374,9 @@ pub const Driver = struct {
 
         // Pass type registry for composite type sizing (BUG-003 fix)
         codegen.setTypeRegistry(type_reg);
+
+        // Pass debug info for DWARF generation
+        codegen.setDebugInfo(source_file, source_text);
 
         for (funcs, 0..) |*ir_func, func_idx| {
             debug.log(.ssa, "=== Processing function {} '{s}' ===", .{ func_idx, ir_func.name });

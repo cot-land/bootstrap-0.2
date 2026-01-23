@@ -230,6 +230,21 @@ pub const ARM64CodeGen = struct {
     /// Map from static_call Value to its hidden return offset within the frame.
     hidden_ret_offsets: std.AutoHashMapUnmanaged(*const Value, u32),
 
+    /// Line entries for DWARF debug info (code_offset, source_byte_offset)
+    line_entries: std.ArrayListUnmanaged(LineEntry),
+
+    /// Track last source offset to avoid duplicate entries
+    last_source_offset: u32 = 0,
+
+    /// Debug info for DWARF generation
+    debug_source_file: []const u8 = "",
+    debug_source_text: []const u8 = "",
+
+    pub const LineEntry = struct {
+        code_offset: u32,
+        source_offset: u32, // Byte offset in source file (stored in Value.pos.line)
+    };
+
     pub fn init(allocator: std.mem.Allocator) ARM64CodeGen {
         return .{
             .allocator = allocator,
@@ -246,6 +261,7 @@ pub const ARM64CodeGen = struct {
             .func_refs = .{},
             .data_relocations = .{},
             .hidden_ret_offsets = .{},
+            .line_entries = .{},
         };
     }
 
@@ -269,6 +285,7 @@ pub const ARM64CodeGen = struct {
         self.func_refs.deinit(self.allocator);
         self.data_relocations.deinit(self.allocator);
         self.hidden_ret_offsets.deinit(self.allocator);
+        self.line_entries.deinit(self.allocator);
         // regalloc_state is borrowed, not owned - don't deinit
     }
 
@@ -294,6 +311,14 @@ pub const ARM64CodeGen = struct {
     /// Must be called before generateBinary if using composite types.
     pub fn setTypeRegistry(self: *ARM64CodeGen, reg: *const TypeRegistry) void {
         self.type_reg = reg;
+    }
+
+    /// Set debug info for DWARF generation.
+    /// source_file: path to the source file
+    /// source_text: source file content
+    pub fn setDebugInfo(self: *ARM64CodeGen, source_file: []const u8, source_text: []const u8) void {
+        self.debug_source_file = source_file;
+        self.debug_source_text = source_text;
     }
 
     /// Get the size of a type in bytes, using type registry for composite types.
@@ -463,6 +488,7 @@ pub const ARM64CodeGen = struct {
         self.hidden_ret_offsets.clearRetainingCapacity();
         self.has_hidden_return = false; // Reset hidden return state
         self.hidden_ret_space_needed = 0;
+        self.last_source_offset = 0; // Reset for each function to ensure first line entry is recorded
 
         // BUG-004: Check if this function returns >16B (needs hidden return pointer)
         // The caller passes the return location in x8; we save it to stack.
@@ -564,6 +590,18 @@ pub const ARM64CodeGen = struct {
         // Emit prologue (Go's approach: only save FP/LR)
         debug.log(.codegen, "  Emitting prologue", .{});
         try self.emitPrologue();
+
+        // For main function, call install_crash_handler at the start
+        if (std.mem.eql(u8, name, "main")) {
+            debug.log(.codegen, "  Emitting call to install_crash_handler for main()", .{});
+            // BL _install_crash_handler (relocation will be applied by linker)
+            const bl_offset = self.offset();
+            try self.emit(asm_mod.encodeBL(0)); // Placeholder offset, will be fixed by linker
+            try self.relocations.append(self.allocator, .{
+                .offset = bl_offset,
+                .target = "_install_crash_handler",
+            });
+        }
 
         // Generate code for each block, recording offsets
         for (f.blocks.items) |block| {
@@ -1057,6 +1095,18 @@ pub const ARM64CodeGen = struct {
     /// Generate binary code for a value
     fn generateValueBinary(self: *ARM64CodeGen, value: *const Value) !void {
         debug.log(.codegen, "    v{d} = {s}", .{ value.id, @tagName(value.op) });
+
+        // Record line entry for DWARF debug info if source position changed
+        const source_offset = value.pos.line; // Byte offset stored in line field
+        debug.log(.codegen, "      pos.line={d}, last={d}, code_off={d}", .{ source_offset, self.last_source_offset, self.offset() });
+        if (source_offset != 0 and source_offset != self.last_source_offset) {
+            debug.log(.codegen, "      -> recording line entry", .{});
+            try self.line_entries.append(self.allocator, .{
+                .code_offset = self.offset(),
+                .source_offset = source_offset,
+            });
+            self.last_source_offset = source_offset;
+        }
 
         // BUG-021 FIX: Skip values that were evicted (no home assignment).
         // Rematerializeable values (const_int, const_bool, etc.) that were evicted
@@ -3186,6 +3236,22 @@ pub const ARM64CodeGen = struct {
 
             // Add ADD relocation (PAGEOFF12) for function symbol
             try writer.addDataRelocation(func_ref.add_offset, func_ref.func_name, macho.ARM64_RELOC_PAGEOFF12);
+        }
+
+        // Add DWARF debug info if we have line entries and source info
+        if (self.line_entries.items.len > 0 and self.debug_source_text.len > 0) {
+            writer.setDebugInfo(self.debug_source_file, self.debug_source_text);
+
+            // Convert LineEntry types (ARM64CodeGen.LineEntry -> macho.MachOWriter.LineEntry)
+            for (self.line_entries.items) |entry| {
+                try writer.addLineEntries(&[_]macho.MachOWriter.LineEntry{.{
+                    .code_offset = entry.code_offset,
+                    .source_offset = entry.source_offset,
+                }});
+            }
+
+            // Generate DWARF sections
+            try writer.generateDebugSections();
         }
 
         // Write to buffer
