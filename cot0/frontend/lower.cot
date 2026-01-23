@@ -663,11 +663,18 @@ fn Lowerer_lowerFnDecl(l: *Lowerer, node: *Node) {
     let nodes_start: i64 = l.ir_nodes_count;
     let locals_start: i64 = l.ir_locals_count;
 
+    // Get return type from FnDecl node (field4 contains type expression node index)
+    // BUG-054: Resolve to actual type index for hidden return detection on large structs
+    var return_type: i64 = resolve_type_expr(l, node.field4);
+    if return_type < 0 {
+        return_type = TYPE_VOID;
+    }
+
     // Create function builder
     var fb: FuncBuilder = undefined;
     FuncBuilder_init(&fb,
                       node.field0, node.field1,  // name_start, name_len
-                      TYPE_I64,                   // return type (simplified for now)
+                      return_type,               // actual return type from parsed node
                       l.ir_locals + l.ir_locals_count,
                       l.ir_locals_cap - l.ir_locals_count,
                       l.ir_nodes + l.ir_nodes_count,
@@ -718,7 +725,7 @@ fn Lowerer_lowerFnDecl(l: *Lowerer, node: *Node) {
         let func_ptr: *IRFunc = l.ir_funcs + l.ir_funcs_count;
         func_ptr.name_start = node.field0;
         func_ptr.name_len = node.field1;
-        func_ptr.return_type = TYPE_I64;
+        func_ptr.return_type = return_type;  // Use actual return type
         func_ptr.nodes_start = nodes_start;
         func_ptr.nodes_count = fb.nodes_count;
         func_ptr.locals_start = locals_start;
@@ -994,6 +1001,19 @@ fn Lowerer_lowerVarDecl(l: *Lowerer, node: *Node) {
             let call_ir: i64 = Lowerer_lowerExpr(l, init_expr);
             let ptr_ir: i64 = FuncBuilder_emitSlicePtr(fb, call_ir, TYPE_I64);
             let len_ir: i64 = FuncBuilder_emitSliceLen(fb, call_ir);
+            FuncBuilder_emitStoreFieldLocal(fb, local_idx, 0, ptr_ir);
+            FuncBuilder_emitStoreFieldLocal(fb, local_idx, 8, len_ir);
+        } else if init_expr.kind == NodeKind.StringLit and local_type == TYPE_SLICE {
+            // String literal to slice - decompose into ptr and len
+            // Following Zig: src/frontend/ssa_builder.zig:586-648 (store_local slice handling)
+            // StringLit: field0 = str_start, field1 = str_len
+            let str_start: i64 = init_expr.field0;
+            let str_len: i64 = init_expr.field1;
+            // Emit ConstString for the pointer
+            let ptr_ir: i64 = FuncBuilder_emitConstString(fb, str_start, str_len);
+            // Emit ConstInt for the length
+            let len_ir: i64 = FuncBuilder_emitConstInt(fb, str_len);
+            // Store ptr at offset 0, len at offset 8
             FuncBuilder_emitStoreFieldLocal(fb, local_idx, 0, ptr_ir);
             FuncBuilder_emitStoreFieldLocal(fb, local_idx, 8, len_ir);
         } else {
@@ -2401,7 +2421,19 @@ fn Lowerer_lowerCall(l: *Lowerer, node: *Node) i64 {
 
     // Direct call to named function
     // args_start now points to offset in call_args array, not IR nodes
-    var call_node: IRNode = IRNode_new(IRNodeKind.Call, TYPE_I64);
+
+    // BUG-054: Look up the called function's return type for hidden return detection
+    // This enables the codegen to detect calls returning >16B structs
+    var call_ret_type: i64 = TYPE_I64;  // Default fallback
+    let ret_type_handle: i64 = Lowerer_findFuncRetType(l, func_name_start, func_name_len);
+    if ret_type_handle >= 0 {
+        call_ret_type = resolve_type_expr(l, ret_type_handle);
+        if call_ret_type < 0 {
+            call_ret_type = TYPE_I64;  // Fallback if resolution fails
+        }
+    }
+
+    var call_node: IRNode = IRNode_new(IRNodeKind.Call, call_ret_type);
     call_node.func_name_start = func_name_start;
     call_node.func_name_len = func_name_len;
     call_node.args_start = call_args_start;
@@ -2445,6 +2477,7 @@ fn Lowerer_lowerAssign(l: *Lowerer, node: *Node) i64 {
     }
 
     // Handle simple variable assignment: x = value
+    // Following Zig: src/frontend/lower.zig:640-658 (assignment to identifier)
     if target_node.kind == NodeKind.Ident {
         // Look up local variable by name
         var local_idx: i64 = -1;
@@ -2457,13 +2490,22 @@ fn Lowerer_lowerAssign(l: *Lowerer, node: *Node) i64 {
             i = i + 1;
         }
 
-        if local_idx < 0 {
-            return NULL_NODE;  // Variable not found
+        if local_idx >= 0 {
+            // Emit store to local
+            FuncBuilder_emitStoreLocal(fb, local_idx, value_idx);
+            return value_idx;
         }
 
-        // Emit store to local
-        FuncBuilder_emitStoreLocal(fb, local_idx, value_idx);
-        return value_idx;
+        // Not a local - check for global variable
+        // Following Zig: src/frontend/lower.zig:640-658 (lookupGlobal then emitGlobalStore)
+        let global_idx: i64 = Lowerer_lookupGlobal(l, target_node.field0, target_node.field1);
+        if global_idx >= 0 {
+            let g: *IRGlobal = l.ir_globals + global_idx;
+            FuncBuilder_emitStoreGlobal(fb, global_idx, value_idx, g.type_idx);
+            return value_idx;
+        }
+
+        return NULL_NODE;  // Variable not found
     }
 
     return NULL_NODE;  // Unsupported assignment target

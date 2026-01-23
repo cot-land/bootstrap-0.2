@@ -1538,10 +1538,12 @@ fn SSABuilder_convertSliceLen(b: *SSABuilder, ir_node: *IRNode) i64 {
 // --- Function Call ---
 
 fn SSABuilder_convertCall(b: *SSABuilder, ir_node: *IRNode) i64 {
+    // BUG-054: Use the IRNode's type_idx which contains the actual return type
+    // This is set during lowering based on the called function's return type
     let val: *Value = Func_emitCall(b.func,
                                      ir_node.func_name_start,
                                      ir_node.func_name_len,
-                                     TYPE_I64);
+                                     ir_node.type_idx);
     // Add arguments
     var arg_idx: i64 = 0;
     while arg_idx < ir_node.args_count {

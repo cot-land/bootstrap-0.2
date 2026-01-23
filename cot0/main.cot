@@ -984,6 +984,9 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     GenState_setFuncAddrRelocs(&gs, g_func_addr_relocs, g_func_addr_relocs_cap);
     GenState_setStringRelocs(&gs, g_string_relocs, g_string_relocs_cap);
 
+    // BUG-054: Set type registry for hidden return detection at call sites
+    GenState_setTypeRegistry(&gs, &g_type_pool);
+
     var total_blocks: i64 = 0;
     var total_values: i64 = 0;
 
@@ -997,10 +1000,15 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
         // Initialize SSA function (reuse global arrays, they'll be overwritten)
         var ssa_func: Func = undefined;
-        Func_init(&ssa_func, ir_func.name_start, ir_func.name_len, TYPE_I64,
+        Func_init(&ssa_func, ir_func.name_start, ir_func.name_len, ir_func.return_type,
                   g_ssa_blocks, MAIN_MAX_SSA_BLOCKS,
                   g_ssa_values, MAIN_MAX_SSA_VALUES,
                   g_ssa_locals, MAIN_MAX_SSA_LOCALS);
+
+        // BUG-054: Compute return type size for hidden return detection
+        // Following Zig: src/codegen/arm64.zig:493-522
+        let ret_type_size: i64 = TypeRegistry_sizeof(&g_type_pool, ir_func.return_type);
+        Func_setReturnTypeSize(&ssa_func, ret_type_size);
 
         // ==================================================================
         // IR to SSA Conversion using SSABuilder

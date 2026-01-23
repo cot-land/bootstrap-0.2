@@ -9,7 +9,6 @@
 ```
 
 **Current blockers:**
-- Large struct returns (>16 bytes) - ARM64 ABI hidden pointer (BUG-054)
 - String literals - garbled output (BUG-055)
 
 **Current status:** 21+ tests verified passing (arithmetic, bitwise, control flow, functions, pointers, arrays, globals, small structs)
@@ -71,14 +70,15 @@ Unknown - likely string data relocation or slice construction issue in cot0.
 
 ### BUG-054: Large struct returns (>16 bytes) crash in cot0-stage1
 
-**Status:** OPEN
-**Priority:** P0 (blocking many tests)
+**Status:** FIXED
+**Priority:** P0 (was blocking many tests)
 **Discovered:** 2026-01-24
+**Fixed:** 2026-01-24
 
 **Symptoms:**
-- Programs returning structs > 16 bytes crash with SIGSEGV
+- Programs returning structs > 16 bytes crashed with SIGSEGV
 - First failure at test_bug004_large_struct_return (line 1901 in all_tests.cot)
-- Crash handler shows NULL pointer dereference
+- Crash handler showed NULL pointer dereference
 
 **Root Cause:**
 ARM64 AAPCS64 ABI requires structs > 16 bytes to be returned via a hidden pointer:
@@ -86,40 +86,23 @@ ARM64 AAPCS64 ABI requires structs > 16 bytes to be returned via a hidden pointe
 2. Callee copies result to [x8]
 3. Caller retrieves result from that address
 
-cot0 does NOT implement this. The callee returns the first field value (e.g., 10) in x0 instead of using the hidden pointer mechanism.
+cot0 was NOT implementing this - callee returned first field value in x0 instead of using hidden pointer mechanism.
 
-**Test File:** `/tmp/test_big_struct.cot`
-```cot
-struct BigStruct {
-    a: i64,
-    b: i64,
-    c: i64,
-}
+**Fix:**
+1. `cot0/ssa/func.cot` - Added `return_type_size` field to Func struct
+2. `cot0/main.cot` - Compute return type size using TypeRegistry_sizeof, pass type registry to GenState
+3. `cot0/codegen/genssa.cot` - Added `has_hidden_return`, `hidden_ret_ptr_offset`, `type_registry` to GenState:
+   - Prologue: if return type > 16B, save x8 to stack
+   - Return: load x8, copy struct to [x8] using STP instructions
+   - Call sites: detect >16B return type, allocate stack space, set x8 = SP before call
+   - Note: Used `ADD x8, SP, #0` instead of `MOV x8, SP` because MOV encodes SP as XZR
+4. `cot0/frontend/lower.cot` - Look up called function's return type for Call nodes
+5. `cot0/ssa/builder.cot` - Use IRNode's type_idx instead of hardcoded TYPE_I64
 
-fn make_big() BigStruct {
-    var s: BigStruct = undefined;
-    s.a = 10;
-    s.b = 20;
-    s.c = 12;
-    return s;
-}
-
-fn test_big_return() i64 {
-    let s: BigStruct = make_big();
-    return s.a + s.b + s.c;  // Should be 42
-}
-```
-
-**Zig Reference:**
-The Zig compiler (src/codegen/arm64.zig) handles this in:
-- `setupCallArgsWithVariadic()` - Sets x8 for hidden return
-- Callee side copies to [x8] on return
-
-**Fix Approach:**
-1. Detect return type > 16 bytes in cot0/codegen/genssa.cot
-2. At call sites: allocate stack space, put address in x8
-3. In callee: save x8, copy result to [x8] on return
-4. After call: load result from allocated space
+**Test Results:**
+- `/tmp/test_big_struct` - Exit: 0 ✓
+- `/tmp/test_comprehensive.cot` - Exit: 0 ✓
+- `/tmp/test_struct.cot` - Exit: 0 ✓
 
 ---
 

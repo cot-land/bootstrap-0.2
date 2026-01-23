@@ -95,6 +95,7 @@ struct Func {
     name_start: i64,      // Name offset in source
     name_len: i64,        // Name length
     return_type: i64,     // Return type index
+    return_type_size: i64, // Return type size in bytes (for hidden return detection)
 
     // Blocks
     blocks: *Block,       // Externally allocated block array
@@ -131,6 +132,7 @@ fn Func_init(f: *Func, name_start: i64, name_len: i64, return_type: i64,
     f.name_start = name_start;
     f.name_len = name_len;
     f.return_type = return_type;
+    f.return_type_size = 8;  // Default to 8 bytes (i64), set larger for structs
 
     f.blocks = blocks;
     f.blocks_count = 0;
@@ -291,6 +293,16 @@ fn Func_getEntryBlock(f: *Func) i64 {
 // Get return type index
 fn Func_getReturnType(f: *Func) i64 {
     return f.return_type;
+}
+
+// Get return type size in bytes
+fn Func_getReturnTypeSize(f: *Func) i64 {
+    return f.return_type_size;
+}
+
+// Set return type size (called after SSA building when type is known)
+fn Func_setReturnTypeSize(f: *Func, size: i64) {
+    f.return_type_size = size;
 }
 
 // Get current block ID

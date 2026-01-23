@@ -17,6 +17,9 @@ import "../ssa/abi.cot"
 import "../ssa/stackalloc.cot"
 import "arm64.cot"
 
+// NOTE: TypeRegistry and TypeRegistry_sizeof are available from types.cot
+// which is imported before genssa.cot in main.cot
+
 // NOTE: IRGlobal is defined in frontend/ir.cot which is imported via lower.cot
 // before genssa.cot in main.cot - no forward declaration needed
 
@@ -169,6 +172,14 @@ struct GenState {
     // Crash handler call offset (-1 if not needed)
     // Set during codegen if this is the main function
     crash_handler_offset: i64,
+
+    // BUG-054: Hidden return pointer for functions returning structs >16B
+    // Following Zig: src/codegen/arm64.zig has_hidden_return, hidden_ret_ptr_offset
+    has_hidden_return: bool,     // True if function returns >16B
+    hidden_ret_ptr_offset: i64,  // Stack offset where x8 is saved
+
+    // Type registry for computing type sizes (needed for hidden return at call sites)
+    type_registry: *TypeRegistry,
 }
 
 // ============================================================================
@@ -216,6 +227,15 @@ fn GenState_init(gs: *GenState, f: *Func,
     gs.string_relocs_count = 0;
     gs.string_relocs_cap = 0;
     gs.crash_handler_offset = -1;
+    // BUG-054: Hidden return tracking
+    gs.has_hidden_return = false;
+    gs.hidden_ret_ptr_offset = 0;
+    gs.type_registry = null;
+}
+
+// Set type registry for computing type sizes (BUG-054: hidden return at call sites)
+fn GenState_setTypeRegistry(gs: *GenState, type_reg: *TypeRegistry) {
+    gs.type_registry = type_reg;
 }
 
 // Set up function address relocations tracking
@@ -490,15 +510,41 @@ fn GenState_reloadSpilledArgs(gs: *GenState, v: *Value) {
 fn GenState_generate(gs: *GenState) i64 {
     let f: *Func = gs.func;
 
+    // BUG-054: Check if this function returns >16B (needs hidden return pointer)
+    // Following Zig: src/codegen/arm64.zig:493-522
+    let ret_size: i64 = Func_getReturnTypeSize(f);
+    if ret_size > 16 {
+        gs.has_hidden_return = true;
+    } else {
+        gs.has_hidden_return = false;
+    }
+
     // Emit function prologue: save X29/X30 and allocate frame
     // Always save LR (X30) in case of calls, and FP (X29) for debugging
     // STP X29, X30, [SP, #-16]!  (pre-indexed store pair)
     // Note: imm7 is offset in 8-byte units, so -16 bytes = -2
     GenState_emitInst(gs, encode_stp_pre(X29, X30, SP, -2));
 
-    let frame_size: i64 = f.frame_size;
+    var frame_size: i64 = f.frame_size;
+
+    // BUG-054: If hidden return, reserve 8 bytes on stack to save x8
+    // Following Zig: src/codegen/arm64.zig:568-571
+    if gs.has_hidden_return {
+        gs.hidden_ret_ptr_offset = frame_size;
+        frame_size = frame_size + 8;
+        // Round up to 16-byte alignment
+        frame_size = (frame_size + 15) & (0 - 16);
+    }
+
     if frame_size > 0 {
         GenState_emitInst(gs, encode_sub_imm(SP, SP, frame_size));
+    }
+
+    // BUG-054: Save hidden return pointer (x8) to stack
+    // Following Zig: src/codegen/arm64.zig:677-683
+    if gs.has_hidden_return {
+        // STR x8, [sp, #hidden_ret_ptr_offset]
+        GenState_emitInst(gs, encode_str(X8, SP, gs.hidden_ret_ptr_offset));
     }
 
     // If this is the main function, emit call to install_crash_handler
@@ -1434,6 +1480,26 @@ fn GenState_offPtr(gs: *GenState, v: *Value) {
 fn GenState_call(gs: *GenState, v: *Value) {
     let f: *Func = gs.func;
 
+    // BUG-054: Check if call returns >16B (needs hidden return)
+    var call_ret_size: i64 = 8;  // Default to 8 bytes
+    if gs.type_registry != null {
+        call_ret_size = TypeRegistry_sizeof(gs.type_registry, v.type_idx);
+    }
+    let needs_hidden_return: bool = call_ret_size > 16;
+
+    // BUG-054: Allocate stack space for hidden return if needed
+    // Round up to 16-byte alignment
+    var hidden_ret_stack_size: i64 = 0;
+    if needs_hidden_return {
+        hidden_ret_stack_size = (call_ret_size + 15) & (0 - 16);
+        // Allocate stack space: SUB SP, SP, #size
+        GenState_emitInst(gs, encode_sub_imm(SP, SP, hidden_ret_stack_size));
+        // Set x8 = SP (hidden return destination)
+        // NOTE: Can't use MOV x8, SP because SP/XZR share encoding (31)
+        // Use ADD x8, SP, #0 instead
+        GenState_emitInst(gs, encode_add_imm(X8, SP, 0));
+    }
+
     // Use ABI module for proper parameter assignment
     // Build array of parameter type indices
     var param_types: [32]i64;  // Max 32 params
@@ -1499,11 +1565,26 @@ fn GenState_call(gs: *GenState, v: *Value) {
         GenState_emitInst(gs, encode_add_imm(SP, SP, abi_info.arg_stack_size));
     }
 
-    // Move call result from X0 to the assigned register
-    // This preserves call results across nested calls
+    // BUG-054: For hidden return, result is at SP (the hidden return area)
+    // x0 contains the address where the result was stored
+    // Move x0 to dest_reg so subsequent code can use it as an address
     let dest_reg: i64 = v.reg;
-    if dest_reg >= 0 and dest_reg != X0 {
-        GenState_emitInst(gs, ARM64_encodeMovReg(dest_reg, X0));
+    if needs_hidden_return {
+        // For hidden return, x0 has the address of the result
+        // Copy the result address to dest_reg before deallocating
+        if dest_reg >= 0 and dest_reg != X0 {
+            GenState_emitInst(gs, ARM64_encodeMovReg(dest_reg, X0));
+        }
+        // Restore the hidden return stack space
+        // IMPORTANT: x0/dest_reg now points to potentially invalid stack memory,
+        // but the copy to the local destination happens immediately after this
+        // in the generated code, so it works as long as we don't clobber the memory
+        GenState_emitInst(gs, encode_add_imm(SP, SP, hidden_ret_stack_size));
+    } else {
+        // Regular return: move result from X0 to the assigned register
+        if dest_reg >= 0 and dest_reg != X0 {
+            GenState_emitInst(gs, ARM64_encodeMovReg(dest_reg, X0));
+        }
     }
 
     // Clean up ABI info
@@ -1589,9 +1670,86 @@ fn GenState_callIndirect(gs: *GenState, v: *Value) {
 fn GenState_return(gs: *GenState, v: *Value) {
     let f: *Func = gs.func;
 
-    // If there's a return value, move it to X0
-    // For slices (SliceMake), move ptr to X0 and len to X1
-    if v.args_count > 0 {
+    // BUG-054: Hidden return handling for structs >16B
+    // Following Zig: src/codegen/arm64.zig:851-963
+    if gs.has_hidden_return and v.args_count > 0 {
+        let arg0_id: i64 = v.args[0];
+        let ret_val: *Value = Func_getValue(f, arg0_id);
+
+        // Load hidden return pointer from stack into X17 (temp register)
+        // We saved x8 to [sp, #hidden_ret_ptr_offset] in prologue
+        GenState_emitInst(gs, encode_ldr(X17, SP, gs.hidden_ret_ptr_offset));
+
+        // Get source address for the return value
+        // The return value may be:
+        // - LocalAddr: address of a local
+        // - Load: value loaded from a local (we need the address, not the value!)
+        // - OffPtr: base + offset
+        var src_reg: i64 = X16;  // Use X16 as source address register
+        if ret_val.op == Op.LocalAddr {
+            // Direct local address - compute address
+            let local_idx: i64 = ret_val.aux_int;
+            let local: *Local = Func_getLocal(f, local_idx);
+            GenState_emitInst(gs, encode_add_imm(X16, SP, local.offset));
+        } else if ret_val.op == Op.Load and ret_val.args_count > 0 {
+            // Load operation - get source address from arg[0] (which should be LocalAddr or OffPtr)
+            let addr_val: *Value = Func_getValue(f, ret_val.args[0]);
+            if addr_val.op == Op.LocalAddr {
+                let local_idx: i64 = addr_val.aux_int;
+                let local: *Local = Func_getLocal(f, local_idx);
+                GenState_emitInst(gs, encode_add_imm(X16, SP, local.offset));
+            } else if addr_val.op == Op.OffPtr and addr_val.args_count > 0 {
+                let base_val: *Value = Func_getValue(f, addr_val.args[0]);
+                if base_val.op == Op.LocalAddr {
+                    let local_idx: i64 = base_val.aux_int;
+                    let local: *Local = Func_getLocal(f, local_idx);
+                    let offset: i64 = addr_val.aux_int;
+                    GenState_emitInst(gs, encode_add_imm(X16, SP, local.offset + offset));
+                } else if base_val.reg >= 0 {
+                    GenState_emitInst(gs, encode_add_imm(X16, base_val.reg, addr_val.aux_int));
+                }
+            } else if addr_val.reg >= 0 {
+                // Address is in a register
+                GenState_emitInst(gs, encode_add_imm(X16, addr_val.reg, 0));
+            }
+        } else if ret_val.op == Op.OffPtr and ret_val.args_count > 0 {
+            // Offset from base - check if base is LocalAddr
+            let base_val: *Value = Func_getValue(f, ret_val.args[0]);
+            if base_val.op == Op.LocalAddr {
+                let local_idx: i64 = base_val.aux_int;
+                let local: *Local = Func_getLocal(f, local_idx);
+                let offset: i64 = ret_val.aux_int;
+                GenState_emitInst(gs, encode_add_imm(X16, SP, local.offset + offset));
+            } else if base_val.reg >= 0 {
+                GenState_emitInst(gs, encode_add_imm(X16, base_val.reg, ret_val.aux_int));
+            }
+        } else if ret_val.reg >= 0 {
+            // Value is in a register (should be an address)
+            src_reg = ret_val.reg;
+        }
+
+        // Copy struct data from [src_reg] to [X17] (the hidden return destination)
+        let ret_size: i64 = Func_getReturnTypeSize(f);
+        var copy_off: i64 = 0;
+        while copy_off + 8 <= ret_size {
+            // LDR X19, [src_reg, #copy_off]
+            GenState_emitInst(gs, encode_ldr(X19, src_reg, copy_off));
+            // STR X19, [X17, #copy_off]
+            GenState_emitInst(gs, encode_str(X19, X17, copy_off));
+            copy_off = copy_off + 8;
+        }
+        // Handle remaining bytes
+        while copy_off < ret_size {
+            GenState_emitInst(gs, encode_ldrb(X19, src_reg, copy_off));
+            GenState_emitInst(gs, encode_strb(X19, X17, copy_off));
+            copy_off = copy_off + 1;
+        }
+
+        // For hidden return, x0 should contain the return address
+        // Some ABIs require this, others don't - we'll set it to be safe
+        GenState_emitInst(gs, ARM64_encodeMovReg(X0, X17));
+    } else if v.args_count > 0 {
+        // Regular return handling (not hidden)
         let arg0_id: i64 = v.args[0];
         let ret_val: *Value = Func_getValue(f, arg0_id);
 
@@ -1617,7 +1775,13 @@ fn GenState_return(gs: *GenState, v: *Value) {
     }
 
     // Emit epilogue: deallocate frame, restore X29/X30, return
-    let frame_size: i64 = f.frame_size;
+    // BUG-054: Frame size may be larger if we have hidden return
+    var frame_size: i64 = f.frame_size;
+    if gs.has_hidden_return {
+        frame_size = gs.hidden_ret_ptr_offset + 8;
+        // Round up to 16-byte alignment
+        frame_size = (frame_size + 15) & (0 - 16);
+    }
     if frame_size > 0 {
         GenState_emitInst(gs, encode_add_imm(SP, SP, frame_size));
     }
