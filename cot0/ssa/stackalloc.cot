@@ -226,8 +226,8 @@ fn StackAlloc_computeLiveness(state: *StackAllocState, f: *Func) {
 
                 // Check if this value uses vid
                 var arg_idx: i64 = 0;
-                while arg_idx < use_val.args_count {
-                    if use_val.args[arg_idx] == vid {
+                while arg_idx < use_val.args.count {
+                    if Value_getArg(use_val, arg_idx) == vid {
                         // Propagate liveness backward
                         StackAlloc_propagateLiveness(state, f, vid, b, def_block);
                     }
@@ -280,8 +280,8 @@ fn StackAlloc_propagateLiveness(state: *StackAllocState, f: *Func, vid: i64, use
         // Mark live at predecessors
         let block: *Block = Func_getBlock(f, bid);
         var p: i64 = 0;
-        while p < block.preds_count {
-            let pred_id: i64 = block.preds[p];
+        while p < block.preds.count {
+            let pred_id: i64 = Block_getPred(block, p);
             if pred_id >= 0 {
                 StackAllocState_addLiveOut(state, pred_id, vid);
                 i64list_append(&worklist, pred_id);
@@ -351,8 +351,8 @@ fn StackAlloc_buildInterference(state: *StackAllocState, f: *Func) {
 
             // Add args to live
             var arg_idx: i64 = 0;
-            while arg_idx < val.args_count {
-                let arg_id: i64 = val.args[arg_idx];
+            while arg_idx < val.args.count {
+                let arg_id: i64 = Value_getArg(val, arg_idx);
                 if arg_id >= 0 and StackAllocState_needsSlot(state, arg_id) {
                     // Check if already in live
                     var found: bool = false;

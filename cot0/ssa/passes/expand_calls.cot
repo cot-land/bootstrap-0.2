@@ -39,8 +39,8 @@ fn expandCalls(f: *Func, type_pool: *TypeRegistry) {
             let v: *Value = Func_getValue(f, block.values_start + vi);
 
             // Check for Store of non-SSA type
-            if v.op == Op.Store and v.args_count >= 2 {
-                let stored_id: i64 = v.args[1];
+            if v.op == Op.Store and v.args.count >= 2 {
+                let stored_id: i64 = Value_getArg(v, 1);
                 if stored_id >= 0 {
                     let stored_val: *Value = Func_getValue(f, stored_id);
 
@@ -83,20 +83,20 @@ fn applyDecRules(f: *Func) {
             // string_ptr(string_make(ptr, len)) → copy(ptr)
             // slice_ptr(slice_make(ptr, len)) → copy(ptr)
             if v.op == Op.StringPtr or v.op == Op.SlicePtr {
-                if v.args_count >= 1 {
-                    let arg_id: i64 = v.args[0];
+                if v.args.count >= 1 {
+                    let arg_id: i64 = Value_getArg(v, 0);
                     if arg_id >= 0 {
                         let arg: *Value = Func_getValue(f, arg_id);
-                        if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args_count >= 1 {
-                            let ptr_id: i64 = arg.args[0];
+                        if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args.count >= 1 {
+                            let ptr_id: i64 = Value_getArg(arg, 0);
 
                             // Decrement old arg's use count
                             arg.uses = arg.uses - 1;
 
                             // Transform to copy
                             v.op = Op.Copy;
-                            v.args[0] = ptr_id;
-                            v.args_count = 1;
+                            Value_setArgById(v, 0, ptr_id);
+                            Value_truncateArgs(v, 1);
 
                             // Increment new arg's use count
                             if ptr_id >= 0 {
@@ -111,20 +111,20 @@ fn applyDecRules(f: *Func) {
             // string_len(string_make(ptr, len)) → copy(len)
             // slice_len(slice_make(ptr, len)) → copy(len)
             if v.op == Op.StringLen or v.op == Op.SliceLen {
-                if v.args_count >= 1 {
-                    let arg_id: i64 = v.args[0];
+                if v.args.count >= 1 {
+                    let arg_id: i64 = Value_getArg(v, 0);
                     if arg_id >= 0 {
                         let arg: *Value = Func_getValue(f, arg_id);
-                        if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args_count >= 2 {
-                            let len_id: i64 = arg.args[1];
+                        if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args.count >= 2 {
+                            let len_id: i64 = Value_getArg(arg, 1);
 
                             // Decrement old arg's use count
                             arg.uses = arg.uses - 1;
 
                             // Transform to copy
                             v.op = Op.Copy;
-                            v.args[0] = len_id;
-                            v.args_count = 1;
+                            Value_setArgById(v, 0, len_id);
+                            Value_truncateArgs(v, 1);
 
                             // Increment new arg's use count
                             if len_id >= 0 {

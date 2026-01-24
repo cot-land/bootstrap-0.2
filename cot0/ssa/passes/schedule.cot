@@ -110,8 +110,8 @@ fn scheduleBlock(f: *Func, block: *Block) {
 // Check if value v uses value with given id
 fn valueUsesValue(v: *Value, used_id: i64) bool {
     var i: i64 = 0;
-    while i < v.args_count {
-        if v.args[i] == used_id {
+    while i < v.args.count {
+        if Value_getArg(v, i) == used_id {
             return true;
         }
         i = i + 1;
@@ -150,9 +150,9 @@ fn updateValueReferences(f: *Func, old_id: i64, new_id: i64) {
     while i < f.values_count {
         let v: *Value = f.values + i;
         var j: i64 = 0;
-        while j < v.args_count {
-            if v.args[j] == old_id {
-                v.args[j] = new_id;
+        while j < v.args.count {
+            if Value_getArg(v, j) == old_id {
+                Value_setArgById(v, j, new_id);
             }
             j = j + 1;
         }

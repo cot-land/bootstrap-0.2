@@ -310,16 +310,14 @@ fn Parser_parseType(p: *Parser) i64 {
         Parser_want(p, TokenType.LParen);  // consume '('
 
         // Parse parameter types and resolve them to TypeRegistry indices
-        // Support up to 8 parameters for function types
-        var param_types: [8]i64;
-        var params_count: i64 = 0;
+        var param_types: I64List = undefined;
+        i64list_init(&param_types);
 
-        while not Parser_check(p, TokenType.RParen) and not Parser_check(p, TokenType.Eof) and params_count < 8 {
+        while not Parser_check(p, TokenType.RParen) and not Parser_check(p, TokenType.Eof) {
             let param_type_node: i64 = Parser_parseType(p);
             // Resolve parameter type to TypeRegistry index
             let param_type_idx: i64 = Parser_resolveTypeNode(p, param_type_node);
-            param_types[params_count] = param_type_idx;
-            params_count = params_count + 1;
+            i64list_append(&param_types, param_type_idx);
 
             if not Parser_check(p, TokenType.Comma) {
                 break;
@@ -343,10 +341,11 @@ fn Parser_parseType(p: *Parser) i64 {
         }
 
         // Create function type in TypeRegistry
-        let func_type_idx: i64 = TypeRegistry_makeFunc(p.type_registry, 0, params_count, ret_type_idx);
+        let func_type_idx: i64 = TypeRegistry_makeFunc(p.type_registry, 0, param_types.count, ret_type_idx);
 
         // Return TypeExprFunc node with pre-resolved type index
         let end_pos: i64 = p.current.start;
+        i64list_deinit(&param_types);
         return Node_typeExprFunc(p.pool, ret_type_node, func_type_idx, type_start, end_pos);
     }
 

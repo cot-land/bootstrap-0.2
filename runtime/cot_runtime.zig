@@ -978,3 +978,9 @@ export fn malloc_Reloc(count: i64) ?*anyopaque { return malloc_struct(count, 24)
 export fn malloc_BlockDefs(count: i64) ?*anyopaque { return malloc_struct(count, 24); }
 export fn malloc_BlockMapping(count: i64) ?*anyopaque { return malloc_struct(count, 16); }
 export fn malloc_VarDef(count: i64) ?*anyopaque { return malloc_struct(count, 24); }
+
+// Liveness and RegAlloc types
+export fn malloc_ValState(count: i64) ?*anyopaque { return malloc_struct(count, 24); }  // ValState: regs(8) + spill(8) + 3 bools(8 padded) = 24
+export fn malloc_RegState(count: i64) ?*anyopaque { return malloc_struct(count, 16); }  // RegState: value_id(8) + dirty(8 padded) = 16
+export fn malloc_LiveInfo(count: i64) ?*anyopaque { return malloc_struct(count, 24); }  // LiveInfo: id(8) + dist(8) + pos(8) = 24
+export fn malloc_BlockLiveness(count: i64) ?*anyopaque { return malloc_struct(count, 48); }  // BlockLiveness: 6 * 8 = 48

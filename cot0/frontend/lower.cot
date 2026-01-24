@@ -2330,59 +2330,32 @@ fn Lowerer_lowerCall(l: *Lowerer, node: *Node) i64 {
     // Following the Zig compiler pattern (src/ssa/regalloc.zig): values need to
     // survive across calls by being spilled to stack, not held in caller-saved regs.
 
-    // Track state for up to 8 args using individual variables
-    // (arrays with undefined might not work reliably in cot0)
-    var arg0_ir: i64 = -1;
-    var arg1_ir: i64 = -1;
-    var arg2_ir: i64 = -1;
-    var arg3_ir: i64 = -1;
-    var arg0_local: i64 = -1;
-    var arg1_local: i64 = -1;
-    var arg2_local: i64 = -1;
-    var arg3_local: i64 = -1;
-    var arg0_is_call: bool = false;
-    var arg1_is_call: bool = false;
-    var arg2_is_call: bool = false;
-    var arg3_is_call: bool = false;
+    // Track state for args using dynamic lists
+    var arg_ir: I64List = undefined;
+    var arg_local: I64List = undefined;
+    var arg_is_call: I64List = undefined;  // 0 = false, 1 = true
+    i64list_init(&arg_ir);
+    i64list_init(&arg_local);
+    i64list_init(&arg_is_call);
 
     // Pass 1: Lower all arguments and store nested call results
     var i: i64 = 0;
-    while i < args_count and i < 4 {
+    while i < args_count {
         let arg_child_ptr: *i64 = l.children + args_start + i;
         let arg_node_idx: i64 = arg_child_ptr.*;
         let arg_node: *Node = l.nodes + arg_node_idx;
         let arg_ir_idx: i64 = Lowerer_lowerExpr(l, arg_node);
         let is_call: bool = arg_node.kind == NodeKind.CallExpr;
 
-        // Store in the right variable based on index
-        if i == 0 {
-            arg0_ir = arg_ir_idx;
-            arg0_is_call = is_call;
-            if is_call {
-                arg0_local = FuncBuilder_addLocal(fb, 0, 0, TYPE_I64, true);
-                FuncBuilder_emitStoreLocal(fb, arg0_local, arg_ir_idx);
-            }
-        } else if i == 1 {
-            arg1_ir = arg_ir_idx;
-            arg1_is_call = is_call;
-            if is_call {
-                arg1_local = FuncBuilder_addLocal(fb, 0, 0, TYPE_I64, true);
-                FuncBuilder_emitStoreLocal(fb, arg1_local, arg_ir_idx);
-            }
-        } else if i == 2 {
-            arg2_ir = arg_ir_idx;
-            arg2_is_call = is_call;
-            if is_call {
-                arg2_local = FuncBuilder_addLocal(fb, 0, 0, TYPE_I64, true);
-                FuncBuilder_emitStoreLocal(fb, arg2_local, arg_ir_idx);
-            }
-        } else if i == 3 {
-            arg3_ir = arg_ir_idx;
-            arg3_is_call = is_call;
-            if is_call {
-                arg3_local = FuncBuilder_addLocal(fb, 0, 0, TYPE_I64, true);
-                FuncBuilder_emitStoreLocal(fb, arg3_local, arg_ir_idx);
-            }
+        i64list_append(&arg_ir, arg_ir_idx);
+        if is_call {
+            i64list_append(&arg_is_call, 1);
+            let local_idx: i64 = FuncBuilder_addLocal(fb, 0, 0, TYPE_I64, true);
+            i64list_append(&arg_local, local_idx);
+            FuncBuilder_emitStoreLocal(fb, local_idx, arg_ir_idx);
+        } else {
+            i64list_append(&arg_is_call, 0);
+            i64list_append(&arg_local, -1);
         }
 
         i = i + 1;
@@ -2394,29 +2367,12 @@ fn Lowerer_lowerCall(l: *Lowerer, node: *Node) i64 {
 
     // Pass 2: Load from temp locals for nested calls, build final call_args
     i = 0;
-    while i < args_count and i < 4 {
-        var final_arg_idx: i64 = -1;
-
-        if i == 0 {
-            final_arg_idx = arg0_ir;
-            if arg0_is_call and arg0_local >= 0 {
-                final_arg_idx = FuncBuilder_emitLoadLocal(fb, arg0_local);
-            }
-        } else if i == 1 {
-            final_arg_idx = arg1_ir;
-            if arg1_is_call and arg1_local >= 0 {
-                final_arg_idx = FuncBuilder_emitLoadLocal(fb, arg1_local);
-            }
-        } else if i == 2 {
-            final_arg_idx = arg2_ir;
-            if arg2_is_call and arg2_local >= 0 {
-                final_arg_idx = FuncBuilder_emitLoadLocal(fb, arg2_local);
-            }
-        } else if i == 3 {
-            final_arg_idx = arg3_ir;
-            if arg3_is_call and arg3_local >= 0 {
-                final_arg_idx = FuncBuilder_emitLoadLocal(fb, arg3_local);
-            }
+    while i < args_count {
+        var final_arg_idx: i64 = i64list_get(&arg_ir, i);
+        let is_call_val: i64 = i64list_get(&arg_is_call, i);
+        let local_idx: i64 = i64list_get(&arg_local, i);
+        if is_call_val != 0 and local_idx >= 0 {
+            final_arg_idx = FuncBuilder_emitLoadLocal(fb, local_idx);
         }
 
         // Store the final IR index in call_args array
@@ -2436,6 +2392,9 @@ fn Lowerer_lowerCall(l: *Lowerer, node: *Node) i64 {
         // Load the function pointer from local variable
         let fn_ptr_expr: i64 = FuncBuilder_emitLoadLocal(fb, fn_ptr_local_idx);
         // Emit indirect call
+        i64list_deinit(&arg_ir);
+        i64list_deinit(&arg_local);
+        i64list_deinit(&arg_is_call);
         return FuncBuilder_emitCallIndirect(fb, fn_ptr_expr, call_args_start, args_count, fn_ptr_return_type);
     }
 
@@ -2458,6 +2417,9 @@ fn Lowerer_lowerCall(l: *Lowerer, node: *Node) i64 {
     call_node.func_name_len = func_name_len;
     call_node.args_start = call_args_start;
     call_node.args_count = args_count;
+    i64list_deinit(&arg_ir);
+    i64list_deinit(&arg_local);
+    i64list_deinit(&arg_is_call);
     return FuncBuilder_emit(fb, call_node);
 }
 

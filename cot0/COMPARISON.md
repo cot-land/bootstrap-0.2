@@ -193,9 +193,36 @@
 | Zig | cot0 | Status |
 |-----|------|--------|
 | `SSABuilder.init()` | `SSABuilder_init()` | Same |
-| `SSABuilder.build()` | `SSABuilder_build()` | Same |
+| `SSABuilder.build()` | `SSABuilder_build()` | **⚠️ WRONG** |
 | `SSABuilder.convertNode()` | `SSABuilder_convertNode()` | Same |
 | `SSABuilder.verify()` | `SSABuilder_verify()` | Same | SSA verification for debugging |
+
+#### ⚠️ CRITICAL ARCHITECTURAL DIFFERENCE: Parameter Handling
+
+**See:** `cot0/SSA_BUILDER_ARCHITECTURE.md` for full details.
+
+**Zig uses 3-phase parameter handling (ssa_builder.zig:111-242):**
+1. **Phase 1:** Create ALL `Op.Arg` values first (captures x0-x7 before any clobbering)
+2. **Phase 2:** Create `slice_make` ops for string params
+3. **Phase 3:** Create `LocalAddr` + `Store` to save params to stack
+
+**cot0 uses interleaved approach (builder.cot:931-958):**
+- For each param: Arg → LocalAddr → Store (interleaved)
+
+**Why this matters:**
+- Interleaving can cause register clobbering before all params captured
+- Breaks with 9+ arguments (stack-passed parameters)
+- Breaks with string parameters (multi-register)
+- Breaks with large structs (>16B, pass-by-reference)
+
+**Additional differences:**
+| Aspect | Zig | cot0 |
+|--------|-----|------|
+| Register index tracking | `phys_reg_idx` (physical ABI register) | `param_local.param_idx` (logical param) |
+| String params | Two Args + slice_make | Not implemented |
+| Large structs (>16B) | Arg as pointer + OpMove | Not implemented |
+
+**Tasks to fix:** See `cot0/SSA_BUILDER_ARCHITECTURE.md` Part 3
 
 ### 3.6-3.7 liveness.cot, regalloc.cot
 

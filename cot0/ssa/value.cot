@@ -5,13 +5,13 @@
 // Reference: bootstrap-0.2/src/ssa/value.zig
 
 import "op.cot"
+// Note: I64List and i64list_* functions are available via earlier imports in main.cot
 
 // ============================================================================
 // Constants
 // ============================================================================
 
 const INVALID_ID: i64 = -1;
-const MAX_ARGS: i64 = 4;    // Most ops have <= 4 args
 
 // ============================================================================
 // SSA Value
@@ -28,9 +28,8 @@ struct Value {
     op: Op,               // Operation this value performs
     type_idx: i64,        // Result type index
 
-    // Arguments (indices into function's value array)
-    args: [4]i64,         // Up to 4 inline args
-    args_count: i64,      // Number of args used
+    // Arguments (indices into function's value array) - dynamic list
+    args: I64List,        // Dynamic args list (no limit)
 
     // Use tracking (critical for DCE and regalloc)
     uses: i64,            // How many values reference this one
@@ -57,11 +56,8 @@ fn Value_new(id: i64, op: Op, type_idx: i64, block_id: i64) Value {
     v.id = id;
     v.op = op;
     v.type_idx = type_idx;
-    v.args[0] = INVALID_ID;
-    v.args[1] = INVALID_ID;
-    v.args[2] = INVALID_ID;
-    v.args[3] = INVALID_ID;
-    v.args_count = 0;
+    // Initialize dynamic args list
+    i64list_init(&v.args);
     v.uses = 0;
     v.aux_int = 0;
     v.aux_ptr = 0;
@@ -70,6 +66,11 @@ fn Value_new(id: i64, op: Op, type_idx: i64, block_id: i64) Value {
     v.reg = -1;
     v.spill_slot = -1;
     return v;
+}
+
+// Get number of arguments (accessor for args.count)
+fn Value_getArgsCount(v: *Value) i64 {
+    return v.args.count;
 }
 
 fn Value_newConstInt(id: i64, value: i64, type_idx: i64, block_id: i64) Value {
@@ -96,11 +97,7 @@ fn Value_newConstBool(id: i64, value: bool, block_id: i64) Value {
 // IMPORTANT: Always use this instead of modifying args directly!
 // This maintains use count invariants.
 fn Value_addArg(v: *Value, arg: *Value) {
-    if v.args_count >= MAX_ARGS { return; }
-
-    let idx: i64 = v.args_count;
-    v.args[idx] = arg.id;
-    v.args_count = idx + 1;
+    i64list_append(&v.args, arg.id);
     arg.uses = arg.uses + 1;
 }
 
@@ -119,28 +116,41 @@ fn Value_addArg3(v: *Value, arg0: *Value, arg1: *Value, arg2: *Value) {
 
 // Set argument at specific index (for phi nodes and similar)
 fn Value_setArg(v: *Value, idx: i64, arg: *Value) {
-    if idx < 0 or idx >= MAX_ARGS { return; }
+    if idx < 0 { return; }
+
+    // Ensure capacity for this index
+    i64list_ensure_capacity(&v.args, idx + 1);
+
+    // Extend count if necessary (filling gaps with INVALID_ID)
+    while v.args.count <= idx {
+        i64list_append(&v.args, INVALID_ID);
+    }
 
     // Decrement old arg's use count if present
-    if v.args[idx] != INVALID_ID {
+    if i64list_get(&v.args, idx) != INVALID_ID {
         // Would need function context to decrement old arg's uses
     }
 
-    v.args[idx] = arg.id;
-    if idx >= v.args_count {
-        v.args_count = idx + 1;
-    }
+    i64list_set(&v.args, idx, arg.id);
     arg.uses = arg.uses + 1;
 }
 
 // Reset all arguments (for value replacement)
 fn Value_resetArgs(v: *Value) {
-    var i: i64 = 0;
-    while i < MAX_ARGS {
-        v.args[i] = INVALID_ID;
-        i = i + 1;
+    i64list_clear(&v.args);
+}
+
+// Truncate args to specified count (for SSA passes)
+fn Value_truncateArgs(v: *Value, count: i64) {
+    if count >= 0 and count < v.args.count {
+        v.args.count = count;
     }
-    v.args_count = 0;
+}
+
+// Clear args and set a single arg by id (common SSA pass pattern)
+fn Value_setSingleArg(v: *Value, arg_id: i64) {
+    i64list_clear(&v.args);
+    i64list_append(&v.args, arg_id);
 }
 
 // ============================================================================
@@ -185,34 +195,47 @@ fn Value_isBool(v: *Value) bool {
     return Op_isComparison(v.op) or v.op == Op.ConstBool;
 }
 
+// Get argument at index (or INVALID_ID if out of bounds)
+fn Value_getArg(v: *Value, idx: i64) i64 {
+    if idx < 0 or idx >= v.args.count { return INVALID_ID; }
+    return i64list_get(&v.args, idx);
+}
+
+// Set argument at index by value id directly (for SSA passes)
+fn Value_setArgById(v: *Value, idx: i64, arg_id: i64) {
+    if idx < 0 { return; }
+    i64list_ensure_capacity(&v.args, idx + 1);
+    while v.args.count <= idx {
+        i64list_append(&v.args, INVALID_ID);
+    }
+    i64list_set(&v.args, idx, arg_id);
+}
+
 // Get first argument (or INVALID_ID if none)
 fn Value_arg0(v: *Value) i64 {
-    if v.args_count < 1 { return INVALID_ID; }
-    return v.args[0];
+    return Value_getArg(v, 0);
 }
 
 // Get second argument (or INVALID_ID if none)
 fn Value_arg1(v: *Value) i64 {
-    if v.args_count < 2 { return INVALID_ID; }
-    return v.args[1];
+    return Value_getArg(v, 1);
 }
 
 // Get third argument (or INVALID_ID if none)
 fn Value_arg2(v: *Value) i64 {
-    if v.args_count < 3 { return INVALID_ID; }
-    return v.args[2];
+    return Value_getArg(v, 2);
 }
 
 // Get number of arguments
 // Reference: Zig's Value.numArgs()
 fn Value_numArgs(v: *Value) i64 {
-    return v.args_count;
+    return v.args.count;
 }
 
 // Alias for argsLen to match Zig naming
 // Reference: Zig's Value.argsLen()
 fn Value_argsLen(v: *Value) i64 {
-    return v.args_count;
+    return v.args.count;
 }
 
 // Alias for isConst to match Zig naming

@@ -477,7 +477,7 @@ fn SSABuilder_ensureDefvar(b: *SSABuilder, block_id: i64, local_idx: i64, value_
 // Reference: Zig ssa_builder.zig:1775-1819
 // Returns value_id or creates a new FwdRef and returns its id
 fn SSABuilder_lookupVarOutgoing(b: *SSABuilder, block_id: i64, local_idx: i64, type_idx: i64,
-                                fwd_refs: *i64, fwd_refs_count: *i64, fwd_refs_cap: i64) i64 {
+                                fwd_refs: *I64List) i64 {
     var cur_id: i64 = block_id;
 
     // Walk backwards through single-predecessor chains
@@ -496,8 +496,8 @@ fn SSABuilder_lookupVarOutgoing(b: *SSABuilder, block_id: i64, local_idx: i64, t
         if blk == null { break; }
 
         // Single predecessor? Keep walking back
-        if blk.preds_count == 1 {
-            cur_id = blk.preds[0];
+        if blk.preds.count == 1 {
+            cur_id = Block_getPred(blk, 0);
             continue;
         }
 
@@ -513,11 +513,7 @@ fn SSABuilder_lookupVarOutgoing(b: *SSABuilder, block_id: i64, local_idx: i64, t
     SSABuilder_ensureDefvar(b, cur_id, local_idx, new_fwd.id);
 
     // CRITICAL: Add to work list so it gets processed
-    if fwd_refs_count.* < fwd_refs_cap {
-        let slot: *i64 = fwd_refs + fwd_refs_count.*;
-        slot.* = new_fwd.id;
-        fwd_refs_count.* = fwd_refs_count.* + 1;
-    }
+    i64list_append(fwd_refs, new_fwd.id);
 
     return new_fwd.id;
 }
@@ -546,28 +542,26 @@ fn SSABuilder_reorderPhis(b: *SSABuilder) {
             continue;
         }
 
-        // Need to reorder: use temporary array (up to 64 values)
-        var temp_ids: [64]i64 = undefined;
-        var temp_count: i64 = 0;
+        // Need to reorder: use dynamic list
+        var temp_ids: I64List = undefined;
+        i64list_init(&temp_ids);
 
         // First pass: collect phis
         i = 0;
-        while i < blk.values_count and temp_count < 64 {
+        while i < blk.values_count {
             let v: *Value = Func_getValue(b.func, blk.values_start + i);
             if v.op == Op.Phi {
-                temp_ids[temp_count] = blk.values_start + i;
-                temp_count = temp_count + 1;
+                i64list_append(&temp_ids, blk.values_start + i);
             }
             i = i + 1;
         }
 
         // Second pass: collect non-phis
         i = 0;
-        while i < blk.values_count and temp_count < 64 {
+        while i < blk.values_count {
             let v: *Value = Func_getValue(b.func, blk.values_start + i);
             if v.op != Op.Phi {
-                temp_ids[temp_count] = blk.values_start + i;
-                temp_count = temp_count + 1;
+                i64list_append(&temp_ids, blk.values_start + i);
             }
             i = i + 1;
         }
@@ -576,6 +570,7 @@ fn SSABuilder_reorderPhis(b: *SSABuilder) {
         // This is a simplification - real implementation would update the block's value list
         // For now, we rely on codegen handling phis first regardless of order
 
+        i64list_deinit(&temp_ids);
         block_idx = block_idx + 1;
     }
 }
@@ -584,10 +579,9 @@ fn SSABuilder_reorderPhis(b: *SSABuilder) {
 // Called after all blocks have been walked.
 // Reference: Zig ssa_builder.zig:1642-1727
 fn SSABuilder_insertPhis(b: *SSABuilder) {
-    // Work list of FwdRef value IDs to process
-    var fwd_refs: [256]i64 = undefined;
-    var fwd_refs_count: i64 = 0;
-    let fwd_refs_cap: i64 = 256;
+    // Work list of FwdRef value IDs to process (dynamic list)
+    var fwd_refs: I64List = undefined;
+    i64list_init(&fwd_refs);
 
     // Collect initial FwdRef values and treat them as definitions
     var block_idx: i64 = 0;
@@ -599,10 +593,7 @@ fn SSABuilder_insertPhis(b: *SSABuilder) {
             let v: *Value = Func_getValue(b.func, val_id);
             if v.op == Op.FwdRef {
                 // Add to work list
-                if fwd_refs_count < fwd_refs_cap {
-                    fwd_refs[fwd_refs_count] = val_id;
-                    fwd_refs_count = fwd_refs_count + 1;
-                }
+                i64list_append(&fwd_refs, val_id);
                 // Treat FwdRefs as definitions in their block
                 let local_idx: i64 = v.aux_int;
                 SSABuilder_ensureDefvar(b, block_idx, local_idx, val_id);
@@ -612,15 +603,14 @@ fn SSABuilder_insertPhis(b: *SSABuilder) {
         block_idx = block_idx + 1;
     }
 
-    // Temporary storage for incoming values (up to 16 predecessors)
-    var args: [16]i64 = undefined;
-    var args_count: i64 = 0;
+    // Temporary storage for incoming values (dynamic list)
+    var args: I64List = undefined;
+    i64list_init(&args);
 
     // Process FwdRefs iteratively until the work list is empty
-    while fwd_refs_count > 0 {
+    while fwd_refs.count > 0 {
         // Pop from work list
-        fwd_refs_count = fwd_refs_count - 1;
-        let fwd_id: i64 = fwd_refs[fwd_refs_count];
+        let fwd_id: i64 = i64list_pop(&fwd_refs);
         let fwd: *Value = Func_getValue(b.func, fwd_id);
 
         // Find which block this FwdRef is in
@@ -650,21 +640,20 @@ fn SSABuilder_insertPhis(b: *SSABuilder) {
         }
 
         // No predecessors? Skip (unreachable block)
-        if blk.preds_count == 0 {
+        if blk.preds.count == 0 {
             continue;
         }
 
         let local_idx: i64 = fwd.aux_int;
 
         // Find variable value on each predecessor
-        args_count = 0;
+        i64list_clear(&args);
         var pred_idx: i64 = 0;
-        while pred_idx < blk.preds_count and args_count < 16 {
-            let pred_block_id: i64 = blk.preds[pred_idx];
+        while pred_idx < blk.preds.count {
+            let pred_block_id: i64 = Block_getPred(blk, pred_idx);
             let val_id: i64 = SSABuilder_lookupVarOutgoing(b, pred_block_id, local_idx, fwd.type_idx,
-                                                           &fwd_refs[0], &fwd_refs_count, fwd_refs_cap);
-            args[args_count] = val_id;
-            args_count = args_count + 1;
+                                                           &fwd_refs);
+            i64list_append(&args, val_id);
             pred_idx = pred_idx + 1;
         }
 
@@ -674,8 +663,8 @@ fn SSABuilder_insertPhis(b: *SSABuilder) {
         var need_phi: bool = false;
 
         var ai: i64 = 0;
-        while ai < args_count {
-            let a: i64 = args[ai];
+        while ai < args.count {
+            let a: i64 = i64list_get(&args, ai);
             if a == fwd_id {
                 ai = ai + 1;
                 continue;  // Self-reference, skip
@@ -693,8 +682,8 @@ fn SSABuilder_insertPhis(b: *SSABuilder) {
             // Convert to Phi with all incoming values
             fwd.op = Op.Phi;
             ai = 0;
-            while ai < args_count {
-                let arg_val: *Value = Func_getValue(b.func, args[ai]);
+            while ai < args.count {
+                let arg_val: *Value = Func_getValue(b.func, i64list_get(&args, ai));
                 Value_addArg(fwd, arg_val);
                 ai = ai + 1;
             }
@@ -707,6 +696,10 @@ fn SSABuilder_insertPhis(b: *SSABuilder) {
         // If no witness at all (all self-references), leave as FwdRef
         // This is an error but will be caught later
     }
+
+    // Clean up dynamic lists
+    i64list_deinit(&args);
+    i64list_deinit(&fwd_refs);
 
     // Reorder all blocks to ensure phis are at the start
     SSABuilder_reorderPhis(b);
@@ -928,28 +921,74 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
         ssa_local_idx = ssa_local_idx + 1;
     }
 
-    // Step 4: Store parameters to stack (BUG-049 fix)
-    // Following Zig's ssa_builder.zig Phase 3: parameters must be stored to
-    // stack slots so they survive across function calls (X0-X7 are caller-saved)
+    // Step 4: Handle parameters with 3-phase approach (BUG-056 fix)
+    // Following Zig's ssa_builder.zig lines 111-242
+    //
+    // CRITICAL: Emit ALL Arg ops FIRST, then stores.
+    // This ensures ABI registers (x0-x7) aren't overwritten before being captured.
+    //
+    // Phase 1: Create ALL Arg ops (captures all ABI register values)
+    // Phase 2: Create slice_make ops for string params (not yet implemented)
+    // Phase 3: Store all params to stack slots
+    //
+    // String/slice params take TWO registers (ptr + len), so we track the
+    // physical register index separately from the logical param index.
+
+    // Dynamic lists to track params across phases (store value IDs, not pointers)
+    var arg_value_ids: I64List = undefined;
+    var arg_local_indices: I64List = undefined;
+    i64list_init(&arg_value_ids);
+    i64list_init(&arg_local_indices);
+
+    // Phase 1: Create ALL Arg ops first
+    // phys_reg_idx tracks the physical ABI register (x0, x1, ..., or stack slot)
+    var phys_reg_idx: i64 = 0;
     var param_local_idx: i64 = 0;
     while param_local_idx < b.func.locals_count {
         let param_local: *Local = Func_getLocal(b.func, param_local_idx);
         if param_local.is_param {
-            // 1. Create Arg value for the parameter (captures value from X0/X1/etc.)
+            // Create Arg value for this parameter
+            // ARM64 ABI: x0-x7 for first 8 args, stack for rest
             let arg_val: *Value = Func_newValue(b.func, Op.Arg, TYPE_I64);
-            arg_val.aux_int = param_local.param_idx;
-            arg_val.reg = X0 + param_local.param_idx;
+            arg_val.aux_int = phys_reg_idx;  // Physical register index, not logical param index
+            if phys_reg_idx < 8 {
+                // Register argument - pre-assign to X0-X7
+                arg_val.reg = X0 + phys_reg_idx;
+            }
+            // Stack arguments (phys_reg_idx >= 8) have reg=-1, will be assigned by regalloc
 
-            // 2. Create LocalAddr value for the stack slot
-            let addr_val: *Value = Func_newValue(b.func, Op.LocalAddr, TYPE_I64);
-            addr_val.aux_int = param_local_idx;
+            // Save for Phase 3
+            i64list_append(&arg_value_ids, arg_val.id);
+            i64list_append(&arg_local_indices, param_local_idx);
 
-            // 3. Store Arg to stack slot
-            let store_val: *Value = Func_newValue(b.func, Op.Store, TYPE_VOID);
-            Value_addArg2(store_val, addr_val, arg_val);
+            phys_reg_idx = phys_reg_idx + 1;
+            // Note: For string params (future), increment phys_reg_idx twice
         }
         param_local_idx = param_local_idx + 1;
     }
+
+    // Phase 2: Create slice_make ops for string params
+    // (Not implemented yet - cot0 doesn't have string params)
+
+    // Phase 3: Store all params to stack slots
+    // This happens AFTER all Arg ops are created
+    var i: i64 = 0;
+    while i < arg_value_ids.count {
+        let arg_val: *Value = Func_getValue(b.func, i64list_get(&arg_value_ids, i));
+        let local_idx: i64 = i64list_get(&arg_local_indices, i);
+
+        // Create LocalAddr value for the stack slot
+        let addr_val: *Value = Func_newValue(b.func, Op.LocalAddr, TYPE_I64);
+        addr_val.aux_int = local_idx;
+
+        // Store Arg to stack slot
+        let store_val: *Value = Func_newValue(b.func, Op.Store, TYPE_VOID);
+        Value_addArg2(store_val, addr_val, arg_val);
+
+        i = i + 1;
+    }
+    i64list_deinit(&arg_value_ids);
+    i64list_deinit(&arg_local_indices);
 
     // Step 5: Convert IR nodes to SSA
     // Track current IR block for block transitions
@@ -1683,7 +1722,7 @@ fn SSABuilder_verify(b: *SSABuilder) bool {
                     errors_found = true;
                 }
                 // Check 2: Phi arg count matches predecessors
-                if v.args_count != block.preds_count {
+                if v.args.count != block.preds.count {
                     errors_found = true;
                 }
             } else {

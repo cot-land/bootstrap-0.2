@@ -12,7 +12,6 @@ import "value.cot"
 
 const INVALID_BLOCK: i64 = -1;
 const MAX_SUCCS: i64 = 2;     // At most 2 successors (branch)
-const MAX_PREDS: i64 = 16;    // Max predecessors
 const MAX_VALUES_PER_BLOCK: i64 = 5000;
 
 // ============================================================================
@@ -63,9 +62,8 @@ struct Block {
     succs: [2]i64,        // Successor block IDs
     succs_count: i64,
 
-    // Predecessors (blocks that jump to us)
-    preds: [16]i64,       // Predecessor block IDs
-    preds_count: i64,
+    // Predecessors (blocks that jump to us) - dynamic list
+    preds: I64List,       // Predecessor block IDs (no limit)
 
     // Values in this block (indices into function's value array)
     values_start: i64,    // First value index
@@ -91,19 +89,25 @@ fn Block_new(id: i64, kind: BlockKind) Block {
     b.succs[0] = INVALID_BLOCK;
     b.succs[1] = INVALID_BLOCK;
     b.succs_count = 0;
-    // Initialize preds array
-    var i: i64 = 0;
-    while i < MAX_PREDS {
-        b.preds[i] = INVALID_BLOCK;
-        i = i + 1;
-    }
-    b.preds_count = 0;
+    // Initialize dynamic preds list
+    i64list_init(&b.preds);
     b.values_start = 0;
     b.values_count = 0;
     b.dom = INVALID_BLOCK;
     b.dom_level = 0;
     b.aux_int = INVALID_ID;
     return b;
+}
+
+// Get predecessor count (accessor for preds.count)
+fn Block_getPredsCount(b: *Block) i64 {
+    return b.preds.count;
+}
+
+// Get predecessor at index
+fn Block_getPred(b: *Block, idx: i64) i64 {
+    if idx < 0 or idx >= b.preds.count { return INVALID_BLOCK; }
+    return i64list_get(&b.preds, idx);
 }
 
 fn Block_newPlain(id: i64) Block {
@@ -156,16 +160,14 @@ fn Block_succ1(b: *Block) i64 {
 
 // Add a predecessor to this block
 fn Block_addPred(b: *Block, pred_id: i64) {
-    if b.preds_count >= MAX_PREDS { return; }
-    b.preds[b.preds_count] = pred_id;
-    b.preds_count = b.preds_count + 1;
+    i64list_append(&b.preds, pred_id);
 }
 
 // Check if block has predecessor
 fn Block_hasPred(b: *Block, pred_id: i64) bool {
     var i: i64 = 0;
-    while i < b.preds_count {
-        if b.preds[i] == pred_id { return true; }
+    while i < b.preds.count {
+        if i64list_get(&b.preds, i) == pred_id { return true; }
         i = i + 1;
     }
     return false;
@@ -177,7 +179,7 @@ fn Block_hasPred(b: *Block, pred_id: i64) bool {
 
 // Check if block is entry block (no predecessors)
 fn Block_isEntry(b: *Block) bool {
-    return b.preds_count == 0;
+    return b.preds.count == 0;
 }
 
 // Check if block is exit block (no successors)
@@ -203,7 +205,7 @@ fn Block_isPlain(b: *Block) bool {
 // Get number of predecessors
 // Reference: Zig's Block.numPreds()
 fn Block_numPreds(b: *Block) i64 {
-    return b.preds_count;
+    return b.preds.count;
 }
 
 // Get number of successors

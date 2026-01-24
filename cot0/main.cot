@@ -768,9 +768,10 @@ fn parse_import_file_with_dir(import_path: *u8, import_path_len: i64, pool: *Nod
     add_imported_path(g_import_path_buf, full_path_len);
 
     // Get the directory of this imported file (for resolving its imports)
-    var this_file_dir: [256]u8;
+    var this_file_dir: U8List = undefined;
+    u8list_init_cap(&this_file_dir, 256);
     let this_file_dir_len: i64 = get_dir_from_path(g_import_path_buf, full_path_len,
-                                                    &this_file_dir[0], 256);
+                                                    this_file_dir.items, this_file_dir.capacity);
 
     // Read the file - append to existing source
     let fd: i32 = open(g_import_path_buf, O_RDONLY, 0);
@@ -822,7 +823,7 @@ fn parse_import_file_with_dir(import_path: *u8, import_path_len: i64, pool: *Nod
             let nested_path_len: i64 = node.field1;
 
             let nested_nodes: i64 = parse_import_file_with_dir(nested_path, nested_path_len, pool,
-                                                                &this_file_dir[0], this_file_dir_len);
+                                                                this_file_dir.items, this_file_dir_len);
             if nested_nodes > 0 {
                 print("  Imported: ");
                 write(1, nested_path, nested_path_len);
@@ -835,6 +836,7 @@ fn parse_import_file_with_dir(import_path: *u8, import_path_len: i64, pool: *Nod
         i = i + 1;
     }
 
+    u8list_deinit(&this_file_dir);
     return total_new_nodes;
 }
 
@@ -1144,24 +1146,27 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     writer.code_count = gs.code_count;
 
     // Add symbols for all functions
-    var sym_name: [128]u8;  // Buffer for mangled name (_funcname)
+    var sym_name: U8List = undefined;
+    u8list_init_cap(&sym_name, 128);  // Buffer for mangled name (_funcname)
     var main_sym_idx: i64 = 0 - 1;  // Track first function's symbol index for debug relocations
     func_idx = 0;
     while func_idx < lowerer.ir_funcs_count {
         let ir_func: *IRFunc = g_ir_funcs + (func_idx);
 
         // Build symbol name: "_" + function name from source
-        sym_name[0] = 95;  // '_'
+        let sn: *u8 = sym_name.items;
+        sn.* = 95;  // '_'
         var name_idx: i64 = 0;
         while name_idx < ir_func.name_len and name_idx < 126 {
             let src_ptr: *u8 = source.ptr + ir_func.name_start + name_idx;
-            sym_name[1 + name_idx] = src_ptr.*;
+            let dest: *u8 = sym_name.items + 1 + name_idx;
+            dest.* = src_ptr.*;
             name_idx = name_idx + 1;
         }
         let sym_len: i64 = 1 + ir_func.name_len;
 
         // Add symbol at function's code offset
-        let sym_idx: i64 = MachOWriter_addSymbol(&writer, &sym_name[0], sym_len, ir_func.code_offset, SECT_TEXT, true);
+        let sym_idx: i64 = MachOWriter_addSymbol(&writer, sym_name.items, sym_len, ir_func.code_offset, SECT_TEXT, true);
 
         // Track first function for debug line relocations (assumes first func is at text start)
         if main_sym_idx < 0 {
@@ -1203,17 +1208,19 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // If not internal, add as external symbol and relocation
         if not is_internal {
             // Build external symbol name: "_" + function name
-            sym_name[0] = 95;  // '_'
+            let sn2: *u8 = sym_name.items;
+            sn2.* = 95;  // '_'
             var ext_name_idx: i64 = 0;
             while ext_name_idx < cs2.func_name_len and ext_name_idx < 126 {
                 let src_ptr2: *u8 = g_source + cs2.func_name_start + ext_name_idx;
-                sym_name[1 + ext_name_idx] = src_ptr2.*;
+                let dest2: *u8 = sym_name.items + 1 + ext_name_idx;
+                dest2.* = src_ptr2.*;
                 ext_name_idx = ext_name_idx + 1;
             }
             let ext_sym_len: i64 = 1 + cs2.func_name_len;
 
             // Add undefined external symbol (section = 0)
-            let sym_idx: i64 = MachOWriter_addSymbol(&writer, &sym_name[0], ext_sym_len, 0, 0, true);
+            let sym_idx: i64 = MachOWriter_addSymbol(&writer, sym_name.items, ext_sym_len, 0, 0, true);
 
             // Add relocation for the BL instruction
             MachOWriter_addReloc(&writer, cs2.code_offset, sym_idx, ARM64_RELOC_BRANCH26, true);
@@ -1226,30 +1233,31 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     // GenState records crash_handler_offset when generating main()
     if gs.crash_handler_offset >= 0 {
         // Build symbol name: "_install_crash_handler"
-        sym_name[0] = 95;   // '_'
-        sym_name[1] = 105;  // 'i'
-        sym_name[2] = 110;  // 'n'
-        sym_name[3] = 115;  // 's'
-        sym_name[4] = 116;  // 't'
-        sym_name[5] = 97;   // 'a'
-        sym_name[6] = 108;  // 'l'
-        sym_name[7] = 108;  // 'l'
-        sym_name[8] = 95;   // '_'
-        sym_name[9] = 99;   // 'c'
-        sym_name[10] = 114; // 'r'
-        sym_name[11] = 97;  // 'a'
-        sym_name[12] = 115; // 's'
-        sym_name[13] = 104; // 'h'
-        sym_name[14] = 95;  // '_'
-        sym_name[15] = 104; // 'h'
-        sym_name[16] = 97;  // 'a'
-        sym_name[17] = 110; // 'n'
-        sym_name[18] = 100; // 'd'
-        sym_name[19] = 108; // 'l'
-        sym_name[20] = 101; // 'e'
-        sym_name[21] = 114; // 'r'
+        let snc: *u8 = sym_name.items;
+        (snc + 0).* = 95;   // '_'
+        (snc + 1).* = 105;  // 'i'
+        (snc + 2).* = 110;  // 'n'
+        (snc + 3).* = 115;  // 's'
+        (snc + 4).* = 116;  // 't'
+        (snc + 5).* = 97;   // 'a'
+        (snc + 6).* = 108;  // 'l'
+        (snc + 7).* = 108;  // 'l'
+        (snc + 8).* = 95;   // '_'
+        (snc + 9).* = 99;   // 'c'
+        (snc + 10).* = 114; // 'r'
+        (snc + 11).* = 97;  // 'a'
+        (snc + 12).* = 115; // 's'
+        (snc + 13).* = 104; // 'h'
+        (snc + 14).* = 95;  // '_'
+        (snc + 15).* = 104; // 'h'
+        (snc + 16).* = 97;  // 'a'
+        (snc + 17).* = 110; // 'n'
+        (snc + 18).* = 100; // 'd'
+        (snc + 19).* = 108; // 'l'
+        (snc + 20).* = 101; // 'e'
+        (snc + 21).* = 114; // 'r'
         // Add undefined external symbol
-        let crash_sym_idx: i64 = MachOWriter_addSymbol(&writer, &sym_name[0], 22, 0, 0, true);
+        let crash_sym_idx: i64 = MachOWriter_addSymbol(&writer, sym_name.items, 22, 0, 0, true);
         // Add relocation for the BL instruction
         MachOWriter_addReloc(&writer, gs.crash_handler_offset, crash_sym_idx, ARM64_RELOC_BRANCH26, true);
     }
@@ -1264,11 +1272,13 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         let g: *IRGlobal = g_ir_globals + (global_idx);
 
         // Build symbol name: "_" + global name from source
-        sym_name[0] = 95;  // '_'
+        let sng: *u8 = sym_name.items;
+        sng.* = 95;  // '_'
         var g_name_idx: i64 = 0;
         while g_name_idx < g.name_len and g_name_idx < 126 {
             let src_ptr3: *u8 = g_source + g.name_start + g_name_idx;
-            sym_name[1 + g_name_idx] = src_ptr3.*;
+            let destg: *u8 = sym_name.items + 1 + g_name_idx;
+            destg.* = src_ptr3.*;
             g_name_idx = g_name_idx + 1;
         }
         let g_sym_len: i64 = 1 + g.name_len;
@@ -1276,7 +1286,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // Add symbol in data section at the global's offset
         // Mark as external for PAGE21/PAGEOFF12 relocations to work (per Zig's approach)
         let g_data_offset: i64 = globals_base_offset + g.data_offset;
-        MachOWriter_addSymbol(&writer, &sym_name[0], g_sym_len, g_data_offset, SECT_DATA, true);
+        MachOWriter_addSymbol(&writer, sym_name.items, g_sym_len, g_data_offset, SECT_DATA, true);
 
         global_idx = global_idx + 1;
     }
@@ -1347,15 +1357,17 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // If not found internally, add as external symbol
         if found_sym_idx < 0 {
             // Build external symbol name: "_" + function name
-            sym_name[0] = 95;  // '_'
+            let snf: *u8 = sym_name.items;
+            snf.* = 95;  // '_'
             var far_name_idx: i64 = 0;
             while far_name_idx < far.func_name_len and far_name_idx < 126 {
                 let src_ptr: *u8 = g_source + far.func_name_start + far_name_idx;
-                sym_name[1 + far_name_idx] = src_ptr.*;
+                let destf: *u8 = sym_name.items + 1 + far_name_idx;
+                destf.* = src_ptr.*;
                 far_name_idx = far_name_idx + 1;
             }
             let far_sym_len: i64 = 1 + far.func_name_len;
-            found_sym_idx = MachOWriter_addSymbol(&writer, &sym_name[0], far_sym_len, 0, 0, true);
+            found_sym_idx = MachOWriter_addSymbol(&writer, sym_name.items, far_sym_len, 0, 0, true);
         }
 
         // Add ADRP relocation (PAGE21) - at code_offset
@@ -1403,37 +1415,38 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
         // Build symbol name: "_str_N" format
         // BUG-055 fix: Handle string indices up to 9999 (was only 0-9)
-        sym_name[0] = 95;   // '_'
-        sym_name[1] = 115;  // 's'
-        sym_name[2] = 116;  // 't'
-        sym_name[3] = 114;  // 'r'
-        sym_name[4] = 95;   // '_'
+        let sns: *u8 = sym_name.items;
+        (sns + 0).* = 95;   // '_'
+        (sns + 1).* = 115;  // 's'
+        (sns + 2).* = 116;  // 't'
+        (sns + 3).* = 114;  // 'r'
+        (sns + 4).* = 95;   // '_'
 
         // Convert str_idx to string (handles up to 9999)
         var sym_name_len: i64 = 5;
         var temp_idx: i64 = str_idx;
         if temp_idx < 10 {
-            sym_name[5] = @intCast(u8, 48 + temp_idx);
+            (sns + 5).* = @intCast(u8, 48 + temp_idx);
             sym_name_len = 6;
         } else if temp_idx < 100 {
-            sym_name[5] = @intCast(u8, 48 + temp_idx / 10);
-            sym_name[6] = @intCast(u8, 48 + temp_idx % 10);
+            (sns + 5).* = @intCast(u8, 48 + temp_idx / 10);
+            (sns + 6).* = @intCast(u8, 48 + temp_idx % 10);
             sym_name_len = 7;
         } else if temp_idx < 1000 {
-            sym_name[5] = @intCast(u8, 48 + temp_idx / 100);
-            sym_name[6] = @intCast(u8, 48 + (temp_idx / 10) % 10);
-            sym_name[7] = @intCast(u8, 48 + temp_idx % 10);
+            (sns + 5).* = @intCast(u8, 48 + temp_idx / 100);
+            (sns + 6).* = @intCast(u8, 48 + (temp_idx / 10) % 10);
+            (sns + 7).* = @intCast(u8, 48 + temp_idx % 10);
             sym_name_len = 8;
         } else {
-            sym_name[5] = @intCast(u8, 48 + temp_idx / 1000);
-            sym_name[6] = @intCast(u8, 48 + (temp_idx / 100) % 10);
-            sym_name[7] = @intCast(u8, 48 + (temp_idx / 10) % 10);
-            sym_name[8] = @intCast(u8, 48 + temp_idx % 10);
+            (sns + 5).* = @intCast(u8, 48 + temp_idx / 1000);
+            (sns + 6).* = @intCast(u8, 48 + (temp_idx / 100) % 10);
+            (sns + 7).* = @intCast(u8, 48 + (temp_idx / 10) % 10);
+            (sns + 8).* = @intCast(u8, 48 + temp_idx % 10);
             sym_name_len = 9;
         }
-        sym_name[sym_name_len] = 0;
+        (sns + sym_name_len).* = 0;
 
-        let str_sym_idx: i64 = MachOWriter_addSymbol(&writer, &sym_name[0], sym_name_len, str_data_offset, SECT_DATA, false);
+        let str_sym_idx: i64 = MachOWriter_addSymbol(&writer, sym_name.items, sym_name_len, str_data_offset, SECT_DATA, false);
 
         // Add ADRP relocation (PAGE21) - at code_offset
         MachOWriter_addReloc(&writer, sr2.code_offset, str_sym_idx, ARM64_RELOC_PAGE21, true);
@@ -1527,6 +1540,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     if out_path_len > 0 {
         let written: i64 = write_file(out_path, g_output, macho_bytes);
         if written < 0 {
+            u8list_deinit(&sym_name);
             return 3;
         }
         print("  Wrote ");
@@ -1536,6 +1550,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         print("  (No output path specified, skipping write)\n");
     }
 
+    u8list_deinit(&sym_name);
     return 0;
 }
 

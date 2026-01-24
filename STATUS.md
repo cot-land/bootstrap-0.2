@@ -35,12 +35,18 @@ See [cot0/STAGE1_TEST_PLAN.md](cot0/STAGE1_TEST_PLAN.md) for detailed execution 
 
 ### Known Issues (Priority Order)
 
-1. **Large Struct Returns** (CRITICAL - BUG-054)
+1. **SSABuilder Parameter Handling Architecture** (CRITICAL - BUG-056)
+   - Symptom: 9+ arguments fail, stack parameters get wrong values
+   - Cause: cot0 interleaves Arg→LocalAddr→Store; Zig uses 3-phase approach
+   - Details: See `cot0/SSA_BUILDER_ARCHITECTURE.md`
+   - Blocks: 9+ arg tests, string params, large struct params
+
+2. **Large Struct Returns** (CRITICAL - BUG-054)
    - Symptom: SIGSEGV crash in programs returning structs >16 bytes
    - Cause: ARM64 ABI requires hidden pointer in x8 for large struct returns, not implemented in cot0
    - First failure: test_bug004_large_struct_return (line 1901 in all_tests.cot)
 
-2. **String Literals** (HIGH - BUG-055)
+3. **String Literals** (HIGH - BUG-055)
    - Symptom: String content is garbled/wrong
    - Cause: String data relocation or slice construction issue in cot0
 
@@ -58,6 +64,7 @@ See [cot0/STAGE1_TEST_PLAN.md](cot0/STAGE1_TEST_PLAN.md) for detailed execution 
 
 ## Recent Milestones
 
+- **2026-01-24**: Converted all core fixed-size arrays to dynamic allocation (Value.args, Block.preds, local arrays in builder/genssa/lower/parser/regalloc/main)
 - **2026-01-24**: Crash handler works in cot0-compiled programs (DWARF parsing, source location display)
 - **2026-01-24**: Error reporting shows file:line:column with source context
 - **2026-01-24**: 21+ basic tests verified passing (arithmetic, bitwise, control flow, functions, pointers, arrays, globals, small structs)

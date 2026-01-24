@@ -1,5 +1,27 @@
 # Claude Development Guidelines
 
+## ⛔⛔⛔ NEVER USE FIXED-SIZE ARRAYS IN COT0 ⛔⛔⛔
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   NEVER EVER EVER EVER EVER USE FIXED-SIZE ARRAYS IN COT0                     ║
+║                                                                               ║
+║   ❌ var arr: [64]*Value = undefined;      <- NEVER DO THIS                   ║
+║   ❌ const MAX_ITEMS: i64 = 500000;        <- NEVER DO THIS                   ║
+║   ❌ var g_array: *Thing = null;           <- NEVER DO THIS (global array)    ║
+║                                                                               ║
+║   ✓ Use malloc() for dynamic allocation                                       ║
+║   ✓ Use realloc() to grow arrays                                              ║
+║   ✓ Copy Zig's ArrayList/ArrayListUnmanaged patterns                          ║
+║                                                                               ║
+║   The user has requested this HUNDREDS OF TIMES. STOP ADDING FIXED ARRAYS.    ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+```
+
+---
+
 ## SHAME LOG - READ THIS FIRST
 
 **2026-01-24** - User asked Claude to bring SSA passes (expand_calls.cot, decompose.cot, schedule.cot, lower.cot) up to parity with Zig. Claude initially wrote ~400 lines of garbage code that pattern-matched conditions but said "For bootstrap, codegen handles this" without doing anything.
@@ -44,7 +66,19 @@ Every function in cot0 must trace back to Go or Zig.
 If you're writing code that doesn't exist in these sources, STOP.
 ```
 
-## The Goal
+## Current Priority: Stage1 Test Parity
+
+**Make all 166 e2e tests pass when compiled with cot0-stage1.**
+
+See [cot0/STAGE1_TEST_PLAN.md](cot0/STAGE1_TEST_PLAN.md) for the detailed execution plan.
+
+**Known Issues (in priority order):**
+1. **Function Pointers** - Link error, generates `_f` symbol instead of indirect call
+2. **Global Variables** - Returns 0 instead of correct value
+3. **String Literals** - `s.len` returns 0 instead of string length
+4. **For Loops** - Parser doesn't recognize `for i in 0..7` syntax
+
+## Long-term Goal
 
 Make every function in [cot0/COMPARISON.md](cot0/COMPARISON.md) show "Same":
 - Same name (adapted to Cot naming: `Scanner_init` not `scanner_init`)

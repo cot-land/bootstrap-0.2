@@ -48,7 +48,7 @@ fn test_value_creation() i64 {
     var v2: Value = Value_new(1, Op.Neg64, 5, 0);
     Value_addArg(&v2, &v);
 
-    if v2.args_count != 1 { return 34; }
+    if v2.args.count != 1 { return 34; }
     if v.uses != 1 { return 35; }
 
     return 0;

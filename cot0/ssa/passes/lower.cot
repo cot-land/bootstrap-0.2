@@ -54,8 +54,8 @@ fn lowerBlock(f: *Func, block: *Block) {
 
         // Pattern 1: Mul by power of 2 → Shl
         // x * 2^n → x << n
-        if v.op == Op.Mul64 and v.args_count == 2 {
-            let right_id: i64 = v.args[1];
+        if v.op == Op.Mul64 and v.args.count == 2 {
+            let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
                 let right: *Value = Func_getValue(f, right_id);
                 if right.op == Op.ConstInt and isPowerOf2(right.aux_int) {
@@ -77,13 +77,13 @@ fn lowerBlock(f: *Func, block: *Block) {
         // Unsigned div/mod optimizations would need Op.UDiv and Op.UMod to be added
 
         // Pattern 2: Mul by 0 → ConstInt 0
-        if v.op == Op.Mul64 and v.args_count == 2 {
-            let right_id: i64 = v.args[1];
+        if v.op == Op.Mul64 and v.args.count == 2 {
+            let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
                 let right: *Value = Func_getValue(f, right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
                     // Decrement use counts on args
-                    let left_id: i64 = v.args[0];
+                    let left_id: i64 = Value_getArg(v, 0);
                     if left_id >= 0 {
                         let left: *Value = Func_getValue(f, left_id);
                         left.uses = left.uses - 1;
@@ -93,128 +93,128 @@ fn lowerBlock(f: *Func, block: *Block) {
                     // Transform to constant 0
                     v.op = Op.ConstInt;
                     v.aux_int = 0;
-                    v.args_count = 0;
+                    i64list_clear(&v.args);
                 }
             }
         }
 
         // Pattern 5: Mul by 1 → Copy
-        if v.op == Op.Mul64 and v.args_count == 2 {
-            let right_id: i64 = v.args[1];
+        if v.op == Op.Mul64 and v.args.count == 2 {
+            let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
                 let right: *Value = Func_getValue(f, right_id);
                 if right.op == Op.ConstInt and right.aux_int == 1 {
-                    let left_id: i64 = v.args[0];
+                    let left_id: i64 = Value_getArg(v, 0);
 
                     // Decrement use on right (the constant 1)
                     right.uses = right.uses - 1;
 
                     // Transform to Copy of left
                     v.op = Op.Copy;
-                    v.args[0] = left_id;
-                    v.args_count = 1;
+                    Value_setArgById(v, 0, left_id);
+                    Value_truncateArgs(v, 1);
                 }
             }
         }
 
         // Pattern 6: Add 0 → Copy
-        if v.op == Op.Add64 and v.args_count == 2 {
-            let right_id: i64 = v.args[1];
+        if v.op == Op.Add64 and v.args.count == 2 {
+            let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
                 let right: *Value = Func_getValue(f, right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
-                    let left_id: i64 = v.args[0];
+                    let left_id: i64 = Value_getArg(v, 0);
 
                     right.uses = right.uses - 1;
 
                     v.op = Op.Copy;
-                    v.args[0] = left_id;
-                    v.args_count = 1;
+                    Value_setArgById(v, 0, left_id);
+                    Value_truncateArgs(v, 1);
                 }
             }
         }
 
         // Pattern 7: Sub 0 → Copy
-        if v.op == Op.Sub64 and v.args_count == 2 {
-            let right_id: i64 = v.args[1];
+        if v.op == Op.Sub64 and v.args.count == 2 {
+            let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
                 let right: *Value = Func_getValue(f, right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
-                    let left_id: i64 = v.args[0];
+                    let left_id: i64 = Value_getArg(v, 0);
 
                     right.uses = right.uses - 1;
 
                     v.op = Op.Copy;
-                    v.args[0] = left_id;
-                    v.args_count = 1;
+                    Value_setArgById(v, 0, left_id);
+                    Value_truncateArgs(v, 1);
                 }
             }
         }
 
         // Pattern 8: And with all 1s → Copy
-        if v.op == Op.And64 and v.args_count == 2 {
-            let right_id: i64 = v.args[1];
+        if v.op == Op.And64 and v.args.count == 2 {
+            let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
                 let right: *Value = Func_getValue(f, right_id);
                 if right.op == Op.ConstInt and right.aux_int == -1 {
-                    let left_id: i64 = v.args[0];
+                    let left_id: i64 = Value_getArg(v, 0);
 
                     right.uses = right.uses - 1;
 
                     v.op = Op.Copy;
-                    v.args[0] = left_id;
-                    v.args_count = 1;
+                    Value_setArgById(v, 0, left_id);
+                    Value_truncateArgs(v, 1);
                 }
             }
         }
 
         // Pattern 9: Or with 0 → Copy
-        if v.op == Op.Or64 and v.args_count == 2 {
-            let right_id: i64 = v.args[1];
+        if v.op == Op.Or64 and v.args.count == 2 {
+            let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
                 let right: *Value = Func_getValue(f, right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
-                    let left_id: i64 = v.args[0];
+                    let left_id: i64 = Value_getArg(v, 0);
 
                     right.uses = right.uses - 1;
 
                     v.op = Op.Copy;
-                    v.args[0] = left_id;
-                    v.args_count = 1;
+                    Value_setArgById(v, 0, left_id);
+                    Value_truncateArgs(v, 1);
                 }
             }
         }
 
         // Pattern 10: Xor with 0 → Copy
-        if v.op == Op.Xor64 and v.args_count == 2 {
-            let right_id: i64 = v.args[1];
+        if v.op == Op.Xor64 and v.args.count == 2 {
+            let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
                 let right: *Value = Func_getValue(f, right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
-                    let left_id: i64 = v.args[0];
+                    let left_id: i64 = Value_getArg(v, 0);
 
                     right.uses = right.uses - 1;
 
                     v.op = Op.Copy;
-                    v.args[0] = left_id;
-                    v.args_count = 1;
+                    Value_setArgById(v, 0, left_id);
+                    Value_truncateArgs(v, 1);
                 }
             }
         }
 
         // Pattern 11: Shift by 0 → Copy
-        if (v.op == Op.Shl64 or v.op == Op.Shr64 or v.op == Op.Sar64) and v.args_count == 2 {
-            let right_id: i64 = v.args[1];
+        if (v.op == Op.Shl64 or v.op == Op.Shr64 or v.op == Op.Sar64) and v.args.count == 2 {
+            let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
                 let right: *Value = Func_getValue(f, right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
-                    let left_id: i64 = v.args[0];
+                    let left_id: i64 = Value_getArg(v, 0);
 
                     right.uses = right.uses - 1;
 
                     v.op = Op.Copy;
-                    v.args[0] = left_id;
-                    v.args_count = 1;
+                    Value_setArgById(v, 0, left_id);
+                    Value_truncateArgs(v, 1);
                 }
             }
         }

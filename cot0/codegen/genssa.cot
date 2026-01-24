@@ -178,6 +178,10 @@ struct GenState {
     has_hidden_return: bool,     // True if function returns >16B
     hidden_ret_ptr_offset: i64,  // Stack offset where x8 is saved
 
+    // Frame size for accessing stack-passed arguments
+    // Stack args are at [FP + 16 + frame_size + (arg_idx-8)*8]
+    frame_size: i64,
+
     // Type registry for computing type sizes (needed for hidden return at call sites)
     type_registry: *TypeRegistry,
 }
@@ -230,6 +234,7 @@ fn GenState_init(gs: *GenState, f: *Func,
     // BUG-054: Hidden return tracking
     gs.has_hidden_return = false;
     gs.hidden_ret_ptr_offset = 0;
+    gs.frame_size = 0;
     gs.type_registry = null;
 }
 
@@ -491,8 +496,8 @@ fn GenState_emitSpill(gs: *GenState, v: *Value) {
 fn GenState_reloadSpilledArgs(gs: *GenState, v: *Value) {
     let f: *Func = gs.func;
     var i: i64 = 0;
-    while i < v.args_count {
-        let arg_id: i64 = v.args[i];
+    while i < v.args.count {
+        let arg_id: i64 = Value_getArg(v, i);
         if arg_id >= 0 and arg_id < f.values_count {
             let arg: *Value = Func_getValue(f, arg_id);
             GenState_emitReload(gs, arg);
@@ -535,6 +540,9 @@ fn GenState_generate(gs: *GenState) i64 {
         // Round up to 16-byte alignment
         frame_size = (frame_size + 15) & (0 - 16);
     }
+
+    // Store frame_size for stack arg access in Op.Arg handling
+    gs.frame_size = frame_size;
 
     if frame_size > 0 {
         GenState_emitInst(gs, encode_sub_imm(SP, SP, frame_size));
@@ -631,7 +639,36 @@ fn GenState_value(gs: *GenState, v: *Value) {
         return;  // Phi nodes handled by register allocator
     }
     if v.op == Op.Arg {
-        return;  // Arguments are in registers already
+        // ARM64 ABI: x0-x7 for first 8 args, stack for rest
+        // Following Zig: src/codegen/arm64.zig:1829-1849
+        let arg_idx: i64 = v.aux_int;
+        if arg_idx >= 8 {
+            // Stack argument - load from caller's stack frame
+            // cot0's prologue layout (SP-relative, FP not set up):
+            //   STP x29, x30, [sp, #-16]!  -> SP -= 16
+            //   SUB SP, SP, frame_size     -> SP -= frame_size
+            //
+            // Stack layout from SP upward:
+            //   SP + 0                     : local frame (frame_size bytes)
+            //   SP + frame_size            : saved FP
+            //   SP + frame_size + 8        : saved LR
+            //   SP + frame_size + 16       : first stack arg (arg 8)
+            //   SP + frame_size + 24       : second stack arg (arg 9)
+            //   etc.
+            //
+            // Note: encode_ldr takes byte offset (it scales internally)
+            // Use x16 as temp if no register assigned (stack args have reg=-1)
+            var dest_reg: i64 = v.reg;
+            if dest_reg < 0 {
+                dest_reg = X16;  // Use scratch register for stack args
+                v.reg = X16;     // Update value's register so Store can use it
+            }
+            let byte_offset: i64 = gs.frame_size + 16 + (arg_idx - 8) * 8;
+            GenState_emitInst(gs, encode_ldr(dest_reg, SP, byte_offset));
+        }
+        // For register arguments (arg_idx < 8), regalloc already assigned
+        // the correct register, so no code needs to be emitted
+        return;
     }
     if v.op == Op.Nop {
         return;  // No operation
@@ -818,7 +855,7 @@ fn GenState_stringMake(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let ptr_val: *Value = Func_getValue(f, v.args[0]);
+    let ptr_val: *Value = Func_getValue(f, Value_getArg(v, 0));
 
     // Move ptr to destination register
     if ptr_val.reg >= 0 and ptr_val.reg != rd {
@@ -836,7 +873,7 @@ fn GenState_sliceMake(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let ptr_val: *Value = Func_getValue(f, v.args[0]);
+    let ptr_val: *Value = Func_getValue(f, Value_getArg(v, 0));
 
     // Move ptr to destination register
     if ptr_val.reg >= 0 and ptr_val.reg != rd {
@@ -853,7 +890,7 @@ fn GenState_slicePtr(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let slice_val: *Value = Func_getValue(f, v.args[0]);
+    let slice_val: *Value = Func_getValue(f, Value_getArg(v, 0));
 
     // For call results: ptr is in x0 (first return value)
     // For slice_make: ptr is args[0]
@@ -865,7 +902,7 @@ fn GenState_slicePtr(gs: *GenState, v: *Value) {
         }
     } else if slice_val.op == Op.SliceMake {
         // slice_make: ptr is args[0]
-        let ptr_val: *Value = Func_getValue(f, slice_val.args[0]);
+        let ptr_val: *Value = Func_getValue(f, Value_getArg(slice_val, 0));
         if ptr_val.reg >= 0 and ptr_val.reg != rd {
             GenState_emitInst(gs, ARM64_encodeMovReg(rd, ptr_val.reg));
         }
@@ -892,7 +929,7 @@ fn GenState_sliceLen(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let slice_val: *Value = Func_getValue(f, v.args[0]);
+    let slice_val: *Value = Func_getValue(f, Value_getArg(v, 0));
 
     // For call results: len is in x1 (second return value)
     // For slice_make: len is args[1]
@@ -904,7 +941,7 @@ fn GenState_sliceLen(gs: *GenState, v: *Value) {
         }
     } else if slice_val.op == Op.SliceMake {
         // slice_make: len is args[1]
-        let len_val: *Value = Func_getValue(f, slice_val.args[1]);
+        let len_val: *Value = Func_getValue(f, Value_getArg(slice_val, 1));
         if len_val.reg >= 0 and len_val.reg != rd {
             GenState_emitInst(gs, ARM64_encodeMovReg(rd, len_val.reg));
         }
@@ -926,8 +963,8 @@ fn GenState_add(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, v.args[0]);
-    let arg1: *Value = Func_getValue(f, v.args[1]);
+    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
 
     // Check if arg1 is a small constant
     if arg1.op == Op.ConstInt and arg1.aux_int >= 0 and arg1.aux_int <= 4095 {
@@ -942,8 +979,8 @@ fn GenState_sub(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, v.args[0]);
-    let arg1: *Value = Func_getValue(f, v.args[1]);
+    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
 
     if arg1.op == Op.ConstInt and arg1.aux_int >= 0 and arg1.aux_int <= 4095 {
         GenState_emitInst(gs, encode_sub_imm(rd, arg0.reg, arg1.aux_int));
@@ -957,8 +994,8 @@ fn GenState_mul(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, v.args[0]);
-    let arg1: *Value = Func_getValue(f, v.args[1]);
+    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
 
     GenState_emitInst(gs, encode_mul(rd, arg0.reg, arg1.reg));
 }
@@ -968,8 +1005,8 @@ fn GenState_div(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, v.args[0]);
-    let arg1: *Value = Func_getValue(f, v.args[1]);
+    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
 
     GenState_emitInst(gs, encode_sdiv(rd, arg0.reg, arg1.reg));
 }
@@ -982,8 +1019,8 @@ fn GenState_mod(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, v.args[0]);
-    let arg1: *Value = Func_getValue(f, v.args[1]);
+    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
 
     let rn: i64 = arg0.reg;  // dividend (a)
     let rm: i64 = arg1.reg;  // divisor (b)
@@ -1001,8 +1038,8 @@ fn GenState_and(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, v.args[0]);
-    let arg1: *Value = Func_getValue(f, v.args[1]);
+    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
 
     GenState_emitInst(gs, ARM64_and(rd, arg0.reg, arg1.reg));
 }
@@ -1012,8 +1049,8 @@ fn GenState_or(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, v.args[0]);
-    let arg1: *Value = Func_getValue(f, v.args[1]);
+    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
 
     GenState_emitInst(gs, ARM64_or(rd, arg0.reg, arg1.reg));
 }
@@ -1023,8 +1060,8 @@ fn GenState_xor(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, v.args[0]);
-    let arg1: *Value = Func_getValue(f, v.args[1]);
+    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
 
     GenState_emitInst(gs, ARM64_xor(rd, arg0.reg, arg1.reg));
 }
@@ -1034,8 +1071,8 @@ fn GenState_shl(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, v.args[0]);
-    let arg1: *Value = Func_getValue(f, v.args[1]);
+    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
 
     GenState_emitInst(gs, encode_lsl_reg(rd, arg0.reg, arg1.reg));
 }
@@ -1045,8 +1082,8 @@ fn GenState_shr(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, v.args[0]);
-    let arg1: *Value = Func_getValue(f, v.args[1]);
+    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
 
     GenState_emitInst(gs, encode_asr_reg(rd, arg0.reg, arg1.reg));  // Signed shift right
 }
@@ -1056,7 +1093,7 @@ fn GenState_neg(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, v.args[0]);
+    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
 
     // NEG Xd, Xn = SUB Xd, XZR, Xn
     GenState_emitInst(gs, encode_sub_reg(rd, XZR, arg0.reg));
@@ -1067,7 +1104,7 @@ fn GenState_not(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, v.args[0]);
+    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
 
     // Logical NOT: XOR with -1 (all 1s)
     // Or use MVN (bitwise not): MVN Xd, Xn = ORN Xd, XZR, Xn
@@ -1079,8 +1116,8 @@ fn GenState_compare(gs: *GenState, v: *Value, cond: i64) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, v.args[0]);
-    let arg1: *Value = Func_getValue(f, v.args[1]);
+    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
 
     // Compare and set result
     GenState_emitInst(gs, ARM64_cmp(arg0.reg, arg1.reg));
@@ -1094,9 +1131,9 @@ fn GenState_select(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let cond_val: *Value = Func_getValue(f, v.args[0]);
-    let true_val: *Value = Func_getValue(f, v.args[1]);
-    let false_val: *Value = Func_getValue(f, v.args[2]);
+    let cond_val: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let true_val: *Value = Func_getValue(f, Value_getArg(v, 1));
+    let false_val: *Value = Func_getValue(f, Value_getArg(v, 2));
 
     // Compare condition with 0
     GenState_emitInst(gs, encode_cmp_imm(cond_val.reg, 0));
@@ -1110,7 +1147,7 @@ fn GenState_load(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let addr: *Value = Func_getValue(f, v.args[0]);
+    let addr: *Value = Func_getValue(f, Value_getArg(v, 0));
 
     // Check if we need byte-sized load (TYPE_U8 = 6, TYPE_I8 = 2)
     let is_byte: bool = v.type_idx == 6 or v.type_idx == 2;
@@ -1127,8 +1164,8 @@ fn GenState_load(gs: *GenState, v: *Value) {
     } else if addr.op == Op.OffPtr {
         // OffPtr: base + offset. Check if base is LocalAddr for direct SP-relative load
         let field_offset: i64 = addr.aux_int;
-        if addr.args_count > 0 {
-            let base_val: *Value = Func_getValue(f, addr.args[0]);
+        if addr.args.count > 0 {
+            let base_val: *Value = Func_getValue(f, Value_getArg(addr, 0));
             if base_val.op == Op.LocalAddr {
                 let local_idx: i64 = base_val.aux_int;
                 let local: *Local = Func_getLocal(f, local_idx);
@@ -1159,8 +1196,8 @@ fn GenState_load(gs: *GenState, v: *Value) {
 
 fn GenState_store(gs: *GenState, v: *Value) {
     let f: *Func = gs.func;
-    let addr: *Value = Func_getValue(f, v.args[0]);
-    let val: *Value = Func_getValue(f, v.args[1]);
+    let addr: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let val: *Value = Func_getValue(f, Value_getArg(v, 1));
 
     // Check if we need byte-sized store (TYPE_U8 = 6, TYPE_I8 = 2)
     let is_byte: bool = val.type_idx == 6 or val.type_idx == 2;
@@ -1177,8 +1214,8 @@ fn GenState_store(gs: *GenState, v: *Value) {
     } else if addr.op == Op.OffPtr {
         // OffPtr: base + offset. Check if base is LocalAddr for direct SP-relative store
         let field_offset: i64 = addr.aux_int;
-        if addr.args_count > 0 {
-            let base_val: *Value = Func_getValue(f, addr.args[0]);
+        if addr.args.count > 0 {
+            let base_val: *Value = Func_getValue(f, Value_getArg(addr, 0));
             if base_val.op == Op.LocalAddr {
                 let local_idx: i64 = base_val.aux_int;
                 let local: *Local = Func_getLocal(f, local_idx);
@@ -1213,10 +1250,10 @@ fn GenState_store(gs: *GenState, v: *Value) {
 // aux_int = size in bytes
 fn GenState_move(gs: *GenState, v: *Value) {
     let f: *Func = gs.func;
-    if v.args_count < 2 { return; }
+    if v.args.count < 2 { return; }
 
-    let dest_val: *Value = Func_getValue(f, v.args[0]);
-    let src_val: *Value = Func_getValue(f, v.args[1]);
+    let dest_val: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let src_val: *Value = Func_getValue(f, Value_getArg(v, 1));
     let copy_size: i64 = v.aux_int;
 
     // Get dest register - could be LocalAddr or computed address
@@ -1235,11 +1272,11 @@ fn GenState_move(gs: *GenState, v: *Value) {
     // Get src register - ALWAYS regenerate for AddPtr since registers may be reused
     // The AddPtr comes from index_value: base_addr + (index * elem_size)
     var src_reg: i64 = X17;  // Use X17 for source
-    if src_val.op == Op.AddPtr and src_val.args_count >= 2 {
+    if src_val.op == Op.AddPtr and src_val.args.count >= 2 {
         // AddPtr: args[0]=base, args[1]=offset
         // We need to regenerate the address calculation
-        let base_v: *Value = Func_getValue(f, src_val.args[0]);
-        let off_v: *Value = Func_getValue(f, src_val.args[1]);
+        let base_v: *Value = Func_getValue(f, Value_getArg(src_val, 0));
+        let off_v: *Value = Func_getValue(f, Value_getArg(src_val, 1));
 
         // Get base address into X17
         if base_v.op == Op.GlobalAddr {
@@ -1408,8 +1445,8 @@ fn GenState_globalStore(gs: *GenState, v: *Value) {
 
     // Get the value to store from arg[0]
     let f: *Func = gs.func;
-    if v.args_count < 1 { return; }
-    let val: *Value = Func_getValue(f, v.args[0]);
+    if v.args.count < 1 { return; }
+    let val: *Value = Func_getValue(f, Value_getArg(v, 0));
     let src_reg: i64 = val.reg;
     if src_reg < 0 { return; }
 
@@ -1451,8 +1488,8 @@ fn GenState_offPtr(gs: *GenState, v: *Value) {
     let f: *Func = gs.func;
     let offset: i64 = v.aux_int;
 
-    if v.args_count > 0 {
-        let base_id: i64 = v.args[0];
+    if v.args.count > 0 {
+        let base_id: i64 = Value_getArg(v, 0);
         let base_val: *Value = Func_getValue(f, base_id);
 
         // Special case: if base is LocalAddr, regenerate it directly
@@ -1501,50 +1538,192 @@ fn GenState_call(gs: *GenState, v: *Value) {
     }
 
     // Use ABI module for proper parameter assignment
-    // Build array of parameter type indices
-    var param_types: [32]i64;  // Max 32 params
+    // Build dynamic list of parameter type indices
+    var param_types: I64List = undefined;
+    i64list_init(&param_types);
     var i: i64 = 0;
-    while i < v.args_count and i < 32 {
-        let arg_id: i64 = v.args[i];
+    while i < v.args.count {
+        let arg_id: i64 = Value_getArg(v, i);
         let arg_val: *Value = Func_getValue(f, arg_id);
-        param_types[i] = arg_val.type_idx;
+        i64list_append(&param_types, arg_val.type_idx);
         i = i + 1;
     }
 
     // Analyze call ABI
     var abi_info: ABIParamResultInfo = undefined;
-    ABI_analyzeFunc(&abi_info, &param_types[0], v.args_count, v.type_idx);
+    ABI_analyzeFunc(&abi_info, param_types.items, v.args.count, v.type_idx);
+    i64list_deinit(&param_types);
 
-    // Pass arguments according to ABI assignment
-    i = 0;
-    while i < v.args_count and i < abi_info.in_params_count {
-        let arg_id: i64 = v.args[i];
+    // Pass arguments using parallel copy to avoid clobbering
+    // Following Zig: src/codegen/arm64.zig:setupCallArgs
+    // Uses x16 as scratch register for breaking cycles
+
+    // Step 1: Allocate stack space for stack arguments FIRST
+    if abi_info.arg_stack_size > 0 {
+        GenState_emitInst(gs, encode_sub_imm(SP, SP, abi_info.arg_stack_size));
+    }
+
+    // Step 2: Store stack arguments (args 9+)
+    // For values without registers (constants, etc.), materialize first using x16
+    i = 8;
+    while i < v.args.count and i < abi_info.in_params_count {
+        let arg_id: i64 = Value_getArg(v, i);
         let arg_val: *Value = Func_getValue(f, arg_id);
 
         var assignment: ABIParamAssignment = undefined;
         ABIParamResultInfo_getInParam(&abi_info, i, &assignment);
 
-        if assignment.location == ParamLocation.Register {
-            // Move to assigned register
-            let target_reg: i64 = assignment.reg0;
-            if target_reg >= 0 and arg_val.reg != target_reg and arg_val.reg >= 0 {
-                GenState_emitInst(gs, ARM64_encodeMovReg(target_reg, arg_val.reg));
+        if assignment.location == ParamLocation.Stack {
+            var src_reg: i64 = arg_val.reg;
+
+            // If no register assigned, materialize the value first
+            if src_reg < 0 {
+                // Use x16 as scratch register for materialization
+                if arg_val.op == Op.ConstInt {
+                    // Materialize constant to x16
+                    GenState_emitInst(gs, encode_movz(X16, arg_val.aux_int & 0xFFFF, 0));
+                    if arg_val.aux_int > 0xFFFF {
+                        GenState_emitInst(gs, encode_movk(X16, (arg_val.aux_int >> 16) & 0xFFFF, 1));
+                    }
+                    if arg_val.aux_int > 0xFFFFFFFF {
+                        GenState_emitInst(gs, encode_movk(X16, (arg_val.aux_int >> 32) & 0xFFFF, 2));
+                    }
+                    src_reg = X16;
+                }
             }
-        } else if assignment.location == ParamLocation.Stack {
-            // Store to stack at assigned offset
-            // Stack args go at SP + offset (caller pushes before call)
-            if arg_val.reg >= 0 {
-                GenState_emitInst(gs, encode_str(arg_val.reg, SP, assignment.offset));
+
+            if src_reg >= 0 {
+                // Stack offset is relative to SP
+                GenState_emitInst(gs, encode_str(src_reg, SP, assignment.offset));
             }
         }
 
         i = i + 1;
     }
 
-    // Allocate stack space for stack-passed arguments
-    if abi_info.arg_stack_size > 0 {
-        GenState_emitInst(gs, encode_sub_imm(SP, SP, abi_info.arg_stack_size));
+    // Step 3: Collect register moves for args 0-7 (dynamic lists)
+    var move_src: I64List = undefined;
+    var move_dest: I64List = undefined;
+    var move_done: I64List = undefined;  // 0 = false, 1 = true
+    i64list_init(&move_src);
+    i64list_init(&move_dest);
+    i64list_init(&move_done);
+
+    i = 0;
+    while i < v.args.count and i < abi_info.in_params_count and i < 8 {
+        let arg_id: i64 = Value_getArg(v, i);
+        let arg_val: *Value = Func_getValue(f, arg_id);
+
+        var assignment: ABIParamAssignment = undefined;
+        ABIParamResultInfo_getInParam(&abi_info, i, &assignment);
+
+        if assignment.location == ParamLocation.Register {
+            let target_reg: i64 = assignment.reg0;
+            let src_reg: i64 = arg_val.reg;
+
+            // Record this move
+            i64list_append(&move_src, src_reg);
+            i64list_append(&move_dest, target_reg);
+            // Already in correct register?
+            if src_reg >= 0 and src_reg == target_reg {
+                i64list_append(&move_done, 1);
+            } else {
+                i64list_append(&move_done, 0);
+            }
+        }
+
+        i = i + 1;
     }
+
+    // Second pass: do non-conflicting moves first
+    // A move is safe if its dest is not a src for any pending move
+    var progress: bool = true;
+    while progress {
+        progress = false;
+        var mi: i64 = 0;
+        while mi < move_src.count {
+            if i64list_get(&move_done, mi) == 0 {
+                // Check if this move's dest would clobber a source we still need
+                var would_clobber: bool = false;
+                var oi: i64 = 0;
+                while oi < move_src.count {
+                    if i64list_get(&move_done, oi) == 0 and oi != mi {
+                        let oi_src: i64 = i64list_get(&move_src, oi);
+                        if oi_src >= 0 and oi_src == i64list_get(&move_dest, mi) {
+                            would_clobber = true;
+                        }
+                    }
+                    oi = oi + 1;
+                }
+
+                if not would_clobber {
+                    // Safe to do this move
+                    let mi_src: i64 = i64list_get(&move_src, mi);
+                    let mi_dest: i64 = i64list_get(&move_dest, mi);
+                    if mi_src >= 0 and mi_dest >= 0 {
+                        GenState_emitInst(gs, ARM64_encodeMovReg(mi_dest, mi_src));
+                    }
+                    i64list_set(&move_done, mi, 1);
+                    progress = true;
+                }
+            }
+            mi = mi + 1;
+        }
+    }
+
+    // Third pass: handle remaining cycles using x16 as temp
+    i = 0;
+    while i < move_src.count {
+        let i_src: i64 = i64list_get(&move_src, i);
+        if i64list_get(&move_done, i) == 0 and i_src >= 0 {
+            // Part of a cycle - save starting value to x16
+            let start_src: i64 = i_src;
+            GenState_emitInst(gs, ARM64_encodeMovReg(X16, start_src));
+
+            // Execute cycle moves
+            var current_dest: i64 = start_src;
+            var cycle_count: i64 = 0;
+            while cycle_count < move_src.count {
+                // Find the move that writes to current_dest
+                var found_idx: i64 = -1;
+                var mi2: i64 = 0;
+                while mi2 < move_src.count {
+                    if i64list_get(&move_done, mi2) == 0 and i64list_get(&move_dest, mi2) == current_dest {
+                        found_idx = mi2;
+                    }
+                    mi2 = mi2 + 1;
+                }
+
+                if found_idx < 0 { cycle_count = 1000; }  // Break
+                else {
+                    let actual_src: i64 = i64list_get(&move_src, found_idx);
+                    let found_dest: i64 = i64list_get(&move_dest, found_idx);
+                    // If src is the start_src, use x16 instead
+                    if actual_src == start_src {
+                        GenState_emitInst(gs, ARM64_encodeMovReg(found_dest, X16));
+                    } else if actual_src >= 0 {
+                        GenState_emitInst(gs, ARM64_encodeMovReg(found_dest, actual_src));
+                    }
+                    i64list_set(&move_done, found_idx, 1);
+
+                    // Follow the chain
+                    if actual_src == start_src {
+                        cycle_count = 1000;  // Cycle complete
+                    } else {
+                        current_dest = actual_src;
+                        cycle_count = cycle_count + 1;
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    i64list_deinit(&move_src);
+    i64list_deinit(&move_dest);
+    i64list_deinit(&move_done);
+
+    // Stack space already allocated above before storing stack args
 
     // Record call site for later resolution
     // v.aux_int = function name start in source
@@ -1597,32 +1776,34 @@ fn GenState_callIndirect(gs: *GenState, v: *Value) {
     let f: *Func = gs.func;
 
     // First argument is the function pointer, rest are actual call arguments
-    if v.args_count < 1 { return; }
+    if v.args.count < 1 { return; }
 
-    let fn_ptr_id: i64 = v.args[0];
+    let fn_ptr_id: i64 = Value_getArg(v, 0);
     let fn_ptr_val: *Value = Func_getValue(f, fn_ptr_id);
     let fn_ptr_reg: i64 = fn_ptr_val.reg;
 
     // Use ABI module for proper parameter assignment (skip first arg which is fn_ptr)
-    var param_types: [32]i64;
+    var param_types: I64List = undefined;
+    i64list_init(&param_types);
     var i: i64 = 1;  // Start from 1 to skip function pointer
-    while i < v.args_count and i < 32 {
-        let arg_id: i64 = v.args[i];
+    while i < v.args.count {
+        let arg_id: i64 = Value_getArg(v, i);
         let arg_val: *Value = Func_getValue(f, arg_id);
-        param_types[i - 1] = arg_val.type_idx;
+        i64list_append(&param_types, arg_val.type_idx);
         i = i + 1;
     }
 
-    let actual_arg_count: i64 = v.args_count - 1;  // Exclude function pointer
+    let actual_arg_count: i64 = v.args.count - 1;  // Exclude function pointer
 
     // Analyze call ABI
     var abi_info: ABIParamResultInfo = undefined;
-    ABI_analyzeFunc(&abi_info, &param_types[0], actual_arg_count, v.type_idx);
+    ABI_analyzeFunc(&abi_info, param_types.items, actual_arg_count, v.type_idx);
+    i64list_deinit(&param_types);
 
     // Pass arguments according to ABI assignment (skip first arg)
     i = 1;
-    while i < v.args_count and (i - 1) < abi_info.in_params_count {
-        let arg_id: i64 = v.args[i];
+    while i < v.args.count and (i - 1) < abi_info.in_params_count {
+        let arg_id: i64 = Value_getArg(v, i);
         let arg_val: *Value = Func_getValue(f, arg_id);
 
         var assignment: ABIParamAssignment = undefined;
@@ -1672,8 +1853,8 @@ fn GenState_return(gs: *GenState, v: *Value) {
 
     // BUG-054: Hidden return handling for structs >16B
     // Following Zig: src/codegen/arm64.zig:851-963
-    if gs.has_hidden_return and v.args_count > 0 {
-        let arg0_id: i64 = v.args[0];
+    if gs.has_hidden_return and v.args.count > 0 {
+        let arg0_id: i64 = Value_getArg(v, 0);
         let ret_val: *Value = Func_getValue(f, arg0_id);
 
         // Load hidden return pointer from stack into X17 (temp register)
@@ -1691,15 +1872,15 @@ fn GenState_return(gs: *GenState, v: *Value) {
             let local_idx: i64 = ret_val.aux_int;
             let local: *Local = Func_getLocal(f, local_idx);
             GenState_emitInst(gs, encode_add_imm(X16, SP, local.offset));
-        } else if ret_val.op == Op.Load and ret_val.args_count > 0 {
+        } else if ret_val.op == Op.Load and ret_val.args.count > 0 {
             // Load operation - get source address from arg[0] (which should be LocalAddr or OffPtr)
-            let addr_val: *Value = Func_getValue(f, ret_val.args[0]);
+            let addr_val: *Value = Func_getValue(f, Value_getArg(ret_val, 0));
             if addr_val.op == Op.LocalAddr {
                 let local_idx: i64 = addr_val.aux_int;
                 let local: *Local = Func_getLocal(f, local_idx);
                 GenState_emitInst(gs, encode_add_imm(X16, SP, local.offset));
-            } else if addr_val.op == Op.OffPtr and addr_val.args_count > 0 {
-                let base_val: *Value = Func_getValue(f, addr_val.args[0]);
+            } else if addr_val.op == Op.OffPtr and addr_val.args.count > 0 {
+                let base_val: *Value = Func_getValue(f, Value_getArg(addr_val, 0));
                 if base_val.op == Op.LocalAddr {
                     let local_idx: i64 = base_val.aux_int;
                     let local: *Local = Func_getLocal(f, local_idx);
@@ -1712,9 +1893,9 @@ fn GenState_return(gs: *GenState, v: *Value) {
                 // Address is in a register
                 GenState_emitInst(gs, encode_add_imm(X16, addr_val.reg, 0));
             }
-        } else if ret_val.op == Op.OffPtr and ret_val.args_count > 0 {
+        } else if ret_val.op == Op.OffPtr and ret_val.args.count > 0 {
             // Offset from base - check if base is LocalAddr
-            let base_val: *Value = Func_getValue(f, ret_val.args[0]);
+            let base_val: *Value = Func_getValue(f, Value_getArg(ret_val, 0));
             if base_val.op == Op.LocalAddr {
                 let local_idx: i64 = base_val.aux_int;
                 let local: *Local = Func_getLocal(f, local_idx);
@@ -1748,16 +1929,16 @@ fn GenState_return(gs: *GenState, v: *Value) {
         // For hidden return, x0 should contain the return address
         // Some ABIs require this, others don't - we'll set it to be safe
         GenState_emitInst(gs, ARM64_encodeMovReg(X0, X17));
-    } else if v.args_count > 0 {
+    } else if v.args.count > 0 {
         // Regular return handling (not hidden)
-        let arg0_id: i64 = v.args[0];
+        let arg0_id: i64 = Value_getArg(v, 0);
         let ret_val: *Value = Func_getValue(f, arg0_id);
 
         // Check if returning a slice (SliceMake)
         if ret_val.op == Op.SliceMake {
             // Slice return: ptr in X0, len in X1
-            let ptr_val: *Value = Func_getValue(f, ret_val.args[0]);
-            let len_val: *Value = Func_getValue(f, ret_val.args[1]);
+            let ptr_val: *Value = Func_getValue(f, Value_getArg(ret_val, 0));
+            let len_val: *Value = Func_getValue(f, Value_getArg(ret_val, 1));
             // Move ptr to X0
             if ptr_val.reg >= 0 and ptr_val.reg != X0 {
                 GenState_emitInst(gs, ARM64_encodeMovReg(X0, ptr_val.reg));
@@ -1796,7 +1977,7 @@ fn GenState_copy(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, v.args[0]);
+    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
 
     if arg0.reg == rd {
         return;  // Same register, no-op
@@ -1822,63 +2003,71 @@ fn GenState_emitPhiMoves(gs: *GenState, current_block: *Block, target_block_id: 
     // Find which predecessor index we are in target's predecessor list
     var pred_idx: i64 = -1;
     var i: i64 = 0;
-    while i < target_block.preds_count {
-        if target_block.preds[i] == current_block.id {
+    while i < target_block.preds.count {
+        if Block_getPred(target_block, i) == current_block.id {
             pred_idx = i;
         }
         i = i + 1;
     }
     if pred_idx < 0 { return; }  // Not a predecessor
 
-    // Collect phi moves: up to 16 moves max
+    // Collect phi moves (dynamic lists)
     // PhiMove: src_reg, dest_reg, needs_temp, temp_reg
-    var src_regs: [16]i64 = undefined;
-    var dest_regs: [16]i64 = undefined;
-    var needs_temp: [16]bool = undefined;
-    var temp_regs: [16]i64 = undefined;
-    var moves_count: i64 = 0;
+    var src_regs: I64List = undefined;
+    var dest_regs: I64List = undefined;
+    var needs_temp: I64List = undefined;  // 0 = false, 1 = true
+    var temp_regs: I64List = undefined;
+    i64list_init(&src_regs);
+    i64list_init(&dest_regs);
+    i64list_init(&needs_temp);
+    i64list_init(&temp_regs);
 
     // Walk values in target block looking for phis
     i = 0;
-    while i < target_block.values_count and moves_count < 16 {
+    while i < target_block.values_count {
         let value_id: i64 = target_block.values_start + i;
         let v: *Value = Func_getValue(f, value_id);
 
         if v.op == Op.Phi {
             // Get the argument for this predecessor
-            if pred_idx < v.args_count {
-                let src_id: i64 = v.args[pred_idx];
+            if pred_idx < v.args.count {
+                let src_id: i64 = Value_getArg(v, pred_idx);
                 let src_val: *Value = Func_getValue(f, src_id);
 
                 let phi_reg: i64 = v.reg;
                 let src_reg: i64 = src_val.reg;
 
                 if phi_reg >= 0 {
-                    src_regs[moves_count] = src_reg;
-                    dest_regs[moves_count] = phi_reg;
-                    needs_temp[moves_count] = false;
-                    temp_regs[moves_count] = 0;
-                    moves_count = moves_count + 1;
+                    i64list_append(&src_regs, src_reg);
+                    i64list_append(&dest_regs, phi_reg);
+                    i64list_append(&needs_temp, 0);
+                    i64list_append(&temp_regs, 0);
                 }
             }
         }
         i = i + 1;
     }
 
-    if moves_count == 0 { return; }
+    if src_regs.count == 0 {
+        i64list_deinit(&src_regs);
+        i64list_deinit(&dest_regs);
+        i64list_deinit(&needs_temp);
+        i64list_deinit(&temp_regs);
+        return;
+    }
 
     // Detect conflicts: source reg will be overwritten before read
     var temp_counter: i64 = 16;  // Use x16, x17 as scratch
     i = 0;
-    while i < moves_count {
-        let src: i64 = src_regs[i];
+    while i < src_regs.count {
+        let src: i64 = i64list_get(&src_regs, i);
         if src >= 0 {
             // Check if this source will be clobbered by an earlier move
             var j: i64 = 0;
             while j < i {
-                if dest_regs[j] == src {
-                    needs_temp[i] = true;
-                    temp_regs[i] = temp_counter;
+                if i64list_get(&dest_regs, j) == src {
+                    i64list_set(&needs_temp, i, 1);
+                    i64list_set(&temp_regs, i, temp_counter);
                     temp_counter = temp_counter + 1;
                     if temp_counter > 17 {
                         temp_counter = 9;  // Fall back to x9-x15
@@ -1892,30 +2081,37 @@ fn GenState_emitPhiMoves(gs: *GenState, current_block: *Block, target_block_id: 
 
     // Phase 1: Save conflicting sources to temp registers
     i = 0;
-    while i < moves_count {
-        if needs_temp[i] and src_regs[i] >= 0 {
+    while i < src_regs.count {
+        if i64list_get(&needs_temp, i) != 0 and i64list_get(&src_regs, i) >= 0 {
             // MOV temp, src (encoded as ADD temp, src, #0)
-            GenState_emitInst(gs, ARM64_encodeMovReg(temp_regs[i], src_regs[i]));
+            GenState_emitInst(gs, ARM64_encodeMovReg(i64list_get(&temp_regs, i), i64list_get(&src_regs, i)));
         }
         i = i + 1;
     }
 
     // Phase 2: Emit actual moves
     i = 0;
-    while i < moves_count {
-        if needs_temp[i] {
-            if src_regs[i] >= 0 {
+    while i < src_regs.count {
+        if i64list_get(&needs_temp, i) != 0 {
+            if i64list_get(&src_regs, i) >= 0 {
                 // Source was saved to temp
-                GenState_emitInst(gs, ARM64_encodeMovReg(dest_regs[i], temp_regs[i]));
+                GenState_emitInst(gs, ARM64_encodeMovReg(i64list_get(&dest_regs, i), i64list_get(&temp_regs, i)));
             }
         } else {
             // No conflict, emit directly
-            if src_regs[i] >= 0 and src_regs[i] != dest_regs[i] {
-                GenState_emitInst(gs, ARM64_encodeMovReg(dest_regs[i], src_regs[i]));
+            let src_r: i64 = i64list_get(&src_regs, i);
+            let dest_r: i64 = i64list_get(&dest_regs, i);
+            if src_r >= 0 and src_r != dest_r {
+                GenState_emitInst(gs, ARM64_encodeMovReg(dest_r, src_r));
             }
         }
         i = i + 1;
     }
+
+    i64list_deinit(&src_regs);
+    i64list_deinit(&dest_regs);
+    i64list_deinit(&needs_temp);
+    i64list_deinit(&temp_regs);
 }
 
 // ============================================================================
