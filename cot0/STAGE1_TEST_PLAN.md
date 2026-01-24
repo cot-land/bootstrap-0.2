@@ -1,65 +1,67 @@
 # Stage1 Test Parity Plan
 
 **Created: 2026-01-24**
+**Updated: 2026-01-24**
 
 ## Goal
 
 Make all 166 e2e tests that pass with the Zig compiler also pass when compiled with cot0-stage1.
 
-## Current Status
+## Current Status: 144/166 passing (87%)
 
 | Category | Status |
 |----------|--------|
-| Basic return, arithmetic, locals | PASS |
-| Function calls | PASS |
-| If/else, while, break, continue | PASS |
-| Structs, nested structs | PASS |
-| Arrays | PASS |
-| Pointer dereference | PASS |
-| Defer | PASS |
-| Comparisons, bitwise ops | PASS |
-| **Function pointers** | FAIL (link error) |
-| **For loops** | FAIL (parser error) |
-| **Global variables** | FAIL (wrong value) |
-| **String literals** | FAIL (wrong value) |
+| Basic return, arithmetic, locals | ✅ PASS |
+| Function calls | ✅ PASS |
+| If/else, while, break, continue | ✅ PASS |
+| Structs, nested structs | ✅ PASS |
+| Arrays | ✅ PASS |
+| Pointer dereference | ✅ PASS |
+| Defer | ✅ PASS |
+| Comparisons, bitwise ops | ✅ PASS |
+| **Function pointers** | ✅ PASS (fixed 2026-01-24) |
+| **String literals (basic)** | ✅ PASS (fixed BUG-055) |
+| **Hex/binary/octal literals** | ✅ PASS (fixed 2026-01-24) |
+| **Self-compilation** | ✅ PASS (fixed BUG-057) |
+| **For loops** | ❌ FAIL (parser error - by design) |
+| **Global variables** | ❌ FAIL (returns 0 - BUG-058) |
+| **Bitwise NOT** | ❌ FAIL (test_bitwise_not_*) |
+| **String escapes in tests** | ❌ FAIL (test_len_escape) |
+| **Large struct args** | ❌ FAIL (test_bug019*) |
 
-## Identified Issues
+## Remaining Issues (22 failing tests)
 
-### Issue 1: Function Pointers (CRITICAL)
-**Symptom**: Linker error "undefined symbol: _f"
-
-**Root Cause**: When calling through a function pointer variable like `f(20, 22)`, cot0 generates a call to external symbol `_f` instead of loading the function pointer from the local variable and calling indirectly through a register.
-
-**Location**: Likely in `cot0/codegen/genssa.cot` or `cot0/ssa/builder.cot`
-
-**Fix Required**: Detect when a call target is a local variable (function pointer type) and emit an indirect call (BLR instruction) instead of a direct call (BL instruction with relocation).
-
-### Issue 2: For Loops (HIGH)
-**Symptom**: "Parser error at position N"
-
-**Root Cause**: cot0 parser doesn't recognize the `for i in 0..7` syntax.
-
-**Location**: `cot0/frontend/parser.cot`
-
-**Fix Required**: Add parsing support for for-in-range syntax, or document that cot0 uses a different for loop syntax.
-
-### Issue 3: Global Variables (HIGH)
+### Issue 1: Global Variables (BUG-058)
 **Symptom**: Global variable reads return 0 instead of correct value
 
-**Root Cause**: The global variable initial value is not being loaded correctly, or the symbol relocation is incorrect.
+**Root Cause**: Unknown - global data section initialization or relocation issue
 
-**Location**: Likely in `cot0/codegen/genssa.cot` (global load/store) or `cot0/obj/macho.cot` (relocations)
+**Location**: `cot0/codegen/genssa.cot` or `cot0/obj/macho.cot`
 
-**Fix Required**: Debug global variable initialization and ensure relocations are correct.
+### Issue 2: Bitwise NOT
+**Symptom**: test_bitwise_not_zero, test_bitwise_not_neg fail
 
-### Issue 4: String Literals (MEDIUM)
-**Symptom**: `s.len` returns 0 instead of string length
+**Root Cause**: Bitwise NOT operation may not be implemented correctly
 
-**Root Cause**: String slice is not being constructed properly, or the length field is not being set.
+### Issue 3: Large Struct Arguments
+**Symptom**: test_bug019_large_struct_arg, test_bug019b_large_struct_literal_arg fail
 
-**Location**: Likely in `cot0/codegen/genssa.cot` or `cot0/frontend/lower.cot`
+**Root Cause**: ARM64 ABI for passing large structs as arguments not fully implemented
 
-**Fix Required**: Debug string literal handling to ensure both ptr and len are correctly stored.
+### Issue 4: For Loops (by design)
+**Symptom**: Parser error for `for i in 0..5` syntax
+
+**Root Cause**: cot0 doesn't support range-based for loops
+
+**Workaround**: Use while loops instead
+
+## Fixed Issues
+
+### ~~Issue 1: Function Pointers~~ FIXED
+Function pointer calls now work correctly.
+
+### ~~Issue 4: String Literals~~ FIXED (BUG-055)
+String literals now work with proper escape sequence handling and s.ptr/s.len access.
 
 ## Execution Plan
 

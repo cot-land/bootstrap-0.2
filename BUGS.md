@@ -47,60 +47,50 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
-### BUG-057: Self-compilation crashes in Phase 4/5 (SSA build)
+### BUG-058: Global variable initialization returns 0
 
-**Status:** OPEN - INVESTIGATION IN PROGRESS
-**Priority:** P0 (blocking self-hosting)
+**Status:** OPEN
+**Priority:** HIGH
 **Discovered:** 2026-01-24
 
 **Symptoms:**
-- cot0-stage1 crashes during SSABuilder_build when compiling main.cot
-- Same crash occurs with Zig-built cot0 (not a cot0-stage1 specific issue)
-- Invalid memory access at address pattern `0x...fff88` (always ends in fff88)
+- Global variables with initial values return 0 instead of the correct value
+- Example: `var g: i64 = 42;` returns 0 when read
 
-**Investigation Findings (2026-01-24):**
+**Root Cause:** Unknown - likely in global data section initialization or relocation
 
-1. **Crash Location:** During Step 5 of SSABuilder_build (IR to SSA conversion)
-   - Processing function 0 (the main merged function)
-   - Function has: 19795 IR nodes, 1050 locals, 198 blocks
-   - Successfully converts nodes 0-480 (481 conversions)
-   - Crashes during/after converting node 481
+**Location:** `cot0/codegen/genssa.cot` or `cot0/obj/macho.cot`
 
-2. **Debug Output Before Crash:**
-   ```
-   convert #478 ir_idx=478 values=2245
-   convert #479 ir_idx=479 values=2246
-   convert #480 ir_idx=480 values=2247
-   CRASH DETECTED
-   ```
+---
 
-3. **Register State at Crash:**
-   ```
-   x00=0x6427fff88 (invalid address being accessed, always ends in fff88)
-   x03=0x19e (414), x04=0x19f (415) - possibly value IDs or indices
-   x16=-1, x17=-1 (temp registers in invalid state)
-   ```
+### BUG-059: For loop syntax not supported
 
-4. **Related Bug:** io_print_int(0) doesn't print zero correctly (separate issue in lib/io.cot)
+**Status:** OPEN (by design)
+**Priority:** LOW
 
-**Analysis:**
-- The crash address pattern `fff88` suggests offset into struct with invalid base pointer
-- Crash is NOT in GenState_generate but in SSABuilder_build
-- Values count at crash: ~2247 (well under MAIN_MAX_SSA_VALUES=500000)
-- Crash happens reliably at the same conversion count
+**Symptoms:**
+- `for i in 0..5 { }` syntax causes parser error
+- cot0 parser doesn't support range-based for loops
 
-**Suspected Causes:**
-1. Pointer arithmetic issue in convert function for specific IR node type
-2. Out-of-bounds access when looking up a value/block/local
-3. Memory corruption from earlier operation affecting node 481's data
+**Workaround:** Use while loops instead
 
-**Next Steps:**
-1. Print IR node kind for nodes 478-485 to identify what type triggers crash
-2. Add bounds checking to Func_getValue, Func_getBlock, Func_getLocal
-3. Check if node 481 references an invalid value ID or block ID
-4. Compare convert function dispatch with Zig's implementation
+---
 
-**Workaround:** None - blocks self-hosting
+## Fixed Bugs
+
+### BUG-057: Self-compilation crashes in Phase 4/5 (SSA build)
+
+**Status:** FIXED
+**Priority:** P0 (was blocking self-hosting)
+**Discovered:** 2026-01-24
+**Fixed:** 2026-01-24
+
+**Root Cause:**
+`malloc_IRLocal` in `runtime/cot_runtime.zig` allocated only 32 bytes per struct, but IRLocal is 80 bytes (10 fields × 8 bytes). This caused memory corruption when writing to IRLocal fields past byte 32, which overwrote adjacent memory (g_ir_funcs).
+
+**Fix:**
+- Updated `malloc_IRLocal`: 32 → 80 bytes
+- Updated `malloc_Local`: 32 → 72 bytes
 
 ---
 

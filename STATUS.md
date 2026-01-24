@@ -7,13 +7,15 @@
 | Component | Status |
 |-----------|--------|
 | Zig compiler | ✅ 166 tests pass |
-| Stage 1 (Zig → cot0) | ⚠️ 21+ tests pass, 9+ arg calls fixed |
-| Stage 2 (cot0 → cot0) | ⏸️ Blocked (crash during codegen) |
-| Self-hosting | In progress |
+| Stage 1 (Zig → cot0) | ⚠️ 144/166 tests pass (87%) |
+| Stage 2 (cot0 → cot0) | ✅ Self-compilation works |
+| Self-hosting | ✅ Achieved (2026-01-24) |
 
 ## Current Priority: Stage1 Test Parity
 
 **Goal**: Make all 166 e2e tests pass when compiled with cot0-stage1.
+
+**Progress**: 144 passing, 22 failing
 
 See [cot0/STAGE1_TEST_PLAN.md](cot0/STAGE1_TEST_PLAN.md) for detailed execution plan.
 
