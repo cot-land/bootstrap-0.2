@@ -1,5 +1,39 @@
 # Claude Development Guidelines
 
+## ⛔⛔⛔ THE ONE RULE - COPY FROM GO/ZIG, NEVER INVENT ⛔⛔⛔
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   BEFORE WRITING ANY CODE, YOU MUST:                                          ║
+║                                                                               ║
+║   1. FIRST read how Go implements it:                                         ║
+║      ~/learning/go/src/cmd/compile/internal/                                  ║
+║                                                                               ║
+║   2. THEN read how Zig implements it:                                         ║
+║      ~/learning/zig/src/                                                      ║
+║                                                                               ║
+║   3. COPY the pattern - adapt syntax only, NEVER invent new approaches        ║
+║                                                                               ║
+║   ┌─────────────────────────────────────────────────────────────────────┐     ║
+║   │   Go Compiler          Zig Compiler           Cot Compiler         │     ║
+║   │   (cmd/compile)   →    (src/*.zig)    →       (cotN/*.cot)         │     ║
+║   │                                                                     │     ║
+║   │   Source of Truth      Reference Impl         Self-Hosting         │     ║
+║   │   for Algorithms       (builds cot)           Target               │     ║
+║   └─────────────────────────────────────────────────────────────────────┘     ║
+║                                                                               ║
+║   If you're writing code that doesn't exist in Go or Zig, STOP.               ║
+║                                                                               ║
+║   Reference commands:                                                         ║
+║   grep -r "keyword" ~/learning/go/src/cmd/compile/                            ║
+║   grep -r "keyword" ~/learning/zig/src/                                       ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+```
+
+---
+
 ## ⛔ MANDATORY: TEST-DRIVEN FEATURE DEVELOPMENT ⛔
 
 ```
@@ -88,26 +122,7 @@ Claude invented a magic number encoding scheme that doesn't exist anywhere in Zi
 
 > **Continue working without pausing for summaries. The user will stop you when done.**
 
-## The One Rule
-
-**Copy from Go/Zig. Never invent.**
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                                                                     │
-│   Go Compiler          Zig Compiler           Cot Compiler         │
-│   (cmd/compile)   →    (src/*.zig)    →       (cot0/*.cot)         │
-│                                                                     │
-│   Source of Truth      Reference Impl         Self-Hosting         │
-│   for Algorithms       (builds cot0)          Target               │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-
-Every function in cot0 must trace back to Go or Zig.
-If you're writing code that doesn't exist in these sources, STOP.
-```
-
-## Current Priority: Stage1 Test Parity
+## Current Priority: cot1 Language Evolution
 
 **Make all 166 e2e tests pass when compiled with cot0-stage1.**
 

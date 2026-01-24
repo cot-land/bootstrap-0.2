@@ -5,6 +5,33 @@
 
 ---
 
+## ⛔ MANDATORY: COPY FROM GO AND ZIG - NEVER INVENT ⛔
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   WHEN IMPLEMENTING NEW LANGUAGE FEATURES:                                    ║
+║                                                                               ║
+║   1. FIRST read how Go implements it:                                         ║
+║      ~/learning/go/src/cmd/compile/internal/                                  ║
+║                                                                               ║
+║   2. THEN read how Zig implements it:                                         ║
+║      ~/learning/zig/src/                                                      ║
+║                                                                               ║
+║   3. COPY the pattern - adapt syntax only                                     ║
+║                                                                               ║
+║   NEVER invent new approaches. Go and Zig are battle-tested.                  ║
+║   If you're writing code that doesn't exist in Go or Zig, STOP.               ║
+║                                                                               ║
+║   Reference commands:                                                         ║
+║   grep -r "ErrorUnion" ~/learning/zig/src/                                    ║
+║   grep -r "optional" ~/learning/go/src/cmd/compile/                           ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+```
+
+---
+
 ## ⛔ MANDATORY: TEST-DRIVEN FEATURE DEVELOPMENT ⛔
 
 ```
