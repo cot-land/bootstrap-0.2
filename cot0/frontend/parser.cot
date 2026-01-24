@@ -802,7 +802,7 @@ fn Parser_parseUnary(p: *Parser) i64 {
                 // NOTE: Do NOT capture args_start here! Inner calls add to children.
                 // We use temporary storage and add children AFTER parsing all args.
                 var args_count: i64 = 0;
-                // Store parsed argument node indices temporarily (max 8 args)
+                // Store parsed argument node indices temporarily (max 16 args for ARM64 ABI)
                 var arg0: i64 = -1;
                 var arg1: i64 = -1;
                 var arg2: i64 = -1;
@@ -811,6 +811,14 @@ fn Parser_parseUnary(p: *Parser) i64 {
                 var arg5: i64 = -1;
                 var arg6: i64 = -1;
                 var arg7: i64 = -1;
+                var arg8: i64 = -1;
+                var arg9: i64 = -1;
+                var arg10: i64 = -1;
+                var arg11: i64 = -1;
+                var arg12: i64 = -1;
+                var arg13: i64 = -1;
+                var arg14: i64 = -1;
+                var arg15: i64 = -1;
 
                 // Parse argument list
                 if not Parser_check(p, TokenType.RParen) {
@@ -829,6 +837,14 @@ fn Parser_parseUnary(p: *Parser) i64 {
                         else if args_count == 5 { arg5 = next_arg; }
                         else if args_count == 6 { arg6 = next_arg; }
                         else if args_count == 7 { arg7 = next_arg; }
+                        else if args_count == 8 { arg8 = next_arg; }
+                        else if args_count == 9 { arg9 = next_arg; }
+                        else if args_count == 10 { arg10 = next_arg; }
+                        else if args_count == 11 { arg11 = next_arg; }
+                        else if args_count == 12 { arg12 = next_arg; }
+                        else if args_count == 13 { arg13 = next_arg; }
+                        else if args_count == 14 { arg14 = next_arg; }
+                        else if args_count == 15 { arg15 = next_arg; }
                         args_count = args_count + 1;
                     }
                 }
@@ -845,6 +861,14 @@ fn Parser_parseUnary(p: *Parser) i64 {
                 if args_count >= 6 { Node_addChild(p.pool, arg5); }
                 if args_count >= 7 { Node_addChild(p.pool, arg6); }
                 if args_count >= 8 { Node_addChild(p.pool, arg7); }
+                if args_count >= 9 { Node_addChild(p.pool, arg8); }
+                if args_count >= 10 { Node_addChild(p.pool, arg9); }
+                if args_count >= 11 { Node_addChild(p.pool, arg10); }
+                if args_count >= 12 { Node_addChild(p.pool, arg11); }
+                if args_count >= 13 { Node_addChild(p.pool, arg12); }
+                if args_count >= 14 { Node_addChild(p.pool, arg13); }
+                if args_count >= 15 { Node_addChild(p.pool, arg14); }
+                if args_count >= 16 { Node_addChild(p.pool, arg15); }
 
                 let end: i64 = p.current.start + p.current.end;
                 Parser_want(p, TokenType.RParen);

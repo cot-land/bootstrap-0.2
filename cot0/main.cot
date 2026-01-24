@@ -7,10 +7,13 @@
 // Syscall Wrappers (libc) - MUST come before any imports
 // ============================================================================
 
+// Shared I/O utilities - MUST import first to make available everywhere
+import "lib/io.cot"
+
 // System calls needed by error handling and main
 extern fn open(path: *u8, flags: i32, mode: i32) i32;
 extern fn read(fd: i32, buf: *u8, count: i64) i64;
-extern fn write(fd: i32, buf: *u8, count: i64) i64;
+// write is already declared in lib/io.cot
 extern fn close(fd: i32) i32;
 extern fn exit(code: i32);
 
@@ -244,7 +247,7 @@ const MAIN_MAX_IR_NODES: i64 = 100000;
 const MAIN_MAX_IR_LOCALS: i64 = 5000;
 const MAIN_MAX_IR_FUNCS: i64 = 1000;
 const MAIN_MAX_CONSTANTS: i64 = 2000;
-const MAIN_MAX_CALL_ARGS: i64 = 10000;
+// MAIN_MAX_CALL_ARGS removed - args stored in IRNode.call_args
 var g_ir_nodes: *IRNode = null;
 var g_ir_nodes_cap: i64 = 0;
 var g_ir_locals: *IRLocal = null;
@@ -253,8 +256,7 @@ var g_ir_funcs: *IRFunc = null;
 var g_ir_funcs_cap: i64 = 0;
 var g_constants: *ConstEntry = null;
 var g_constants_cap: i64 = 0;
-var g_call_args: *i64 = null;
-var g_call_args_cap: i64 = 0;
+// g_call_args removed - call args now stored directly in IRNode.call_args (matches Zig)
 
 // Defer stack storage (for defer statement semantics)
 // Reference: Zig lower.zig:59 defer_stack
@@ -950,8 +952,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
                  g_ir_nodes, MAIN_MAX_IR_NODES,
                  g_ir_locals, MAIN_MAX_IR_LOCALS,
                  g_ir_funcs, MAIN_MAX_IR_FUNCS,
-                 g_constants, MAIN_MAX_CONSTANTS,
-                 g_call_args, MAIN_MAX_CALL_ARGS);
+                 g_constants, MAIN_MAX_CONSTANTS);
     Lowerer_initDeferStack(&lowerer, g_defer_stack, g_defer_stack_cap);
     Lowerer_setGlobals(&lowerer, g_ir_globals, MAIN_MAX_IR_GLOBALS);
 
@@ -1030,7 +1031,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
                          g_ir_nodes, ir_func.nodes_start, ir_func.nodes_count);
         SSABuilder_setIRLocals(&builder,
                          g_ir_locals, ir_func.locals_start, ir_func.locals_count);
-        SSABuilder_setSource(&builder, g_source, g_source_len, g_call_args);
+        SSABuilder_setSource(&builder, g_source, g_source_len);
         SSABuilder_setTypeRegistry(&builder, &g_type_pool);
 
         // Build SSA from IR (handles blocks, locals, params, conversion)
@@ -1716,8 +1717,7 @@ fn main(argc: i64, argv: **u8) i64 {
     // i64 arrays
     g_type_params_cap = 5000;
     g_type_params = malloc_i64(g_type_params_cap);
-    g_call_args_cap = 10000;
-    g_call_args = malloc_i64(g_call_args_cap);
+    // g_call_args removed - args stored in IRNode.call_args
     g_defer_stack_cap = MAIN_MAX_DEFER_STACK;
     g_defer_stack = malloc_i64(g_defer_stack_cap);
     g_bstart_cap = 5000;

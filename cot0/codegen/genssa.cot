@@ -644,27 +644,13 @@ fn GenState_value(gs: *GenState, v: *Value) {
         let arg_idx: i64 = v.aux_int;
         if arg_idx >= 8 {
             // Stack argument - load from caller's stack frame
-            // cot0's prologue layout (SP-relative, FP not set up):
-            //   STP x29, x30, [sp, #-16]!  -> SP -= 16
-            //   SUB SP, SP, frame_size     -> SP -= frame_size
-            //
-            // Stack layout from SP upward:
-            //   SP + 0                     : local frame (frame_size bytes)
-            //   SP + frame_size            : saved FP
-            //   SP + frame_size + 8        : saved LR
-            //   SP + frame_size + 16       : first stack arg (arg 8)
-            //   SP + frame_size + 24       : second stack arg (arg 9)
-            //   etc.
-            //
-            // Note: encode_ldr takes byte offset (it scales internally)
-            // Use x16 as temp if no register assigned (stack args have reg=-1)
-            var dest_reg: i64 = v.reg;
-            if dest_reg < 0 {
-                dest_reg = X16;  // Use scratch register for stack args
-                v.reg = X16;     // Update value's register so Store can use it
-            }
+            // Note: We load into x16 here, but GenState_store has special handling
+            // to re-load stack args to avoid conflicts when multiple stack args
+            // are used before any are stored. For non-Store uses (arithmetic, calls),
+            // the value will be in x16 immediately after this load.
             let byte_offset: i64 = gs.frame_size + 16 + (arg_idx - 8) * 8;
-            GenState_emitInst(gs, encode_ldr(dest_reg, SP, byte_offset));
+            GenState_emitInst(gs, encode_ldr(X16, SP, byte_offset));
+            v.reg = X16;
         }
         // For register arguments (arg_idx < 8), regalloc already assigned
         // the correct register, so no code needs to be emitted
@@ -1202,14 +1188,29 @@ fn GenState_store(gs: *GenState, v: *Value) {
     // Check if we need byte-sized store (TYPE_U8 = 6, TYPE_I8 = 2)
     let is_byte: bool = val.type_idx == 6 or val.type_idx == 2;
 
+    // Special handling for stack arguments (arg_idx >= 8)
+    // The Arg value wasn't loaded in Op.Arg handling, so we load it here
+    // directly into x16 and store from x16. This avoids register conflicts
+    // when multiple stack args need to be stored.
+    var src_reg: i64 = val.reg;
+    if val.op == Op.Arg {
+        let arg_idx: i64 = val.aux_int;
+        if arg_idx >= 8 {
+            // Load from caller's stack frame into x16
+            let byte_offset: i64 = gs.frame_size + 16 + (arg_idx - 8) * 8;
+            GenState_emitInst(gs, encode_ldr(X16, SP, byte_offset));
+            src_reg = X16;
+        }
+    }
+
     // Check if address is LocalAddr - emit SP-relative store directly
     if addr.op == Op.LocalAddr {
         let local_idx: i64 = addr.aux_int;
         let local: *Local = Func_getLocal(f, local_idx);
         if is_byte {
-            GenState_emitInst(gs, encode_strb(val.reg, SP, local.offset));
+            GenState_emitInst(gs, encode_strb(src_reg, SP, local.offset));
         } else {
-            GenState_emitInst(gs, encode_str(val.reg, SP, local.offset));
+            GenState_emitInst(gs, encode_str(src_reg, SP, local.offset));
         }
     } else if addr.op == Op.OffPtr {
         // OffPtr: base + offset. Check if base is LocalAddr for direct SP-relative store
@@ -1221,25 +1222,25 @@ fn GenState_store(gs: *GenState, v: *Value) {
                 let local: *Local = Func_getLocal(f, local_idx);
                 let total_offset: i64 = local.offset + field_offset;
                 if is_byte {
-                    GenState_emitInst(gs, encode_strb(val.reg, SP, total_offset));
+                    GenState_emitInst(gs, encode_strb(src_reg, SP, total_offset));
                 } else {
-                    GenState_emitInst(gs, encode_str(val.reg, SP, total_offset));
+                    GenState_emitInst(gs, encode_str(src_reg, SP, total_offset));
                 }
             } else if base_val.reg >= 0 {
                 // Base is in a register
                 if is_byte {
-                    GenState_emitInst(gs, encode_strb(val.reg, base_val.reg, field_offset));
+                    GenState_emitInst(gs, encode_strb(src_reg, base_val.reg, field_offset));
                 } else {
-                    GenState_emitInst(gs, encode_str(val.reg, base_val.reg, field_offset));
+                    GenState_emitInst(gs, encode_str(src_reg, base_val.reg, field_offset));
                 }
             }
         }
     } else {
         // Store to address in register
         if is_byte {
-            GenState_emitInst(gs, encode_strb(val.reg, addr.reg, 0));
+            GenState_emitInst(gs, encode_strb(src_reg, addr.reg, 0));
         } else {
-            GenState_emitInst(gs, encode_str(val.reg, addr.reg, 0));
+            GenState_emitInst(gs, encode_str(src_reg, addr.reg, 0));
         }
     }
 }
@@ -1576,20 +1577,21 @@ fn GenState_call(gs: *GenState, v: *Value) {
         if assignment.location == ParamLocation.Stack {
             var src_reg: i64 = arg_val.reg;
 
-            // If no register assigned, materialize the value first
-            if src_reg < 0 {
-                // Use x16 as scratch register for materialization
-                if arg_val.op == Op.ConstInt {
-                    // Materialize constant to x16
-                    GenState_emitInst(gs, encode_movz(X16, arg_val.aux_int & 0xFFFF, 0));
-                    if arg_val.aux_int > 0xFFFF {
-                        GenState_emitInst(gs, encode_movk(X16, (arg_val.aux_int >> 16) & 0xFFFF, 1));
-                    }
-                    if arg_val.aux_int > 0xFFFFFFFF {
-                        GenState_emitInst(gs, encode_movk(X16, (arg_val.aux_int >> 32) & 0xFFFF, 2));
-                    }
-                    src_reg = X16;
+            // For constants, ALWAYS regenerate to x16 regardless of regalloc
+            // (the assigned register may contain a different value now)
+            if arg_val.op == Op.ConstInt {
+                // Materialize constant to x16
+                GenState_emitInst(gs, encode_movz(X16, arg_val.aux_int & 0xFFFF, 0));
+                if arg_val.aux_int > 0xFFFF {
+                    GenState_emitInst(gs, encode_movk(X16, (arg_val.aux_int >> 16) & 0xFFFF, 1));
                 }
+                if arg_val.aux_int > 0xFFFFFFFF {
+                    GenState_emitInst(gs, encode_movk(X16, (arg_val.aux_int >> 32) & 0xFFFF, 2));
+                }
+                src_reg = X16;
+            } else if src_reg < 0 {
+                // Non-constant without register - skip (shouldn't happen for valid args)
+                src_reg = -1;
             }
 
             if src_reg >= 0 {
@@ -1602,11 +1604,15 @@ fn GenState_call(gs: *GenState, v: *Value) {
     }
 
     // Step 3: Collect register moves for args 0-7 (dynamic lists)
+    // Following Zig: src/codegen/arm64.zig:2938-2959
+    // Track src reg (-1 for consts), dest reg, value_id (for regeneration), and done flag
     var move_src: I64List = undefined;
     var move_dest: I64List = undefined;
+    var move_val_id: I64List = undefined;  // Value ID for regenerating constants
     var move_done: I64List = undefined;  // 0 = false, 1 = true
     i64list_init(&move_src);
     i64list_init(&move_dest);
+    i64list_init(&move_val_id);
     i64list_init(&move_done);
 
     i = 0;
@@ -1621,9 +1627,10 @@ fn GenState_call(gs: *GenState, v: *Value) {
             let target_reg: i64 = assignment.reg0;
             let src_reg: i64 = arg_val.reg;
 
-            // Record this move
+            // Record this move (Zig: moves[num_moves] = .{.src, .dest, .value, .done})
             i64list_append(&move_src, src_reg);
             i64list_append(&move_dest, target_reg);
+            i64list_append(&move_val_id, arg_id);
             // Already in correct register?
             if src_reg >= 0 and src_reg == target_reg {
                 i64list_append(&move_done, 1);
@@ -1658,10 +1665,43 @@ fn GenState_call(gs: *GenState, v: *Value) {
 
                 if not would_clobber {
                     // Safe to do this move
+                    // Following Zig: src/codegen/arm64.zig:2981-2992
                     let mi_src: i64 = i64list_get(&move_src, mi);
                     let mi_dest: i64 = i64list_get(&move_dest, mi);
-                    if mi_src >= 0 and mi_dest >= 0 {
-                        GenState_emitInst(gs, ARM64_encodeMovReg(mi_dest, mi_src));
+                    let mi_val_id: i64 = i64list_get(&move_val_id, mi);
+                    let mi_val: *Value = Func_getValue(f, mi_val_id);
+                    if mi_dest >= 0 {
+                        // For constants, ALWAYS regenerate regardless of mi_src
+                        // (the assigned register may contain a different value now)
+                        if mi_val.op == Op.ConstInt {
+                            let imm: i64 = mi_val.aux_int;
+                            // Handle negative small numbers with MOVN
+                            if imm < 0 and imm >= (0 - 65536) {
+                                let notval: i64 = (0 - imm) - 1;
+                                GenState_emitInst(gs, encode_movn(mi_dest, notval, 0));
+                            } else if imm >= 0 and imm <= 65535 {
+                                GenState_emitInst(gs, encode_movz(mi_dest, imm, 0));
+                            } else {
+                                // Large positive values need MOVZ + MOVK
+                                GenState_emitInst(gs, encode_movz(mi_dest, imm & 65535, 0));
+                                let bits16: i64 = (imm / 65536) & 65535;
+                                if bits16 != 0 {
+                                    GenState_emitInst(gs, encode_movk(mi_dest, bits16, 1));
+                                }
+                                let bits32: i64 = (imm / 65536 / 65536) & 65535;
+                                if bits32 != 0 {
+                                    GenState_emitInst(gs, encode_movk(mi_dest, bits32, 2));
+                                }
+                            }
+                        } else if mi_val.op == Op.ConstBool {
+                            let imm: i64 = 0;
+                            if mi_val.aux_int != 0 { imm = 1; }
+                            GenState_emitInst(gs, encode_movz(mi_dest, imm, 0));
+                        } else if mi_src >= 0 {
+                            // Non-constant with source register: emit MOV dest, src
+                            GenState_emitInst(gs, ARM64_encodeMovReg(mi_dest, mi_src));
+                        }
+                        // else: no source and not a constant - skip
                     }
                     i64list_set(&move_done, mi, 1);
                     progress = true;
@@ -1721,6 +1761,7 @@ fn GenState_call(gs: *GenState, v: *Value) {
 
     i64list_deinit(&move_src);
     i64list_deinit(&move_dest);
+    i64list_deinit(&move_val_id);
     i64list_deinit(&move_done);
 
     // Stack space already allocated above before storing stack args

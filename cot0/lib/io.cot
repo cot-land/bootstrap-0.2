@@ -1,0 +1,64 @@
+// Cot0 I/O and Debug Utilities
+// This file should be imported FIRST in main.cot to make these functions
+// available to all other modules.
+
+// System calls
+extern fn write(fd: i32, buf: *u8, count: i64) i64;
+
+// Print a string to stdout
+fn io_print(s: string) {
+    write(1, s.ptr, s.len);
+}
+
+// Print an integer to stdout
+fn io_print_int(n: i64) {
+    var buf: [20]u8;
+    var i: i64 = 19;
+    var val: i64 = n;
+
+    if val == 0 {
+        buf[i] = 48;  // '0'
+        write(1, &buf[i], 1);
+        return;
+    }
+
+    if val < 0 {
+        io_print("-");
+        val = 0 - val;
+    }
+
+    while val > 0 {
+        let digit: i64 = val - (val / 10) * 10;
+        buf[i] = @intCast(u8, 48 + digit);
+        val = val / 10;
+        i = i - 1;
+    }
+
+    write(1, &buf[i + 1], 19 - i);
+}
+
+// Print a hex value to stdout
+fn io_print_hex(n: i64) {
+    var buf: [18]u8;
+    buf[0] = 48;  // '0'
+    buf[1] = 120; // 'x'
+    var i: i64 = 17;
+    var val: i64 = n;
+    if val == 0 {
+        buf[i] = 48;
+        i = i - 1;
+    } else {
+        while val > 0 and i > 1 {
+            let digit: i64 = val % 16;
+            if digit < 10 {
+                buf[i] = @intCast(u8, 48 + digit);
+            } else {
+                buf[i] = @intCast(u8, 97 + digit - 10);
+            }
+            val = val / 16;
+            i = i - 1;
+        }
+    }
+    write(1, &buf[0], 2);
+    write(1, &buf[i + 1], 17 - i);
+}

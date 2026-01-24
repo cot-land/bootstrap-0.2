@@ -185,7 +185,6 @@ struct SSABuilder {
     ir_locals_count: i64,     // Number of locals
     source: *u8,              // Source text for function names
     source_len: i64,
-    call_args: *i64,          // Global call args array
 
     // === Type Registry (for struct checks) ===
     // Following Zig ssa_builder.zig line 49: type_registry: *TypeRegistry
@@ -241,7 +240,6 @@ fn SSABuilder_init(b: *SSABuilder, f: *Func,
     b.ir_locals_count = 0;
     b.source = null;
     b.source_len = 0;
-    b.call_args = null;
     b.type_registry = null;
 
     // Register allocation - simple round-robin matching original main.cot
@@ -304,11 +302,10 @@ fn SSABuilder_setIRLocals(b: *SSABuilder,
     b.ir_locals_count = ir_locals_count;
 }
 
-// Set source and call args for the SSA builder
-fn SSABuilder_setSource(b: *SSABuilder, source: *u8, source_len: i64, call_args: *i64) {
+// Set source for the SSA builder
+fn SSABuilder_setSource(b: *SSABuilder, source: *u8, source_len: i64) {
     b.source = source;
     b.source_len = source_len;
-    b.call_args = call_args;
 }
 
 // Allocate storage for a block's VarDefs
@@ -1583,14 +1580,16 @@ fn SSABuilder_convertCall(b: *SSABuilder, ir_node: *IRNode) i64 {
                                      ir_node.func_name_start,
                                      ir_node.func_name_len,
                                      ir_node.type_idx);
-    // Add arguments
+    // Add arguments - call convertNode for each arg (matches Zig exactly)
+    // Zig: for (c.args) |arg_idx| { const arg_val = try self.convertNode(arg_idx)... }
     var arg_idx: i64 = 0;
-    while arg_idx < ir_node.args_count {
-        // args_start is an index into call_args array
-        // call_args contains the actual IR node indices for each argument
-        let call_args_slot: *i64 = b.call_args + ir_node.args_start + arg_idx;
-        let arg_ir_rel: i64 = call_args_slot.*;  // Relative IR index within function
-        let arg_val: *Value = SSABuilder_getOperandValue(b, arg_ir_rel);
+    while arg_idx < ir_node.call_args.count {
+        let arg_ir_rel: i64 = i64list_get(&ir_node.call_args, arg_idx);
+        let abs_idx: i64 = b.ir_nodes_start + arg_ir_rel;
+        let arg_ir_node: *IRNode = b.ir_nodes + abs_idx;
+        // Call convertNode like Zig does (handles caching internally)
+        let arg_value_id: i64 = SSABuilder_convertNode(b, arg_ir_node, abs_idx);
+        let arg_val: *Value = Func_getValue(b.func, arg_value_id);
         Value_addArg(val, arg_val);
         arg_idx = arg_idx + 1;
     }
@@ -1605,15 +1604,21 @@ fn SSABuilder_convertCallIndirect(b: *SSABuilder, ir_node: *IRNode) i64 {
     let val: *Value = Func_emitCallIndirect(b.func, TYPE_I64);
 
     // First argument is the function pointer (ir_node.left)
-    let fn_ptr_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
+    // Use convertNode pattern like Zig
+    let fn_ptr_abs_idx: i64 = b.ir_nodes_start + ir_node.left;
+    let fn_ptr_ir_node: *IRNode = b.ir_nodes + fn_ptr_abs_idx;
+    let fn_ptr_value_id: i64 = SSABuilder_convertNode(b, fn_ptr_ir_node, fn_ptr_abs_idx);
+    let fn_ptr_val: *Value = Func_getValue(b.func, fn_ptr_value_id);
     Value_addArg(val, fn_ptr_val);
 
-    // Add remaining arguments from call_args array
+    // Add remaining arguments - call convertNode for each arg (matches Zig)
     var arg_idx: i64 = 0;
-    while arg_idx < ir_node.args_count {
-        let call_args_slot: *i64 = b.call_args + ir_node.args_start + arg_idx;
-        let arg_ir_rel: i64 = call_args_slot.*;
-        let arg_val: *Value = SSABuilder_getOperandValue(b, arg_ir_rel);
+    while arg_idx < ir_node.call_args.count {
+        let arg_ir_rel: i64 = i64list_get(&ir_node.call_args, arg_idx);
+        let abs_idx: i64 = b.ir_nodes_start + arg_ir_rel;
+        let arg_ir_node: *IRNode = b.ir_nodes + abs_idx;
+        let arg_value_id: i64 = SSABuilder_convertNode(b, arg_ir_node, abs_idx);
+        let arg_val: *Value = Func_getValue(b.func, arg_value_id);
         Value_addArg(val, arg_val);
         arg_idx = arg_idx + 1;
     }

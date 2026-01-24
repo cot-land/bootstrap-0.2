@@ -355,7 +355,9 @@ fn ABI_analyzeFunc(info: *ABIParamResultInfo,
     }
 
     info.in_registers_used = state.int_reg_idx;
-    info.arg_stack_size = state.stack_offset;
+    // Round up to 16-byte alignment (ARM64 ABI requirement)
+    // Following Zig: src/ssa/abi.zig:argWidth() uses alignUp(max_offset, ARM64.stack_align)
+    info.arg_stack_size = ABI_alignUp(state.stack_offset, ARM64_STACK_ALIGN);
 
     // Reset for results
     ABIAssignState_resetRegs(&state);

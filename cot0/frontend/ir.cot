@@ -10,6 +10,7 @@
 // Reference: bootstrap-0.2/src/frontend/ir.zig
 
 import "types.cot"
+import "../lib/list.cot"
 
 // ============================================================================
 // Index Types - Distinct to prevent mixing
@@ -210,25 +211,27 @@ struct IRNode {
     // For Call nodes
     func_name_start: i64,
     func_name_len: i64,
-    args_start: i64,
-    args_count: i64,
+    args_start: i64,      // DEPRECATED: Use call_args instead
+    args_count: i64,      // DEPRECATED: Use call_args.count instead
+    call_args: I64List,   // Direct storage of argument IR indices (matches Zig)
 }
 
 fn IRNode_new(kind: IRNodeKind, type_idx: i64) IRNode {
-    return IRNode{
-        .kind = kind,
-        .type_idx = type_idx,
-        .block_id = 0,
-        .pos = 0,
-        .value = 0,
-        .left = NULL_IR_NODE,
-        .right = NULL_IR_NODE,
-        .op = 0,
-        .func_name_start = 0,
-        .func_name_len = 0,
-        .args_start = 0,
-        .args_count = 0,
-    };
+    var node: IRNode = undefined;
+    node.kind = kind;
+    node.type_idx = type_idx;
+    node.block_id = 0;
+    node.pos = 0;
+    node.value = 0;
+    node.left = NULL_IR_NODE;
+    node.right = NULL_IR_NODE;
+    node.op = 0;
+    node.func_name_start = 0;
+    node.func_name_len = 0;
+    node.args_start = 0;
+    node.args_count = 0;
+    i64list_init(&node.call_args);
+    return node;
 }
 
 // Create a new IR node with source position

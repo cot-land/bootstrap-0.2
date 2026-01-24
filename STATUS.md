@@ -7,8 +7,8 @@
 | Component | Status |
 |-----------|--------|
 | Zig compiler | ✅ 166 tests pass |
-| Stage 1 (Zig → cot0) | ⚠️ 21+ tests pass, 2 features broken |
-| Stage 2 (cot0 → cot0) | ⏸️ Blocked (awaiting Stage 1 fixes) |
+| Stage 1 (Zig → cot0) | ⚠️ 21+ tests pass, 9+ arg calls fixed |
+| Stage 2 (cot0 → cot0) | ⏸️ Blocked (crash during codegen) |
 | Self-hosting | In progress |
 
 ## Current Priority: Stage1 Test Parity
@@ -30,16 +30,17 @@ See [cot0/STAGE1_TEST_PLAN.md](cot0/STAGE1_TEST_PLAN.md) for detailed execution 
 | Comparisons, bitwise ops | ✅ PASS |
 | Global variables | ✅ PASS |
 | Crash handler integration | ✅ PASS |
+| **9+ argument function calls** | ✅ PASS (fixed 2026-01-24) |
 | **Large struct returns (>16B)** | ❌ FAIL (SIGSEGV - BUG-054) |
 | **String literals** | ❌ FAIL (garbled output - BUG-055) |
 
 ### Known Issues (Priority Order)
 
-1. **SSABuilder Parameter Handling Architecture** (CRITICAL - BUG-056)
-   - Symptom: 9+ arguments fail, stack parameters get wrong values
-   - Cause: cot0 interleaves Arg→LocalAddr→Store; Zig uses 3-phase approach
-   - Details: See `cot0/SSA_BUILDER_ARCHITECTURE.md`
-   - Blocks: 9+ arg tests, string params, large struct params
+1. **Self-compilation crash** (CRITICAL)
+   - Symptom: cot0-stage1 crashes during Phase 4/5 (SSA/codegen) when compiling main.cot
+   - Location: main.cot:1055 (during code generation)
+   - Note: Same crash occurs with Zig-built cot0, indicating pre-existing issue
+   - Investigating: Likely memory/pointer issue in SSA builder or codegen
 
 2. **Large Struct Returns** (CRITICAL - BUG-054)
    - Symptom: SIGSEGV crash in programs returning structs >16 bytes
@@ -58,12 +59,13 @@ See [cot0/STAGE1_TEST_PLAN.md](cot0/STAGE1_TEST_PLAN.md) for detailed execution 
 - ✅ Array indexing with struct fields (`points[0].x`)
 - ✅ Defer statements with proper scope handling
 - ✅ Control flow (if/else, while, break, continue)
-- ✅ Function calls with up to 8 arguments
+- ✅ Function calls with any number of arguments (9+ use stack)
 - ✅ String literals and global variables
 - ✅ DWARF debug info (source locations in crash reports)
 
 ## Recent Milestones
 
+- **2026-01-24**: **Fixed 9+ argument function calls** - Parser extended to 16 args, ABI stack alignment fixed, genssa store handler updated
 - **2026-01-24**: Converted all core fixed-size arrays to dynamic allocation (Value.args, Block.preds, local arrays in builder/genssa/lower/parser/regalloc/main)
 - **2026-01-24**: Crash handler works in cot0-compiled programs (DWARF parsing, source location display)
 - **2026-01-24**: Error reporting shows file:line:column with source context
