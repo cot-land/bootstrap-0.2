@@ -14,7 +14,7 @@ cot1 extends cot0 with error handling and safety features that make writing robu
 |---------|--------|-------|
 | Error unions (`Error!T`) | Planned | test/cot1/test_error_union_*.cot |
 | Optional types (`?T`) | Planned | test/cot1/test_optional_*.cot |
-| Type aliases | Planned | test/cot1/test_type_alias_*.cot |
+| **Type aliases** | **DONE** | test/cot1/test_type_alias_*.cot (3 tests) |
 | errdefer | Planned | test/cot1/test_errdefer_*.cot |
 | Const pointers | Planned | test/cot1/test_const_ptr_*.cot |
 | Labeled break/continue | Planned | test/cot1/test_labeled_*.cot |

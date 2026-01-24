@@ -1630,6 +1630,31 @@ fn Parser_parseStructField(p: *Parser) i64 {
 }
 
 // Parse struct declaration: struct Name { fields }
+// cot1: Parse type alias declaration: type Name = Type;
+// Following Go's typeDecl pattern from syntax/parser.go:600
+fn Parser_parseTypeAliasDecl(p: *Parser) i64 {
+    let start: i64 = p.current.start;
+    Parser_want(p, TokenType.Type);
+
+    // Alias name
+    let name_start: i64 = p.current.start;
+    let name_len: i64 = p.current.end;
+    Parser_want(p, TokenType.Ident);
+
+    // Expect '='
+    Parser_want(p, TokenType.Eq);
+
+    // Parse the type expression
+    let type_node_idx: i64 = Parser_parseType(p);
+
+    let end: i64 = p.current.start + p.current.end;
+
+    // Optional semicolon (like other declarations)
+    Parser_got(p, TokenType.Semi);
+
+    return Node_typeAliasDecl(p.pool, name_start, name_len, type_node_idx, start, end);
+}
+
 fn Parser_parseStructDecl(p: *Parser) i64 {
     let start: i64 = p.current.start;
     Parser_want(p, TokenType.Struct);
@@ -1826,6 +1851,11 @@ fn Parser_parseDecl(p: *Parser) i64 {
 
     if Parser_check(p, TokenType.Enum) {
         return Parser_parseEnumDecl(p);
+    }
+
+    // cot1: type alias declaration
+    if Parser_check(p, TokenType.Type) {
+        return Parser_parseTypeAliasDecl(p);
     }
 
     // Error - unexpected token at top level

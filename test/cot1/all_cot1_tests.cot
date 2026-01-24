@@ -71,15 +71,36 @@ fn test_optional_placeholder() i64 {
 }
 
 // ============================================================================
-// Feature: Type Aliases (Can start implementing now - syntax only)
+// Feature: Type Aliases - IMPLEMENTED
 // ============================================================================
 
-// Note: Type aliases may work with current parser if we add 'type' keyword
-// type NodeIndex = i64;
+// Type aliases now work!
+type TestIndex = i64
+type TestOffset = i64
 
-fn test_type_alias_placeholder() i64 {
-    // Placeholder until type keyword is added
-    return 1;
+fn get_test_index(idx: TestIndex) TestIndex {
+    return idx + 1;
+}
+
+fn test_type_alias_basic() i64 {
+    let idx: TestIndex = 5;
+    let result: TestIndex = get_test_index(idx);
+    if result == 6 { return 1; }
+    return 0;
+}
+
+fn test_type_alias_assignment() i64 {
+    let a: TestIndex = 10;
+    let b: TestOffset = 20;
+    let sum: i64 = a + b;
+    if sum == 30 { return 1; }
+    return 0;
+}
+
+fn test_type_alias_function_return() i64 {
+    let result: TestIndex = get_test_index(99);
+    if result == 100 { return 1; }
+    return 0;
 }
 
 // ============================================================================
@@ -116,9 +137,11 @@ fn main() i64 {
     print("Testing: Optional Types\n");
     run_test("optional_placeholder", test_optional_placeholder(), 1);
 
-    // Type Alias Tests (Feature 3)
+    // Type Alias Tests (Feature 3) - IMPLEMENTED
     print("Testing: Type Aliases\n");
-    run_test("type_alias_placeholder", test_type_alias_placeholder(), 1);
+    run_test("type_alias_basic", test_type_alias_basic(), 1);
+    run_test("type_alias_assignment", test_type_alias_assignment(), 1);
+    run_test("type_alias_function_return", test_type_alias_function_return(), 1);
 
     // Labeled Break/Continue Tests (Feature 5)
     print("Testing: Labeled Break/Continue\n");

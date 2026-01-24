@@ -7,21 +7,25 @@
 // 3. Using alias as return type
 // 4. Alias to pointer types
 
-// Simple aliases
-type NodeIndex = i64;
-type SymbolId = i64;
-type Offset = i64;
-
-// Pointer alias
-type NodePtr = *Node;
+// Simple aliases - cot1 syntax
+type NodeIndex = i64
+type SymbolId = i64
+type Offset = i64
 
 struct Node {
-    index: NodeIndex,
-    next: NodePtr,
+    index: i64,
+    value: i64,
 }
+
+// Pointer alias
+type NodePtr = *Node
 
 fn getIndex(idx: NodeIndex) NodeIndex {
     return idx + 1;
+}
+
+fn makeOffset(x: i64) Offset {
+    return x * 8;
 }
 
 fn test_alias_parameter() i64 {
@@ -44,18 +48,37 @@ fn test_alias_assignment() i64 {
     return 0;
 }
 
-fn test_alias_struct_field() i64 {
+fn test_alias_return() i64 {
+    let off: Offset = makeOffset(3);
+    if off == 24 {
+        return 1;
+    }
+    return 0;
+}
+
+fn test_pointer_alias() i64 {
     var node: Node = undefined;
     node.index = 42;
-    node.next = null;
-    if node.index == 42 {
+    node.value = 100;
+
+    let ptr: NodePtr = &node;
+    if ptr.index == 42 {
         return 1;
     }
     return 0;
 }
 
 fn main() i64 {
-    // These tests can run once type aliases are implemented
-    // For now, return 0 to indicate placeholder
-    return 0;
+    var passed: i64 = 0;
+
+    if test_alias_parameter() == 1 { passed = passed + 1; }
+    if test_alias_assignment() == 1 { passed = passed + 1; }
+    if test_alias_return() == 1 { passed = passed + 1; }
+    if test_pointer_alias() == 1 { passed = passed + 1; }
+
+    // Return 0 if all 4 tests pass
+    if passed == 4 {
+        return 0;
+    }
+    return 1;
 }

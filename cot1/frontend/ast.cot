@@ -51,6 +51,7 @@ enum NodeKind {
     EnumDecl,       // enum Name { variants }
     FieldDecl,      // name: type (struct field)
     ImportDecl,     // import "path";
+    TypeAliasDecl,  // type Name = Type; (cot1: field0=name_start, field1=name_len, field2=type_node_idx)
 
     // Member access
     FieldAccess,    // expr.field
@@ -760,6 +761,29 @@ fn Node_enumDecl(pool: *NodePool, name_start: i64, name_len: i64,
     n.field1 = name_len;        // Enum name length
     n.field2 = variants_start;  // Start index in children array
     n.field3 = variants_count;  // Number of variants
+
+    return idx;
+}
+
+// cot1: Create a type alias declaration node
+// type Name = Type;
+// field0: name_start (offset in source)
+// field1: name_len
+// field2: type_node_idx (index of type expression node)
+// Following Go's TypeDecl pattern from syntax/nodes.go
+fn Node_typeAliasDecl(pool: *NodePool, name_start: i64, name_len: i64,
+                       type_node_idx: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.TypeAliasDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;      // Alias name offset
+    n.field1 = name_len;        // Alias name length
+    n.field2 = type_node_idx;   // Type expression node index
+    n.field3 = 0;               // Reserved
 
     return idx;
 }
