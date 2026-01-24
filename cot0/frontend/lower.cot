@@ -210,6 +210,36 @@ fn resolve_named_type(pool: *TypeRegistry, source: *u8, name_start: i64, name_le
     return TypeRegistry_findByName(pool, name_start, name_len);
 }
 
+// Resolve type from source text - handles pointer types like *GlobalReloc
+// This parses the type expression from source and creates/finds the appropriate type
+fn resolve_type_from_source(pool: *TypeRegistry, source: *u8, type_start: i64, type_len: i64) i64 {
+    if type_len <= 0 { return TYPE_I64; }
+
+    // Check for pointer type (*T)
+    let first_char: u8 = (source + type_start).*;
+    if first_char == 42 {  // '*'
+        // It's a pointer type - resolve pointee type first
+        let pointee_type: i64 = resolve_type_from_source(pool, source, type_start + 1, type_len - 1);
+        // Create or find pointer type to pointee
+        return TypeRegistry_makePointer(pool, pointee_type);
+    }
+
+    // Not a pointer, resolve as named type
+    return resolve_named_type(pool, source, type_start, type_len);
+}
+
+// Get type length from a type node
+// BUG FIX: FieldDecl.field3 contains a type NODE INDEX, not the type length!
+// This function extracts the actual type length from the type node.
+fn get_type_len_from_node(nodes: *Node, type_node_idx: i64) i64 {
+    let type_node: *Node = nodes + type_node_idx;
+    // For all type expression nodes, (end - start) gives the source length
+    // TypeExprNamed: end = name_start + name_len
+    // TypeExprPointer: end = position after inner type
+    // etc.
+    return type_node.end - type_node.start;
+}
+
 // Legacy function for backwards compatibility during transition
 // This is for code that still uses old-style type handles
 fn resolve_type_handle(pool: *TypeRegistry, source: *u8, type_handle: i64) i64 {
@@ -903,13 +933,48 @@ fn Lowerer_lowerFnDecl(l: *Lowerer, node: *Node) {
         // Following Zig pattern (lower.zig:1554-1561) for auto-dereference through pointers
         // This allows p.*.field to find correct field offsets
         if local_idx >= 0 {
+            let local: *IRLocal = fb.locals + local_idx;
             let type_info: *Type = TypeRegistry_get(l.type_pool, param_type);
             if type_info != null and type_info.kind == TypeKind.Pointer {
                 let pointee: *Type = TypeRegistry_get(l.type_pool, type_info.elem);
                 if pointee != null and pointee.kind == TypeKind.Struct {
-                    let local: *IRLocal = fb.locals + local_idx;
+                    // Use TypeRegistry struct name
                     local.struct_type_start = pointee.name_start;
                     local.struct_type_len = pointee.name_len;
+                } else {
+                    // Fallback: Extract struct name from TypeExpr AST
+                    // For *Lowerer: TypeExprPointer.field0 = TypeExprNamed.field0/field1 = name
+                    let type_expr_idx: i64 = param_node.field3;
+                    if type_expr_idx >= 0 and type_expr_idx < l.nodes_count {
+                        let type_expr: *Node = l.nodes + type_expr_idx;
+                        if type_expr.kind == NodeKind.TypeExprPointer {
+                            let inner_idx: i64 = type_expr.field0;
+                            if inner_idx >= 0 and inner_idx < l.nodes_count {
+                                let inner_expr: *Node = l.nodes + inner_idx;
+                                if inner_expr.kind == NodeKind.TypeExprNamed {
+                                    // Found the struct name!
+                                    let name_start: i64 = inner_expr.field0;
+                                    let name_len: i64 = inner_expr.field1;
+                                    if name_start >= 0 and name_len > 0 and name_len < 100 and
+                                       name_start + name_len <= l.source_len {
+                                        local.struct_type_start = name_start;
+                                        local.struct_type_len = name_len;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if type_info != null {
+                // Type is not a pointer - extract struct name directly from TypeExpr if it's a struct
+                let type_expr_idx: i64 = param_node.field3;
+                if type_expr_idx >= 0 {
+                    let type_expr: *Node = l.nodes + type_expr_idx;
+                    if type_expr.kind == NodeKind.TypeExprNamed {
+                        // Direct struct parameter
+                        local.struct_type_start = type_expr.field0;
+                        local.struct_type_len = type_expr.field1;
+                    }
                 }
             }
         }
@@ -2301,19 +2366,13 @@ fn lookup_struct_field_info(l: *Lowerer, struct_name_start: i64, struct_name_len
                     let field_idx: i64 = child_ptr.*;
                     let field_node: *Node = l.nodes + field_idx;
 
-                    // FieldDecl: field0=name_start, field1=name_len, field2=type_start, field3=type_handle
+                    // FieldDecl: field0=name_start, field1=name_len, field2=type_start, field3=type_node_idx
                     if field_node.kind == NodeKind.FieldDecl {
-                        // Get this field's type info
+                        // Get this field's type info from AST
+                        // BUG FIX: field3 is a type NODE INDEX, not the type length!
                         let ftype_start: i64 = field_node.field2;
-                        var pos: i64 = ftype_start;
-                        while pos < l.source_len {
-                            let c: u8 = (l.source + pos).*;
-                            let is_ident: bool = (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or
-                                                 (c >= 48 and c <= 57) or c == 95;
-                            if not is_ident { break; }
-                            pos = pos + 1;
-                        }
-                        let ftype_len: i64 = pos - ftype_start;
+                        let ftype_node_idx: i64 = field_node.field3;
+                        let ftype_len: i64 = get_type_len_from_node(l.nodes, ftype_node_idx);
 
                         if names_equal(l.source, field_node.field0, field_node.field1,
                                        field_name_start, field_name_len) {
@@ -2322,8 +2381,8 @@ fn lookup_struct_field_info(l: *Lowerer, struct_name_start: i64, struct_name_len
                             result.type_start = ftype_start;
                             result.type_len = ftype_len;
                             result.found = true;
-                            // Resolve type from name
-                            result.type_idx = resolve_named_type(l.type_pool, l.source, ftype_start, ftype_len);
+                            // Resolve type from source - handles pointer types like *GlobalReloc
+                            result.type_idx = resolve_type_from_source(l.type_pool, l.source, ftype_start, ftype_len);
                             return result;
                         }
 
@@ -3254,6 +3313,31 @@ fn Lowerer_lowerAddressOf(l: *Lowerer, node: *Node) i64 {
                 // Last resort: return base address without offset (field at offset 0)
                 return FuncBuilder_emitAddrLocal(fb, local_idx, TYPE_I64);
             }
+
+            // Try global variable (Zig: lower.zig:1270-1289)
+            // Handle &global.field
+            let global_idx: i64 = Lowerer_lookupGlobal(l, base_node.field0, base_node.field1);
+            if global_idx >= 0 {
+                // Get the global's type index
+                let global: *IRGlobal = l.ir_globals + global_idx;
+                let global_type_idx: i64 = global.type_idx;
+
+                // Look up field offset in the struct type
+                let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, global_type_idx,
+                                                               field_name_start, field_name_len);
+                if field_info != null {
+                    // Get address of global + field offset
+                    let base_addr: i64 = FuncBuilder_emitAddrGlobal(fb, global_idx, TYPE_I64);
+                    if field_info.offset == 0 {
+                        return base_addr;
+                    }
+                    let offset_val: i64 = FuncBuilder_emitConstInt(fb, field_info.offset);
+                    return FuncBuilder_emitBinary(fb, IR_OP_ADD, base_addr, offset_val, TYPE_I64);
+                }
+
+                // Last resort: return global address without offset (field at offset 0)
+                return FuncBuilder_emitAddrGlobal(fb, global_idx, TYPE_I64);
+            }
         }
     }
 
@@ -3395,14 +3479,35 @@ fn Lowerer_lowerFieldAccess(l: *Lowerer, node: *Node) i64 {
             // Look up field in the pointee struct
             let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, struct_type_idx,
                                                            field_name_start, field_name_len);
-            if field_info == null {
-                return NULL_NODE;  // Field not found
+            if field_info != null {
+                // Load the pointer value
+                let ptr_val: i64 = FuncBuilder_emitLoadLocal(fb, local_idx);
+                // Access field through the pointer
+                return FuncBuilder_emitFieldValue(fb, ptr_val, field_info.offset, field_info.type_idx);
             }
 
-            // Load the pointer value
-            let ptr_val: i64 = FuncBuilder_emitLoadLocal(fb, local_idx);
-            // Access field through the pointer
-            return FuncBuilder_emitFieldValue(fb, ptr_val, field_info.offset, field_info.type_idx);
+            // Fallback: use AST-based lookup when TypeRegistry lookup fails
+            // This is needed for pointer-to-struct parameters where the struct fields
+            // may not be in TypeRegistry yet
+            let local: *IRLocal = fb.locals + local_idx;
+            if local.struct_type_start >= 0 {
+                let field_info_ast: FieldLookupResult = lookup_struct_field_info(l,
+                    local.struct_type_start, local.struct_type_len,
+                    field_name_start, field_name_len);
+                if field_info_ast.offset >= 0 {
+                    var field_type: i64 = field_info_ast.type_idx;
+                    if field_type < 0 {
+                        field_type = TYPE_I64;
+                    }
+                    // Load the pointer value
+                    let ptr_val: i64 = FuncBuilder_emitLoadLocal(fb, local_idx);
+                    // Access field through the pointer
+                    return FuncBuilder_emitFieldValue(fb, ptr_val, field_info_ast.offset, field_type);
+                }
+            }
+
+            // Return NULL_NODE if field not found by any method
+            return NULL_NODE;
         }
 
         // Direct struct access

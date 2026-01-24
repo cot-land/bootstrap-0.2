@@ -974,7 +974,7 @@ export fn malloc_GlobalReloc(count: i64) ?*anyopaque { return malloc_struct(coun
 export fn malloc_FuncAddrReloc(count: i64) ?*anyopaque { return malloc_struct(count, 24); }  // FuncAddrReloc: 3 fields * 8 = 24
 export fn malloc_StringReloc(count: i64) ?*anyopaque { return malloc_struct(count, 24); }  // StringReloc: 3 fields * 8 = 24
 export fn malloc_Symbol(count: i64) ?*anyopaque { return malloc_struct(count, 40); }
-export fn malloc_Reloc(count: i64) ?*anyopaque { return malloc_struct(count, 24); }
+export fn malloc_Reloc(count: i64) ?*anyopaque { return malloc_struct(count, 48); }  // Reloc: offset(8) + target_start(8) + target_len(8) + reloc_type(8) + is_pcrel(8) + length(8) = 48
 export fn malloc_BlockDefs(count: i64) ?*anyopaque { return malloc_struct(count, 24); }
 export fn malloc_BlockMapping(count: i64) ?*anyopaque { return malloc_struct(count, 16); }
 export fn malloc_VarDef(count: i64) ?*anyopaque { return malloc_struct(count, 24); }

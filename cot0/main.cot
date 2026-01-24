@@ -761,6 +761,12 @@ fn adjust_node_positions(pool: *NodePool, start_idx: i64, end_idx: i64, offset: 
         } else if node.kind == NodeKind.FieldAccess {
             // field1 = field_name_start (source position)
             node.field1 = node.field1 + offset;
+        } else if node.kind == NodeKind.TypeExprNamed {
+            // field0 = name_start (source position), field1 = name_len (not adjusted)
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.BuiltinCall {
+            // field0 = name_start (source position after @)
+            node.field0 = node.field0 + offset;
         }
 
         i = i + 1;
@@ -1124,6 +1130,17 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print_int(gs.global_relocs_count);
     print("\n");
 
+    // Debug: check GlobalRelocs right after codegen
+    if gs.global_relocs_count > 0 {
+        print("  DEBUG after codegen - first GlobalReloc:\n");
+        let dbg_gr: *GlobalReloc = g_global_relocs;
+        print("    code_offset=");
+        print_int(dbg_gr.code_offset);
+        print(", global_idx=");
+        print_int(dbg_gr.global_idx);
+        print("\n");
+    }
+
     // Resolve call sites: patch BL instructions with correct offsets
     var call_idx: i64 = 0;
     while call_idx < gs.call_sites_count {
@@ -1305,7 +1322,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
             let sym_idx: i64 = MachOWriter_addSymbol(&writer, sym_name.items, ext_sym_len, 0, 0, true);
 
             // Add relocation for the BL instruction
-            MachOWriter_addReloc(&writer, cs2.code_offset, sym_idx, ARM64_RELOC_BRANCH26, true);
+            // Following Zig: pass target as slice (ptr to name in strings buffer)
+            let sym: *Symbol = writer.symbols + sym_idx;
+            let name_ptr: *u8 = writer.strings + sym.name_offset;
+            MachOWriter_addReloc(&writer, cs2.code_offset, name_ptr, ext_sym_len, ARM64_RELOC_BRANCH26, 1);
         }
 
         call_idx = call_idx + 1;
@@ -1341,7 +1361,9 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // Add undefined external symbol
         let crash_sym_idx: i64 = MachOWriter_addSymbol(&writer, sym_name.items, 22, 0, 0, true);
         // Add relocation for the BL instruction
-        MachOWriter_addReloc(&writer, gs.crash_handler_offset, crash_sym_idx, ARM64_RELOC_BRANCH26, true);
+        let crash_sym: *Symbol = writer.symbols + crash_sym_idx;
+        let crash_name_ptr: *u8 = writer.strings + crash_sym.name_offset;
+        MachOWriter_addReloc(&writer, gs.crash_handler_offset, crash_name_ptr, 22, ARM64_RELOC_BRANCH26, 1);
     }
 
     // Add global variable symbols and relocations
@@ -1398,19 +1420,59 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print(", writer.relocs before=");
     print_int(writer.relocs_count);
     print("\n");
+
+    // Debug: print first entry directly (no pointer arithmetic loops)
+    print("  DEBUG first GlobalReloc:\n");
+    let first_gr: *GlobalReloc = g_global_relocs;
+    print("    code_offset=");
+    print_int(first_gr.code_offset);
+    print(", global_idx=");
+    print_int(first_gr.global_idx);
+    print("\n");
+    // Now test pointer arithmetic: g_global_relocs + 1
+    print("  DEBUG second GlobalReloc (via ptr+1):\n");
+    let second_gr: *GlobalReloc = g_global_relocs + 1;
+    print("    code_offset=");
+    print_int(second_gr.code_offset);
+    print(", global_idx=");
+    print_int(second_gr.global_idx);
+    print("\n");
+
     var reloc_idx: i64 = 0;
     while reloc_idx < gs.global_relocs_count {
         let gr: *GlobalReloc = g_global_relocs + (reloc_idx);
 
-        // Find the symbol index for this global
+        // Find the symbol for this global
         // Global symbols start at globals_sym_start (after function + external symbols)
         let g_sym_idx: i64 = globals_sym_start + gr.global_idx;
 
+        // Debug: print info to trace crash
+        print("    global_reloc[");
+        print_int(reloc_idx);
+        print("]: global_idx=");
+        print_int(gr.global_idx);
+        print(", g_sym_idx=");
+        print_int(g_sym_idx);
+        print(", symbols_count=");
+        print_int(writer.symbols_count);
+        print("\n");
+
+        if g_sym_idx >= writer.symbols_count {
+            print("ERROR: g_sym_idx out of bounds!\n");
+            return 1;
+        }
+
+        let g_sym: *Symbol = writer.symbols + g_sym_idx;
+        let g_name_ptr: *u8 = writer.strings + g_sym.name_offset;
+        // Get name length by finding null terminator
+        var g_name_len: i64 = 0;
+        while (g_name_ptr + g_name_len).* != 0 { g_name_len = g_name_len + 1; }
+
         // ADRP relocation (PAGE21) - at code_offset
-        MachOWriter_addReloc(&writer, gr.code_offset, g_sym_idx, ARM64_RELOC_PAGE21, true);
+        MachOWriter_addReloc(&writer, gr.code_offset, g_name_ptr, g_name_len, ARM64_RELOC_PAGE21, 1);
 
         // ADD relocation (PAGEOFF12) - at code_offset + 4
-        MachOWriter_addReloc(&writer, gr.code_offset + 4, g_sym_idx, ARM64_RELOC_PAGEOFF12, false);
+        MachOWriter_addReloc(&writer, gr.code_offset + 4, g_name_ptr, g_name_len, ARM64_RELOC_PAGEOFF12, 0);
 
         reloc_idx = reloc_idx + 1;
     }
@@ -1467,10 +1529,14 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         }
 
         // Add ADRP relocation (PAGE21) - at code_offset
-        MachOWriter_addReloc(&writer, far.code_offset, found_sym_idx, ARM64_RELOC_PAGE21, true);
+        let far_sym: *Symbol = writer.symbols + found_sym_idx;
+        let far_name_ptr: *u8 = writer.strings + far_sym.name_offset;
+        var far_name_len2: i64 = 0;
+        while (far_name_ptr + far_name_len2).* != 0 { far_name_len2 = far_name_len2 + 1; }
+        MachOWriter_addReloc(&writer, far.code_offset, far_name_ptr, far_name_len2, ARM64_RELOC_PAGE21, 1);
 
         // ADD relocation (PAGEOFF12) - at code_offset + 4
-        MachOWriter_addReloc(&writer, far.code_offset + 4, found_sym_idx, ARM64_RELOC_PAGEOFF12, false);
+        MachOWriter_addReloc(&writer, far.code_offset + 4, far_name_ptr, far_name_len2, ARM64_RELOC_PAGEOFF12, 0);
 
         func_addr_idx = func_addr_idx + 1;
     }
@@ -1564,10 +1630,12 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         let str_sym_idx: i64 = MachOWriter_addSymbol(&writer, sym_name.items, sym_name_len, str_data_offset, SECT_DATA, false);
 
         // Add ADRP relocation (PAGE21) - at code_offset
-        MachOWriter_addReloc(&writer, sr2.code_offset, str_sym_idx, ARM64_RELOC_PAGE21, true);
+        let str_sym: *Symbol = writer.symbols + str_sym_idx;
+        let str_name_ptr: *u8 = writer.strings + str_sym.name_offset;
+        MachOWriter_addReloc(&writer, sr2.code_offset, str_name_ptr, sym_name_len, ARM64_RELOC_PAGE21, 1);
 
         // ADD relocation (PAGEOFF12) - at code_offset + 4
-        MachOWriter_addReloc(&writer, sr2.code_offset + 4, str_sym_idx, ARM64_RELOC_PAGEOFF12, false)
+        MachOWriter_addReloc(&writer, sr2.code_offset + 4, str_name_ptr, sym_name_len, ARM64_RELOC_PAGEOFF12, 0);
 
         // Move to next string position (string len + null + alignment)
         str_data_offset = str_data_offset + sr2.str_len + 1;

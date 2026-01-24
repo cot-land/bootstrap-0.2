@@ -17,6 +17,8 @@ import "../ssa/abi.cot"
 import "../ssa/stackalloc.cot"
 import "arm64.cot"
 
+// NOTE: print() and print_int() are defined in main.cot and available to all imported files
+
 // NOTE: TypeRegistry and TypeRegistry_sizeof are available from types.cot
 // which is imported before genssa.cot in main.cot
 

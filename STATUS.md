@@ -1,6 +1,6 @@
 # Project Status
 
-**Last Updated: 2026-01-24**
+**Last Updated: 2026-01-25**
 
 ## Quick Status
 
@@ -8,17 +8,19 @@
 |-----------|--------|
 | Zig compiler | ✅ 166 tests pass |
 | Stage 1 (Zig → cot0) | ✅ 166/166 tests pass (100%) |
-| Stage 2 (cot0 → cot0) | ⚠️ Compiles with SSA errors |
-| Self-hosting | ⚠️ Blocked by stage2 SSA errors |
+| Stage 2 (cot0 → cot0) | ✅ Compiles with correct GlobalRelocs |
+| Self-hosting | ⚠️ Blocked by DWARF relocation alignment |
 | Fixed arrays removal | ✅ COMPLETE |
 
-## Current Priority: Fix Stage 2 SSA Errors
+## Current Priority: Fix DWARF Relocation Alignment
 
-**Goal**: Make stage2 produce correct code so stage3 = stage2.
+**Goal**: Make stage1-compiled binaries executable.
 
-**Issue**: When stage1 compiles cot0, there are SSA errors ("Invalid arg ir_rel=-1"). This is a separate bug from the fixed arrays issue (which is now resolved).
+**Issue**: DWARF debug_line section has a relocation at offset 59 (not 4-byte aligned), which causes "exec format error" on macOS.
 
-See [SELF_HOSTING.md](SELF_HOSTING.md) for details.
+**Progress (2026-01-25)**: Fixed nested struct field lookup bug (BUG-060). GlobalReloc corruption is resolved - stage1 now produces correct relocation values.
+
+See [cot0/STAGE2_INVESTIGATION.md](cot0/STAGE2_INVESTIGATION.md) for detailed analysis.
 
 ## Recent: Fixed Arrays Conversion (COMPLETE)
 

@@ -47,6 +47,23 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
+### BUG-061: DWARF debug_line relocation not 4-byte aligned
+
+**Status:** OPEN
+**Priority:** HIGH
+**Discovered:** 2026-01-25
+
+**Symptoms:**
+- Stage1-compiled binaries show "exec format error" on macOS
+- `BAD RELOC[src=2,idx=0]: offset=59 sym=0 type=0` in debug output
+- Relocation offset 59 is not 4-byte aligned
+
+**Root Cause:** The `__debug_line` section has a relocation at byte offset 59, but ARM64 Mach-O relocations typically require 4-byte alignment.
+
+**Location:** `cot0/obj/macho.cot` DWARF section handling
+
+---
+
 ### BUG-058: Global variable initialization returns 0
 
 **Status:** OPEN
@@ -77,6 +94,36 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 ---
 
 ## Fixed Bugs
+
+### BUG-060: Nested struct field lookup uses node index as type length
+
+**Status:** FIXED
+**Priority:** P0 (was blocking stage2)
+**Discovered:** 2026-01-25
+**Fixed:** 2026-01-25
+
+**Symptoms:**
+- `test_nested_struct` failing (165/166 tests)
+- Stage2 GlobalReloc corruption (code_offset=817890 when max is 326248)
+- Worked for simple cases but failed when many structs were defined
+
+**Root Cause:**
+In `Parser_parseStructField`, `field3` stores the type **node index**. But `lookup_struct_field_info` was interpreting `field3` as the type **string length**.
+
+When Point struct was defined before Inner/Outer:
+- "Inner" type appeared at node index 60+
+- lookup_struct_field_info looked for 60+ characters instead of 5
+- Field lookup failed, returned wrong offset
+- Struct pointer arithmetic corrupted GlobalReloc writes
+
+**Fix:**
+Added `get_type_len_from_node()` helper in `cot0/frontend/lower.cot` that extracts the actual type length from the type node using `(type_node.end - type_node.start)`.
+
+**Files Changed:**
+- `cot0/frontend/lower.cot` - Added helper function (lines 231-241)
+- `cot0/frontend/lower.cot` - Modified `lookup_struct_field_info` (line 2375)
+
+---
 
 ### BUG-057: Self-compilation crashes in Phase 4/5 (SSA build)
 

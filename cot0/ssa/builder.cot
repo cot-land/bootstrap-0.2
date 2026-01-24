@@ -1608,6 +1608,16 @@ fn SSABuilder_convertCall(b: *SSABuilder, ir_node: *IRNode) i64 {
             io_print_int(arg_ir_rel);
             io_print(" for call arg ");
             io_print_int(arg_idx);
+            io_print(" in ");
+            // Print current function name
+            if b.source != null and b.func.name_start >= 0 and b.func.name_len > 0 {
+                write(1, b.source + b.func.name_start, b.func.name_len);
+            }
+            io_print(" calling ");
+            // Print callee name
+            if b.source != null and ir_node.func_name_start >= 0 and ir_node.func_name_len > 0 {
+                write(1, b.source + ir_node.func_name_start, ir_node.func_name_len);
+            }
             io_print("\n");
             arg_idx = arg_idx + 1;
             continue;
