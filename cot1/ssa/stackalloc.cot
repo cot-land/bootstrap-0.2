@@ -1,0 +1,538 @@
+// Cot0 Stack Allocation Pass
+// Assigns stack slots to spilled values and local variables.
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/ssa/stackalloc.go
+// Reference: bootstrap-0.2/src/ssa/stackalloc.zig
+
+// Note: func.cot and list.cot are imported before this file via genssa.cot chain
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+const FRAME_HEADER_SIZE: i64 = 16;  // FP + LR
+const SPILL_SLOT_SIZE: i64 = 8;
+
+// ============================================================================
+// Stack Allocation Result
+// ============================================================================
+
+struct StackAllocResult {
+    frame_size: i64,
+    num_locals: i64,
+    locals_size: i64,
+    num_spill_slots: i64,
+    num_reused: i64,
+}
+
+fn StackAllocResult_init() StackAllocResult {
+    return StackAllocResult{
+        .frame_size = FRAME_HEADER_SIZE,
+        .num_locals = 0,
+        .locals_size = 0,
+        .num_spill_slots = 0,
+        .num_reused = 0,
+    };
+}
+
+// ============================================================================
+// Stack Allocator State
+// ============================================================================
+
+struct StackAllocState {
+    // Per-value state: [needs_slot (0/1), def_block, slot_idx]
+    // Indexed by value_id * 3
+    val_state: I64List,
+
+    // Live-out tracking: list of (block_id, value_id) pairs
+    live_out: I64List,
+
+    // Interference: list of (val_a, val_b) pairs
+    interferes: I64List,
+
+    // Slots: list of (offset, type_idx) pairs
+    slots: I64List,
+
+    // Current stack offset
+    current_offset: i64,
+}
+
+fn StackAllocState_init(state: *StackAllocState) {
+    i64list_init(&state.val_state);
+    i64list_init(&state.live_out);
+    i64list_init(&state.interferes);
+    i64list_init(&state.slots);
+    state.current_offset = FRAME_HEADER_SIZE;
+}
+
+fn StackAllocState_deinit(state: *StackAllocState) {
+    i64list_deinit(&state.val_state);
+    i64list_deinit(&state.live_out);
+    i64list_deinit(&state.interferes);
+    i64list_deinit(&state.slots);
+}
+
+// Value state accessors (3 fields per value: needs_slot, def_block, slot_idx)
+fn StackAllocState_ensureValue(state: *StackAllocState, vid: i64) {
+    let needed: i64 = (vid + 1) * 3;
+    while state.val_state.count < needed {
+        i64list_append(&state.val_state, 0);   // needs_slot = false
+        i64list_append(&state.val_state, -1);  // def_block
+        i64list_append(&state.val_state, -1);  // slot_idx
+    }
+}
+
+fn StackAllocState_setNeedsSlot(state: *StackAllocState, vid: i64, needs: bool) {
+    StackAllocState_ensureValue(state, vid);
+    if needs {
+        i64list_set(&state.val_state, vid * 3, 1);
+    } else {
+        i64list_set(&state.val_state, vid * 3, 0);
+    }
+}
+
+fn StackAllocState_needsSlot(state: *StackAllocState, vid: i64) bool {
+    if vid * 3 >= state.val_state.count {
+        return false;
+    }
+    return i64list_get(&state.val_state, vid * 3) != 0;
+}
+
+fn StackAllocState_setDefBlock(state: *StackAllocState, vid: i64, bid: i64) {
+    StackAllocState_ensureValue(state, vid);
+    i64list_set(&state.val_state, vid * 3 + 1, bid);
+}
+
+fn StackAllocState_getDefBlock(state: *StackAllocState, vid: i64) i64 {
+    if vid * 3 + 1 >= state.val_state.count {
+        return -1;
+    }
+    return i64list_get(&state.val_state, vid * 3 + 1);
+}
+
+fn StackAllocState_setSlotIdx(state: *StackAllocState, vid: i64, idx: i64) {
+    StackAllocState_ensureValue(state, vid);
+    i64list_set(&state.val_state, vid * 3 + 2, idx);
+}
+
+fn StackAllocState_getSlotIdx(state: *StackAllocState, vid: i64) i64 {
+    if vid * 3 + 2 >= state.val_state.count {
+        return -1;
+    }
+    return i64list_get(&state.val_state, vid * 3 + 2);
+}
+
+// Live-out tracking
+fn StackAllocState_addLiveOut(state: *StackAllocState, bid: i64, vid: i64) {
+    i64list_append(&state.live_out, bid);
+    i64list_append(&state.live_out, vid);
+}
+
+fn StackAllocState_isLiveOut(state: *StackAllocState, bid: i64, vid: i64) bool {
+    var i: i64 = 0;
+    while i < state.live_out.count {
+        let b: i64 = i64list_get(&state.live_out, i);
+        let v: i64 = i64list_get(&state.live_out, i + 1);
+        if b == bid and v == vid {
+            return true;
+        }
+        i = i + 2;
+    }
+    return false;
+}
+
+// Interference tracking
+fn StackAllocState_addInterference(state: *StackAllocState, a: i64, b: i64) {
+    // Check if already present
+    var i: i64 = 0;
+    while i < state.interferes.count {
+        let va: i64 = i64list_get(&state.interferes, i);
+        let vb: i64 = i64list_get(&state.interferes, i + 1);
+        if (va == a and vb == b) or (va == b and vb == a) {
+            return;
+        }
+        i = i + 2;
+    }
+    i64list_append(&state.interferes, a);
+    i64list_append(&state.interferes, b);
+}
+
+fn StackAllocState_interferes(state: *StackAllocState, a: i64, b: i64) bool {
+    var i: i64 = 0;
+    while i < state.interferes.count {
+        let va: i64 = i64list_get(&state.interferes, i);
+        let vb: i64 = i64list_get(&state.interferes, i + 1);
+        if (va == a and vb == b) or (va == b and vb == a) {
+            return true;
+        }
+        i = i + 2;
+    }
+    return false;
+}
+
+// ============================================================================
+// Phase 1: Mark Values Needing Slots
+// ============================================================================
+
+fn StackAlloc_markValues(state: *StackAllocState, f: *Func) {
+    var b: i64 = 0;
+    while b < f.blocks_count {
+        let block: *Block = Func_getBlock(f, b);
+
+        var v: i64 = block.values_start;
+        let end: i64 = block.values_start + block.values_count;
+        while v < end {
+            let val: *Value = Func_getValue(f, v);
+
+            StackAllocState_setDefBlock(state, v, b);
+
+            // A value needs a slot if it's a store_reg with uses
+            if val.op == Op.StoreReg and val.uses > 0 {
+                StackAllocState_setNeedsSlot(state, v, true);
+            }
+
+            v = v + 1;
+        }
+
+        b = b + 1;
+    }
+}
+
+// ============================================================================
+// Phase 2: Compute Liveness
+// ============================================================================
+
+fn StackAlloc_computeLiveness(state: *StackAllocState, f: *Func) {
+    // For each value needing a slot, find uses and propagate liveness
+
+    var vid: i64 = 0;
+    while vid < f.values_count {
+        if not StackAllocState_needsSlot(state, vid) {
+            vid = vid + 1;
+            continue;
+        }
+
+        let def_block: i64 = StackAllocState_getDefBlock(state, vid);
+
+        // Find all uses
+        var b: i64 = 0;
+        while b < f.blocks_count {
+            let block: *Block = Func_getBlock(f, b);
+
+            var v: i64 = block.values_start;
+            let end: i64 = block.values_start + block.values_count;
+            while v < end {
+                let use_val: *Value = Func_getValue(f, v);
+
+                // Check if this value uses vid
+                var arg_idx: i64 = 0;
+                while arg_idx < use_val.args.count {
+                    if Value_getArg(use_val, arg_idx) == vid {
+                        // Propagate liveness backward
+                        StackAlloc_propagateLiveness(state, f, vid, b, def_block);
+                    }
+                    arg_idx = arg_idx + 1;
+                }
+
+                v = v + 1;
+            }
+
+            b = b + 1;
+        }
+
+        vid = vid + 1;
+    }
+}
+
+fn StackAlloc_propagateLiveness(state: *StackAllocState, f: *Func, vid: i64, use_block: i64, def_block: i64) {
+    // BFS backward through predecessors
+    var worklist: I64List = undefined;
+    var visited: I64List = undefined;
+    i64list_init(&worklist);
+    i64list_init(&visited);
+
+    i64list_append(&worklist, use_block);
+
+    while worklist.count > 0 {
+        let bid: i64 = i64list_pop(&worklist);
+
+        if bid < 0 or bid >= f.blocks_count {
+            continue;
+        }
+        if bid == def_block {
+            continue;
+        }
+
+        // Check if visited
+        var is_visited: bool = false;
+        var i: i64 = 0;
+        while i < visited.count {
+            if i64list_get(&visited, i) == bid {
+                is_visited = true;
+            }
+            i = i + 1;
+        }
+        if is_visited {
+            continue;
+        }
+        i64list_append(&visited, bid);
+
+        // Mark live at predecessors
+        let block: *Block = Func_getBlock(f, bid);
+        var p: i64 = 0;
+        while p < block.preds.count {
+            let pred_id: i64 = Block_getPred(block, p);
+            if pred_id >= 0 {
+                StackAllocState_addLiveOut(state, pred_id, vid);
+                i64list_append(&worklist, pred_id);
+            }
+            p = p + 1;
+        }
+    }
+
+    i64list_deinit(&worklist);
+    i64list_deinit(&visited);
+}
+
+// ============================================================================
+// Phase 3: Build Interference
+// ============================================================================
+
+fn StackAlloc_buildInterference(state: *StackAllocState, f: *Func) {
+    var b: i64 = 0;
+    while b < f.blocks_count {
+        let block: *Block = Func_getBlock(f, b);
+
+        // Collect live values at end of block
+        var live: I64List = undefined;
+        i64list_init(&live);
+
+        // Add values that are live-out
+        var i: i64 = 0;
+        while i < state.live_out.count {
+            let bid: i64 = i64list_get(&state.live_out, i);
+            let vid: i64 = i64list_get(&state.live_out, i + 1);
+            if bid == b {
+                i64list_append(&live, vid);
+            }
+            i = i + 2;
+        }
+
+        // Process values in reverse order
+        var val_idx: i64 = block.values_start + block.values_count - 1;
+        while val_idx >= block.values_start {
+            let val: *Value = Func_getValue(f, val_idx);
+            let vid: i64 = val_idx;
+
+            if StackAllocState_needsSlot(state, vid) {
+                // Remove from live
+                var j: i64 = 0;
+                while j < live.count {
+                    if i64list_get(&live, j) == vid {
+                        // Swap with last and pop
+                        let last: i64 = i64list_get(&live, live.count - 1);
+                        i64list_set(&live, j, last);
+                        live.count = live.count - 1;
+                    } else {
+                        j = j + 1;
+                    }
+                }
+
+                // All currently live values interfere with vid
+                j = 0;
+                while j < live.count {
+                    let other: i64 = i64list_get(&live, j);
+                    if StackAllocState_needsSlot(state, other) {
+                        StackAllocState_addInterference(state, vid, other);
+                    }
+                    j = j + 1;
+                }
+            }
+
+            // Add args to live
+            var arg_idx: i64 = 0;
+            while arg_idx < val.args.count {
+                let arg_id: i64 = Value_getArg(val, arg_idx);
+                if arg_id >= 0 and StackAllocState_needsSlot(state, arg_id) {
+                    // Check if already in live
+                    var found: bool = false;
+                    var k: i64 = 0;
+                    while k < live.count {
+                        if i64list_get(&live, k) == arg_id {
+                            found = true;
+                        }
+                        k = k + 1;
+                    }
+                    if not found {
+                        i64list_append(&live, arg_id);
+                    }
+                }
+                arg_idx = arg_idx + 1;
+            }
+
+            val_idx = val_idx - 1;
+        }
+
+        i64list_deinit(&live);
+        b = b + 1;
+    }
+}
+
+// ============================================================================
+// Phase 4 & 5: Allocate Locals and Spill Slots
+// ============================================================================
+
+fn StackAlloc_allocateLocals(state: *StackAllocState, f: *Func, result: *StackAllocResult) {
+    var local_idx: i64 = 0;
+    while local_idx < f.locals_count {
+        let local: *Local = Func_getLocal(f, local_idx);
+
+        // Align to 8 bytes
+        state.current_offset = (state.current_offset + 7) & (0 - 8);
+
+        local.offset = state.current_offset;
+        state.current_offset = state.current_offset + local.size;
+
+        result.num_locals = result.num_locals + 1;
+        local_idx = local_idx + 1;
+    }
+
+    result.locals_size = state.current_offset - FRAME_HEADER_SIZE;
+}
+
+fn StackAlloc_allocateSpillSlots(state: *StackAllocState, f: *Func, result: *StackAllocResult) {
+    var vid: i64 = 0;
+    while vid < f.values_count {
+        if not StackAllocState_needsSlot(state, vid) {
+            vid = vid + 1;
+            continue;
+        }
+
+        let val: *Value = Func_getValue(f, vid);
+        let type_idx: i64 = val.type_idx;
+
+        // Try to find an existing slot that doesn't interfere
+        var found_slot: i64 = -1;
+
+        // Conservative: don't reuse slots for store_reg
+        if val.op != Op.StoreReg {
+            var slot_idx: i64 = 0;
+            while slot_idx < state.slots.count / 2 {
+                let slot_type: i64 = i64list_get(&state.slots, slot_idx * 2 + 1);
+
+                if slot_type == type_idx {
+                    // Check interference with all values using this slot
+                    var interferes: bool = false;
+
+                    var other: i64 = 0;
+                    while other < vid {
+                        if StackAllocState_getSlotIdx(state, other) == slot_idx {
+                            if StackAllocState_interferes(state, vid, other) {
+                                interferes = true;
+                            }
+                        }
+                        other = other + 1;
+                    }
+
+                    if not interferes {
+                        found_slot = slot_idx;
+                        result.num_reused = result.num_reused + 1;
+                    }
+                }
+
+                if found_slot >= 0 {
+                    break;
+                }
+                slot_idx = slot_idx + 1;
+            }
+        }
+
+        // Allocate new slot if needed
+        if found_slot < 0 {
+            state.current_offset = (state.current_offset + 7) & (0 - 8);
+
+            found_slot = state.slots.count / 2;
+            i64list_append(&state.slots, state.current_offset);  // offset
+            i64list_append(&state.slots, type_idx);              // type_idx
+
+            state.current_offset = state.current_offset + SPILL_SLOT_SIZE;
+            result.num_spill_slots = result.num_spill_slots + 1;
+        }
+
+        // Assign slot
+        StackAllocState_setSlotIdx(state, vid, found_slot);
+        let slot_offset: i64 = i64list_get(&state.slots, found_slot * 2);
+        val.spill_slot = slot_offset;
+
+        vid = vid + 1;
+    }
+}
+
+// ============================================================================
+// Main Entry Point
+// ============================================================================
+
+fn StackAlloc_run(f: *Func) StackAllocResult {
+    var state: StackAllocState = undefined;
+    StackAllocState_init(&state);
+
+    var result: StackAllocResult = StackAllocResult_init();
+
+    // Save regalloc's spill count (it runs before stackalloc)
+    let regalloc_spills: i64 = f.spill_slots;
+
+    // Phase 1: Mark values needing slots
+    StackAlloc_markValues(&state, f);
+
+    // Phase 2: Compute liveness
+    StackAlloc_computeLiveness(&state, f);
+
+    // Phase 3: Build interference
+    StackAlloc_buildInterference(&state, f);
+
+    // Phase 4: Allocate locals
+    StackAlloc_allocateLocals(&state, f, &result);
+
+    // Phase 5: Allocate spill slots (for StoreReg values)
+    StackAlloc_allocateSpillSlots(&state, f, &result);
+
+    // Phase 6: Allocate space for regalloc spill slots
+    // Regalloc sets spill_slot on values to slot numbers (0, 1, 2, ...)
+    // We need to allocate actual stack space and convert to offsets
+    let spill_base: i64 = state.current_offset;
+    if regalloc_spills > 0 {
+        // Align to 8 bytes
+        state.current_offset = (state.current_offset + 7) & (0 - 8);
+        // Record the base offset for spill slots
+        let spill_start: i64 = state.current_offset;
+        // Allocate space for all regalloc spills
+        state.current_offset = state.current_offset + (regalloc_spills * SPILL_SLOT_SIZE);
+        result.num_spill_slots = regalloc_spills;
+
+        // Convert spill_slot numbers to actual offsets
+        // Walk all values and convert slot number -> stack offset
+        var vid: i64 = 0;
+        while vid < f.values_count {
+            let val: *Value = Func_getValue(f, vid);
+            // Check if this value has a spill slot NUMBER (set by regalloc)
+            // Slot numbers are small non-negative integers (0, 1, 2, ...)
+            // We need to convert these to actual stack offsets
+            if val.spill_slot >= 0 and val.spill_slot < regalloc_spills {
+                // Convert slot number to offset: spill_start + (slot_number * 8)
+                val.spill_slot = spill_start + (val.spill_slot * SPILL_SLOT_SIZE);
+            }
+            vid = vid + 1;
+        }
+    }
+
+    // Calculate total frame size (16-byte aligned)
+    let total: i64 = state.current_offset;
+    result.frame_size = (total + 15) & (0 - 16);
+
+    f.frame_size = result.frame_size;
+    f.spill_slots = result.num_spill_slots;
+
+    StackAllocState_deinit(&state);
+
+    return result;
+}

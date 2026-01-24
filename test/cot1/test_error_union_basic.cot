@@ -1,0 +1,40 @@
+// Test: Error Union Basic Syntax
+// Feature: error!T type and error returns
+//
+// This test verifies:
+// 1. Error set declaration
+// 2. Function returning error union
+// 3. Returning error value
+// 4. Returning success value
+
+// Error set definition
+const TestError = error {
+    Fail,
+    NotFound,
+};
+
+// Function that can fail
+fn mayFail(should_fail: bool) TestError!i64 {
+    if should_fail {
+        return error.Fail;
+    }
+    return 42;
+}
+
+fn test_error_return() i64 {
+    // This should return error.Fail
+    // For now, we just test that error syntax parses
+    // Full error handling tested in other files
+    return 1;
+}
+
+fn test_success_return() i64 {
+    // This should return 42
+    return 1;
+}
+
+fn main() i64 {
+    // Placeholder until error unions are implemented
+    // These tests define the syntax we want to support
+    return 0;
+}

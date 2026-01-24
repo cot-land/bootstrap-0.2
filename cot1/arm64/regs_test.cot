@@ -1,0 +1,68 @@
+// ARM64 Register Tests
+// Run with: ./zig-out/bin/cot cot0/arm64/regs_test.cot -o /tmp/regs_test && /tmp/regs_test
+
+import "regs.cot"
+
+fn main() i64 {
+    let result: i64 = 0;
+
+    result = result + test_register_values();
+    result = result + test_classification();
+
+    return result;
+}
+
+fn test_register_values() i64 {
+    // Argument registers
+    if X0 != 0 { return 1; }
+    if X7 != 7 { return 2; }
+
+    // Callee-saved
+    if X19 != 19 { return 3; }
+    if X28 != 28 { return 4; }
+
+    // Special registers
+    if X29 != 29 { return 5; }  // FP
+    if X30 != 30 { return 6; }  // LR
+    if SP != 31 { return 7; }
+    if XZR != 31 { return 8; }
+
+    // Aliases
+    if FP != 29 { return 9; }
+    if LR != 30 { return 10; }
+
+    return 0;
+}
+
+fn test_classification() i64 {
+    // Argument registers
+    if not is_arg_reg(X0) { return 20; }
+    if not is_arg_reg(X7) { return 21; }
+    if is_arg_reg(X8) { return 22; }
+
+    // Callee-saved
+    if not is_callee_saved(X19) { return 30; }
+    if not is_callee_saved(X28) { return 31; }
+    if is_callee_saved(X0) { return 32; }
+    if is_callee_saved(X29) { return 33; }  // FP is not in callee-saved range
+
+    // Caller-saved
+    if not is_caller_saved(X0) { return 40; }
+    if not is_caller_saved(X15) { return 41; }
+    if is_caller_saved(X16) { return 42; }
+
+    // Scratch registers
+    if not is_scratch_reg(X16) { return 50; }
+    if not is_scratch_reg(X17) { return 51; }
+    if is_scratch_reg(X15) { return 52; }
+
+    // Allocatable
+    if not is_allocatable(X0) { return 60; }
+    if not is_allocatable(X28) { return 61; }
+    if is_allocatable(X16) { return 62; }  // IP0 not allocatable
+    if is_allocatable(X18) { return 63; }  // Platform register not allocatable
+    if is_allocatable(X29) { return 64; }  // FP not allocatable
+    if is_allocatable(X30) { return 65; }  // LR not allocatable
+
+    return 0;
+}

@@ -1,0 +1,1037 @@
+// Cot0 Type Representation
+// Minimal type system for: i64, bool, void, functions
+//
+// Design follows Go's go/types package patterns:
+// - TypeKind enum for type discrimination
+// - TypeIndex (i64) for compact storage and interning
+// - TypeRegistry for type creation and lookup
+// - Predicate functions for type checking
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/types/type.go
+// Reference: bootstrap-0.2/src/frontend/types.zig
+
+import "token.cot"
+import "../lib/list.cot"  // For realloc_i64
+
+// ============================================================================
+// Type Index
+// ============================================================================
+
+// Index into type pool. -1 = invalid/error type.
+const INVALID_TYPE: i64 = -1;
+
+// ============================================================================
+// Type Kinds (Go's Kind enum)
+// ============================================================================
+
+// Kind of type.
+enum TypeKind {
+    Invalid,    // Error/unknown type
+
+    // Basic types
+    Bool,       // bool
+    I8,         // i8
+    I16,        // i16
+    I32,        // i32
+    I64,        // i64
+    U8,         // u8
+    U16,        // u16
+    U32,        // u32
+    U64,        // u64
+    F32,        // f32
+    F64,        // f64
+    Void,       // void (no value)
+
+    // Composite types
+    Pointer,    // *T
+    Slice,      // []T
+    Array,      // [N]T
+    Func,       // fn(args) ret
+    Struct,     // struct { fields }
+    Enum,       // enum { variants }
+    String,     // string (slice of u8)
+}
+
+// ============================================================================
+// Type Structure
+// ============================================================================
+
+// Type represents a Cot type.
+// Uses a flat struct with kind-specific interpretation of fields.
+struct Type {
+    kind: TypeKind,
+
+    // Kind-specific fields:
+    // For Pointer: elem is the pointee type index
+    // For Slice: elem is the element type index
+    // For Array: elem is element type, len is array length
+    // For Func: params_start, params_count, ret_type
+    // For Struct: name_start, name_len, fields_start, fields_count
+
+    elem: i64,          // Element type index (for Pointer, Slice, Array)
+    len: i64,           // Array length (for Array)
+    ret_type: i64,      // Return type index (for Func)
+    params_start: i64,  // Start index in params array (for Func)
+    params_count: i64,  // Number of parameters (for Func)
+    name_start: i64,    // Name offset in source (for Struct, Enum)
+    name_len: i64,      // Name length (for Struct, Enum)
+    size: i64,          // Size in bytes
+    align: i64,         // Alignment in bytes
+}
+
+// ============================================================================
+// Field Information (for struct fields)
+// ============================================================================
+
+struct FieldInfo {
+    name_start: i64,    // Field name offset in source
+    name_len: i64,      // Field name length
+    type_idx: i64,      // Field type index
+    offset: i64,        // Byte offset within struct
+}
+
+// ============================================================================
+// Type Pool (arena allocation for type interning)
+// ============================================================================
+
+// MAX_TYPES, MAX_PARAMS, MAX_FIELDS removed - using dynamic growth
+
+// Realloc externs for dynamic growth
+// Note: realloc_i64 is declared in lib/list.cot
+extern fn realloc_Type(ptr: *Type, old_count: i64, new_count: i64) *Type;
+extern fn realloc_FieldInfo(ptr: *FieldInfo, old_count: i64, new_count: i64) *FieldInfo;
+
+struct TypeRegistry {
+    types: *Type,        // Pointer to array of types
+    count: i64,          // Current type count
+    types_cap: i64,      // Types array capacity
+
+    // Parameter arrays (for function types)
+    params: *i64,        // Pointer to array of type indices
+    params_count: i64,
+    params_cap: i64,     // Params array capacity
+
+    // Field arrays (for struct types)
+    fields: *FieldInfo,  // Pointer to array of field information
+    fields_count: i64,   // Current field count
+    fields_cap: i64,     // Fields array capacity
+
+    // Source text for name comparison
+    source: *u8,
+    source_len: i64,
+}
+
+// ============================================================================
+// Pre-defined Type Indices
+// ============================================================================
+
+// These match the order in which types are registered in TypeRegistry_init
+const TYPE_INVALID: i64 = 0;
+const TYPE_BOOL: i64 = 1;
+const TYPE_I8: i64 = 2;
+const TYPE_I16: i64 = 3;
+const TYPE_I32: i64 = 4;
+const TYPE_I64: i64 = 5;
+const TYPE_U8: i64 = 6;
+const TYPE_U16: i64 = 7;
+const TYPE_U32: i64 = 8;
+const TYPE_U64: i64 = 9;
+const TYPE_F32: i64 = 10;
+const TYPE_F64: i64 = 11;
+const TYPE_VOID: i64 = 12;
+const TYPE_STRING: i64 = 13;
+const TYPE_SLICE: i64 = 14;   // Slice type marker for locals
+
+// Aliases
+const TYPE_INT: i64 = 5;   // i64 is the default int
+const TYPE_FLOAT: i64 = 11; // f64 is the default float
+const TYPE_BYTE: i64 = 6;  // u8 is byte
+
+// First user-defined type index
+const FIRST_USER_TYPE: i64 = 15;
+
+// ============================================================================
+// Parser Type Handles (PTYPE_*)
+// ============================================================================
+// These are used by the parser to represent types before TypeRegistry resolution.
+// The resolve_type_handle() function converts PTYPE_* to TYPE_* indices.
+//
+// PTYPE_* ranges:
+// - 0-9: Basic types
+// - 10-99: Pointer types (PTYPE_PTR_BASE + pointee_handle)
+// - 100+: User types (PTYPE_USER_BASE + source offset of type name)
+
+const PTYPE_I64: i64 = 0;
+const PTYPE_I32: i64 = 1;
+const PTYPE_U8: i64 = 2;
+const PTYPE_BOOL: i64 = 3;
+const PTYPE_VOID: i64 = 4;
+const PTYPE_STRING: i64 = 5;
+const PTYPE_PTR_BASE: i64 = 10;    // Pointer types start here
+const PTYPE_USER_BASE: i64 = 100;  // User types start here (up to 9999)
+const PTYPE_ARRAY_BASE: i64 = 10000;  // Array types: PTYPE_ARRAY_BASE + index into array_info table
+const PTYPE_SLICE_BASE: i64 = 100000; // Slice types: PTYPE_SLICE_BASE + elem_type
+
+// Array type info storage - simple inline encoding
+// Since we can't easily share global pointers between files,
+// use a simpler encoding: PTYPE_ARRAY_BASE + (size * 100 + elem_type)
+// This limits array sizes to < 100000 and element types to < 100
+
+// Register an array type, returns PTYPE handle
+fn PType_registerArray(elem_ptype: i64, size: i64) i64 {
+    // Encode: size * 100 + elem_type (elem_type < 100)
+    return PTYPE_ARRAY_BASE + size * 100 + elem_ptype;
+}
+
+// Get array element type from PTYPE handle
+fn PType_arrayElem(ptype: i64) i64 {
+    if ptype < PTYPE_ARRAY_BASE {
+        return PTYPE_I64;
+    }
+    let encoded: i64 = ptype - PTYPE_ARRAY_BASE;
+    return encoded % 100;  // elem_type is the remainder
+}
+
+// Get array size from PTYPE handle
+fn PType_arraySize(ptype: i64) i64 {
+    if ptype < PTYPE_ARRAY_BASE {
+        return 0;
+    }
+    let encoded: i64 = ptype - PTYPE_ARRAY_BASE;
+    return encoded / 100;  // size is the quotient
+}
+
+// Register a slice type []T, returns PTYPE handle
+fn PType_registerSlice(elem_ptype: i64) i64 {
+    return PTYPE_SLICE_BASE + elem_ptype;
+}
+
+// Get slice element type from PTYPE handle
+fn PType_sliceElem(ptype: i64) i64 {
+    if ptype < PTYPE_SLICE_BASE {
+        return PTYPE_I64;
+    }
+    return ptype - PTYPE_SLICE_BASE;
+}
+
+// Check if PTYPE is a slice type
+fn ptype_TypeInfo_isSlice(ptype: i64) bool {
+    return ptype >= PTYPE_SLICE_BASE;
+}
+
+// ============================================================================
+// Type Pool Dynamic Growth
+// ============================================================================
+
+fn TypeRegistry_ensureTypesCapacity(pool: *TypeRegistry, additional: i64) {
+    let needed: i64 = pool.count + additional;
+    if needed <= pool.types_cap {
+        return;
+    }
+    var new_cap: i64 = pool.types_cap * 2;
+    if new_cap < needed {
+        new_cap = needed;
+    }
+    pool.types = realloc_Type(pool.types, pool.types_cap, new_cap);
+    pool.types_cap = new_cap;
+}
+
+fn TypeRegistry_ensureParamsCapacity(pool: *TypeRegistry, additional: i64) {
+    let needed: i64 = pool.params_count + additional;
+    if needed <= pool.params_cap {
+        return;
+    }
+    var new_cap: i64 = pool.params_cap * 2;
+    if new_cap < needed {
+        new_cap = needed;
+    }
+    pool.params = realloc_i64(pool.params, pool.params_cap, new_cap);
+    pool.params_cap = new_cap;
+}
+
+fn TypeRegistry_ensureFieldsCapacity(pool: *TypeRegistry, additional: i64) {
+    let needed: i64 = pool.fields_count + additional;
+    if needed <= pool.fields_cap {
+        return;
+    }
+    var new_cap: i64 = pool.fields_cap * 2;
+    if new_cap < needed {
+        new_cap = needed;
+    }
+    pool.fields = realloc_FieldInfo(pool.fields, pool.fields_cap, new_cap);
+    pool.fields_cap = new_cap;
+}
+
+// ============================================================================
+// Type Pool Initialization
+// ============================================================================
+
+// Initialize type pool with backing storage arrays and capacities
+// This is the preferred init function - provides explicit backing storage
+fn TypeRegistry_initWithStorage(pool: *TypeRegistry, types: *Type, types_cap: i64,
+                                 params: *i64, params_cap: i64,
+                                 fields: *FieldInfo, fields_cap: i64) {
+    pool.types = types;
+    pool.types_cap = types_cap;
+    pool.params = params;
+    pool.params_cap = params_cap;
+    pool.fields = fields;
+    pool.fields_cap = fields_cap;
+    pool.count = 0;
+    pool.params_count = 0;
+    pool.fields_count = 0;
+    pool.source = null;
+    pool.source_len = 0;
+
+    // Register basic types in order
+    TypeRegistry_registerBasic(pool, TypeKind.Invalid, 0, 0);   // 0: invalid
+    TypeRegistry_registerBasic(pool, TypeKind.Bool, 1, 1);      // 1: bool
+    TypeRegistry_registerBasic(pool, TypeKind.I8, 1, 1);        // 2: i8
+    TypeRegistry_registerBasic(pool, TypeKind.I16, 2, 2);       // 3: i16
+    TypeRegistry_registerBasic(pool, TypeKind.I32, 4, 4);       // 4: i32
+    TypeRegistry_registerBasic(pool, TypeKind.I64, 8, 8);       // 5: i64
+    TypeRegistry_registerBasic(pool, TypeKind.U8, 1, 1);        // 6: u8
+    TypeRegistry_registerBasic(pool, TypeKind.U16, 2, 2);       // 7: u16
+    TypeRegistry_registerBasic(pool, TypeKind.U32, 4, 4);       // 8: u32
+    TypeRegistry_registerBasic(pool, TypeKind.U64, 8, 8);       // 9: u64
+    TypeRegistry_registerBasic(pool, TypeKind.F32, 4, 4);       // 10: f32
+    TypeRegistry_registerBasic(pool, TypeKind.F64, 8, 8);       // 11: f64
+    TypeRegistry_registerBasic(pool, TypeKind.Void, 0, 0);      // 12: void
+    TypeRegistry_registerBasic(pool, TypeKind.String, 16, 8);   // 13: string (ptr + len)
+    TypeRegistry_registerBasic(pool, TypeKind.Slice, 16, 8);    // 14: TYPE_SLICE placeholder (ptr + len)
+    // User types start at index 15 (FIRST_USER_TYPE)
+}
+
+// Initialize type pool (legacy - requires pool.types/params/fields to be set first)
+fn TypeRegistry_init(pool: *TypeRegistry) {
+    pool.count = 0;
+    pool.params_count = 0;
+    pool.fields_count = 0;
+    pool.source = null;
+    pool.source_len = 0;
+
+    // Register basic types in order
+    TypeRegistry_registerBasic(pool, TypeKind.Invalid, 0, 0);   // 0: invalid
+    TypeRegistry_registerBasic(pool, TypeKind.Bool, 1, 1);      // 1: bool
+    TypeRegistry_registerBasic(pool, TypeKind.I8, 1, 1);        // 2: i8
+    TypeRegistry_registerBasic(pool, TypeKind.I16, 2, 2);       // 3: i16
+    TypeRegistry_registerBasic(pool, TypeKind.I32, 4, 4);       // 4: i32
+    TypeRegistry_registerBasic(pool, TypeKind.I64, 8, 8);       // 5: i64
+    TypeRegistry_registerBasic(pool, TypeKind.U8, 1, 1);        // 6: u8
+    TypeRegistry_registerBasic(pool, TypeKind.U16, 2, 2);       // 7: u16
+    TypeRegistry_registerBasic(pool, TypeKind.U32, 4, 4);       // 8: u32
+    TypeRegistry_registerBasic(pool, TypeKind.U64, 8, 8);       // 9: u64
+    TypeRegistry_registerBasic(pool, TypeKind.F32, 4, 4);       // 10: f32
+    TypeRegistry_registerBasic(pool, TypeKind.F64, 8, 8);       // 11: f64
+    TypeRegistry_registerBasic(pool, TypeKind.Void, 0, 0);      // 12: void
+    TypeRegistry_registerBasic(pool, TypeKind.String, 16, 8);   // 13: string (ptr + len)
+    TypeRegistry_registerBasic(pool, TypeKind.Slice, 16, 8);    // 14: TYPE_SLICE placeholder (ptr + len)
+    // User types start at index 15 (FIRST_USER_TYPE)
+}
+
+// Helper to register a basic type
+fn TypeRegistry_registerBasic(pool: *TypeRegistry, kind: TypeKind, size: i64, align: i64) i64 {
+    TypeRegistry_ensureTypesCapacity(pool, 1);
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let t: *Type = pool.types + idx;
+    t.kind = kind;
+    t.elem = INVALID_TYPE;
+    t.len = 0;
+    t.ret_type = INVALID_TYPE;
+    t.params_start = 0;
+    t.params_count = 0;
+    t.name_start = 0;
+    t.name_len = 0;
+    t.size = size;
+    t.align = align;
+
+    return idx;
+}
+
+// ============================================================================
+// Type Accessors
+// ============================================================================
+
+// Get type at index
+fn TypeRegistry_get(pool: *TypeRegistry, idx: i64) *Type {
+    if idx < 0 or idx >= pool.count {
+        return pool.types + 0;  // Return invalid type
+    }
+    return pool.types + idx;
+}
+
+// Check if type index is valid
+fn TypeInfo_valid(idx: i64) bool {
+    return idx != INVALID_TYPE and idx >= 0;
+}
+
+// Check if type is invalid
+// Reference: Zig's Type.isInvalid()
+fn TypeInfo_isInvalid(pool: *TypeRegistry, idx: i64) bool {
+    if idx == INVALID_TYPE or idx < 0 {
+        return true;
+    }
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.kind == TypeKind.Invalid;
+}
+
+// Find a struct type by name in the pool
+// Returns the type index, or INVALID_TYPE if not found
+fn TypeRegistry_findByName(pool: *TypeRegistry, name_start: i64, name_len: i64) i64 {
+    var i: i64 = 0;
+    while i < pool.count {
+        let t: *Type = pool.types + i;
+        if t.kind == TypeKind.Struct {
+            // Compare names
+            if t.name_len == name_len {
+                var match: bool = true;
+                var j: i64 = 0;
+                while j < name_len {
+                    let c1: u8 = (pool.source + t.name_start + j).*;
+                    let c2: u8 = (pool.source + name_start + j).*;
+                    if c1 != c2 {
+                        match = false;
+                        break;
+                    }
+                    j = j + 1;
+                }
+                if match {
+                    return i;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return INVALID_TYPE;
+}
+
+// ============================================================================
+// Type Creation
+// ============================================================================
+
+// Create a pointer type: *elem
+fn TypeRegistry_makePointer(pool: *TypeRegistry, elem: i64) i64 {
+    TypeRegistry_ensureTypesCapacity(pool, 1);
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let t: *Type = pool.types + idx;
+    t.kind = TypeKind.Pointer;
+    t.elem = elem;
+    t.len = 0;
+    t.ret_type = INVALID_TYPE;
+    t.params_start = 0;
+    t.params_count = 0;
+    t.name_start = 0;
+    t.name_len = 0;
+    t.size = 8;  // Pointers are 8 bytes on 64-bit
+    t.align = 8;
+
+    return idx;
+}
+
+// Create a slice type: []elem
+fn TypeRegistry_makeSlice(pool: *TypeRegistry, elem: i64) i64 {
+    TypeRegistry_ensureTypesCapacity(pool, 1);
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let t: *Type = pool.types + idx;
+    t.kind = TypeKind.Slice;
+    t.elem = elem;
+    t.len = 0;
+    t.ret_type = INVALID_TYPE;
+    t.params_start = 0;
+    t.params_count = 0;
+    t.name_start = 0;
+    t.name_len = 0;
+    t.size = 16;  // ptr + len
+    t.align = 8;
+
+    return idx;
+}
+
+// Create an array type: [len]elem
+fn TypeRegistry_makeArray(pool: *TypeRegistry, elem: i64, array_len: i64) i64 {
+    TypeRegistry_ensureTypesCapacity(pool, 1);
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let elem_type: *Type = TypeRegistry_get(pool, elem);
+    let elem_size: i64 = elem_type.size;
+
+    let t: *Type = pool.types + idx;
+    t.kind = TypeKind.Array;
+    t.elem = elem;
+    t.len = array_len;
+    t.ret_type = INVALID_TYPE;
+    t.params_start = 0;
+    t.params_count = 0;
+    t.name_start = 0;
+    t.name_len = 0;
+    t.size = elem_size * array_len;
+    t.align = elem_type.align;
+
+    return idx;
+}
+
+// Create a function type: fn(params) ret
+fn TypeRegistry_makeFunc(pool: *TypeRegistry, params_start: i64, params_count: i64, ret_type: i64) i64 {
+    TypeRegistry_ensureTypesCapacity(pool, 1);
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let t: *Type = pool.types + idx;
+    t.kind = TypeKind.Func;
+    t.elem = INVALID_TYPE;
+    t.len = 0;
+    t.ret_type = ret_type;
+    t.params_start = params_start;
+    t.params_count = params_count;
+    t.name_start = 0;
+    t.name_len = 0;
+    t.size = 8;  // Function pointer
+    t.align = 8;
+
+    return idx;
+}
+
+// Add a parameter type to the params array
+fn TypeRegistry_addParam(pool: *TypeRegistry, param_type: i64) i64 {
+    TypeRegistry_ensureParamsCapacity(pool, 1);
+    let idx: i64 = pool.params_count;
+    let ptr: *i64 = pool.params + idx;
+    ptr.* = param_type;
+    pool.params_count = pool.params_count + 1;
+    return idx;
+}
+
+// Create a struct type: struct { fields }
+// fields_start and fields_count index into params array (used for field types)
+fn TypeRegistry_makeStruct(pool: *TypeRegistry, name_start: i64, name_len: i64,
+                    fields_start: i64, fields_count: i64, size: i64, align: i64) i64 {
+    TypeRegistry_ensureTypesCapacity(pool, 1);
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let t: *Type = pool.types + idx;
+    t.kind = TypeKind.Struct;
+    t.elem = INVALID_TYPE;
+    t.len = 0;
+    t.ret_type = INVALID_TYPE;
+    t.params_start = fields_start;  // Reuse params for field types
+    t.params_count = fields_count;
+    t.name_start = name_start;
+    t.name_len = name_len;
+    t.size = size;
+    t.align = align;
+
+    return idx;
+}
+
+// Create an enum type: enum { variants }
+// Enums are i32-sized by default (like Go)
+fn TypeRegistry_makeEnum(pool: *TypeRegistry, name_start: i64, name_len: i64,
+                  variants_count: i64) i64 {
+    TypeRegistry_ensureTypesCapacity(pool, 1);
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let t: *Type = pool.types + idx;
+    t.kind = TypeKind.Enum;
+    t.elem = INVALID_TYPE;
+    t.len = variants_count;  // Store variant count in len field
+    t.ret_type = INVALID_TYPE;
+    t.params_start = 0;
+    t.params_count = 0;
+    t.name_start = name_start;
+    t.name_len = name_len;
+    t.size = 4;   // Enums are 4 bytes (i32)
+    t.align = 4;
+
+    return idx;
+}
+
+// Get parameter type at index
+fn TypeRegistry_getParam(pool: *TypeRegistry, params_start: i64, offset: i64) i64 {
+    let ptr: *i64 = pool.params + params_start + offset;
+    return ptr.*;
+}
+
+// ============================================================================
+// Type Predicates
+// ============================================================================
+
+// Check if type is integer (signed or unsigned)
+fn TypeInfo_isInteger(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.kind == TypeKind.I8 or t.kind == TypeKind.I16 or
+           t.kind == TypeKind.I32 or t.kind == TypeKind.I64 or
+           t.kind == TypeKind.U8 or t.kind == TypeKind.U16 or
+           t.kind == TypeKind.U32 or t.kind == TypeKind.U64;
+}
+
+// Check if type is signed integer
+fn TypeInfo_isSigned(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.kind == TypeKind.I8 or t.kind == TypeKind.I16 or
+           t.kind == TypeKind.I32 or t.kind == TypeKind.I64;
+}
+
+// Check if type is unsigned integer
+fn TypeInfo_isUnsigned(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.kind == TypeKind.U8 or t.kind == TypeKind.U16 or
+           t.kind == TypeKind.U32 or t.kind == TypeKind.U64;
+}
+
+// Check if type is floating point
+fn TypeInfo_isFloat(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.kind == TypeKind.F32 or t.kind == TypeKind.F64;
+}
+
+// Check if type is numeric (integer or float)
+fn TypeInfo_isNumeric(pool: *TypeRegistry, idx: i64) bool {
+    return TypeInfo_isInteger(pool, idx) or TypeInfo_isFloat(pool, idx);
+}
+
+// Check if type is boolean
+fn TypeInfo_isBool(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.kind == TypeKind.Bool;
+}
+
+// Check if type is void
+fn TypeInfo_isVoid(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.kind == TypeKind.Void;
+}
+
+// Check if type is a pointer
+fn TypeInfo_isPointer(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.kind == TypeKind.Pointer;
+}
+
+// Check if type is a slice
+fn TypeInfo_isSlice(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.kind == TypeKind.Slice;
+}
+
+// Check if type is an array
+fn TypeInfo_isArray(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.kind == TypeKind.Array;
+}
+
+// Check if type is a function
+fn TypeInfo_isFunc(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.kind == TypeKind.Func;
+}
+
+// Check if type is a string
+fn TypeInfo_isString(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.kind == TypeKind.String;
+}
+
+// Check if type is a struct
+fn TypeInfo_isStruct(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.kind == TypeKind.Struct;
+}
+
+// Check if type is an enum
+fn TypeInfo_isEnum(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.kind == TypeKind.Enum;
+}
+
+// ============================================================================
+// Type Accessors
+// ============================================================================
+
+// Get element type of pointer/slice/array
+fn TypeInfo_elem(pool: *TypeRegistry, idx: i64) i64 {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.elem;
+}
+
+// Get array length
+fn TypeInfo_arrayLen(pool: *TypeRegistry, idx: i64) i64 {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.len;
+}
+
+// Get function return type
+fn TypeInfo_ret(pool: *TypeRegistry, idx: i64) i64 {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.ret_type;
+}
+
+// Get function parameter count
+fn TypeInfo_paramCount(pool: *TypeRegistry, idx: i64) i64 {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.params_count;
+}
+
+// Get type size in bytes
+fn TypeInfo_size(pool: *TypeRegistry, idx: i64) i64 {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.size;
+}
+
+// Get type alignment
+fn TypeInfo_alignment(pool: *TypeRegistry, idx: i64) i64 {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.align;
+}
+
+// Get size of type in bytes (matches Zig's TypeRegistry.sizeOf)
+// Reference: src/frontend/types.zig sizeOf()
+fn TypeRegistry_sizeof(pool: *TypeRegistry, idx: i64) i64 {
+    if idx < 0 { return 0; }
+
+    let t: *Type = TypeRegistry_get(pool, idx);
+    if t == null { return 0; }
+
+    // For types with explicit size field, use it
+    if t.size > 0 { return t.size; }
+
+    // Handle by kind
+    if t.kind == TypeKind.Pointer { return 8; }  // 64-bit pointer
+    if t.kind == TypeKind.Slice { return 16; }   // ptr + len
+    if t.kind == TypeKind.Func { return 8; }     // function pointer
+    if t.kind == TypeKind.String { return 16; }  // ptr + len
+
+    // Array: element size * length
+    if t.kind == TypeKind.Array {
+        let elem_size: i64 = TypeRegistry_sizeof(pool, t.elem);
+        return elem_size * t.len;
+    }
+
+    // Struct: use stored size
+    if t.kind == TypeKind.Struct { return t.size; }
+
+    // Enum: use stored size (usually i64)
+    if t.kind == TypeKind.Enum { return t.size; }
+
+    // Default to 8 for unknown types
+    return 8;
+}
+
+// ============================================================================
+// Type Equality
+// ============================================================================
+
+// Check if two types are equal
+fn TypeInfo_equal(pool: *TypeRegistry, a: i64, b: i64) bool {
+    if a == b { return true; }
+    if a < 0 or b < 0 { return false; }
+
+    let ta: *Type = TypeRegistry_get(pool, a);
+    let tb: *Type = TypeRegistry_get(pool, b);
+
+    // Different kinds are never equal
+    if ta.kind != tb.kind { return false; }
+
+    // For basic types, same kind means equal
+    if ta.kind == TypeKind.Bool or
+       ta.kind == TypeKind.I8 or ta.kind == TypeKind.I16 or
+       ta.kind == TypeKind.I32 or ta.kind == TypeKind.I64 or
+       ta.kind == TypeKind.U8 or ta.kind == TypeKind.U16 or
+       ta.kind == TypeKind.U32 or ta.kind == TypeKind.U64 or
+       ta.kind == TypeKind.F32 or ta.kind == TypeKind.F64 or
+       ta.kind == TypeKind.Void or ta.kind == TypeKind.String {
+        return true;
+    }
+
+    // For Pointer, Slice: compare element types
+    if ta.kind == TypeKind.Pointer or ta.kind == TypeKind.Slice {
+        return TypeInfo_equal(pool, ta.elem, tb.elem);
+    }
+
+    // For Array: compare element types and lengths
+    if ta.kind == TypeKind.Array {
+        return ta.len == tb.len and TypeInfo_equal(pool, ta.elem, tb.elem);
+    }
+
+    // For Func: compare params and return type
+    if ta.kind == TypeKind.Func {
+        if ta.params_count != tb.params_count { return false; }
+        if not TypeInfo_equal(pool, ta.ret_type, tb.ret_type) { return false; }
+
+        var i: i64 = 0;
+        while i < ta.params_count {
+            let pa: i64 = TypeRegistry_getParam(pool, ta.params_start, i);
+            let pb: i64 = TypeRegistry_getParam(pool, tb.params_start, i);
+            if not TypeInfo_equal(pool, pa, pb) { return false; }
+            i = i + 1;
+        }
+        return true;
+    }
+
+    return false;
+}
+
+// ============================================================================
+// Type Name Lookup
+// ============================================================================
+
+// Look up basic type by name
+// Returns type index or INVALID_TYPE if not found
+fn TypeInfo_lookupBasic(source: *u8, name_start: i64, name_len: i64) i64 {
+    // Single character type names
+    if name_len == 2 {
+        let c0: u8 = (source + name_start).*;
+        let c1: u8 = (source + name_start + 1).*;
+
+        if c0 == 105 and c1 == 56 { return TYPE_I8; }  // "i8"
+        if c0 == 117 and c1 == 56 { return TYPE_U8; }  // "u8"
+    }
+
+    if name_len == 3 {
+        let c0: u8 = (source + name_start).*;
+        let c1: u8 = (source + name_start + 1).*;
+        let c2: u8 = (source + name_start + 2).*;
+
+        if c0 == 105 and c1 == 49 and c2 == 54 { return TYPE_I16; }  // "i16"
+        if c0 == 105 and c1 == 51 and c2 == 50 { return TYPE_I32; }  // "i32"
+        if c0 == 105 and c1 == 54 and c2 == 52 { return TYPE_I64; }  // "i64"
+        if c0 == 117 and c1 == 49 and c2 == 54 { return TYPE_U16; }  // "u16"
+        if c0 == 117 and c1 == 51 and c2 == 50 { return TYPE_U32; }  // "u32"
+        if c0 == 117 and c1 == 54 and c2 == 52 { return TYPE_U64; }  // "u64"
+        if c0 == 102 and c1 == 51 and c2 == 50 { return TYPE_F32; }  // "f32"
+        if c0 == 102 and c1 == 54 and c2 == 52 { return TYPE_F64; }  // "f64"
+        if c0 == 105 and c1 == 110 and c2 == 116 { return TYPE_INT; }  // "int"
+    }
+
+    if name_len == 4 {
+        let c0: u8 = (source + name_start).*;
+        let c1: u8 = (source + name_start + 1).*;
+        let c2: u8 = (source + name_start + 2).*;
+        let c3: u8 = (source + name_start + 3).*;
+
+        if c0 == 98 and c1 == 111 and c2 == 111 and c3 == 108 { return TYPE_BOOL; }  // "bool"
+        if c0 == 118 and c1 == 111 and c2 == 105 and c3 == 100 { return TYPE_VOID; }  // "void"
+        if c0 == 98 and c1 == 121 and c2 == 116 and c3 == 101 { return TYPE_BYTE; }  // "byte"
+    }
+
+    if name_len == 5 {
+        let c0: u8 = (source + name_start).*;
+        let c1: u8 = (source + name_start + 1).*;
+        let c2: u8 = (source + name_start + 2).*;
+        let c3: u8 = (source + name_start + 3).*;
+        let c4: u8 = (source + name_start + 4).*;
+
+        if c0 == 102 and c1 == 108 and c2 == 111 and c3 == 97 and c4 == 116 { return TYPE_FLOAT; }  // "float"
+    }
+
+    if name_len == 6 {
+        let c0: u8 = (source + name_start).*;
+        let c1: u8 = (source + name_start + 1).*;
+        let c2: u8 = (source + name_start + 2).*;
+        let c3: u8 = (source + name_start + 3).*;
+        let c4: u8 = (source + name_start + 4).*;
+        let c5: u8 = (source + name_start + 5).*;
+
+        // "string"
+        if c0 == 115 and c1 == 116 and c2 == 114 and c3 == 105 and c4 == 110 and c5 == 103 {
+            return TYPE_STRING;
+        }
+    }
+
+    return INVALID_TYPE;
+}
+
+// ============================================================================
+// Type Assignability
+// ============================================================================
+
+// Check if a value of type `from` can be assigned to a variable of type `to`
+fn TypeInfo_isAssignable(pool: *TypeRegistry, from: i64, to: i64) bool {
+    // Same type is always assignable
+    if from == to { return true; }
+
+    // Error types are assignable (for error recovery)
+    if from < 0 or to < 0 { return true; }
+
+    let from_t: *Type = TypeRegistry_get(pool, from);
+    let to_t: *Type = TypeRegistry_get(pool, to);
+
+    // Same basic types are assignable
+    if from_t.kind == to_t.kind {
+        if from_t.kind == TypeKind.Bool or
+           from_t.kind == TypeKind.I8 or from_t.kind == TypeKind.I16 or
+           from_t.kind == TypeKind.I32 or from_t.kind == TypeKind.I64 or
+           from_t.kind == TypeKind.U8 or from_t.kind == TypeKind.U16 or
+           from_t.kind == TypeKind.U32 or from_t.kind == TypeKind.U64 or
+           from_t.kind == TypeKind.F32 or from_t.kind == TypeKind.F64 or
+           from_t.kind == TypeKind.Void or from_t.kind == TypeKind.String {
+            return true;
+        }
+    }
+
+    // Pointer types with same element
+    if from_t.kind == TypeKind.Pointer and to_t.kind == TypeKind.Pointer {
+        return TypeInfo_equal(pool, from_t.elem, to_t.elem);
+    }
+
+    // Slice types with same element
+    if from_t.kind == TypeKind.Slice and to_t.kind == TypeKind.Slice {
+        return TypeInfo_equal(pool, from_t.elem, to_t.elem);
+    }
+
+    // Array to slice with same element type
+    if from_t.kind == TypeKind.Array and to_t.kind == TypeKind.Slice {
+        return TypeInfo_equal(pool, from_t.elem, to_t.elem);
+    }
+
+    // Array types with same element and length
+    if from_t.kind == TypeKind.Array and to_t.kind == TypeKind.Array {
+        return from_t.len == to_t.len and TypeInfo_equal(pool, from_t.elem, to_t.elem);
+    }
+
+    return false;
+}
+
+// ============================================================================
+// Field Management (for struct types)
+// ============================================================================
+
+// Set source text for field name comparison
+fn TypeRegistry_setSource(pool: *TypeRegistry, source: *u8, source_len: i64) {
+    pool.source = source;
+    pool.source_len = source_len;
+}
+
+// Add a field to the fields array, return its index
+fn TypeRegistry_addField(pool: *TypeRegistry, name_start: i64, name_len: i64,
+                  type_idx: i64, offset: i64) i64 {
+    TypeRegistry_ensureFieldsCapacity(pool, 1);
+    let idx: i64 = pool.fields_count;
+    pool.fields_count = pool.fields_count + 1;
+
+    let f: *FieldInfo = pool.fields + idx;
+    f.name_start = name_start;
+    f.name_len = name_len;
+    f.type_idx = type_idx;
+    f.offset = offset;
+
+    return idx;
+}
+
+// Get field info at index
+fn TypeRegistry_getField(pool: *TypeRegistry, idx: i64) *FieldInfo {
+    return pool.fields + idx;
+}
+
+// Compare two strings in source
+fn names_equal_types(source: *u8, start1: i64, len1: i64, start2: i64, len2: i64) bool {
+    if len1 != len2 { return false; }
+    var i: i64 = 0;
+    while i < len1 {
+        let p1: *u8 = source + start1 + i;
+        let p2: *u8 = source + start2 + i;
+        if p1.* != p2.* { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Look up field by name in a struct type
+// Returns field info if found, null otherwise
+// type_idx must be a struct type
+fn TypeRegistry_lookupField(pool: *TypeRegistry, type_idx: i64,
+                     field_name_start: i64, field_name_len: i64) *FieldInfo {
+    let t: *Type = TypeRegistry_get(pool, type_idx);
+    if t.kind != TypeKind.Struct {
+        return null;
+    }
+
+    // fields_start in params_start, fields_count in params_count
+    let fields_start: i64 = t.params_start;
+    let fields_count: i64 = t.params_count;
+
+    var i: i64 = 0;
+    while i < fields_count {
+        let f: *FieldInfo = pool.fields + fields_start + i;
+        if names_equal_types(pool.source, f.name_start, f.name_len,
+                            field_name_start, field_name_len) {
+            return f;
+        }
+        i = i + 1;
+    }
+
+    return null;
+}
+
+// Get pointee type from pointer type
+fn TypeInfo_getPointee(pool: *TypeRegistry, ptr_type_idx: i64) i64 {
+    let t: *Type = TypeRegistry_get(pool, ptr_type_idx);
+    if t.kind == TypeKind.Pointer {
+        return t.elem;
+    }
+    return TYPE_INVALID;
+}
+
+// ============================================================================
+// Type Classification (Reference: Zig's core/types.zig)
+// ============================================================================
+
+// Check if type is a primitive (basic) type
+// Reference: Zig's TypeInfo.isPrimitive()
+fn TypeInfo_isPrimitive(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    if t.kind == TypeKind.Bool { return true; }
+    if t.kind == TypeKind.I8 { return true; }
+    if t.kind == TypeKind.I16 { return true; }
+    if t.kind == TypeKind.I32 { return true; }
+    if t.kind == TypeKind.I64 { return true; }
+    if t.kind == TypeKind.U8 { return true; }
+    if t.kind == TypeKind.U16 { return true; }
+    if t.kind == TypeKind.U32 { return true; }
+    if t.kind == TypeKind.U64 { return true; }
+    if t.kind == TypeKind.F32 { return true; }
+    if t.kind == TypeKind.F64 { return true; }
+    if t.kind == TypeKind.Void { return true; }
+    return false;
+}
+
+// Check if type fits in registers (i.e., <= 16 bytes on ARM64)
+// Reference: Zig's TypeInfo.fitsInRegs()
+fn TypeInfo_fitsInRegs(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    return t.size <= 16;
+}
+
+// Check if type needs a register (non-void, non-memory types)
+// Reference: Zig's TypeInfo.needsReg()
+fn TypeInfo_needsReg(pool: *TypeRegistry, idx: i64) bool {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    if t.kind == TypeKind.Void { return false; }
+    if t.kind == TypeKind.Invalid { return false; }
+    return true;
+}
+
+// Get number of registers needed for type
+// Reference: Zig's TypeInfo.registerCount()
+fn TypeInfo_registerCount(pool: *TypeRegistry, idx: i64) i64 {
+    let t: *Type = TypeRegistry_get(pool, idx);
+    if t.kind == TypeKind.Void { return 0; }
+    if t.kind == TypeKind.Invalid { return 0; }
+    // String/Slice need 2 registers (ptr + len)
+    if t.kind == TypeKind.String { return 2; }
+    if t.kind == TypeKind.Slice { return 2; }
+    // Everything else fits in 1 register (for now)
+    if t.size <= 8 { return 1; }
+    // Larger types need 2 registers
+    if t.size <= 16 { return 2; }
+    // Even larger types would need memory
+    return 0;
+}

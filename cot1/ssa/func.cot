@@ -1,0 +1,445 @@
+// Cot0 SSA Function
+// Minimal SSA function for self-hosting.
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/ssa/func.go
+// Reference: bootstrap-0.2/src/ssa/func.zig
+
+// Only import block.cot - it transitively imports value.cot → op.cot
+import "block.cot"
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+const FUNC_MAX_PARAMS: i64 = 32;
+const FUNC_MAX_LOCALS: i64 = 1024;
+
+// ============================================================================
+// Local Variable
+// ============================================================================
+
+struct Local {
+    name_start: i64,      // Name offset in source
+    name_len: i64,        // Name length
+    type_idx: i64,        // Type index
+    is_mutable: bool,     // let vs var
+    is_param: bool,       // Is function parameter
+    param_idx: i64,       // Parameter index (if is_param)
+    size: i64,            // Size in bytes
+    align: i64,           // Alignment
+    offset: i64,          // Stack frame offset (computed by stackalloc)
+}
+
+fn Local_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) Local {
+    return Local{
+        .name_start = name_start,
+        .name_len = name_len,
+        .type_idx = type_idx,
+        .is_mutable = is_mutable,
+        .is_param = false,
+        .param_idx = 0,
+        .size = 8,
+        .align = 8,
+        .offset = 0,
+    };
+}
+
+fn Local_newParam(name_start: i64, name_len: i64, type_idx: i64, param_idx: i64) Local {
+    return Local{
+        .name_start = name_start,
+        .name_len = name_len,
+        .type_idx = type_idx,
+        .is_mutable = false,
+        .is_param = true,
+        .param_idx = param_idx,
+        .size = 8,
+        .align = 8,
+        .offset = 0,
+    };
+}
+
+// Local accessor functions
+fn Local_getType(l: *Local) i64 {
+    return l.type_idx;
+}
+
+fn Local_getSize(l: *Local) i64 {
+    return l.size;
+}
+
+fn Local_getOffset(l: *Local) i64 {
+    return l.offset;
+}
+
+fn Local_isParam(l: *Local) bool {
+    return l.is_param;
+}
+
+fn Local_isMutable(l: *Local) bool {
+    return l.is_mutable;
+}
+
+// ============================================================================
+// SSA Function
+// ============================================================================
+
+// Func represents a function in SSA form.
+// Contains:
+// - Entry block
+// - All basic blocks
+// - All values (instructions)
+// - Local variables
+// - Stack frame layout
+struct Func {
+    // Function metadata
+    name_start: i64,      // Name offset in source
+    name_len: i64,        // Name length
+    return_type: i64,     // Return type index
+    return_type_size: i64, // Return type size in bytes (for hidden return detection)
+
+    // Blocks
+    blocks: *Block,       // Externally allocated block array
+    blocks_count: i64,
+    blocks_cap: i64,
+    entry_block: i64,     // Entry block ID
+
+    // Values
+    values: *Value,       // Externally allocated value array
+    values_count: i64,
+    values_cap: i64,
+
+    // Locals
+    locals: *Local,       // Externally allocated local array
+    locals_count: i64,
+    locals_cap: i64,
+
+    // Stack frame (computed by stackalloc)
+    frame_size: i64,      // Total stack frame size
+    spill_slots: i64,     // Number of spill slots used
+
+    // Current building state
+    current_block: i64,   // Block we're adding values to
+}
+
+// ============================================================================
+// Function Initialization
+// ============================================================================
+
+fn Func_init(f: *Func, name_start: i64, name_len: i64, return_type: i64,
+             blocks: *Block, blocks_cap: i64,
+             values: *Value, values_cap: i64,
+             locals: *Local, locals_cap: i64) {
+    f.name_start = name_start;
+    f.name_len = name_len;
+    f.return_type = return_type;
+    f.return_type_size = 8;  // Default to 8 bytes (i64), set larger for structs
+
+    f.blocks = blocks;
+    f.blocks_count = 0;
+    f.blocks_cap = blocks_cap;
+    f.entry_block = INVALID_BLOCK;
+
+    f.values = values;
+    f.values_count = 0;
+    f.values_cap = values_cap;
+
+    f.locals = locals;
+    f.locals_count = 0;
+    f.locals_cap = locals_cap;
+
+    f.frame_size = 0;
+    f.spill_slots = 0;
+    f.current_block = INVALID_BLOCK;
+}
+
+// ============================================================================
+// Block Management
+// ============================================================================
+
+// Create a new block and add it to the function
+fn Func_newBlock(f: *Func, kind: BlockKind) i64 {
+    if f.blocks_count >= f.blocks_cap { return INVALID_BLOCK; }
+
+    let id: i64 = f.blocks_count;
+    let b: *Block = f.blocks + id;
+    b.* = Block_new(id, kind);
+    f.blocks_count = f.blocks_count + 1;
+
+    return id;
+}
+
+// Create entry block (call once at start)
+fn Func_newEntryBlock(f: *Func) i64 {
+    let id: i64 = Func_newBlock(f, BlockKind.Plain);
+    f.entry_block = id;
+    f.current_block = id;
+    return id;
+}
+
+// Get block by ID
+fn Func_getBlock(f: *Func, id: i64) *Block {
+    if id < 0 or id >= f.blocks_count {
+        return f.blocks;  // Return first as error placeholder
+    }
+    return f.blocks + id;
+}
+
+// Set current block (for value emission)
+fn Func_setBlock(f: *Func, block_id: i64) {
+    f.current_block = block_id;
+}
+
+// ============================================================================
+// Value Management
+// ============================================================================
+
+// Create a new value in the current block
+fn Func_newValue(f: *Func, op: Op, type_idx: i64) *Value {
+    if f.values_count >= f.values_cap {
+        return f.values;  // Return first as error placeholder
+    }
+    if f.current_block == INVALID_BLOCK {
+        return f.values;
+    }
+
+    let id: i64 = f.values_count;
+    let v: *Value = f.values + id;
+    v.* = Value_new(id, op, type_idx, f.current_block);
+    f.values_count = f.values_count + 1;
+
+    // Update block's value range
+    let b: *Block = Func_getBlock(f, f.current_block);
+    if b.values_count == 0 {
+        b.values_start = id;
+    }
+    b.values_count = b.values_count + 1;
+
+    return v;
+}
+
+// Get value by ID
+fn Func_getValue(f: *Func, id: i64) *Value {
+    if id < 0 or id >= f.values_count {
+        return f.values;  // Return first as error placeholder
+    }
+    return f.values + id;
+}
+
+// ============================================================================
+// Local Management
+// ============================================================================
+
+// Add a local variable
+fn Func_addLocal(f: *Func, name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) i64 {
+    if f.locals_count >= f.locals_cap { return -1; }
+
+    let idx: i64 = f.locals_count;
+    let local: *Local = f.locals + idx;
+    local.* = Local_new(name_start, name_len, type_idx, is_mutable);
+    f.locals_count = f.locals_count + 1;
+
+    return idx;
+}
+
+// Add a parameter (parameters come before other locals)
+fn Func_addParam(f: *Func, name_start: i64, name_len: i64, type_idx: i64) i64 {
+    if f.locals_count >= f.locals_cap { return -1; }
+
+    let param_idx: i64 = f.locals_count;
+    let idx: i64 = f.locals_count;
+    let local: *Local = f.locals + idx;
+    local.* = Local_newParam(name_start, name_len, type_idx, param_idx);
+    f.locals_count = f.locals_count + 1;
+
+    return idx;
+}
+
+// Get local by index
+fn Func_getLocal(f: *Func, idx: i64) *Local {
+    if idx < 0 or idx >= f.locals_count {
+        return f.locals;  // Return first as error placeholder
+    }
+    return f.locals + idx;
+}
+
+// Get count of blocks
+// Reference: Zig's Func.numBlocks()
+fn Func_numBlocks(f: *Func) i64 {
+    return f.blocks_count;
+}
+
+// Get count of values
+// Reference: Zig's Func.numValues()
+fn Func_numValues(f: *Func) i64 {
+    return f.values_count;
+}
+
+// Get count of locals
+// Reference: Zig's Func.numLocals()
+fn Func_numLocals(f: *Func) i64 {
+    return f.locals_count;
+}
+
+// Get frame size
+fn Func_getFrameSize(f: *Func) i64 {
+    return f.frame_size;
+}
+
+// Get entry block ID
+fn Func_getEntryBlock(f: *Func) i64 {
+    return f.entry_block;
+}
+
+// Get return type index
+fn Func_getReturnType(f: *Func) i64 {
+    return f.return_type;
+}
+
+// Get return type size in bytes
+fn Func_getReturnTypeSize(f: *Func) i64 {
+    return f.return_type_size;
+}
+
+// Set return type size (called after SSA building when type is known)
+fn Func_setReturnTypeSize(f: *Func, size: i64) {
+    f.return_type_size = size;
+}
+
+// Get current block ID
+fn Func_getCurrentBlock(f: *Func) i64 {
+    return f.current_block;
+}
+
+// ============================================================================
+// Value Emission Helpers
+// ============================================================================
+
+// Emit a constant integer
+fn Func_emitConstInt(f: *Func, value: i64, type_idx: i64) *Value {
+    let v: *Value = Func_newValue(f, Op.ConstInt, type_idx);
+    v.aux_int = value;
+    return v;
+}
+
+// Emit a constant boolean
+fn Func_emitConstBool(f: *Func, value: bool) *Value {
+    let v: *Value = Func_newValue(f, Op.ConstBool, 1);  // TYPE_BOOL = 1
+    if value {
+        v.aux_int = 1;
+    } else {
+        v.aux_int = 0;
+    }
+    return v;
+}
+
+// Emit a constant string
+fn Func_emitConstString(f: *Func, str_start: i64, str_len: i64) *Value {
+    let v: *Value = Func_newValue(f, Op.ConstString, 13);  // TYPE_STRING = 13
+    v.aux_int = str_start;  // Offset in source text
+    v.aux_ptr = str_len;    // Length of string
+    return v;
+}
+
+// Emit a binary operation
+fn Func_emitBinary(f: *Func, op: Op, left: *Value, right: *Value, type_idx: i64) *Value {
+    let v: *Value = Func_newValue(f, op, type_idx);
+    Value_addArg2(v, left, right);
+    return v;
+}
+
+// Emit a unary operation
+fn Func_emitUnary(f: *Func, op: Op, operand: *Value, type_idx: i64) *Value {
+    let v: *Value = Func_newValue(f, op, type_idx);
+    Value_addArg(v, operand);
+    return v;
+}
+
+// Emit a select (conditional value): cond ? true_val : false_val
+fn Func_emitSelect(f: *Func, cond: *Value, true_val: *Value, false_val: *Value, type_idx: i64) *Value {
+    let v: *Value = Func_newValue(f, Op.Select, type_idx);
+    Value_addArg3(v, cond, true_val, false_val);
+    return v;
+}
+
+// Emit a load from local
+fn Func_emitLoadLocal(f: *Func, local_idx: i64) *Value {
+    let local: *Local = Func_getLocal(f, local_idx);
+    let v: *Value = Func_newValue(f, Op.LocalAddr, local.type_idx);
+    v.aux_int = local_idx;
+
+    let load: *Value = Func_newValue(f, Op.Load, local.type_idx);
+    Value_addArg(load, v);
+    return load;
+}
+
+// Emit a store to local
+fn Func_emitStoreLocal(f: *Func, local_idx: i64, val: *Value) *Value {
+    let local: *Local = Func_getLocal(f, local_idx);
+    let addr: *Value = Func_newValue(f, Op.LocalAddr, local.type_idx);
+    addr.aux_int = local_idx;
+
+    let store: *Value = Func_newValue(f, Op.Store, 0);  // Store has no result type
+    Value_addArg2(store, addr, val);
+    return store;
+}
+
+// Emit a return
+fn Func_emitReturn(f: *Func, val: *Value) *Value {
+    let ret: *Value = Func_newValue(f, Op.Return, 0);
+    if val.id != INVALID_ID {
+        Value_addArg(ret, val);
+    }
+    return ret;
+}
+
+// Emit a function call
+// name_start/name_len refer to positions in source
+fn Func_emitCall(f: *Func, name_start: i64, name_len: i64, type_idx: i64) *Value {
+    let v: *Value = Func_newValue(f, Op.Call, type_idx);
+    v.aux_int = name_start;
+    v.aux_ptr = name_len;
+    return v;
+}
+
+// Emit an indirect function call through function pointer (Go: ClosureCall)
+// Following Zig pattern: src/frontend/ir.zig:1168
+// The function pointer will be added as first arg by caller
+fn Func_emitCallIndirect(f: *Func, type_idx: i64) *Value {
+    let v: *Value = Func_newValue(f, Op.ClosureCall, type_idx);
+    return v;
+}
+
+// ============================================================================
+// Control Flow
+// ============================================================================
+
+// Set up a conditional branch
+fn Func_emitIf(f: *Func, cond: *Value, then_block: i64, else_block: i64) {
+    let b: *Block = Func_getBlock(f, f.current_block);
+    b.kind = BlockKind.If;
+    b.control = cond.id;
+
+    Block_setSucc(b, 0, then_block);
+    Block_setSucc(b, 1, else_block);
+
+    let then_b: *Block = Func_getBlock(f, then_block);
+    let else_b: *Block = Func_getBlock(f, else_block);
+    Block_addPred(then_b, f.current_block);
+    Block_addPred(else_b, f.current_block);
+}
+
+// Set up an unconditional jump
+fn Func_emitJump(f: *Func, target: i64) {
+    let b: *Block = Func_getBlock(f, f.current_block);
+    b.kind = BlockKind.Plain;
+    Block_addSucc(b, target);
+
+    let target_b: *Block = Func_getBlock(f, target);
+    Block_addPred(target_b, f.current_block);
+}
+
+// Mark current block as return block
+fn Func_emitReturnBlock(f: *Func) {
+    let b: *Block = Func_getBlock(f, f.current_block);
+    b.kind = BlockKind.Return;
+}

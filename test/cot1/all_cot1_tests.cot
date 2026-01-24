@@ -1,0 +1,149 @@
+// cot1 Feature Test Suite
+// ========================
+//
+// This file tests all cot1 language features.
+// Each feature must have 3-5 tests that pass before the feature is complete.
+//
+// Run with:
+//   ./zig-out/bin/cot test/cot1/all_cot1_tests.cot -o /tmp/cot1_tests && /tmp/cot1_tests
+//
+// Expected output: "All N tests passed!" where N grows as features are added.
+
+// ============================================================================
+// Test Infrastructure (same as e2e/all_tests.cot)
+// ============================================================================
+
+extern fn write(fd: i64, buf: *u8, count: i64) i64;
+
+fn print(s: string) {
+    let _ = write(1, s.ptr, s.len);
+}
+
+fn print_int(n: i64) {
+    if n < 0 {
+        print("-");
+        print_int(0 - n);
+        return;
+    }
+    if n >= 10 {
+        print_int(n / 10);
+    }
+    var buf: [1]u8 = undefined;
+    buf[0] = @intCast(u8, 48 + (n % 10));
+    let _ = write(1, &buf[0], 1);
+}
+
+var g_tests_run: i64 = 0;
+var g_tests_passed: i64 = 0;
+
+fn run_test(name: string, result: i64, expected: i64) {
+    g_tests_run = g_tests_run + 1;
+    if result == expected {
+        g_tests_passed = g_tests_passed + 1;
+    } else {
+        print("FAIL: ");
+        print(name);
+        print(" - got ");
+        print_int(result);
+        print(", expected ");
+        print_int(expected);
+        print("\n");
+    }
+}
+
+// ============================================================================
+// Feature: Error Unions (Placeholder tests until implemented)
+// ============================================================================
+
+fn test_error_union_placeholder() i64 {
+    // Placeholder: returns 1 when feature not yet implemented
+    // Will be replaced with actual error union tests
+    return 1;
+}
+
+// ============================================================================
+// Feature: Optional Types (Placeholder tests until implemented)
+// ============================================================================
+
+fn test_optional_placeholder() i64 {
+    // Placeholder: returns 1 when feature not yet implemented
+    return 1;
+}
+
+// ============================================================================
+// Feature: Type Aliases (Can start implementing now - syntax only)
+// ============================================================================
+
+// Note: Type aliases may work with current parser if we add 'type' keyword
+// type NodeIndex = i64;
+
+fn test_type_alias_placeholder() i64 {
+    // Placeholder until type keyword is added
+    return 1;
+}
+
+// ============================================================================
+// Feature: Labeled Break/Continue
+// ============================================================================
+
+fn test_labeled_break_placeholder() i64 {
+    // Placeholder until labeled control flow is added
+    return 1;
+}
+
+// ============================================================================
+// Feature: Struct Init Shorthand
+// ============================================================================
+
+fn test_struct_shorthand_placeholder() i64 {
+    // Placeholder until .field shorthand is added
+    return 1;
+}
+
+// ============================================================================
+// Main Test Runner
+// ============================================================================
+
+fn main() i64 {
+    print("cot1 Feature Test Suite\n");
+    print("=======================\n\n");
+
+    // Error Union Tests (Feature 1)
+    print("Testing: Error Unions\n");
+    run_test("error_union_placeholder", test_error_union_placeholder(), 1);
+
+    // Optional Type Tests (Feature 2)
+    print("Testing: Optional Types\n");
+    run_test("optional_placeholder", test_optional_placeholder(), 1);
+
+    // Type Alias Tests (Feature 3)
+    print("Testing: Type Aliases\n");
+    run_test("type_alias_placeholder", test_type_alias_placeholder(), 1);
+
+    // Labeled Break/Continue Tests (Feature 5)
+    print("Testing: Labeled Break/Continue\n");
+    run_test("labeled_break_placeholder", test_labeled_break_placeholder(), 1);
+
+    // Struct Init Shorthand Tests (Feature 7)
+    print("Testing: Struct Init Shorthand\n");
+    run_test("struct_shorthand_placeholder", test_struct_shorthand_placeholder(), 1);
+
+    // Summary
+    print("\n");
+    print_int(g_tests_passed);
+    print("/");
+    print_int(g_tests_run);
+    print(" tests passed\n");
+
+    if g_tests_passed == g_tests_run {
+        print("All ");
+        print_int(g_tests_run);
+        print(" tests passed!\n");
+        return 0;
+    } else {
+        print("FAILURES: ");
+        print_int(g_tests_run - g_tests_passed);
+        print(" tests failed\n");
+        return 1;
+    }
+}

@@ -1,0 +1,83 @@
+// Mach-O Tests
+// Run with: ./zig-out/bin/cot cot0/obj/macho_test.cot -o /tmp/macho_test && /tmp/macho_test
+
+import "macho.cot"
+
+fn main() i64 {
+    let result: i64 = 0;
+
+    result = result + test_constants();
+    result = result + test_reloc_info();
+    result = result + test_alignment();
+
+    return result;
+}
+
+fn test_constants() i64 {
+    // Magic number
+    if MH_MAGIC_64 != 0xFEEDFACF { return 1; }
+
+    // CPU type
+    if CPU_TYPE_ARM64 != 0x0100000C { return 2; }
+
+    // File types
+    if MH_OBJECT != 1 { return 3; }
+    if MH_EXECUTE != 2 { return 4; }
+
+    // Structure sizes
+    if MACH_HEADER_64_SIZE != 32 { return 10; }
+    if NLIST64_SIZE != 16 { return 11; }
+    if RELOCATION_SIZE != 8 { return 12; }
+
+    // Check magic validation
+    if not is_macho_magic(MH_MAGIC_64) { return 20; }
+    if not is_macho_magic(MH_CIGAM_64) { return 21; }
+    if is_macho_magic(0x12345678) { return 22; }
+
+    // Check file type validation
+    if not is_valid_file_type(MH_OBJECT) { return 30; }
+    if not is_valid_file_type(MH_EXECUTE) { return 31; }
+    if is_valid_file_type(99) { return 32; }
+
+    return 0;
+}
+
+fn test_reloc_info() i64 {
+    // ARM64_RELOC_BRANCH26, symbol 0, pcrel=true, length=2 (4 bytes), external=true
+    // Expected: 0 | (1<<24) | (2<<25) | (1<<27) | (2<<28)
+    //         = 0x00000000 | 0x01000000 | 0x04000000 | 0x08000000 | 0x20000000
+    //         = 0x2D000000
+    let reloc: i64 = make_reloc_info(0, true, 2, true, ARM64_RELOC_BRANCH26);
+    if reloc != 0x2D000000 { return 40; }
+
+    // Simple unsigned relocation, symbol 5, not pcrel, length=3 (8 bytes), external
+    // Expected: 5 | (0<<24) | (3<<25) | (1<<27) | (0<<28)
+    //         = 0x05 | 0x06000000 | 0x08000000
+    //         = 0x0E000005
+    let reloc2: i64 = make_reloc_info(5, false, 3, true, ARM64_RELOC_UNSIGNED);
+    if reloc2 != 0x0E000005 { return 41; }
+
+    return 0;
+}
+
+fn test_alignment() i64 {
+    // Padding for alignment
+    // offset 0, align 2 -> 0 padding
+    if padding_for_align(0, 2) != 0 { return 50; }
+    // offset 1, align 2 (4 bytes) -> 3 padding
+    if padding_for_align(1, 2) != 3 { return 51; }
+    // offset 4, align 2 (4 bytes) -> 0 padding
+    if padding_for_align(4, 2) != 0 { return 52; }
+    // offset 5, align 3 (8 bytes) -> 3 padding
+    if padding_for_align(5, 3) != 3 { return 53; }
+
+    // Align up
+    if align_up(0, 2) != 0 { return 60; }
+    if align_up(1, 2) != 4 { return 61; }
+    if align_up(4, 2) != 4 { return 62; }
+    if align_up(5, 3) != 8 { return 63; }
+    if align_up(8, 3) != 8 { return 64; }
+    if align_up(9, 3) != 16 { return 65; }
+
+    return 0;
+}

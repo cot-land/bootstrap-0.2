@@ -1,0 +1,139 @@
+// ARM64 Register Definitions
+// Defines register numbers and register sets for ARM64 code generation.
+//
+// Reference: src/codegen/arm64.zig (our Zig bootstrap)
+// Reference: ARM Architecture Reference Manual
+//
+// ARM64 has 31 general-purpose registers (X0-X30), plus SP (X31).
+// Register numbers 0-30 are used in instruction encoding.
+// X31 encodes as 31 but means either SP or XZR depending on context.
+
+// ============================================================================
+// General Purpose Registers (64-bit X registers)
+// ============================================================================
+
+// Argument/Result registers (caller-saved)
+const X0: i64 = 0;   // First argument/return value
+const X1: i64 = 1;   // Second argument/return value (or high part of 128-bit)
+const X2: i64 = 2;   // Third argument
+const X3: i64 = 3;   // Fourth argument
+const X4: i64 = 4;   // Fifth argument
+const X5: i64 = 5;   // Sixth argument
+const X6: i64 = 6;   // Seventh argument
+const X7: i64 = 7;   // Eighth argument
+
+// Caller-saved temporaries
+const X8: i64 = 8;   // Indirect result location register (also temp)
+const X9: i64 = 9;   // Temporary
+const X10: i64 = 10; // Temporary
+const X11: i64 = 11; // Temporary
+const X12: i64 = 12; // Temporary
+const X13: i64 = 13; // Temporary
+const X14: i64 = 14; // Temporary
+const X15: i64 = 15; // Temporary
+
+// Intra-procedure-call scratch registers
+const X16: i64 = 16; // IP0 - may be used by linker
+const X17: i64 = 17; // IP1 - may be used by linker
+
+// Platform register
+const X18: i64 = 18; // Platform-specific, not generally available
+
+// Callee-saved registers
+const X19: i64 = 19; // Callee-saved
+const X20: i64 = 20; // Callee-saved
+const X21: i64 = 21; // Callee-saved
+const X22: i64 = 22; // Callee-saved
+const X23: i64 = 23; // Callee-saved
+const X24: i64 = 24; // Callee-saved
+const X25: i64 = 25; // Callee-saved
+const X26: i64 = 26; // Callee-saved
+const X27: i64 = 27; // Callee-saved
+const X28: i64 = 28; // Callee-saved
+
+// Special registers
+const X29: i64 = 29; // FP - Frame Pointer (callee-saved)
+const X30: i64 = 30; // LR - Link Register (holds return address)
+const XZR: i64 = 31; // Zero register / Stack pointer
+const SP: i64 = 31;  // Stack pointer (same encoding as XZR)
+
+// Aliases
+const FP: i64 = 29;  // Frame pointer
+const LR: i64 = 30;  // Link register
+
+// ============================================================================
+// Register Set Information
+// ============================================================================
+
+// Number of general purpose registers available for allocation
+const NUM_GP_REGS: i64 = 31;
+
+// Number of argument registers (X0-X7)
+const NUM_ARG_REGS: i64 = 8;
+
+// Number of callee-saved registers (X19-X28)
+const NUM_CALLEE_SAVED: i64 = 10;
+
+// Number of caller-saved registers (X0-X15, excluding X16-X18)
+const NUM_CALLER_SAVED: i64 = 16;
+
+// ============================================================================
+// Register Classification Functions
+// ============================================================================
+
+// Check if register is an argument register (X0-X7)
+fn is_arg_reg(reg: i64) bool {
+    return reg >= 0 and reg <= 7;
+}
+
+// Check if register is callee-saved (X19-X28)
+fn is_callee_saved(reg: i64) bool {
+    return reg >= 19 and reg <= 28;
+}
+
+// Check if register is caller-saved (X0-X15)
+fn is_caller_saved(reg: i64) bool {
+    return reg >= 0 and reg <= 15;
+}
+
+// Check if register is a scratch register (X16-X17)
+fn is_scratch_reg(reg: i64) bool {
+    return reg == 16 or reg == 17;
+}
+
+// Check if register is allocatable (X0-X28, excluding X16-X18)
+fn is_allocatable(reg: i64) bool {
+    if reg < 0 or reg > 28 { return false; }
+    if reg == 16 or reg == 17 or reg == 18 { return false; }
+    return true;
+}
+
+// ============================================================================
+// Register Naming (for debug output)
+// ============================================================================
+
+// Get the name of a register
+// Returns a string like "x0", "x30", "sp", etc.
+// NOTE: For self-hosting, we'll need a string lookup table or switch expression.
+// For now, this is a placeholder that would need runtime string construction.
+
+// ============================================================================
+// Floating Point Registers (128-bit V registers)
+// ============================================================================
+
+// SIMD/FP registers V0-V31 (also known as Q0-Q31 for 128-bit)
+// D0-D31 for 64-bit, S0-S31 for 32-bit, H0-H31 for 16-bit, B0-B31 for 8-bit
+
+const V0: i64 = 0;
+const V1: i64 = 1;
+const V2: i64 = 2;
+const V3: i64 = 3;
+const V4: i64 = 4;
+const V5: i64 = 5;
+const V6: i64 = 6;
+const V7: i64 = 7;
+// V8-V15 are callee-saved (lower 64 bits only)
+// V16-V31 are caller-saved
+
+// Number of FP argument registers (V0-V7)
+const NUM_FP_ARG_REGS: i64 = 8;

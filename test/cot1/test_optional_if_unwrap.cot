@@ -1,0 +1,51 @@
+// Test: Optional If-Unwrap Pattern
+// Feature: if opt |val| { } else { } syntax
+//
+// This test verifies:
+// 1. if-unwrap with value capture
+// 2. else branch for null case
+// 3. nested unwrapping
+
+struct Node {
+    value: i64,
+    next: ?*Node,
+}
+
+fn getNext(node: *Node) ?*Node {
+    return node.next;
+}
+
+fn test_if_unwrap_some() i64 {
+    // var node: Node = Node{ .value = 42, .next = null };
+    // var ptr: ?*Node = &node;
+    // if ptr |n| {
+    //     return n.value;  // Should return 42
+    // }
+    // return 0;
+    return 1;
+}
+
+fn test_if_unwrap_null() i64 {
+    // var ptr: ?*Node = null;
+    // if ptr |n| {
+    //     return n.value;
+    // } else {
+    //     return 99;  // Should return 99
+    // }
+    return 1;
+}
+
+fn test_if_unwrap_chain() i64 {
+    // var node1: Node = Node{ .value = 10, .next = null };
+    // var node2: Node = Node{ .value = 20, .next = &node1 };
+    // if node2.next |n| {
+    //     return n.value;  // Should return 10
+    // }
+    // return 0;
+    return 1;
+}
+
+fn main() i64 {
+    // Placeholder until optionals are implemented
+    return 0;
+}

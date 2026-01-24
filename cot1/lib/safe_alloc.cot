@@ -1,0 +1,296 @@
+// =============================================================================
+// Safe Memory Allocation
+// =============================================================================
+//
+// Wrappers around malloc that:
+// 1. Check for invalid sizes
+// 2. Check for allocation failure (null return)
+// 3. Track allocation statistics
+// 4. Provide context on failure
+//
+// =============================================================================
+
+import "error.cot"
+
+// Note: malloc_u8, malloc_i64, free_u8, free_i64, realloc_u8 must be declared
+// by the importing file (typically in main.cot or via list.cot)
+
+// =============================================================================
+// Safe Allocation - u8 (bytes)
+// =============================================================================
+
+fn safe_malloc_u8(size: i64, name: *u8) *u8 {
+    // Check for invalid size
+    if size <= 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("ALLOC ERROR: ");
+        stderr_str(name);
+        stderr_str(" requested invalid size ");
+        stderr_int(size);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+
+    // Attempt allocation
+    let ptr: *u8 = malloc_u8(size);
+
+    // Check for failure
+    if ptr == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("ALLOC FAILED: ");
+        stderr_str(name);
+        stderr_str(" could not allocate ");
+        stderr_int(size);
+        stderr_str(" bytes\n");
+        stderr_str("Current allocation stats:\n");
+        stderr_str("  Total allocations: ");
+        stderr_int(g_alloc_count);
+        stderr_newline();
+        stderr_str("  Total bytes: ");
+        stderr_int(g_alloc_bytes);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+
+    // Track allocation
+    track_alloc(size);
+
+    // Debug output if enabled
+    if g_debug_verbose {
+        stderr_str("[ALLOC] ");
+        stderr_str(name);
+        stderr_str(": ");
+        stderr_int(size);
+        stderr_str(" bytes at ");
+        stderr_hex(@intCast(i64, ptr));
+        stderr_newline();
+    }
+
+    return ptr;
+}
+
+// =============================================================================
+// Safe Allocation - i64 (arrays of 64-bit integers)
+// =============================================================================
+
+fn safe_malloc_i64(count: i64, name: *u8) *i64 {
+    // Check for invalid count
+    if count <= 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("ALLOC ERROR: ");
+        stderr_str(name);
+        stderr_str(" requested invalid count ");
+        stderr_int(count);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+
+    // Calculate byte size
+    let size: i64 = count * 8;
+
+    // Attempt allocation
+    let ptr: *i64 = malloc_i64(count);
+
+    // Check for failure
+    if ptr == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("ALLOC FAILED: ");
+        stderr_str(name);
+        stderr_str(" could not allocate ");
+        stderr_int(count);
+        stderr_str(" i64 elements (");
+        stderr_int(size);
+        stderr_str(" bytes)\n");
+        stderr_str("Current allocation stats:\n");
+        stderr_str("  Total allocations: ");
+        stderr_int(g_alloc_count);
+        stderr_newline();
+        stderr_str("  Total bytes: ");
+        stderr_int(g_alloc_bytes);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+
+    // Track allocation
+    track_alloc(size);
+
+    // Debug output if enabled
+    if g_debug_verbose {
+        stderr_str("[ALLOC] ");
+        stderr_str(name);
+        stderr_str(": ");
+        stderr_int(count);
+        stderr_str(" i64 (");
+        stderr_int(size);
+        stderr_str(" bytes) at ");
+        stderr_hex(@intCast(i64, ptr));
+        stderr_newline();
+    }
+
+    return ptr;
+}
+
+// =============================================================================
+// Safe Reallocation
+// =============================================================================
+
+fn safe_realloc_u8(ptr: *u8, old_size: i64, new_size: i64, name: *u8) *u8 {
+    // Check for invalid sizes
+    if new_size <= 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("REALLOC ERROR: ");
+        stderr_str(name);
+        stderr_str(" requested invalid new size ");
+        stderr_int(new_size);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+
+    // If ptr is null, this is just an allocation
+    if ptr == null {
+        return safe_malloc_u8(new_size, name);
+    }
+
+    // Attempt reallocation
+    let new_ptr: *u8 = realloc_u8(ptr, old_size, new_size);
+
+    // Check for failure
+    if new_ptr == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("REALLOC FAILED: ");
+        stderr_str(name);
+        stderr_str(" could not grow from ");
+        stderr_int(old_size);
+        stderr_str(" to ");
+        stderr_int(new_size);
+        stderr_str(" bytes\n");
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+
+    // Track the size change
+    if new_size > old_size {
+        track_alloc(new_size - old_size);
+    }
+
+    // Debug output if enabled
+    if g_debug_verbose {
+        stderr_str("[REALLOC] ");
+        stderr_str(name);
+        stderr_str(": ");
+        stderr_int(old_size);
+        stderr_str(" -> ");
+        stderr_int(new_size);
+        stderr_str(" bytes, ");
+        stderr_hex(@intCast(i64, ptr));
+        stderr_str(" -> ");
+        stderr_hex(@intCast(i64, new_ptr));
+        stderr_newline();
+    }
+
+    return new_ptr;
+}
+
+// =============================================================================
+// Safe Free (with tracking)
+// =============================================================================
+
+fn safe_free_u8(ptr: *u8, name: *u8) {
+    if ptr == null {
+        // Freeing null is a no-op (like C free)
+        return;
+    }
+
+    if g_debug_verbose {
+        stderr_str("[FREE] ");
+        stderr_str(name);
+        stderr_str(" at ");
+        stderr_hex(@intCast(i64, ptr));
+        stderr_newline();
+    }
+
+    track_free();
+    free_u8(ptr);
+}
+
+fn safe_free_i64(ptr: *i64, name: *u8) {
+    if ptr == null {
+        return;
+    }
+
+    if g_debug_verbose {
+        stderr_str("[FREE] ");
+        stderr_str(name);
+        stderr_str(" at ");
+        stderr_hex(@intCast(i64, ptr));
+        stderr_newline();
+    }
+
+    track_free();
+    free_i64(ptr);
+}
+
+// =============================================================================
+// Allocation with Zero Initialization
+// =============================================================================
+
+fn safe_calloc_u8(size: i64, name: *u8) *u8 {
+    let ptr: *u8 = safe_malloc_u8(size, name);
+
+    // Zero the memory
+    var i: i64 = 0;
+    while i < size {
+        (ptr + i).* = 0;
+        i = i + 1;
+    }
+
+    return ptr;
+}
+
+fn safe_calloc_i64(count: i64, name: *u8) *i64 {
+    let ptr: *i64 = safe_malloc_i64(count, name);
+
+    // Zero the memory
+    var i: i64 = 0;
+    while i < count {
+        (ptr + i).* = 0;
+        i = i + 1;
+    }
+
+    return ptr;
+}
+
+// =============================================================================
+// Ensure Capacity (grow array if needed)
+// =============================================================================
+
+// Returns new capacity if growth needed, 0 if no growth needed
+fn calc_grow_capacity(count: i64, capacity: i64, needed: i64) i64 {
+    if count + needed <= capacity {
+        return 0;  // No growth needed
+    }
+
+    // Grow by at least 50% or to fit needed, whichever is larger
+    var new_cap: i64 = capacity + capacity / 2;
+    if new_cap < count + needed {
+        new_cap = count + needed;
+    }
+
+    // Minimum capacity of 8
+    if new_cap < 8 {
+        new_cap = 8;
+    }
+
+    return new_cap;
+}

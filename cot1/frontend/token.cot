@@ -1,0 +1,339 @@
+// Cot0 Token Definitions
+// Sprint A: Control flow, variables, comparison/logical operators
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/syntax/tokens.go
+
+// Token type enumeration
+enum TokenType {
+    // Literals
+    Int,        // 42, 0xFF, 0b1010
+    StringLit,  // "hello"
+    CharLit,    // 'a'
+
+    // Identifiers
+    Ident,      // foo, bar
+
+    // Keywords - declarations
+    Fn,         // fn
+    Let,        // let
+    Var,        // var
+    Const,      // const
+    Struct,     // struct
+    Enum,       // enum
+    Import,     // import
+    Extern,     // extern
+
+    // Keywords - control flow
+    Return,     // return
+    If,         // if
+    Else,       // else
+    While,      // while
+    For,        // for
+    In,         // in
+    Break,      // break
+    Continue,   // continue
+    Defer,      // defer
+    Switch,     // switch
+
+    // Keywords - types
+    I64,        // i64
+    I32,        // i32
+    U8,         // u8
+    Bool,       // bool
+    Void,       // void
+    String,     // string (slice type)
+
+    // Keywords - literals
+    True,       // true
+    False,      // false
+    Null,       // null
+
+    // Keywords - logical operators (word form)
+    And,        // and
+    Or,         // or
+    Not,        // not
+
+    // Punctuation - delimiters
+    LParen,     // (
+    RParen,     // )
+    LBrace,     // {
+    RBrace,     // }
+    LBracket,   // [
+    RBracket,   // ]
+    Comma,      // ,
+    Colon,      // :
+    Semi,       // ;
+    Dot,        // .
+    At,         // @
+
+    // Operators - arithmetic
+    Plus,       // +
+    Minus,      // -
+    Star,       // *
+    Slash,      // /
+    Percent,    // %
+
+    // Operators - comparison (following Go's precCmp)
+    EqEq,       // ==
+    NotEq,      // !=
+    Less,       // <
+    LessEq,     // <=
+    Greater,    // >
+    GreaterEq,  // >=
+
+    // Operators - logical (symbol form)
+    AmpAmp,     // &&
+    PipePipe,   // ||
+    Bang,       // !
+
+    // Operators - bitwise
+    Amp,        // &
+    Pipe,       // |
+    Caret,      // ^
+    Tilde,      // ~
+    LessLess,   // <<
+    GreaterGreater, // >>
+
+    // Operators - assignment
+    Eq,         // =
+    PlusEq,     // +=
+    MinusEq,    // -=
+    StarEq,     // *=
+    SlashEq,    // /=
+    PercentEq,  // %=
+    AmpEq,      // &=
+    PipeEq,     // |=
+    CaretEq,    // ^=
+
+    // Arrow (for function types)
+    Arrow,      // ->
+    FatArrow,   // =>
+
+    // Special
+    Eof,        // end of file
+    Error,      // invalid token
+}
+
+// Token structure
+struct Token {
+    kind: TokenType,
+    start: i64,     // offset into source
+    end: i64,       // token length (NOT end offset - misleading name)
+}
+
+// Create a token (matches Token struct initialization in Zig)
+fn Token_new(k: TokenType, s: i64, e: i64) Token {
+    var t: Token;
+    t.kind = k;
+    t.start = s;
+    t.end = e;
+    return t;
+}
+
+// Returns operator precedence (0 = non-operator)
+// Higher values bind tighter (matches Token.precedence() in Zig)
+fn Token_precedence(t: TokenType) i64 {
+    // Lowest: ?? coalesce (not in cot0 yet)
+    if t == TokenType.Or or t == TokenType.PipePipe { return 2; }
+    if t == TokenType.And or t == TokenType.AmpAmp { return 3; }
+    if t == TokenType.EqEq or t == TokenType.NotEq or t == TokenType.Less or
+       t == TokenType.LessEq or t == TokenType.Greater or t == TokenType.GreaterEq { return 4; }
+    if t == TokenType.Plus or t == TokenType.Minus or t == TokenType.Pipe or t == TokenType.Caret { return 5; }
+    if t == TokenType.Star or t == TokenType.Slash or t == TokenType.Percent or
+       t == TokenType.Amp or t == TokenType.LessLess or t == TokenType.GreaterGreater { return 6; }
+    return 0;
+}
+
+// Returns true for literal tokens (matches Token.isLiteral() in Zig)
+fn Token_isLiteral(t: TokenType) bool {
+    return t == TokenType.Int or t == TokenType.StringLit or t == TokenType.CharLit or t == TokenType.Ident;
+}
+
+// Returns true for operator/delimiter tokens (matches Token.isOperator() in Zig)
+fn Token_isOperator(t: TokenType) bool {
+    // Arithmetic
+    if t == TokenType.Plus or t == TokenType.Minus or t == TokenType.Star or
+       t == TokenType.Slash or t == TokenType.Percent { return true; }
+    // Comparison
+    if t == TokenType.EqEq or t == TokenType.NotEq or t == TokenType.Less or
+       t == TokenType.LessEq or t == TokenType.Greater or t == TokenType.GreaterEq { return true; }
+    // Logical
+    if t == TokenType.AmpAmp or t == TokenType.PipePipe or t == TokenType.Bang { return true; }
+    // Bitwise
+    if t == TokenType.Amp or t == TokenType.Pipe or t == TokenType.Caret or
+       t == TokenType.Tilde or t == TokenType.LessLess or t == TokenType.GreaterGreater { return true; }
+    // Assignment
+    if t == TokenType.Eq or t == TokenType.PlusEq or t == TokenType.MinusEq or
+       t == TokenType.StarEq or t == TokenType.SlashEq or t == TokenType.PercentEq or
+       t == TokenType.AmpEq or t == TokenType.PipeEq or t == TokenType.CaretEq { return true; }
+    // Punctuation
+    if t == TokenType.LParen or t == TokenType.RParen or t == TokenType.LBrace or
+       t == TokenType.RBrace or t == TokenType.LBracket or t == TokenType.RBracket or
+       t == TokenType.Comma or t == TokenType.Colon or t == TokenType.Semi or
+       t == TokenType.Dot or t == TokenType.At or t == TokenType.Arrow or t == TokenType.FatArrow { return true; }
+    return false;
+}
+
+// Returns true for keyword tokens (matches Token.isKeyword() in Zig)
+fn Token_isKeyword(t: TokenType) bool {
+    // Declaration keywords
+    if t == TokenType.Fn or t == TokenType.Let or t == TokenType.Var or
+       t == TokenType.Const or t == TokenType.Struct or t == TokenType.Enum or
+       t == TokenType.Import or t == TokenType.Extern { return true; }
+    // Control flow keywords
+    if t == TokenType.Return or t == TokenType.If or t == TokenType.Else or
+       t == TokenType.While or t == TokenType.For or t == TokenType.In or
+       t == TokenType.Break or t == TokenType.Continue or t == TokenType.Switch { return true; }
+    // Type keywords
+    if t == TokenType.I64 or t == TokenType.I32 or t == TokenType.U8 or
+       t == TokenType.Bool or t == TokenType.Void or t == TokenType.String { return true; }
+    // Literal keywords
+    if t == TokenType.True or t == TokenType.False or t == TokenType.Null { return true; }
+    // Logical keywords
+    if t == TokenType.And or t == TokenType.Or or t == TokenType.Not { return true; }
+    return false;
+}
+
+// Returns true for type keywords (matches Token.isTypeKeyword() in Zig)
+fn Token_isTypeKeyword(t: TokenType) bool {
+    return t == TokenType.I64 or t == TokenType.I32 or t == TokenType.U8 or
+           t == TokenType.Bool or t == TokenType.Void or t == TokenType.String;
+}
+
+// Returns true for assignment operators (matches Token.isAssignment() in Zig)
+fn Token_isAssignment(t: TokenType) bool {
+    return t == TokenType.Eq or t == TokenType.PlusEq or t == TokenType.MinusEq or
+           t == TokenType.StarEq or t == TokenType.SlashEq or t == TokenType.PercentEq or
+           t == TokenType.AmpEq or t == TokenType.PipeEq or t == TokenType.CaretEq;
+}
+
+// Lookup maps an identifier to its keyword token or Ident (matches lookup() in Zig)
+// Following Go's pattern from syntax/scanner.go keyword lookup
+fn Token_lookup(text: string) TokenType {
+    let n: i64 = len(text);
+
+    // Length 2 keywords
+    if n == 2 {
+        if text[0] == 102 and text[1] == 110 { return TokenType.Fn; }      // fn
+        if text[0] == 105 and text[1] == 102 { return TokenType.If; }      // if
+        if text[0] == 105 and text[1] == 110 { return TokenType.In; }      // in
+        if text[0] == 111 and text[1] == 114 { return TokenType.Or; }      // or
+        if text[0] == 117 and text[1] == 56 { return TokenType.U8; }       // u8
+    }
+
+    // Length 3 keywords
+    if n == 3 {
+        if text[0] == 105 and text[1] == 54 and text[2] == 52 { return TokenType.I64; }   // i64
+        if text[0] == 105 and text[1] == 51 and text[2] == 50 { return TokenType.I32; }   // i32
+        if text[0] == 108 and text[1] == 101 and text[2] == 116 { return TokenType.Let; } // let
+        if text[0] == 118 and text[1] == 97 and text[2] == 114 { return TokenType.Var; }  // var
+        if text[0] == 102 and text[1] == 111 and text[2] == 114 { return TokenType.For; } // for
+        if text[0] == 97 and text[1] == 110 and text[2] == 100 { return TokenType.And; }  // and
+        if text[0] == 110 and text[1] == 111 and text[2] == 116 { return TokenType.Not; } // not
+    }
+
+    // Length 4 keywords
+    if n == 4 {
+        if text[0] == 98 and text[1] == 111 and text[2] == 111 and text[3] == 108 { return TokenType.Bool; }    // bool
+        if text[0] == 118 and text[1] == 111 and text[2] == 105 and text[3] == 100 { return TokenType.Void; }   // void
+        if text[0] == 116 and text[1] == 114 and text[2] == 117 and text[3] == 101 { return TokenType.True; }   // true
+        if text[0] == 101 and text[1] == 108 and text[2] == 115 and text[3] == 101 { return TokenType.Else; }   // else
+        if text[0] == 101 and text[1] == 110 and text[2] == 117 and text[3] == 109 { return TokenType.Enum; }   // enum
+        if text[0] == 110 and text[1] == 117 and text[2] == 108 and text[3] == 108 { return TokenType.Null; }   // null
+    }
+
+    // Length 5 keywords
+    if n == 5 {
+        if text[0] == 119 and text[1] == 104 and text[2] == 105 and text[3] == 108 and text[4] == 101 { return TokenType.While; }   // while
+        if text[0] == 98 and text[1] == 114 and text[2] == 101 and text[3] == 97 and text[4] == 107 { return TokenType.Break; }     // break
+        if text[0] == 99 and text[1] == 111 and text[2] == 110 and text[3] == 115 and text[4] == 116 { return TokenType.Const; }    // const
+        if text[0] == 102 and text[1] == 97 and text[2] == 108 and text[3] == 115 and text[4] == 101 { return TokenType.False; }    // false
+        if text[0] == 100 and text[1] == 101 and text[2] == 102 and text[3] == 101 and text[4] == 114 { return TokenType.Defer; }    // defer
+    }
+
+    // Length 6 keywords
+    if n == 6 {
+        if text[0] == 114 and text[1] == 101 and text[2] == 116 and text[3] == 117 and text[4] == 114 and text[5] == 110 { return TokenType.Return; }   // return
+        if text[0] == 115 and text[1] == 116 and text[2] == 114 and text[3] == 117 and text[4] == 99 and text[5] == 116 { return TokenType.Struct; }    // struct
+        if text[0] == 105 and text[1] == 109 and text[2] == 112 and text[3] == 111 and text[4] == 114 and text[5] == 116 { return TokenType.Import; }   // import
+        if text[0] == 115 and text[1] == 116 and text[2] == 114 and text[3] == 105 and text[4] == 110 and text[5] == 103 { return TokenType.String; }   // string
+        if text[0] == 101 and text[1] == 120 and text[2] == 116 and text[3] == 101 and text[4] == 114 and text[5] == 110 { return TokenType.Extern; }   // extern
+        if text[0] == 115 and text[1] == 119 and text[2] == 105 and text[3] == 116 and text[4] == 99 and text[5] == 104 { return TokenType.Switch; }    // switch
+    }
+
+    // Length 8 keywords
+    if n == 8 {
+        // continue
+        if text[0] == 99 and text[1] == 111 and text[2] == 110 and text[3] == 116 and
+           text[4] == 105 and text[5] == 110 and text[6] == 117 and text[7] == 101 {
+            return TokenType.Continue;
+        }
+    }
+
+    return TokenType.Ident;
+}
+
+// Get string representation of token type
+// Reference: Zig's Token.string()
+fn Token_string(t: TokenType) string {
+    if t == TokenType.Eof { return "EOF"; }
+    if t == TokenType.Error { return "ERROR"; }
+    if t == TokenType.Ident { return "IDENT"; }
+    if t == TokenType.Int { return "INT"; }
+    if t == TokenType.StringLit { return "STRING"; }
+    if t == TokenType.CharLit { return "CHAR"; }
+    if t == TokenType.Plus { return "+"; }
+    if t == TokenType.Minus { return "-"; }
+    if t == TokenType.Star { return "*"; }
+    if t == TokenType.Slash { return "/"; }
+    if t == TokenType.Percent { return "%"; }
+    if t == TokenType.Amp { return "&"; }
+    if t == TokenType.Pipe { return "|"; }
+    if t == TokenType.Caret { return "^"; }
+    if t == TokenType.Tilde { return "~"; }
+    if t == TokenType.LessLess { return "<<"; }
+    if t == TokenType.GreaterGreater { return ">>"; }
+    if t == TokenType.Eq { return "="; }
+    if t == TokenType.EqEq { return "=="; }
+    if t == TokenType.NotEq { return "!="; }
+    if t == TokenType.Less { return "<"; }
+    if t == TokenType.LessEq { return "<="; }
+    if t == TokenType.Greater { return ">"; }
+    if t == TokenType.GreaterEq { return ">="; }
+    if t == TokenType.Bang { return "!"; }
+    if t == TokenType.And { return "and"; }
+    if t == TokenType.Or { return "or"; }
+    if t == TokenType.LParen { return "("; }
+    if t == TokenType.RParen { return ")"; }
+    if t == TokenType.LBrace { return "{"; }
+    if t == TokenType.RBrace { return "}"; }
+    if t == TokenType.LBracket { return "["; }
+    if t == TokenType.RBracket { return "]"; }
+    if t == TokenType.Comma { return ","; }
+    if t == TokenType.Dot { return "."; }
+    if t == TokenType.Colon { return ":"; }
+    if t == TokenType.Semi { return ";"; }
+    if t == TokenType.Arrow { return "->"; }
+    if t == TokenType.At { return "@"; }
+    if t == TokenType.Fn { return "fn"; }
+    if t == TokenType.Let { return "let"; }
+    if t == TokenType.Var { return "var"; }
+    if t == TokenType.Const { return "const"; }
+    if t == TokenType.If { return "if"; }
+    if t == TokenType.Else { return "else"; }
+    if t == TokenType.While { return "while"; }
+    if t == TokenType.For { return "for"; }
+    if t == TokenType.Return { return "return"; }
+    if t == TokenType.Struct { return "struct"; }
+    if t == TokenType.Enum { return "enum"; }
+    if t == TokenType.Import { return "import"; }
+    if t == TokenType.Extern { return "extern"; }
+    if t == TokenType.True { return "true"; }
+    if t == TokenType.False { return "false"; }
+    if t == TokenType.Null { return "null"; }
+    if t == TokenType.Break { return "break"; }
+    if t == TokenType.Continue { return "continue"; }
+    if t == TokenType.Defer { return "defer"; }
+    if t == TokenType.Switch { return "switch"; }
+    return "UNKNOWN";
+}

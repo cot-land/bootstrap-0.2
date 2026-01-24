@@ -1,0 +1,1309 @@
+// Cot0 AST Node Definitions
+// Minimal AST for: i64, arithmetic, functions, return
+//
+// Design follows Go's cmd/compile/internal/syntax patterns:
+// - Nodes identified by kind enum
+// - Expressions and statements distinguished by kind
+// - Functions store lists of parameters and body statements
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/syntax/nodes.go
+
+import "token.cot"
+import "../lib/list.cot"
+
+// ============================================================================
+// Node Kinds
+// ============================================================================
+
+// NodeKind identifies what type of AST node this is.
+// Split into expressions (produce values) and statements (perform actions).
+enum NodeKind {
+    // Expressions (produce values)
+    IntLit,         // Integer literal: 42
+    StringLit,      // String literal: "hello"
+    Ident,          // Identifier: foo
+    BinaryExpr,     // Binary operation: a + b
+    CallExpr,       // Function call: add(1, 2)
+    UnaryExpr,      // Unary operation: -x, !x
+    AddressOf,      // Address-of: &x
+    DerefExpr,      // Dereference: ptr.*
+    AssignExpr,     // Assignment: x = expr
+
+    // Statements (perform actions)
+    ReturnStmt,     // return expr;
+    ExprStmt,       // expression as statement: foo();
+    BlockStmt,      // { stmt; stmt; }
+    IfStmt,         // if cond { body } else { body }
+    WhileStmt,      // while cond { body }
+    ForStmt,        // for item in array { body }
+    BreakStmt,      // break;
+    ContinueStmt,   // continue;
+    DeferStmt,      // defer expr; (field0=expr node index)
+
+    // Declarations
+    FnDecl,         // fn name(params) ret { body }
+    ExternFnDecl,   // extern fn name(params) ret;
+    ParamDecl,      // name: type
+    VarDecl,        // let/var name: type = expr; (local)
+    GlobalVarDecl,  // var name: type; (top-level global)
+    ConstDecl,      // const name = expr;
+    StructDecl,     // struct Name { fields }
+    EnumDecl,       // enum Name { variants }
+    FieldDecl,      // name: type (struct field)
+    ImportDecl,     // import "path";
+
+    // Member access
+    FieldAccess,    // expr.field
+    IndexExpr,      // expr[index]
+    SliceExpr,      // expr[start:end]
+
+    // Composite literals
+    StructLit,      // TypeName{ .field = value, ... }
+    FieldInit,      // .field = value (inside struct literal)
+    ArrayLit,       // [elem1, elem2, ...]
+
+    // Builtins
+    BuiltinCall,    // @string(ptr, len), @intCast(type, val), @sizeOf(type)
+
+    // Switch expression
+    SwitchExpr,     // switch x { 1 => a, 2 => b, else => c }
+    SwitchCase,     // pattern => body (or else => body)
+
+    // Type expressions (like Zig's TypeExpr - resolved by checker)
+    // Reference: src/frontend/ast.zig TypeExpr, TypeKind
+    TypeExprNamed,      // Named type: Point, i64 (field0=name_start, field1=name_len)
+    TypeExprPointer,    // Pointer type: *T (field0=inner type node)
+    TypeExprArray,      // Array type: [N]T (field0=size node, field1=elem type node)
+    TypeExprSlice,      // Slice type: []T (field0=elem type node)
+    TypeExprOptional,   // Optional type: ?T (field0=inner type node)
+    TypeExprFunc,       // Function type: fn(params) -> ret (field0=ret type node, field1=resolved type_idx)
+
+    // Special
+    BadNode,        // Error placeholder
+}
+
+// Binary operators for expressions
+// Follows Go's operator precedence (precMul > precAdd > precCmp > precAnd > precOr)
+enum BinaryOp {
+    // Arithmetic (precMul, precAdd)
+    Add,        // +
+    Sub,        // -
+    Mul,        // *
+    Div,        // /
+    Mod,        // %
+
+    // Comparison (precCmp)
+    Equal,      // ==
+    NotEqual,   // !=
+    Less,       // <
+    LessEq,     // <=
+    Greater,    // >
+    GreaterEq,  // >=
+
+    // Logical (precAnd < precOr)
+    And,        // and, &&
+    Or,         // or, ||
+
+    // Bitwise
+    BitAnd,     // &
+    BitOr,      // |
+    BitXor,     // ^
+    Shl,        // <<
+    Shr,        // >>
+}
+
+// Unary operators
+enum UnaryOp {
+    Neg,        // - (negation)
+    Not,        // !, not (logical not)
+    BitNot,     // ~ (bitwise not)
+}
+
+// ============================================================================
+// Node Index (pool-based allocation)
+// ============================================================================
+
+// Node indices are i64 for simplicity. -1 = null/invalid.
+const NULL_NODE: i64 = -1;
+
+// ============================================================================
+// AST Node Structure
+// ============================================================================
+
+// Node is the universal AST node type.
+// Each node has a kind and kind-specific fields stored in a flat layout.
+// This mirrors Go's approach where each node type embeds a base node.
+struct Node {
+    kind: NodeKind,
+
+    // Source location (token start/end)
+    start: i64,
+    end: i64,
+
+    // Kind-specific fields (union-like, interpret based on kind)
+    // For IntLit: value is the integer value
+    // For Ident: name_start, name_len index into source
+    // For BinaryExpr: left, right are Node indices, op is BinaryOp
+    // For CallExpr: callee is Node index, args_start, args_count in args array
+    // For ReturnStmt: value is Node index (-1 if no value)
+    // For ExprStmt: value is Node index
+    // For BlockStmt: stmts_start, stmts_count in stmts array
+    // For FnDecl: name_start, name_len, params_start, params_count, ret_type, body
+    // For ParamDecl: name_start, name_len, type_start, type_len
+
+    // Generic fields (interpreted by kind)
+    field0: i64,    // Multi-purpose field 0
+    field1: i64,    // Multi-purpose field 1
+    field2: i64,    // Multi-purpose field 2
+    field3: i64,    // Multi-purpose field 3
+    field4: i64,    // Multi-purpose field 4 (for FnDecl: ret_type)
+    field5: i64,    // Multi-purpose field 5 (for FnDecl: body node index)
+}
+
+// ============================================================================
+// Node Pool (arena allocation)
+// ============================================================================
+
+// MAX_NODES removed - using capacity field
+
+struct NodePool {
+    nodes: *Node,           // Array of nodes (externally allocated)
+    count: i64,             // Current node count
+    capacity: i64,          // Allocated capacity
+
+    // Child arrays - DYNAMIC (grows as needed)
+    children: I64List,      // Dynamic list of node indices for args/stmts/params
+}
+
+// Compatibility: get children_count from the list
+fn NodePool_childrenCount(pool: *NodePool) i64 {
+    return pool.children.count;
+}
+
+// Get node count
+// Reference: Zig's AST.numNodes()
+fn NodePool_count(pool: *NodePool) i64 {
+    return pool.count;
+}
+
+// Get node by index
+// Reference: Zig's AST.getNode()
+fn NodePool_get(pool: *NodePool, idx: i64) *Node {
+    return pool.nodes + idx;
+}
+
+// ============================================================================
+// Node Constructors
+// ============================================================================
+
+// Create an integer literal node
+fn Node_intLit(pool: *NodePool, value: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.IntLit;
+    n.start = start;
+    n.end = end;
+    n.field0 = value;  // The integer value
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create an identifier node
+fn Node_ident(pool: *NodePool, name_start: i64, name_len: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.Ident;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;  // Offset in source
+    n.field1 = name_len;    // Length of name
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a binary expression node
+fn Node_binary(pool: *NodePool, op: BinaryOp, left: i64, right: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.BinaryExpr;
+    n.start = start;
+    n.end = end;
+    n.field0 = left;        // Left operand (node index)
+    n.field1 = right;       // Right operand (node index)
+    // Store op as integer - BinaryOp enum ordinal
+    // Arithmetic
+    if op == BinaryOp.Add { n.field2 = 0; }
+    if op == BinaryOp.Sub { n.field2 = 1; }
+    if op == BinaryOp.Mul { n.field2 = 2; }
+    if op == BinaryOp.Div { n.field2 = 3; }
+    if op == BinaryOp.Mod { n.field2 = 4; }
+    // Comparison
+    if op == BinaryOp.Equal { n.field2 = 5; }
+    if op == BinaryOp.NotEqual { n.field2 = 6; }
+    if op == BinaryOp.Less { n.field2 = 7; }
+    if op == BinaryOp.LessEq { n.field2 = 8; }
+    if op == BinaryOp.Greater { n.field2 = 9; }
+    if op == BinaryOp.GreaterEq { n.field2 = 10; }
+    // Logical
+    if op == BinaryOp.And { n.field2 = 11; }
+    if op == BinaryOp.Or { n.field2 = 12; }
+    // Bitwise
+    if op == BinaryOp.BitAnd { n.field2 = 13; }
+    if op == BinaryOp.BitOr { n.field2 = 14; }
+    if op == BinaryOp.BitXor { n.field2 = 15; }
+    if op == BinaryOp.Shl { n.field2 = 16; }
+    if op == BinaryOp.Shr { n.field2 = 17; }
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a function call node
+fn Node_call(pool: *NodePool, callee: i64, args_start: i64, args_count: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.CallExpr;
+    n.start = start;
+    n.end = end;
+    n.field0 = callee;      // Callee node index
+    n.field1 = args_start;  // Start index in children array
+    n.field2 = args_count;  // Number of arguments
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a return statement node
+fn Node_return(pool: *NodePool, value: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ReturnStmt;
+    n.start = start;
+    n.end = end;
+    n.field0 = value;       // Return value (-1 if void)
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create an expression statement node
+fn Node_exprStmt(pool: *NodePool, expr: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ExprStmt;
+    n.start = start;
+    n.end = end;
+    n.field0 = expr;        // Expression node index
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a block statement node
+fn Node_block(pool: *NodePool, stmts_start: i64, stmts_count: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.BlockStmt;
+    n.start = start;
+    n.end = end;
+    n.field0 = stmts_start; // Start index in children array
+    n.field1 = stmts_count; // Number of statements
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a parameter declaration node
+fn Node_param(pool: *NodePool, name_start: i64, name_len: i64, type_start: i64, type_len: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ParamDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;  // Parameter name offset
+    n.field1 = name_len;    // Parameter name length
+    n.field2 = type_start;  // Type name offset
+    n.field3 = type_len;    // Type name length
+
+    return idx;
+}
+
+// Create a function declaration node
+fn Node_fnDecl(pool: *NodePool, name_start: i64, name_len: i64,
+                params_start: i64, params_count: i64,
+                ret_type_start: i64, ret_type_len: i64,
+                body: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.FnDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;      // Function name offset
+    n.field1 = name_len;        // Function name length
+    n.field2 = params_start;    // Start index in children array
+    n.field3 = params_count;    // Number of parameters
+    n.field4 = ret_type_len;    // Return type (type handle from parse_type)
+    n.field5 = body;            // Body block node index
+
+    return idx;
+}
+
+// Create an extern function declaration node (no body)
+fn Node_externFnDecl(pool: *NodePool, name_start: i64, name_len: i64,
+                       params_start: i64, params_count: i64,
+                       ret_type_start: i64, ret_type_len: i64,
+                       start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ExternFnDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;      // Function name offset
+    n.field1 = name_len;        // Function name length
+    n.field2 = params_start;    // Start index in children array
+    n.field3 = params_count;    // Number of parameters
+    n.field4 = ret_type_len;    // Return type (type handle from parse_type)
+    n.field5 = 0;               // No body (marker for extern)
+
+    return idx;
+}
+
+// Create a variable declaration node (let or var)
+// field0: is_let (1 = let, 0 = var)
+// field1: name_start (offset in source)
+// field2: name_len
+// field3: init_expr node index (-1 if no initializer)
+// field4: type_handle (parser type encoding, e.g. PTYPE_USER_BASE + offset for structs)
+fn Node_varDecl(pool: *NodePool, is_let: i64, name_start: i64, name_len: i64,
+                 type_start: i64, type_handle: i64, init_expr: i64,
+                 start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.VarDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = is_let;          // 1 = let, 0 = var
+    n.field1 = name_start;      // Name offset in source
+    n.field2 = name_len;        // Name length
+    n.field3 = init_expr;       // Init expression (-1 if none)
+    n.field4 = type_start;      // Type annotation position (for later resolution)
+    n.field5 = type_handle;     // Resolved type (may be placeholder, resolved during lowering)
+
+    return idx;
+}
+
+// Create a global variable declaration (top-level var)
+// Same structure as VarDecl but uses GlobalVarDecl kind
+fn Node_globalVarDecl(pool: *NodePool, name_start: i64, name_len: i64,
+                      type_start: i64, type_handle: i64, init_expr: i64,
+                      start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.GlobalVarDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = 0;               // Always mutable (var, not let)
+    n.field1 = name_start;      // Name offset in source
+    n.field2 = name_len;        // Name length
+    n.field3 = init_expr;       // Init expression (-1 if none)
+    n.field4 = type_start;      // Type annotation position
+    n.field5 = type_handle;     // Resolved type
+
+    return idx;
+}
+
+// Create an if statement node
+// field0: condition expr node index
+// field1: then body node index (block)
+// field2: else body node index (-1 if no else)
+// field3: unused
+fn Node_ifStmt(pool: *NodePool, cond: i64, then_body: i64, else_body: i64,
+                start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.IfStmt;
+    n.start = start;
+    n.end = end;
+    n.field0 = cond;            // Condition expression
+    n.field1 = then_body;       // Then block
+    n.field2 = else_body;       // Else block (-1 if none)
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a while statement node
+// field0: condition expr node index
+// field1: body node index (block)
+// field2, field3: unused
+fn Node_whileStmt(pool: *NodePool, cond: i64, body: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.WhileStmt;
+    n.start = start;
+    n.end = end;
+    n.field0 = cond;            // Condition expression
+    n.field1 = body;            // Body block
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a for-in statement node: for item in array { body }
+// Following Zig compiler pattern from src/frontend/lower.zig:lowerFor
+// field0: binding name_start
+// field1: binding name_len
+// field2: iterable expression node index
+// field3: body node index (block)
+fn Node_forStmt(pool: *NodePool, binding_start: i64, binding_len: i64,
+                 iterable: i64, body: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ForStmt;
+    n.start = start;
+    n.end = end;
+    n.field0 = binding_start;   // Loop variable name offset
+    n.field1 = binding_len;     // Loop variable name length
+    n.field2 = iterable;        // Iterable expression (array/slice)
+    n.field3 = body;            // Body block
+
+    return idx;
+}
+
+// Create a break statement node
+fn Node_breakStmt(pool: *NodePool, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.BreakStmt;
+    n.start = start;
+    n.end = end;
+    n.field0 = 0;
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a continue statement node
+fn Node_continueStmt(pool: *NodePool, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ContinueStmt;
+    n.start = start;
+    n.end = end;
+    n.field0 = 0;
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a defer statement node
+// field0: expression node index to defer
+// Reference: Zig lower.zig defer_stmt handling
+fn Node_deferStmt(pool: *NodePool, expr_idx: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.DeferStmt;
+    n.start = start;
+    n.end = end;
+    n.field0 = expr_idx;
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a unary expression node
+// field0: operand node index
+// field1: UnaryOp (as int)
+fn Node_unary(pool: *NodePool, op: UnaryOp, operand: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.UnaryExpr;
+    n.start = start;
+    n.end = end;
+    n.field0 = operand;         // Operand expression
+    // Store op as integer
+    if op == UnaryOp.Neg { n.field1 = 0; }
+    if op == UnaryOp.Not { n.field1 = 1; }
+    if op == UnaryOp.BitNot { n.field1 = 2; }
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// ============================================================================
+// Sprint C: Pointers and Strings
+// Following Go's cmd/compile/internal/syntax/nodes.go patterns
+// ============================================================================
+
+// Create a string literal node
+// field0: string_start (offset in source, after opening quote)
+// field1: string_len (length of string content, excluding quotes)
+fn Node_stringLit(pool: *NodePool, str_start: i64, str_len: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.StringLit;
+    n.start = start;
+    n.end = end;
+    n.field0 = str_start;       // String content offset (after quote)
+    n.field1 = str_len;         // String content length
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create an address-of expression node: &expr
+// field0: operand node index
+fn Node_addressOf(pool: *NodePool, operand: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.AddressOf;
+    n.start = start;
+    n.end = end;
+    n.field0 = operand;         // Operand expression
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a dereference expression node: expr.*
+// field0: operand node index (the pointer expression)
+fn Node_deref(pool: *NodePool, operand: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.DerefExpr;
+    n.start = start;
+    n.end = end;
+    n.field0 = operand;         // Pointer expression
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create an assignment expression node: target = value
+// field0: target (identifier node index - the variable being assigned)
+// field1: value (expression node index - the value being assigned)
+fn Node_assign(pool: *NodePool, target: i64, value: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.AssignExpr;
+    n.start = start;
+    n.end = end;
+    n.field0 = target;          // Target variable
+    n.field1 = value;           // Value expression
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// ============================================================================
+// Sprint D: Imports and Constants
+// Following Go's cmd/compile/internal/syntax/nodes.go patterns
+// ============================================================================
+
+// Create an import declaration node: import "path";
+// field0: path_start (offset in source, after opening quote)
+// field1: path_len (length of path string, excluding quotes)
+fn Node_importDecl(pool: *NodePool, path_start: i64, path_len: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ImportDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = path_start;      // Import path offset (after quote)
+    n.field1 = path_len;        // Import path length
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a const declaration node: const NAME = expr;
+// field0: name_start
+// field1: name_len
+// field2: type_handle (-1 if no type annotation)
+// field3: init_expr node index
+fn Node_constDecl(pool: *NodePool, name_start: i64, name_len: i64,
+                   type_handle: i64, init_expr: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ConstDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;      // Constant name offset
+    n.field1 = name_len;        // Constant name length
+    n.field2 = type_handle;     // Type (-1 if inferred)
+    n.field3 = init_expr;       // Initializer expression
+
+    return idx;
+}
+
+// ============================================================================
+// Sprint B: Struct/Enum Declarations
+// Following Go's cmd/compile/internal/syntax/nodes.go patterns
+// ============================================================================
+
+// Create a struct declaration node
+// struct Name { field1: type1; field2: type2; }
+// field0: name_start (offset in source)
+// field1: name_len
+// field2: fields_start (index in children array)
+// field3: fields_count
+fn Node_structDecl(pool: *NodePool, name_start: i64, name_len: i64,
+                    fields_start: i64, fields_count: i64,
+                    start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.StructDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;      // Struct name offset
+    n.field1 = name_len;        // Struct name length
+    n.field2 = fields_start;    // Start index in children array
+    n.field3 = fields_count;    // Number of fields
+
+    return idx;
+}
+
+// Create an enum declaration node
+// enum Name { Variant1, Variant2, Variant3 }
+// field0: name_start (offset in source)
+// field1: name_len
+// field2: variants_start (index in children array)
+// field3: variants_count
+fn Node_enumDecl(pool: *NodePool, name_start: i64, name_len: i64,
+                  variants_start: i64, variants_count: i64,
+                  start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.EnumDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;      // Enum name offset
+    n.field1 = name_len;        // Enum name length
+    n.field2 = variants_start;  // Start index in children array
+    n.field3 = variants_count;  // Number of variants
+
+    return idx;
+}
+
+// Create a field declaration node (for struct fields)
+// name: type
+// field0: name_start
+// field1: name_len
+// field2: type_start
+// field3: type_len
+fn Node_fieldDecl(pool: *NodePool, name_start: i64, name_len: i64,
+                   type_start: i64, type_len: i64,
+                   start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.FieldDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;      // Field name offset
+    n.field1 = name_len;        // Field name length
+    n.field2 = type_start;      // Type offset
+    n.field3 = type_len;        // Type length
+
+    return idx;
+}
+
+// Create a field access expression node
+// expr.field or Type.Variant
+// field0: base expression node index
+// field1: field_name_start
+// field2: field_name_len
+// field3: unused
+fn Node_fieldAccess(pool: *NodePool, base: i64,
+                     field_start: i64, field_len: i64,
+                     start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.FieldAccess;
+    n.start = start;
+    n.end = end;
+    n.field0 = base;            // Base expression
+    n.field1 = field_start;     // Field name offset
+    n.field2 = field_len;       // Field name length
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create an IndexExpr node: expr[index]
+// field0: base expression
+// field1: index expression
+// field2: unused
+// field3: unused
+fn Node_index(pool: *NodePool, base: i64, index: i64,
+              start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.IndexExpr;
+    n.start = start;
+    n.end = end;
+    n.field0 = base;    // Base expression (array/slice/pointer)
+    n.field1 = index;   // Index expression
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a SliceExpr node: expr[start:end]
+// Following Zig compiler pattern from src/frontend/parser.zig:787-792
+// field0: base expression
+// field1: start expression (-1 if omitted, e.g., arr[:end])
+// field2: end expression (-1 if omitted, e.g., arr[start:])
+// field3: unused
+fn Node_slice(pool: *NodePool, base: i64, slice_start: i64, slice_end: i64,
+              start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.SliceExpr;
+    n.start = start;
+    n.end = end;
+    n.field0 = base;         // Base expression (array)
+    n.field1 = slice_start;  // Start index (-1 if omitted)
+    n.field2 = slice_end;    // End index (-1 if omitted)
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a struct literal node: TypeName{ .field = value, ... }
+// field0 = type_name_start (source position of type name)
+// field1 = type_name_len
+// field2 = fields_start (index in children array)
+// field3 = fields_count
+fn Node_structLit(pool: *NodePool, type_name_start: i64, type_name_len: i64,
+                   fields_start: i64, fields_count: i64,
+                   start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.StructLit;
+    n.start = start;
+    n.end = end;
+    n.field0 = type_name_start;
+    n.field1 = type_name_len;
+    n.field2 = fields_start;
+    n.field3 = fields_count;
+
+    return idx;
+}
+
+// Create a field initializer node: .field = value
+// field0 = field_name_start (source position)
+// field1 = field_name_len
+// field2 = value (node index)
+fn Node_fieldInit(pool: *NodePool, field_name_start: i64, field_name_len: i64,
+                   value: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+
+    // Bounds check - prevent overflow
+    if idx >= pool.capacity {
+        return -1;  // Error: exceeded max nodes
+    }
+
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.FieldInit;
+    n.start = start;
+    n.end = end;
+    n.field0 = field_name_start;
+    n.field1 = field_name_len;
+    n.field2 = value;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create an array literal node: [elem1, elem2, ...]
+// field0 = elements_start (index in children array)
+// field1 = elements_count
+// field2 = unused
+// field3 = unused
+fn Node_arrayLit(pool: *NodePool, elements_start: i64, elements_count: i64,
+                  start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ArrayLit;
+    n.start = start;
+    n.end = end;
+    n.field0 = elements_start;
+    n.field1 = elements_count;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Create a builtin call node: @string(ptr, len), @intCast(type, val), @sizeOf(type)
+// field0 = builtin_name_start (source position after @)
+// field1 = builtin_name_len
+// field2 = type_arg (type handle for type argument, -1 if none)
+// field3 = arg1 (first expression argument node index, -1 if none)
+// field4 = arg2 (second expression argument node index, -1 if none)
+fn Node_builtinCall(pool: *NodePool, name_start: i64, name_len: i64,
+                     type_arg: i64, arg1: i64, arg2: i64,
+                     start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.BuiltinCall;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;
+    n.field1 = name_len;
+    n.field2 = type_arg;
+    n.field3 = arg1;
+    n.field4 = arg2;
+    return idx;
+}
+
+// ============================================================================
+// Switch Expression Support
+// ============================================================================
+
+// Create a switch expression node: switch x { cases... else => expr }
+// field0 = subject (expression node index)
+// field1 = cases_start (index in children array)
+// field2 = cases_count
+// field3 = else_body (node index, -1 if no else)
+fn Node_switchExpr(pool: *NodePool, subject: i64, cases_start: i64, cases_count: i64,
+                    else_body: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.SwitchExpr;
+    n.start = start;
+    n.end = end;
+    n.field0 = subject;
+    n.field1 = cases_start;
+    n.field2 = cases_count;
+    n.field3 = else_body;
+
+    return idx;
+}
+
+// Create a switch case node: pattern1, pattern2 => body
+// field0 = patterns_start (index in children array)
+// field1 = patterns_count
+// field2 = body (expression node index)
+fn Node_switchCase(pool: *NodePool, patterns_start: i64, patterns_count: i64,
+                    body: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.SwitchCase;
+    n.start = start;
+    n.end = end;
+    n.field0 = patterns_start;
+    n.field1 = patterns_count;
+    n.field2 = body;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// ============================================================================
+// Type Expression Nodes (like Zig's TypeExpr)
+// Reference: src/frontend/ast.zig TypeExpr, TypeKind
+// ============================================================================
+
+// Named type: Point, i64, bool, etc.
+// field0 = name_start (source position), field1 = name_len
+fn Node_typeExprNamed(pool: *NodePool, name_start: i64, name_len: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.TypeExprNamed;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;
+    n.field1 = name_len;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Pointer type: *T
+// field0 = inner type node index
+fn Node_typeExprPointer(pool: *NodePool, inner: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.TypeExprPointer;
+    n.start = start;
+    n.end = end;
+    n.field0 = inner;
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Array type: [N]T
+// field0 = size (integer literal node), field1 = element type node
+fn Node_typeExprArray(pool: *NodePool, size_node: i64, elem_node: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.TypeExprArray;
+    n.start = start;
+    n.end = end;
+    n.field0 = size_node;
+    n.field1 = elem_node;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Slice type: []T
+// field0 = element type node
+fn Node_typeExprSlice(pool: *NodePool, elem_node: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.TypeExprSlice;
+    n.start = start;
+    n.end = end;
+    n.field0 = elem_node;
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Optional type: ?T
+// field0 = inner type node
+fn Node_typeExprOptional(pool: *NodePool, inner: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.TypeExprOptional;
+    n.start = start;
+    n.end = end;
+    n.field0 = inner;
+    n.field1 = 0;
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// Function type: fn(params) -> ret
+// field0 = return type node, field1 = resolved type_idx from TypeRegistry
+fn Node_typeExprFunc(pool: *NodePool, ret_type_node: i64, type_idx: i64, start: i64, end: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.TypeExprFunc;
+    n.start = start;
+    n.end = end;
+    n.field0 = ret_type_node;
+    n.field1 = type_idx;  // Pre-resolved TypeRegistry index
+    n.field2 = 0;
+    n.field3 = 0;
+
+    return idx;
+}
+
+// ============================================================================
+// Node Accessors
+// ============================================================================
+
+// Get node at index
+fn Node_get(pool: *NodePool, idx: i64) *Node {
+    return pool.nodes + idx;
+}
+
+// Check if node index is valid
+fn Node_valid(idx: i64) bool {
+    return idx != NULL_NODE;
+}
+
+// Get child node index from children array (using dynamic list)
+fn Node_child(pool: *NodePool, children_start: i64, offset: i64) i64 {
+    return i64list_get(&pool.children, children_start + offset);
+}
+
+// Add child node to children array (using dynamic list - grows as needed)
+fn Node_addChild(pool: *NodePool, child_idx: i64) i64 {
+    let idx: i64 = pool.children.count;
+    i64list_append(&pool.children, child_idx);
+    return idx;
+}
+
+// ============================================================================
+// Node Kind Helpers
+// ============================================================================
+
+fn NodeKind_isExpr(kind: NodeKind) bool {
+    return kind == NodeKind.IntLit or
+           kind == NodeKind.StringLit or
+           kind == NodeKind.Ident or
+           kind == NodeKind.BinaryExpr or
+           kind == NodeKind.CallExpr or
+           kind == NodeKind.UnaryExpr or
+           kind == NodeKind.AddressOf or
+           kind == NodeKind.DerefExpr or
+           kind == NodeKind.FieldAccess or
+           kind == NodeKind.AssignExpr or
+           kind == NodeKind.BuiltinCall or
+           kind == NodeKind.ArrayLit;
+}
+
+fn NodeKind_isStmt(kind: NodeKind) bool {
+    return kind == NodeKind.ReturnStmt or
+           kind == NodeKind.ExprStmt or
+           kind == NodeKind.BlockStmt or
+           kind == NodeKind.IfStmt or
+           kind == NodeKind.WhileStmt;
+}
+
+fn NodeKind_isDecl(kind: NodeKind) bool {
+    return kind == NodeKind.FnDecl or
+           kind == NodeKind.ParamDecl or
+           kind == NodeKind.VarDecl or
+           kind == NodeKind.ConstDecl or
+           kind == NodeKind.StructDecl or
+           kind == NodeKind.EnumDecl or
+           kind == NodeKind.FieldDecl or
+           kind == NodeKind.ImportDecl;
+}
+
+// ============================================================================
+// BinaryOp Helpers
+// ============================================================================
+
+// Convert token to binary op (returns -1 if not a binary op token)
+fn Token_toBinaryOp(tok_kind: TokenType) i64 {
+    // Arithmetic
+    if tok_kind == TokenType.Plus    { return 0; }   // BinaryOp.Add
+    if tok_kind == TokenType.Minus   { return 1; }   // BinaryOp.Sub
+    if tok_kind == TokenType.Star    { return 2; }   // BinaryOp.Mul
+    if tok_kind == TokenType.Slash   { return 3; }   // BinaryOp.Div
+    if tok_kind == TokenType.Percent { return 4; }   // BinaryOp.Mod
+
+    // Comparison
+    if tok_kind == TokenType.EqEq      { return 5; }  // BinaryOp.Equal
+    if tok_kind == TokenType.NotEq     { return 6; }  // BinaryOp.NotEqual
+    if tok_kind == TokenType.Less      { return 7; }  // BinaryOp.Less
+    if tok_kind == TokenType.LessEq    { return 8; }  // BinaryOp.LessEq
+    if tok_kind == TokenType.Greater   { return 9; }  // BinaryOp.Greater
+    if tok_kind == TokenType.GreaterEq { return 10; } // BinaryOp.GreaterEq
+
+    // Logical (both word and symbol forms)
+    if tok_kind == TokenType.And      { return 11; }  // BinaryOp.And
+    if tok_kind == TokenType.AmpAmp   { return 11; }  // BinaryOp.And (symbol form)
+    if tok_kind == TokenType.Or       { return 12; }  // BinaryOp.Or
+    if tok_kind == TokenType.PipePipe { return 12; }  // BinaryOp.Or (symbol form)
+
+    // Bitwise
+    if tok_kind == TokenType.Amp        { return 13; }  // BinaryOp.BitAnd
+    if tok_kind == TokenType.Pipe       { return 14; }  // BinaryOp.BitOr
+    if tok_kind == TokenType.Caret      { return 15; }  // BinaryOp.BitXor
+    if tok_kind == TokenType.LessLess   { return 16; }  // BinaryOp.Shl
+    if tok_kind == TokenType.GreaterGreater { return 17; } // BinaryOp.Shr
+
+    return -1;
+}
+
+fn BinaryOp_fromInt(val: i64) BinaryOp {
+    // Arithmetic
+    if val == 0 { return BinaryOp.Add; }
+    if val == 1 { return BinaryOp.Sub; }
+    if val == 2 { return BinaryOp.Mul; }
+    if val == 3 { return BinaryOp.Div; }
+    if val == 4 { return BinaryOp.Mod; }
+
+    // Comparison
+    if val == 5  { return BinaryOp.Equal; }
+    if val == 6  { return BinaryOp.NotEqual; }
+    if val == 7  { return BinaryOp.Less; }
+    if val == 8  { return BinaryOp.LessEq; }
+    if val == 9  { return BinaryOp.Greater; }
+    if val == 10 { return BinaryOp.GreaterEq; }
+
+    // Logical
+    if val == 11 { return BinaryOp.And; }
+    if val == 12 { return BinaryOp.Or; }
+
+    // Bitwise
+    if val == 13 { return BinaryOp.BitAnd; }
+    if val == 14 { return BinaryOp.BitOr; }
+    if val == 15 { return BinaryOp.BitXor; }
+    if val == 16 { return BinaryOp.Shl; }
+    if val == 17 { return BinaryOp.Shr; }
+
+    return BinaryOp.Add;  // Default (should not happen)
+}
+
+// Convert token to unary op (returns -1 if not a unary op token)
+fn Token_toUnaryOp(tok_kind: TokenType) i64 {
+    if tok_kind == TokenType.Minus { return 0; }  // UnaryOp.Neg
+    if tok_kind == TokenType.Bang  { return 1; }  // UnaryOp.Not
+    if tok_kind == TokenType.Not   { return 1; }  // UnaryOp.Not (keyword form)
+    if tok_kind == TokenType.Tilde { return 2; }  // UnaryOp.BitNot
+    return -1;
+}
+
+fn UnaryOp_fromInt(val: i64) UnaryOp {
+    if val == 0 { return UnaryOp.Neg; }
+    if val == 1 { return UnaryOp.Not; }
+    if val == 2 { return UnaryOp.BitNot; }
+    return UnaryOp.Neg;  // Default
+}
+
+// ============================================================================
+// Operator Precedence (following Go's design)
+// ============================================================================
+
+// Precedence levels (higher = binds tighter)
+// Go's precedence: MUL(5) > ADD(4) > CMP(3) > AND(2) > OR(1)
+// MUL: *, /, %, <<, >>, &
+// ADD: +, -, |, ^
+const PREC_OR: i64 = 1;      // or, ||
+const PREC_AND: i64 = 2;     // and, &&
+const PREC_CMP: i64 = 3;     // ==, !=, <, <=, >, >=
+const PREC_ADD: i64 = 4;     // +, -, |, ^
+const PREC_MUL: i64 = 5;     // *, /, %, <<, >>, &
+
+// Get precedence of a binary operator token
+fn token_precedence(tok_kind: TokenType) i64 {
+    // Logical OR (lowest)
+    if tok_kind == TokenType.Or { return PREC_OR; }
+    if tok_kind == TokenType.PipePipe { return PREC_OR; }
+
+    // Logical AND
+    if tok_kind == TokenType.And { return PREC_AND; }
+    if tok_kind == TokenType.AmpAmp { return PREC_AND; }
+
+    // Comparison
+    if tok_kind == TokenType.EqEq { return PREC_CMP; }
+    if tok_kind == TokenType.NotEq { return PREC_CMP; }
+    if tok_kind == TokenType.Less { return PREC_CMP; }
+    if tok_kind == TokenType.LessEq { return PREC_CMP; }
+    if tok_kind == TokenType.Greater { return PREC_CMP; }
+    if tok_kind == TokenType.GreaterEq { return PREC_CMP; }
+
+    // Additive (including bitwise OR and XOR, following Go)
+    if tok_kind == TokenType.Plus { return PREC_ADD; }
+    if tok_kind == TokenType.Minus { return PREC_ADD; }
+    if tok_kind == TokenType.Pipe { return PREC_ADD; }     // Bitwise OR
+    if tok_kind == TokenType.Caret { return PREC_ADD; }    // Bitwise XOR
+
+    // Multiplicative (highest, including shifts and bitwise AND, following Go)
+    if tok_kind == TokenType.Star { return PREC_MUL; }
+    if tok_kind == TokenType.Slash { return PREC_MUL; }
+    if tok_kind == TokenType.Percent { return PREC_MUL; }
+    if tok_kind == TokenType.LessLess { return PREC_MUL; }     // Left shift
+    if tok_kind == TokenType.GreaterGreater { return PREC_MUL; } // Right shift
+    if tok_kind == TokenType.Amp { return PREC_MUL; }          // Bitwise AND
+
+    return 0;  // Not a binary operator
+}

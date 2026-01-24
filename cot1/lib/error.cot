@@ -1,0 +1,637 @@
+// =============================================================================
+// cot0 Error Infrastructure
+// =============================================================================
+//
+// Comprehensive error handling for the cot0 compiler.
+// Provides: panic, assert, null checks, bounds checks, debug tracing
+//
+// Philosophy: NEVER silently segfault. Always tell the user exactly what
+// went wrong, where it went wrong, and provide enough context to fix it.
+//
+// =============================================================================
+
+// NOTE: This file expects externs.cot to be imported first!
+// Required externs: write, exit
+
+// =============================================================================
+// Global Debug State
+// =============================================================================
+
+var g_debug_trace: bool = false;      // Function entry/exit tracing
+var g_debug_verbose: bool = false;    // Verbose debug output
+var g_debug_checks: bool = true;      // Invariant checking (on by default)
+var g_trace_depth: i64 = 0;           // Current trace indentation
+
+// Allocation tracking
+var g_alloc_count: i64 = 0;
+var g_alloc_bytes: i64 = 0;
+var g_free_count: i64 = 0;
+
+// =============================================================================
+// stderr Helpers (write to fd 2)
+// =============================================================================
+
+fn stderr_str(s: *u8) {
+    if s == null { return; }
+    var len: i64 = 0;
+    while (s + len).* != 0 {
+        len = len + 1;
+    }
+    write(2, s, len);
+}
+
+fn stderr_char(c: u8) {
+    var buf: [1]u8;
+    buf[0] = c;
+    write(2, &buf[0], 1);
+}
+
+fn stderr_int(n: i64) {
+    var buf: [32]u8;
+    var i: i64 = 31;
+    var is_neg: bool = n < 0;
+    var val: i64 = n;
+
+    if is_neg {
+        val = 0 - n;
+    }
+
+    if val == 0 {
+        buf[i] = 48;  // '0'
+        i = i - 1;
+    } else {
+        while val > 0 {
+            buf[i] = @intCast(u8, 48 + (val % 10));
+            val = val / 10;
+            i = i - 1;
+        }
+    }
+
+    if is_neg {
+        buf[i] = 45;  // '-'
+        i = i - 1;
+    }
+
+    write(2, &buf[i + 1], 31 - i);
+}
+
+fn stderr_hex(n: i64) {
+    var buf: [18]u8;
+    buf[0] = 48;  // '0'
+    buf[1] = 120; // 'x'
+    var i: i64 = 17;
+    var val: i64 = n;
+
+    if val == 0 {
+        buf[i] = 48;
+        i = i - 1;
+    } else {
+        while val > 0 and i > 1 {
+            let digit: i64 = val % 16;
+            if digit < 10 {
+                buf[i] = @intCast(u8, 48 + digit);
+            } else {
+                buf[i] = @intCast(u8, 97 + digit - 10);  // 'a' + digit - 10
+            }
+            val = val / 16;
+            i = i - 1;
+        }
+    }
+
+    write(2, &buf[0], 2);  // "0x"
+    write(2, &buf[i + 1], 17 - i);
+}
+
+fn stderr_newline() {
+    write(2, "\n", 1);
+}
+
+// =============================================================================
+// Core Panic Functions
+// =============================================================================
+
+// Basic panic - print message and exit
+fn panic(msg: *u8) {
+    stderr_str("\n");
+    stderr_str("================================================================================\n");
+    stderr_str("PANIC: ");
+    stderr_str(msg);
+    stderr_str("\n");
+    stderr_str("================================================================================\n");
+    exit(1);
+}
+
+// Panic with numeric context
+fn panic_int(msg: *u8, value: i64) {
+    stderr_str("\n");
+    stderr_str("================================================================================\n");
+    stderr_str("PANIC: ");
+    stderr_str(msg);
+    stderr_str(": ");
+    stderr_int(value);
+    stderr_str("\n");
+    stderr_str("================================================================================\n");
+    exit(1);
+}
+
+// Panic with two values for context
+fn panic_int2(msg: *u8, val1: i64, val2: i64) {
+    stderr_str("\n");
+    stderr_str("================================================================================\n");
+    stderr_str("PANIC: ");
+    stderr_str(msg);
+    stderr_str(": ");
+    stderr_int(val1);
+    stderr_str(", ");
+    stderr_int(val2);
+    stderr_str("\n");
+    stderr_str("================================================================================\n");
+    exit(1);
+}
+
+// Panic with pointer context
+fn panic_ptr(msg: *u8, ptr: *u8) {
+    stderr_str("\n");
+    stderr_str("================================================================================\n");
+    stderr_str("PANIC: ");
+    stderr_str(msg);
+    stderr_str(" at address ");
+    stderr_hex(@intCast(i64, ptr));
+    stderr_str("\n");
+    stderr_str("================================================================================\n");
+    exit(1);
+}
+
+// =============================================================================
+// Assert Functions
+// =============================================================================
+
+// Basic assert
+fn assert(condition: bool, msg: *u8) {
+    if not condition {
+        panic(msg);
+    }
+}
+
+// Assert with integer context
+fn assert_int(condition: bool, msg: *u8, value: i64) {
+    if not condition {
+        panic_int(msg, value);
+    }
+}
+
+// Assert with two integer values
+fn assert_int2(condition: bool, msg: *u8, val1: i64, val2: i64) {
+    if not condition {
+        panic_int2(msg, val1, val2);
+    }
+}
+
+// Assert equal
+fn assert_eq(actual: i64, expected: i64, name: *u8) {
+    if actual != expected {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("ASSERT FAILED: ");
+        stderr_str(name);
+        stderr_str("\n  expected: ");
+        stderr_int(expected);
+        stderr_str("\n  actual:   ");
+        stderr_int(actual);
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+}
+
+// Assert not equal
+fn assert_ne(actual: i64, unexpected: i64, name: *u8) {
+    if actual == unexpected {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("ASSERT FAILED: ");
+        stderr_str(name);
+        stderr_str(" should not equal ");
+        stderr_int(unexpected);
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+}
+
+// Assert less than
+fn assert_lt(value: i64, limit: i64, name: *u8) {
+    if value >= limit {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("ASSERT FAILED: ");
+        stderr_str(name);
+        stderr_str(" = ");
+        stderr_int(value);
+        stderr_str(" should be < ");
+        stderr_int(limit);
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+}
+
+// Assert less than or equal
+fn assert_le(value: i64, limit: i64, name: *u8) {
+    if value > limit {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("ASSERT FAILED: ");
+        stderr_str(name);
+        stderr_str(" = ");
+        stderr_int(value);
+        stderr_str(" should be <= ");
+        stderr_int(limit);
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+}
+
+// Assert greater than or equal
+fn assert_ge(value: i64, limit: i64, name: *u8) {
+    if value < limit {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("ASSERT FAILED: ");
+        stderr_str(name);
+        stderr_str(" = ");
+        stderr_int(value);
+        stderr_str(" should be >= ");
+        stderr_int(limit);
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+}
+
+// =============================================================================
+// Null Pointer Checks
+// =============================================================================
+
+fn assert_not_null(ptr: *u8, name: *u8) {
+    if ptr == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("NULL POINTER: ");
+        stderr_str(name);
+        stderr_str(" is null\n");
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+}
+
+fn assert_not_null_i64(ptr: *i64, name: *u8) {
+    if ptr == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("NULL POINTER: ");
+        stderr_str(name);
+        stderr_str(" (*i64) is null\n");
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+}
+
+// Check pointer and return it (for inline use)
+fn check_ptr(ptr: *u8, name: *u8) *u8 {
+    assert_not_null(ptr, name);
+    return ptr;
+}
+
+fn check_ptr_i64(ptr: *i64, name: *u8) *i64 {
+    assert_not_null_i64(ptr, name);
+    return ptr;
+}
+
+// =============================================================================
+// Bounds Checking
+// =============================================================================
+
+fn assert_bounds(index: i64, length: i64, name: *u8) {
+    if index < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("BOUNDS ERROR: ");
+        stderr_str(name);
+        stderr_str("[");
+        stderr_int(index);
+        stderr_str("] - negative index\n");
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+    if index >= length {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("BOUNDS ERROR: ");
+        stderr_str(name);
+        stderr_str("[");
+        stderr_int(index);
+        stderr_str("] out of bounds (length=");
+        stderr_int(length);
+        stderr_str(")\n");
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+}
+
+// Check that index is valid and return it
+fn check_bounds(index: i64, length: i64, name: *u8) i64 {
+    assert_bounds(index, length, name);
+    return index;
+}
+
+// Check index range [start, end) is valid
+fn assert_range(start: i64, end: i64, length: i64, name: *u8) {
+    if start < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("RANGE ERROR: ");
+        stderr_str(name);
+        stderr_str(" start=");
+        stderr_int(start);
+        stderr_str(" is negative\n");
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+    if end > length {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("RANGE ERROR: ");
+        stderr_str(name);
+        stderr_str(" end=");
+        stderr_int(end);
+        stderr_str(" exceeds length=");
+        stderr_int(length);
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+    if start > end {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("RANGE ERROR: ");
+        stderr_str(name);
+        stderr_str(" start=");
+        stderr_int(start);
+        stderr_str(" > end=");
+        stderr_int(end);
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+}
+
+// =============================================================================
+// Capacity/Overflow Checks
+// =============================================================================
+
+fn assert_capacity(count: i64, capacity: i64, name: *u8) {
+    if count > capacity {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("CAPACITY OVERFLOW: ");
+        stderr_str(name);
+        stderr_str(" count=");
+        stderr_int(count);
+        stderr_str(" exceeds capacity=");
+        stderr_int(capacity);
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+}
+
+fn assert_space(count: i64, capacity: i64, needed: i64, name: *u8) {
+    if count + needed > capacity {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("SPACE ERROR: ");
+        stderr_str(name);
+        stderr_str(" needs ");
+        stderr_int(needed);
+        stderr_str(" more slots, but only ");
+        stderr_int(capacity - count);
+        stderr_str(" available (count=");
+        stderr_int(count);
+        stderr_str(", cap=");
+        stderr_int(capacity);
+        stderr_str(")\n");
+        stderr_str("================================================================================\n");
+        exit(1);
+    }
+}
+
+// =============================================================================
+// Unreachable Code Marker
+// =============================================================================
+
+fn unreachable(msg: *u8) {
+    stderr_str("\n");
+    stderr_str("================================================================================\n");
+    stderr_str("UNREACHABLE CODE: ");
+    stderr_str(msg);
+    stderr_str("\n");
+    stderr_str("This indicates a bug in the compiler itself.\n");
+    stderr_str("================================================================================\n");
+    exit(1);
+}
+
+fn unreachable_int(msg: *u8, value: i64) {
+    stderr_str("\n");
+    stderr_str("================================================================================\n");
+    stderr_str("UNREACHABLE CODE: ");
+    stderr_str(msg);
+    stderr_str(": ");
+    stderr_int(value);
+    stderr_str("\n");
+    stderr_str("This indicates a bug in the compiler itself.\n");
+    stderr_str("================================================================================\n");
+    exit(1);
+}
+
+// =============================================================================
+// Debug Tracing
+// =============================================================================
+
+fn trace_enter(func_name: *u8) {
+    if not g_debug_trace { return; }
+
+    var i: i64 = 0;
+    while i < g_trace_depth {
+        stderr_str("  ");
+        i = i + 1;
+    }
+    stderr_str("-> ");
+    stderr_str(func_name);
+    stderr_newline();
+    g_trace_depth = g_trace_depth + 1;
+}
+
+fn trace_exit(func_name: *u8) {
+    if not g_debug_trace { return; }
+
+    g_trace_depth = g_trace_depth - 1;
+    var i: i64 = 0;
+    while i < g_trace_depth {
+        stderr_str("  ");
+        i = i + 1;
+    }
+    stderr_str("<- ");
+    stderr_str(func_name);
+    stderr_newline();
+}
+
+fn trace_value(name: *u8, value: i64) {
+    if not g_debug_trace { return; }
+
+    var i: i64 = 0;
+    while i < g_trace_depth {
+        stderr_str("  ");
+        i = i + 1;
+    }
+    stderr_str("   ");
+    stderr_str(name);
+    stderr_str(" = ");
+    stderr_int(value);
+    stderr_newline();
+}
+
+// =============================================================================
+// Debug Logging
+// =============================================================================
+
+fn debug(msg: *u8) {
+    if not g_debug_verbose { return; }
+    stderr_str("[DEBUG] ");
+    stderr_str(msg);
+    stderr_newline();
+}
+
+fn debug_int(msg: *u8, value: i64) {
+    if not g_debug_verbose { return; }
+    stderr_str("[DEBUG] ");
+    stderr_str(msg);
+    stderr_str(": ");
+    stderr_int(value);
+    stderr_newline();
+}
+
+fn debug_int2(msg: *u8, val1: i64, val2: i64) {
+    if not g_debug_verbose { return; }
+    stderr_str("[DEBUG] ");
+    stderr_str(msg);
+    stderr_str(": ");
+    stderr_int(val1);
+    stderr_str(", ");
+    stderr_int(val2);
+    stderr_newline();
+}
+
+fn debug_ptr(msg: *u8, ptr: *u8) {
+    if not g_debug_verbose { return; }
+    stderr_str("[DEBUG] ");
+    stderr_str(msg);
+    stderr_str(": ");
+    stderr_hex(@intCast(i64, ptr));
+    stderr_newline();
+}
+
+// =============================================================================
+// Allocation Tracking
+// =============================================================================
+
+fn track_alloc(bytes: i64) {
+    g_alloc_count = g_alloc_count + 1;
+    g_alloc_bytes = g_alloc_bytes + bytes;
+}
+
+fn track_free() {
+    g_free_count = g_free_count + 1;
+}
+
+fn print_alloc_stats() {
+    stderr_str("Allocation stats:\n");
+    stderr_str("  Allocations: ");
+    stderr_int(g_alloc_count);
+    stderr_newline();
+    stderr_str("  Total bytes: ");
+    stderr_int(g_alloc_bytes);
+    stderr_newline();
+    stderr_str("  Frees: ");
+    stderr_int(g_free_count);
+    stderr_newline();
+}
+
+// =============================================================================
+// Error Context Stack (for nested operations)
+// =============================================================================
+
+const ERROR_CONTEXT_MAX: i64 = 32;
+var g_error_context: [32]*u8;
+var g_error_context_depth: i64 = 0;
+
+fn push_context(ctx: *u8) {
+    if g_error_context_depth < ERROR_CONTEXT_MAX {
+        g_error_context[g_error_context_depth] = ctx;
+        g_error_context_depth = g_error_context_depth + 1;
+    }
+}
+
+fn pop_context() {
+    if g_error_context_depth > 0 {
+        g_error_context_depth = g_error_context_depth - 1;
+    }
+}
+
+fn print_error_context() {
+    if g_error_context_depth == 0 { return; }
+
+    stderr_str("Error context (innermost first):\n");
+    var i: i64 = g_error_context_depth - 1;
+    while i >= 0 {
+        stderr_str("  ");
+        stderr_int(g_error_context_depth - i);
+        stderr_str(". ");
+        stderr_str(g_error_context[i]);
+        stderr_newline();
+        i = i - 1;
+    }
+}
+
+// Panic with context
+fn panic_with_context(msg: *u8) {
+    stderr_str("\n");
+    stderr_str("================================================================================\n");
+    stderr_str("PANIC: ");
+    stderr_str(msg);
+    stderr_str("\n\n");
+    print_error_context();
+    stderr_str("================================================================================\n");
+    exit(1);
+}
+
+// =============================================================================
+// Debug Mode Initialization
+// =============================================================================
+
+fn error_init_debug_mode(trace: bool, verbose: bool, checks: bool) {
+    g_debug_trace = trace;
+    g_debug_verbose = verbose;
+    g_debug_checks = checks;
+
+    if verbose {
+        stderr_str("[DEBUG] Debug mode enabled: trace=");
+        if trace { stderr_str("on"); } else { stderr_str("off"); }
+        stderr_str(", verbose=");
+        if verbose { stderr_str("on"); } else { stderr_str("off"); }
+        stderr_str(", checks=");
+        if checks { stderr_str("on"); } else { stderr_str("off"); }
+        stderr_newline();
+    }
+}

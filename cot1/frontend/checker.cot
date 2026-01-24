@@ -1,0 +1,760 @@
+// Cot0 Type Checker
+// Minimal type checking for: i64, bool, void, functions
+//
+// Design follows Go's go/types package patterns:
+// - Multi-phase: collect declarations, then check bodies
+// - Scope hierarchy with parent chain for name lookup
+// - Symbol table for tracking declared names
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/types2/
+// Reference: bootstrap-0.2/src/frontend/checker.zig
+
+// Note: Dependencies (token.cot, types.cot, ast.cot) are imported by main.cot
+
+// ============================================================================
+// Symbol Kinds
+// ============================================================================
+
+enum SymbolKind {
+    Variable,
+    Constant,
+    Function,
+    TypeName,
+    Parameter,
+}
+
+// ============================================================================
+// Symbol (Go's Object)
+// ============================================================================
+
+struct Symbol {
+    name_start: i64,     // Name offset in source
+    name_len: i64,       // Name length
+    kind: SymbolKind,    // What kind of symbol
+    type_idx: i64,       // Type index from TypeRegistry
+    node_idx: i64,       // AST node where defined
+    mutable: bool,       // var vs let/const
+    is_extern: bool,     // extern fn?
+    const_value: i64,    // Value for constants (-1 if not const)
+}
+
+fn Symbol_new(name_start: i64, name_len: i64, kind: SymbolKind, type_idx: i64, node_idx: i64, mutable: bool) Symbol {
+    return Symbol{
+        .name_start = name_start,
+        .name_len = name_len,
+        .kind = kind,
+        .type_idx = type_idx,
+        .node_idx = node_idx,
+        .mutable = mutable,
+        .is_extern = false,
+        .const_value = -1,
+    };
+}
+
+fn Symbol_newConst(name_start: i64, name_len: i64, type_idx: i64, node_idx: i64, value: i64) Symbol {
+    return Symbol{
+        .name_start = name_start,
+        .name_len = name_len,
+        .kind = SymbolKind.Constant,
+        .type_idx = type_idx,
+        .node_idx = node_idx,
+        .mutable = false,
+        .is_extern = false,
+        .const_value = value,
+    };
+}
+
+fn Symbol_newExtern(name_start: i64, name_len: i64, kind: SymbolKind, type_idx: i64, node_idx: i64) Symbol {
+    return Symbol{
+        .name_start = name_start,
+        .name_len = name_len,
+        .kind = kind,
+        .type_idx = type_idx,
+        .node_idx = node_idx,
+        .mutable = false,
+        .is_extern = true,
+        .const_value = -1,
+    };
+}
+
+// ============================================================================
+// Scope (Go's Scope)
+// ============================================================================
+
+// MAX_SYMBOLS removed - not used (ScopePool uses external arrays)
+
+struct Scope {
+    symbols: *Symbol,       // Array of symbols
+    count: i64,             // Number of symbols in this scope
+    parent_idx: i64,        // Parent scope index (-1 for none)
+}
+
+// ============================================================================
+// Scope Pool
+// ============================================================================
+
+// MAX_SCOPES removed - not used (ScopePool uses external arrays)
+
+struct ScopePool {
+    scopes: *Scope,         // Array of scopes
+    count: i64,             // Number of scopes
+    symbols: *Symbol,       // Global symbol storage
+    symbols_count: i64,     // Total symbols allocated
+}
+
+fn ScopePool_init(pool: *ScopePool) {
+    pool.count = 0;
+    pool.symbols_count = 0;
+}
+
+fn ScopePool_new(pool: *ScopePool, parent_idx: i64) i64 {
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+
+    let s: *Scope = pool.scopes + idx;
+    s.symbols = pool.symbols + pool.symbols_count;
+    s.count = 0;
+    s.parent_idx = parent_idx;
+
+    return idx;
+}
+
+fn ScopePool_define(pool: *ScopePool, scope_idx: i64, sym: Symbol) {
+    let s: *Scope = pool.scopes + scope_idx;
+    let sym_ptr: *Symbol = s.symbols + s.count;
+    sym_ptr.* = sym;
+    s.count = s.count + 1;
+    pool.symbols_count = pool.symbols_count + 1;
+}
+
+// Look up symbol in scope and parents
+// Returns the symbol's type index, or -1 if not found
+fn ScopePool_lookupType(pool: *ScopePool, scope_idx: i64, source: *u8, name_start: i64, name_len: i64) i64 {
+    var current_idx: i64 = scope_idx;
+
+    while current_idx >= 0 {
+        let s: *Scope = pool.scopes + current_idx;
+
+        // Search symbols in this scope
+        var i: i64 = 0;
+        while i < s.count {
+            let sym: *Symbol = s.symbols + i;
+            if names_equal(source, sym.name_start, sym.name_len, source, name_start, name_len) {
+                return sym.type_idx;
+            }
+            i = i + 1;
+        }
+
+        current_idx = s.parent_idx;
+    }
+
+    return -1;  // Not found
+}
+
+// Check if a symbol is already defined in this scope (not parents)
+// Zig ref: Scope.isDefined
+fn ScopePool_isDefined(pool: *ScopePool, scope_idx: i64, source: *u8, name_start: i64, name_len: i64) bool {
+    let s: *Scope = pool.scopes + scope_idx;
+    var i: i64 = 0;
+    while i < s.count {
+        let sym: *Symbol = s.symbols + i;
+        if names_equal(source, sym.name_start, sym.name_len, source, name_start, name_len) {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Check if two names are equal
+fn names_equal(src1: *u8, start1: i64, len1: i64, src2: *u8, start2: i64, len2: i64) bool {
+    if len1 != len2 { return false; }
+
+    var i: i64 = 0;
+    while i < len1 {
+        let c1: u8 = (src1 + start1 + i).*;
+        let c2: u8 = (src2 + start2 + i).*;
+        if c1 != c2 { return false; }
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// ============================================================================
+// Checker State
+// ============================================================================
+
+struct Checker {
+    type_pool: *TypeRegistry,   // Type registry
+    scope_pool: *ScopePool, // Scope pool
+    ast_pool: *NodePool,    // AST nodes
+    source: *u8,            // Source text
+    current_scope: i64,     // Current scope index
+    return_type: i64,       // Expected return type for current function
+    in_loop: bool,          // Inside a loop?
+    error_count: i64,       // Number of errors found
+}
+
+fn Checker_init(chk: *Checker, type_pool: *TypeRegistry, scope_pool: *ScopePool,
+                ast_pool: *NodePool, source: *u8) {
+    chk.type_pool = type_pool;
+    chk.scope_pool = scope_pool;
+    chk.ast_pool = ast_pool;
+    chk.source = source;
+    chk.current_scope = ScopePool_new(scope_pool, -1);  // Global scope
+    chk.return_type = TYPE_VOID;
+    chk.in_loop = false;
+    chk.error_count = 0;
+}
+
+// ============================================================================
+// Type Checking - Expressions
+// ============================================================================
+
+// Check an expression and return its type
+fn Checker_checkExpr(chk: *Checker, node_idx: i64) i64 {
+    if node_idx < 0 { return TYPE_INVALID; }
+
+    let node: *Node = node_get(chk.ast_pool, node_idx);
+
+    // IntLit -> i64
+    if node.kind == NodeKind.IntLit {
+        return TYPE_I64;
+    }
+
+    // StringLit -> string
+    if node.kind == NodeKind.StringLit {
+        return TYPE_STRING;
+    }
+
+    // Ident -> lookup in scope
+    if node.kind == NodeKind.Ident {
+        let name_start: i64 = node.field0;
+        let name_len: i64 = node.field1;
+
+        let type_idx: i64 = ScopePool_lookupType(chk.scope_pool, chk.current_scope,
+                                               chk.source, name_start, name_len);
+
+        // Check if symbol was found (-1 means not found)
+        if type_idx < 0 {
+            chk.error_count = chk.error_count + 1;
+            return TYPE_INVALID;
+        }
+
+        return type_idx;
+    }
+
+    // BinaryExpr -> check both operands
+    if node.kind == NodeKind.BinaryExpr {
+        let left: i64 = node.field0;
+        let right: i64 = node.field1;
+        let op: i64 = node.field2;
+
+        let left_type: i64 = Checker_checkExpr(chk, left);
+        let right_type: i64 = Checker_checkExpr(chk, right);
+
+        // For arithmetic ops, both must be numeric
+        // ops: 0=Add, 1=Sub, 2=Mul, 3=Div, 4=Mod
+        if op == 0 or op == 1 or op == 2 or op == 3 or op == 4 {
+            if not TypeInfo_isNumeric(chk.type_pool, left_type) {
+                chk.error_count = chk.error_count + 1;
+                return TYPE_INVALID;
+            }
+            if not TypeInfo_isNumeric(chk.type_pool, right_type) {
+                chk.error_count = chk.error_count + 1;
+                return TYPE_INVALID;
+            }
+            // Result is the same type (simplified - assume i64)
+            return left_type;
+        }
+
+        // Comparison ops return bool
+        // ops: 5=Equal, 6=NotEqual, 7=Less, 8=LessEq, 9=Greater, 10=GreaterEq
+        if op == 5 or op == 6 or op == 7 or op == 8 or op == 9 or op == 10 {
+            // Both operands should be comparable (same type or numeric)
+            if TypeInfo_isNumeric(chk.type_pool, left_type) and TypeInfo_isNumeric(chk.type_pool, right_type) {
+                return TYPE_BOOL;
+            }
+            // String comparison
+            if TypeInfo_isString(chk.type_pool, left_type) and TypeInfo_isString(chk.type_pool, right_type) {
+                return TYPE_BOOL;
+            }
+            // Same type comparison (bool == bool, etc.)
+            if TypeInfo_equal(chk.type_pool, left_type, right_type) {
+                return TYPE_BOOL;
+            }
+            chk.error_count = chk.error_count + 1;
+            return TYPE_INVALID;
+        }
+
+        // Logical ops (and, or) require bool operands, return bool
+        // ops: 11=And, 12=Or
+        if op == 11 or op == 12 {
+            if not TypeInfo_isBool(chk.type_pool, left_type) {
+                chk.error_count = chk.error_count + 1;
+                return TYPE_INVALID;
+            }
+            if not TypeInfo_isBool(chk.type_pool, right_type) {
+                chk.error_count = chk.error_count + 1;
+                return TYPE_INVALID;
+            }
+            return TYPE_BOOL;
+        }
+
+        return TYPE_INVALID;
+    }
+
+    // CallExpr -> check callee is function, check args
+    if node.kind == NodeKind.CallExpr {
+        let callee: i64 = node.field0;
+        let args_start: i64 = node.field1;
+        let args_count: i64 = node.field2;
+
+        let callee_type: i64 = Checker_checkExpr(chk, callee);
+        if not TypeInfo_isFunc(chk.type_pool, callee_type) {
+            chk.error_count = chk.error_count + 1;
+            return TYPE_INVALID;
+        }
+
+        // Get return type of function
+        return TypeInfo_ret(chk.type_pool, callee_type);
+    }
+
+    // UnaryExpr -> check operand, return appropriate type
+    if node.kind == NodeKind.UnaryExpr {
+        let operand: i64 = node.field0;
+        let op: i64 = node.field1;  // 0=Neg, 1=Not, 2=BitNot
+
+        let operand_type: i64 = Checker_checkExpr(chk, operand);
+
+        // Negation requires numeric, returns same type
+        if op == 0 {
+            if not TypeInfo_isNumeric(chk.type_pool, operand_type) {
+                chk.error_count = chk.error_count + 1;
+                return TYPE_INVALID;
+            }
+            return operand_type;
+        }
+
+        // Logical not requires bool, returns bool
+        if op == 1 {
+            if not TypeInfo_isBool(chk.type_pool, operand_type) {
+                chk.error_count = chk.error_count + 1;
+                return TYPE_INVALID;
+            }
+            return TYPE_BOOL;
+        }
+
+        // Bitwise not requires integer, returns same type
+        if op == 2 {
+            if not TypeInfo_isInteger(chk.type_pool, operand_type) {
+                chk.error_count = chk.error_count + 1;
+                return TYPE_INVALID;
+            }
+            return operand_type;
+        }
+
+        return TYPE_INVALID;
+    }
+
+    // AddressOf -> returns pointer to operand type
+    if node.kind == NodeKind.AddressOf {
+        let operand: i64 = node.field0;
+        let operand_type: i64 = Checker_checkExpr(chk, operand);
+
+        // Create pointer type
+        return TypeRegistry_makePointer(chk.type_pool, operand_type);
+    }
+
+    // DerefExpr -> operand must be pointer, returns element type
+    if node.kind == NodeKind.DerefExpr {
+        let operand: i64 = node.field0;
+        let operand_type: i64 = Checker_checkExpr(chk, operand);
+
+        if not TypeInfo_isPointer(chk.type_pool, operand_type) {
+            chk.error_count = chk.error_count + 1;
+            return TYPE_INVALID;
+        }
+
+        // Return element type
+        return TypeInfo_elem(chk.type_pool, operand_type);
+    }
+
+    // FieldAccess -> check base is struct/enum, return field/variant type
+    if node.kind == NodeKind.FieldAccess {
+        let base: i64 = node.field0;
+        let field_start: i64 = node.field1;
+        let field_len: i64 = node.field2;
+
+        let base_type: i64 = Checker_checkExpr(chk, base);
+
+        // Struct field access: returns field type
+        // Note: Full field name lookup requires field registry (not implemented)
+        // For now, just verify base is struct and return i64 as placeholder
+        if TypeInfo_isStruct(chk.type_pool, base_type) {
+            // TODO: Look up actual field type by name
+            // For now return i64 as placeholder
+            return TYPE_I64;
+        }
+
+        // Enum variant access: returns the enum type itself
+        if TypeInfo_isEnum(chk.type_pool, base_type) {
+            return base_type;
+        }
+
+        // String .len and .ptr access
+        if TypeInfo_isString(chk.type_pool, base_type) {
+            // .len returns i64
+            // .ptr returns *u8
+            // For simplicity, return i64 for both (ptr is address which is i64)
+            return TYPE_I64;
+        }
+
+        chk.error_count = chk.error_count + 1;
+        return TYPE_INVALID;
+    }
+
+    return TYPE_INVALID;
+}
+
+// ============================================================================
+// Type Checking - Statements
+// ============================================================================
+
+// Check a statement, return true if control always returns
+fn Checker_checkStmt(chk: *Checker, node_idx: i64) bool {
+    if node_idx < 0 { return false; }
+
+    let node: *Node = node_get(chk.ast_pool, node_idx);
+
+    // ReturnStmt -> check value matches return type
+    if node.kind == NodeKind.ReturnStmt {
+        let value: i64 = node.field0;
+
+        if value >= 0 {
+            let value_type: i64 = Checker_checkExpr(chk, value);
+            if not TypeInfo_isAssignable(chk.type_pool, value_type, chk.return_type) {
+                chk.error_count = chk.error_count + 1;
+            }
+        } else {
+            // No value - must be void return
+            if chk.return_type != 12 {
+                chk.error_count = chk.error_count + 1;
+            }
+        }
+
+        return true;  // Always returns
+    }
+
+    // ExprStmt -> just check the expression
+    if node.kind == NodeKind.ExprStmt {
+        let expr: i64 = node.field0;
+        Checker_checkExpr(chk, expr);
+        return false;
+    }
+
+    // BlockStmt -> check each statement
+    if node.kind == NodeKind.BlockStmt {
+        let stmts_start: i64 = node.field0;
+        let stmts_count: i64 = node.field1;
+
+        var i: i64 = 0;
+        var has_return: bool = false;
+        while i < stmts_count {
+            let stmt_idx: i64 = node_child(chk.ast_pool, stmts_start, i);
+            if Checker_checkStmt(chk, stmt_idx) {
+                has_return = true;
+            }
+            i = i + 1;
+        }
+
+        return has_return;
+    }
+
+    // IfStmt -> check condition is bool, check both branches
+    if node.kind == NodeKind.IfStmt {
+        let cond: i64 = node.field0;
+        let then_body: i64 = node.field1;
+        let else_body: i64 = node.field2;
+
+        // Check condition is boolean
+        let cond_type: i64 = Checker_checkExpr(chk, cond);
+        if not TypeInfo_isBool(chk.type_pool, cond_type) {
+            chk.error_count = chk.error_count + 1;
+        }
+
+        // Check then branch
+        let then_returns: bool = Checker_checkStmt(chk, then_body);
+
+        // Check else branch if present
+        var else_returns: bool = false;
+        if else_body >= 0 {
+            else_returns = Checker_checkStmt(chk, else_body);
+        }
+
+        // Returns only if both branches return
+        return then_returns and else_returns;
+    }
+
+    // WhileStmt -> check condition is bool, check body
+    if node.kind == NodeKind.WhileStmt {
+        let cond: i64 = node.field0;
+        let body: i64 = node.field1;
+
+        // Check condition is boolean
+        let cond_type: i64 = Checker_checkExpr(chk, cond);
+        if not TypeInfo_isBool(chk.type_pool, cond_type) {
+            chk.error_count = chk.error_count + 1;
+        }
+
+        // Track that we're in a loop
+        let old_in_loop: bool = chk.in_loop;
+        chk.in_loop = true;
+
+        // Check body
+        Checker_checkStmt(chk, body);
+
+        // Restore loop state
+        chk.in_loop = old_in_loop;
+
+        // While loops don't guarantee return
+        return false;
+    }
+
+    return false;
+}
+
+// ============================================================================
+// Type Checking - Variable Declarations
+// ============================================================================
+
+// Check a variable declaration and add to scope
+fn Checker_checkVarDecl(chk: *Checker, node_idx: i64) {
+    if node_idx < 0 { return; }
+
+    let node: *Node = node_get(chk.ast_pool, node_idx);
+    if node.kind != NodeKind.VarDecl { return; }
+
+    let is_let: i64 = node.field0;      // 1 = let (immutable), 0 = var (mutable)
+    let name_start: i64 = node.field1;
+    let name_len: i64 = node.field2;
+    let init_expr: i64 = node.field3;
+
+    // Determine type from initializer expression
+    var var_type: i64 = TYPE_INVALID;
+    if init_expr >= 0 {
+        var_type = Checker_checkExpr(chk, init_expr);
+    }
+
+    // Create symbol and add to current scope
+    let mutable: bool = is_let == 0;
+    let sym: Symbol = Symbol_new(name_start, name_len, SymbolKind.Variable,
+                                  var_type, node_idx, mutable);
+    ScopePool_define(chk.scope_pool, chk.current_scope, sym);
+}
+
+// ============================================================================
+// Parser Type Handle Resolution
+// ============================================================================
+// PTYPE_* constants are defined in types.cot
+
+// Resolve a parser type handle to a TypeRegistry type index
+// Mirrors Zig bootstrap's resolveTypeRef
+fn Checker_resolveTypeHandle(chk: *Checker, type_handle: i64) i64 {
+    // Basic types: direct mapping
+    if type_handle == PTYPE_I64 { return TYPE_I64; }
+    if type_handle == PTYPE_I32 { return TYPE_I32; }
+    if type_handle == PTYPE_U8 { return TYPE_U8; }
+    if type_handle == PTYPE_BOOL { return TYPE_BOOL; }
+    if type_handle == PTYPE_VOID { return TYPE_VOID; }
+    if type_handle == PTYPE_STRING { return TYPE_STRING; }
+
+    // Pointer types: PTYPE_PTR_BASE + pointee_handle
+    if type_handle >= PTYPE_PTR_BASE and type_handle < PTYPE_USER_BASE {
+        let pointee_handle: i64 = type_handle - PTYPE_PTR_BASE;
+        let pointee_type: i64 = Checker_resolveTypeHandle(chk, pointee_handle);
+        return TypeRegistry_makePointer(chk.type_pool, pointee_type);
+    }
+
+    // User-defined types: PTYPE_USER_BASE + source_offset
+    if type_handle >= PTYPE_USER_BASE {
+        let name_start: i64 = type_handle - PTYPE_USER_BASE;
+        // Find end of name in source (scan for non-identifier char)
+        var name_len: i64 = 0;
+        var pos: i64 = name_start;
+        while true {
+            let c: u8 = (chk.source + pos).*;
+            // Check if still identifier char: a-z, A-Z, 0-9, _
+            if (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or
+               (c >= 48 and c <= 57) or c == 95 {
+                name_len = name_len + 1;
+                pos = pos + 1;
+            } else {
+                break;
+            }
+        }
+        // Look up type by name in scope
+        return ScopePool_lookupType(chk.scope_pool, chk.current_scope,
+                                 chk.source, name_start, name_len);
+    }
+
+    return TYPE_INVALID;
+}
+
+// ============================================================================
+// Type Checking - Struct/Enum Declarations
+// ============================================================================
+
+// Check a struct declaration and register type
+// Mirrors Zig bootstrap's buildStructType - computes field offsets
+fn Checker_checkStructDecl(chk: *Checker, node_idx: i64) {
+    if node_idx < 0 { return; }
+
+    let node: *Node = node_get(chk.ast_pool, node_idx);
+    if node.kind != NodeKind.StructDecl { return; }
+
+    let name_start: i64 = node.field0;
+    let name_len: i64 = node.field1;
+    let ast_fields_start: i64 = node.field2;  // Index into AST children array
+    let fields_count: i64 = node.field3;
+
+    // Record start of fields in TypeRegistry's fields array
+    let type_fields_start: i64 = chk.type_pool.fields_count;
+
+    // Process each field and compute offsets
+    // Mirrors Zig checker.zig:1744-1759
+    var offset: i64 = 0;
+    var max_align: i64 = 1;
+    var i: i64 = 0;
+    while i < fields_count {
+        // Get FieldDecl node from AST children
+        let field_node_idx: i64 = node_child(chk.ast_pool, ast_fields_start, i);
+        let field_node: *Node = node_get(chk.ast_pool, field_node_idx);
+
+        // FieldDecl: field0=name_start, field1=name_len, field2=type_start, field3=type_handle
+        let fname_start: i64 = field_node.field0;
+        let fname_len: i64 = field_node.field1;
+        let type_handle: i64 = field_node.field3;
+
+        // Resolve field type to get size/alignment
+        let field_type: i64 = Checker_resolveTypeHandle(chk, type_handle);
+        let field_size: i64 = TypeInfo_size(chk.type_pool, field_type);
+        let field_align: i64 = TypeInfo_alignment(chk.type_pool, field_type);
+
+        // Align offset to field alignment
+        if field_align > 0 {
+            offset = (offset + field_align - 1) / field_align * field_align;
+        }
+
+        // Track max alignment for struct alignment
+        if field_align > max_align {
+            max_align = field_align;
+        }
+
+        // Add field to TypeRegistry with computed offset
+        TypeRegistry_addField(chk.type_pool, fname_start, fname_len, field_type, offset);
+
+        // Advance offset by field size
+        offset = offset + field_size;
+
+        i = i + 1;
+    }
+
+    // Align final size to struct alignment (round up to max_align)
+    let struct_size: i64 = (offset + max_align - 1) / max_align * max_align;
+
+    // Create struct type with TypeRegistry fields_start (not AST children start)
+    let struct_type: i64 = TypeRegistry_makeStruct(chk.type_pool, name_start, name_len,
+                                             type_fields_start, fields_count,
+                                             struct_size, max_align);
+
+    // Register as type name in scope
+    let sym: Symbol = Symbol_new(name_start, name_len, SymbolKind.TypeName,
+                                  struct_type, node_idx, false);
+    ScopePool_define(chk.scope_pool, chk.current_scope, sym);
+}
+
+// Check an enum declaration and register type
+fn Checker_checkEnumDecl(chk: *Checker, node_idx: i64) {
+    if node_idx < 0 { return; }
+
+    let node: *Node = node_get(chk.ast_pool, node_idx);
+    if node.kind != NodeKind.EnumDecl { return; }
+
+    let name_start: i64 = node.field0;
+    let name_len: i64 = node.field1;
+    let variants_start: i64 = node.field2;
+    let variants_count: i64 = node.field3;
+
+    // Create enum type
+    let enum_type: i64 = TypeRegistry_makeEnum(chk.type_pool, name_start, name_len, variants_count);
+
+    // Register as type name in scope
+    let sym: Symbol = Symbol_new(name_start, name_len, SymbolKind.TypeName,
+                                  enum_type, node_idx, false);
+    ScopePool_define(chk.scope_pool, chk.current_scope, sym);
+}
+
+// ============================================================================
+// Type Checking - Declarations
+// ============================================================================
+
+// Check a function declaration
+fn Checker_checkFnDecl(chk: *Checker, node_idx: i64) {
+    let node: *Node = node_get(chk.ast_pool, node_idx);
+    if node.kind != NodeKind.FnDecl { return; }
+
+    let name_start: i64 = node.field0;
+    let name_len: i64 = node.field1;
+    let params_start: i64 = node.field2;
+    let params_count: i64 = node.field3;
+
+    // Create new scope for function body
+    let fn_scope: i64 = ScopePool_new(chk.scope_pool, chk.current_scope);
+    let old_scope: i64 = chk.current_scope;
+    chk.current_scope = fn_scope;
+
+    // TODO: Add parameters to function scope
+    // TODO: Get return type from function declaration
+    // For now, assume i64 return type
+    let old_return: i64 = chk.return_type;
+    chk.return_type = 5;
+
+    // TODO: Check function body
+
+    // Restore scope
+    chk.current_scope = old_scope;
+    chk.return_type = old_return;
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+// Check if result is valid (no errors)
+fn Checker_ok(chk: *Checker) bool {
+    return chk.error_count == 0;
+}
+
+// Get error count
+fn Checker_errors(chk: *Checker) i64 {
+    return chk.error_count;
+}
+
+// Check all declarations in the file
+// Following Zig checker.zig:checkFile pattern
+fn Checker_checkFile(chk: *Checker) {
+    // Phase 1: Process all struct and enum declarations first
+    // This registers types with correct field offsets in the type pool
+    var i: i64 = 0;
+    while i < chk.ast_pool.count {
+        let node: *Node = node_get(chk.ast_pool, i);
+        if node.kind == NodeKind.StructDecl {
+            Checker_checkStructDecl(chk, i);
+        } else if node.kind == NodeKind.EnumDecl {
+            Checker_checkEnumDecl(chk, i);
+        }
+        i = i + 1;
+    }
+}

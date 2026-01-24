@@ -1,0 +1,623 @@
+// Cot0 SSA Register Allocator
+// Allocates physical registers to SSA values.
+//
+// Algorithm: Linear scan with farthest-next-use spilling
+// - Process blocks in order
+// - For each value, try to allocate a register
+// - If no register free, spill the value with farthest next use
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/ssa/regalloc.go
+// Reference: bootstrap-0.2/src/ssa/regalloc.zig
+
+// Only import liveness.cot - it transitively imports func.cot → block.cot → value.cot → op.cot
+import "liveness.cot"
+
+// ============================================================================
+// ARM64 Register Definitions
+// ============================================================================
+
+const NUM_REGS: i64 = 32;
+
+// Register numbers
+const REG_X0: i64 = 0;
+const REG_X1: i64 = 1;
+const REG_X2: i64 = 2;
+const REG_X3: i64 = 3;
+const REG_X4: i64 = 4;
+const REG_X5: i64 = 5;
+const REG_X6: i64 = 6;
+const REG_X7: i64 = 7;
+const REG_X8: i64 = 8;
+const REG_X16: i64 = 16;
+const REG_X17: i64 = 17;
+const REG_X18: i64 = 18;
+const REG_X19: i64 = 19;
+const REG_X20: i64 = 20;
+const REG_X21: i64 = 21;
+const REG_X22: i64 = 22;
+const REG_X23: i64 = 23;
+const REG_X24: i64 = 24;
+const REG_X25: i64 = 25;
+const REG_X26: i64 = 26;
+const REG_X27: i64 = 27;
+const REG_X28: i64 = 28;
+const REG_FP: i64 = 29;
+const REG_LR: i64 = 30;
+const REG_SP: i64 = 31;
+
+// Register masks (bit per register)
+// Allocatable: x0-x15, x19-x28
+// Not allocatable: x16-x18 (platform), x29 (fp), x30 (lr), x31 (sp)
+const ALLOCATABLE_MASK: i64 = 0x1FF8FFFF;  // x0-x15, x19-x28 (excludes x16-x18, x29-x31)
+const CALLER_SAVED_MASK: i64 = 0x3FFFF;     // x0-x17
+const CALLEE_SAVED_MASK: i64 = 0x1FF80000;  // x19-x28
+
+// Argument registers for function calls
+const ARG_REG_COUNT: i64 = 8;
+
+// ============================================================================
+// Per-Value State
+// ============================================================================
+
+struct ValState {
+    regs: i64,          // Bitmask of registers holding this value
+    spill: i64,         // Spill slot ID (-1 if none)
+    spill_used: bool,   // Has this value been spilled?
+    needs_reg: bool,    // Does this value need a register?
+    rematerializable: bool,  // Can be recomputed (constants)
+}
+
+fn ValState_new() ValState {
+    return ValState{
+        .regs = 0,
+        .spill = -1,
+        .spill_used = false,
+        .needs_reg = true,
+        .rematerializable = false,
+    };
+}
+
+fn ValState_inReg(vs: *ValState) bool {
+    return vs.regs != 0;
+}
+
+fn ValState_firstReg(vs: *ValState) i64 {
+    if vs.regs == 0 { return -1; }
+    // Count trailing zeros to find first set bit
+    var mask: i64 = vs.regs;
+    var reg: i64 = 0;
+    while (mask & 1) == 0 {
+        mask = mask >> 1;
+        reg = reg + 1;
+        if reg >= NUM_REGS { return -1; }
+    }
+    return reg;
+}
+
+// ============================================================================
+// Per-Register State
+// ============================================================================
+
+struct RegState {
+    value_id: i64,      // Value currently in this register (-1 if free)
+    dirty: bool,        // Modified since last spill?
+}
+
+fn RegState_new() RegState {
+    return RegState{
+        .value_id = INVALID_ID,
+        .dirty = false,
+    };
+}
+
+fn RegState_isFree(rs: *RegState) bool {
+    return rs.value_id == INVALID_ID;
+}
+
+fn RegState_clear(rs: *RegState) {
+    rs.value_id = INVALID_ID;
+    rs.dirty = false;
+}
+
+// ============================================================================
+// Register Allocator State
+// ============================================================================
+
+struct RegAllocState {
+    func: *Func,
+
+    // Per-value state
+    val_states: *ValState,
+    val_states_count: i64,
+    val_states_cap: i64,
+
+    // Per-register state
+    reg_states: *RegState,
+
+    // Registers in use for current instruction's arguments
+    used: i64,
+
+    // Spill slots allocated
+    num_spills: i64,
+
+    // Liveness result for use distance lookups
+    liveness: *LivenessResult,
+}
+
+fn RegAlloc_init(ra: *RegAllocState, f: *Func,
+                  val_states: *ValState, val_states_cap: i64,
+                  reg_states: *RegState,
+                  lr: *LivenessResult) {
+    ra.func = f;
+    ra.val_states = val_states;
+    ra.val_states_count = 0;
+    ra.val_states_cap = val_states_cap;
+    ra.reg_states = reg_states;
+    ra.used = 0;
+    ra.num_spills = 0;
+    ra.liveness = lr;
+
+    // Initialize register states
+    var i: i64 = 0;
+    while i < NUM_REGS {
+        let rs: *RegState = reg_states + i;
+        rs.* = RegState_new();
+        i = i + 1;
+    }
+}
+
+// ============================================================================
+// Register Operations
+// ============================================================================
+
+// Find a free register in the mask
+fn RegAlloc_findFreeReg(ra: *RegAllocState, mask: i64) i64 {
+    var m: i64 = mask;
+    var reg: i64 = 0;
+    while m != 0 {
+        if (m & 1) != 0 {
+            let rs: *RegState = ra.reg_states + reg;
+            if RegState_isFree(rs) {
+                return reg;
+            }
+        }
+        m = m >> 1;
+        reg = reg + 1;
+    }
+    return -1;
+}
+
+// Allocate a register, spilling if necessary
+fn RegAlloc_allocReg(ra: *RegAllocState, mask: i64, block_id: i64) i64 {
+    // Exclude 'used' registers (holding current instruction's args)
+    let available: i64 = mask & (~ra.used);
+
+    // Try to find a free register
+    let free_reg: i64 = RegAlloc_findFreeReg(ra, available);
+    if free_reg >= 0 {
+        return free_reg;
+    }
+
+    // Must spill - find register with farthest next use
+    let bl: *BlockLiveness = LivenessResult_getBlock(ra.liveness, block_id);
+
+    var best_reg: i64 = -1;
+    var best_dist: i64 = -1;
+
+    var m: i64 = available;
+    var reg: i64 = 0;
+    while m != 0 {
+        if (m & 1) != 0 {
+            let rs: *RegState = ra.reg_states + reg;
+            if not RegState_isFree(rs) {
+                // Get distance to next use
+                let dist: i64 = BlockLiveness_get(bl, rs.value_id);
+                if dist > best_dist {
+                    best_dist = dist;
+                    best_reg = reg;
+                }
+            }
+        }
+        m = m >> 1;
+        reg = reg + 1;
+    }
+
+    if best_reg < 0 {
+        // No register available - return first allocatable as fallback
+        return 0;
+    }
+
+    // Spill the value in best_reg
+    RegAlloc_spillReg(ra, best_reg);
+
+    return best_reg;
+}
+
+// Spill a value from a register to a stack slot
+fn RegAlloc_spillReg(ra: *RegAllocState, reg: i64) {
+    if reg < 0 or reg >= NUM_REGS { return; }
+
+    let rs: *RegState = ra.reg_states + reg;
+    if RegState_isFree(rs) { return; }
+
+    let value_id: i64 = rs.value_id;
+    if value_id < 0 or value_id >= ra.val_states_count { return; }
+
+    let vs: *ValState = ra.val_states + value_id;
+
+    // Rematerializable values don't need actual spills
+    if vs.rematerializable {
+        // Just clear the register
+        RegState_clear(rs);
+        vs.regs = vs.regs & (~(1 << reg));
+        return;
+    }
+
+    // Allocate spill slot if needed
+    if vs.spill < 0 {
+        vs.spill = ra.num_spills;
+        ra.num_spills = ra.num_spills + 1;
+    }
+    vs.spill_used = true;
+
+    // CRITICAL: Set the Value's spill_slot so genssa knows to emit store/load
+    let v: *Value = Func_getValue(ra.func, value_id);
+    v.spill_slot = vs.spill;
+
+    // Clear register - value is now only on stack
+    RegState_clear(rs);
+    vs.regs = vs.regs & (~(1 << reg));
+}
+
+// Assign a value to a register
+fn RegAlloc_assignReg(ra: *RegAllocState, value_id: i64, reg: i64) {
+    if reg < 0 or reg >= NUM_REGS { return; }
+    if value_id < 0 or value_id >= ra.val_states_count { return; }
+
+    let rs: *RegState = ra.reg_states + reg;
+    rs.value_id = value_id;
+    rs.dirty = true;
+
+    let vs: *ValState = ra.val_states + value_id;
+    vs.regs = vs.regs | (1 << reg);
+
+    // CRITICAL: Also set the Value's reg field so genssa can use it
+    let v: *Value = Func_getValue(ra.func, value_id);
+    v.reg = reg;
+
+    // Mark register as used for current instruction
+    ra.used = ra.used | (1 << reg);
+}
+
+// Free a register
+fn RegAlloc_freeReg(ra: *RegAllocState, reg: i64) {
+    if reg < 0 or reg >= NUM_REGS { return; }
+
+    let rs: *RegState = ra.reg_states + reg;
+    let value_id: i64 = rs.value_id;
+
+    if value_id >= 0 and value_id < ra.val_states_count {
+        let vs: *ValState = ra.val_states + value_id;
+        vs.regs = vs.regs & (~(1 << reg));
+    }
+
+    RegState_clear(rs);
+    ra.used = ra.used & (~(1 << reg));
+}
+
+// Free all registers in a mask
+fn RegAlloc_freeRegs(ra: *RegAllocState, mask: i64) {
+    var m: i64 = mask;
+    var reg: i64 = 0;
+    while m != 0 {
+        if (m & 1) != 0 {
+            RegAlloc_freeReg(ra, reg);
+        }
+        m = m >> 1;
+        reg = reg + 1;
+    }
+}
+
+// ============================================================================
+// Value Processing
+// ============================================================================
+
+// Ensure we have a ValState for a value
+fn RegAlloc_ensureValState(ra: *RegAllocState, value_id: i64) {
+    if value_id < 0 { return; }
+
+    // Extend if needed
+    while ra.val_states_count <= value_id {
+        if ra.val_states_count >= ra.val_states_cap { return; }
+        let vs: *ValState = ra.val_states + ra.val_states_count;
+        vs.* = ValState_new();
+        ra.val_states_count = ra.val_states_count + 1;
+    }
+}
+
+// Check if a value is rematerializable (constants)
+fn Op_isRematerializable(op: Op) bool {
+    if op == Op.ConstInt { return true; }
+    if op == Op.ConstBool { return true; }
+    if op == Op.ConstNil { return true; }
+    if op == Op.ConstString { return true; }
+    return false;
+}
+
+// Check if a value needs a register
+fn Value_needsReg(op: Op) bool {
+    // Memory/control operations don't need registers
+    if op == Op.Store { return false; }
+    if op == Op.Return { return false; }
+    if op == Op.Move { return false; }
+    if op == Op.Zero { return false; }
+    if op == Op.InitMem { return false; }
+    if op == Op.Nop { return false; }
+    // Note: Op.Arg params 0-7 have pre-assigned registers but params 8+ need
+    // register assignment. This is handled specially in RegAlloc_processValue.
+    return true;
+}
+
+// ============================================================================
+// Phi Allocation
+// Reference: Zig regalloc.zig:614-680 allocatePhis
+// ============================================================================
+
+// Allocate registers for phi nodes in a block
+// This is called at the start of processing each block
+fn RegAlloc_allocatePhis(ra: *RegAllocState, f: *Func, block: *Block, primary_pred_idx: i64) {
+    // Collect phi nodes (they should be first in the block)
+    var phi_ids: I64List = undefined;
+    i64list_init(&phi_ids);
+
+    var vi: i64 = 0;
+    while vi < block.values_count {
+        let v: *Value = Func_getValue(f, block.values_start + vi);
+        if v.op == Op.Phi {
+            i64list_append(&phi_ids, v.id);
+        } else {
+            break;  // Phis are always first
+        }
+        vi = vi + 1;
+    }
+
+    if phi_ids.count == 0 {
+        i64list_deinit(&phi_ids);
+        return;
+    }
+
+    // Track which registers are used by phis
+    var phi_used: i64 = 0;
+
+    // Dynamic list for phi register assignments (-1 means not yet assigned)
+    var phi_regs: I64List = undefined;
+    i64list_init(&phi_regs);
+    var i: i64 = 0;
+    while i < phi_ids.count {
+        i64list_append(&phi_regs, -1);
+        i = i + 1;
+    }
+
+    // Pass 1: Try to reuse primary predecessor's register
+    i = 0;
+    while i < phi_ids.count {
+        let phi: *Value = Func_getValue(f, i64list_get(&phi_ids, i));
+        if primary_pred_idx >= 0 and primary_pred_idx < phi.args.count {
+            let arg_id: i64 = Value_getArg(phi, primary_pred_idx);
+            if arg_id >= 0 and arg_id < ra.val_states_count {
+                let arg_vs: *ValState = ra.val_states + arg_id;
+                // Check if arg has a register that's not already used by a phi
+                let arg_regs: i64 = arg_vs.regs & (~phi_used) & ALLOCATABLE_MASK;
+                if arg_regs != 0 {
+                    // Use the first available register from arg
+                    let reg: i64 = ValState_firstReg_mask(arg_regs);
+                    if reg >= 0 {
+                        i64list_set(&phi_regs, i, reg);
+                        phi_used = phi_used | (1 << reg);
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    // Pass 2: Allocate fresh registers for remaining phis
+    i = 0;
+    while i < phi_ids.count {
+        if i64list_get(&phi_regs, i) >= 0 {
+            i = i + 1;
+            continue;  // Already assigned in pass 1
+        }
+
+        let available: i64 = ALLOCATABLE_MASK & (~phi_used);
+        let reg: i64 = RegAlloc_findFreeReg_mask(ra, available);
+        if reg >= 0 {
+            i64list_set(&phi_regs, i, reg);
+            phi_used = phi_used | (1 << reg);
+        }
+        i = i + 1;
+    }
+
+    // Pass 3: Actually assign registers to phis
+    i = 0;
+    while i < phi_ids.count {
+        let reg: i64 = i64list_get(&phi_regs, i);
+        if reg >= 0 {
+            // Free the register first if occupied
+            let rs: *RegState = ra.reg_states + reg;
+            if not RegState_isFree(rs) {
+                RegAlloc_freeReg(ra, reg);
+            }
+            RegAlloc_assignReg(ra, i64list_get(&phi_ids, i), reg);
+        }
+        i = i + 1;
+    }
+
+    i64list_deinit(&phi_ids);
+    i64list_deinit(&phi_regs);
+}
+
+// Helper: find first set bit in a mask
+fn ValState_firstReg_mask(mask: i64) i64 {
+    if mask == 0 { return -1; }
+    var m: i64 = mask;
+    var reg: i64 = 0;
+    while (m & 1) == 0 {
+        m = m >> 1;
+        reg = reg + 1;
+        if reg >= NUM_REGS { return -1; }
+    }
+    return reg;
+}
+
+// Find a free register from a specific mask
+fn RegAlloc_findFreeReg_mask(ra: *RegAllocState, mask: i64) i64 {
+    var m: i64 = mask;
+    var reg: i64 = 0;
+    while m != 0 {
+        if (m & 1) != 0 {
+            let rs: *RegState = ra.reg_states + reg;
+            if RegState_isFree(rs) {
+                return reg;
+            }
+        }
+        m = m >> 1;
+        reg = reg + 1;
+    }
+    return -1;
+}
+
+// ============================================================================
+// Main Register Allocation
+// ============================================================================
+
+// Process a single value
+fn RegAlloc_processValue(ra: *RegAllocState, f: *Func, v: *Value, block_id: i64) {
+    RegAlloc_ensureValState(ra, v.id);
+
+    let vs: *ValState = ra.val_states + v.id;
+
+    // Check if rematerializable
+    if Op_isRematerializable(v.op) {
+        vs.rematerializable = true;
+    }
+
+    // Check if needs register
+    if not Value_needsReg(v.op) {
+        vs.needs_reg = false;
+        return;
+    }
+
+    // Clear 'used' mask for this instruction
+    ra.used = 0;
+
+    // Process arguments - ensure they're in registers
+    var i: i64 = 0;
+    while i < v.args.count {
+        let arg_id: i64 = Value_getArg(v, i);
+        if arg_id != INVALID_ID and arg_id < ra.val_states_count {
+            let arg_vs: *ValState = ra.val_states + arg_id;
+            if arg_vs.needs_reg and not ValState_inReg(arg_vs) {
+                // Need to load this argument
+                let reg: i64 = RegAlloc_allocReg(ra, ALLOCATABLE_MASK, block_id);
+                RegAlloc_assignReg(ra, arg_id, reg);
+            }
+            // Mark arg's register as used
+            if ValState_inReg(arg_vs) {
+                let arg_reg: i64 = ValState_firstReg(arg_vs);
+                if arg_reg >= 0 {
+                    ra.used = ra.used | (1 << arg_reg);
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    // Allocate register for result
+    if vs.needs_reg {
+        // For Op.Arg values that already have a pre-assigned register (params 0-7),
+        // keep that register instead of allocating a new one.
+        // Params 8+ have v.reg=-1 and need allocation.
+        if v.reg >= 0 {
+            // Already has a register (e.g., Op.Arg for params 0-7)
+            RegAlloc_assignReg(ra, v.id, v.reg);
+        } else {
+            let reg: i64 = RegAlloc_allocReg(ra, ALLOCATABLE_MASK, block_id);
+            RegAlloc_assignReg(ra, v.id, reg);
+        }
+    }
+}
+
+// Process a single block
+fn RegAlloc_processBlock(ra: *RegAllocState, f: *Func, block: *Block) {
+    // Determine primary predecessor (first one with smallest ID)
+    var primary_pred_idx: i64 = -1;
+    if block.preds.count > 0 {
+        primary_pred_idx = 0;  // Use first predecessor as primary
+    }
+
+    // Allocate registers for phi nodes first
+    // Reference: Zig regalloc.zig:723
+    RegAlloc_allocatePhis(ra, f, block, primary_pred_idx);
+
+    // Process remaining values in order
+    var vi: i64 = 0;
+    while vi < block.values_count {
+        let v: *Value = Func_getValue(f, block.values_start + vi);
+        // Skip phis - already processed by allocatePhis
+        if v.op == Op.Phi {
+            vi = vi + 1;
+            continue;
+        }
+        RegAlloc_processValue(ra, f, v, block.id);
+        vi = vi + 1;
+    }
+}
+
+// Main entry point: Allocate registers for a function
+// Returns 0 on success
+fn RegAlloc_run(ra: *RegAllocState, f: *Func) i64 {
+    // Process blocks in order
+    var b: i64 = 0;
+    while b < f.blocks_count {
+        let block: *Block = Func_getBlock(f, b);
+        RegAlloc_processBlock(ra, f, block);
+        b = b + 1;
+    }
+
+    // Update function's spill count
+    f.spill_slots = ra.num_spills;
+
+    return 0;
+}
+
+// ============================================================================
+// Query Functions
+// ============================================================================
+
+// Get the register assigned to a value
+fn RegAlloc_getReg(ra: *RegAllocState, value_id: i64) i64 {
+    if value_id < 0 or value_id >= ra.val_states_count {
+        return -1;
+    }
+    let vs: *ValState = ra.val_states + value_id;
+    return ValState_firstReg(vs);
+}
+
+// Get the spill slot for a value (or -1)
+fn RegAlloc_getSpill(ra: *RegAllocState, value_id: i64) i64 {
+    if value_id < 0 or value_id >= ra.val_states_count {
+        return -1;
+    }
+    let vs: *ValState = ra.val_states + value_id;
+    return vs.spill;
+}
+
+// Check if a value is in a register
+fn RegAlloc_inReg(ra: *RegAllocState, value_id: i64) bool {
+    if value_id < 0 or value_id >= ra.val_states_count {
+        return false;
+    }
+    let vs: *ValState = ra.val_states + value_id;
+    return ValState_inReg(vs);
+}

@@ -1,0 +1,137 @@
+// Checker Test - Tests for checker.cot
+// Run with: ./zig-out/bin/cot cot0/frontend/checker_test.cot -o /tmp/checker_test && /tmp/checker_test
+
+import "checker.cot"
+
+fn main() i64 {
+    let result: i64 = 0;
+
+    result = result + test_names_equal();
+    result = result + test_type_valid_fn();
+    result = result + test_ScopePool_define_lookup();
+    result = result + test_scope_parent_lookup();
+
+    return result;
+}
+
+// ============================================================================
+// Test: names_equal function
+// ============================================================================
+
+fn test_names_equal() i64 {
+    // Test equal names
+    let name1: string = "hello";
+    let name2: string = "hello";
+
+    if not names_equal(name1.ptr, 0, 5, name2.ptr, 0, 5) { return 1; }
+
+    // Test different names
+    let name3: string = "world";
+    if names_equal(name1.ptr, 0, 5, name3.ptr, 0, 5) { return 2; }
+
+    // Test different lengths
+    let name4: string = "helloworld";
+    if names_equal(name1.ptr, 0, 5, name4.ptr, 0, 10) { return 3; }
+
+    // Test substrings
+    // "ello" starting at offset 1 vs "ello" in "bello"
+    let name5: string = "bello";
+    if not names_equal(name1.ptr, 1, 4, name5.ptr, 1, 4) { return 4; }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: type_valid function (from types.cot)
+// ============================================================================
+
+fn test_type_valid_fn() i64 {
+    // Valid indices should return true
+    if not type_valid(0) { return 10; }
+    if not type_valid(5) { return 11; }
+    if not type_valid(12) { return 12; }
+
+    // Negative indices should return false
+    if type_valid(-1) { return 13; }
+    if type_valid(-100) { return 14; }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: scope define and lookup
+// ============================================================================
+
+fn test_ScopePool_define_lookup() i64 {
+    // Allocate scope pool storage
+    var scopes: [100]Scope = undefined;
+    var symbols: [1000]Symbol = undefined;
+
+    var pool: ScopePool = ScopePool{
+        .scopes = &scopes[0],
+        .count = 0,
+        .symbols = &symbols[0],
+        .symbols_count = 0,
+    };
+
+    // Create global scope
+    let global: i64 = ScopePool_new(&pool, -1);
+
+    // Define a variable "x" with type i64 (TYPE_I64 = 5)
+    let source: string = "x";
+    let sym: Symbol = Symbol_new(0, 1, SymbolKind.Variable, 5, 0, true);
+    ScopePool_define(&pool, global, sym);
+
+    // Lookup "x" - should find it
+    let found_type: i64 = ScopePool_lookupType(&pool, global, source.ptr, 0, 1);
+    if found_type != 5 { return 20; }
+
+    // Lookup "y" - should NOT find it
+    let source_y: string = "y";
+    let not_found: i64 = ScopePool_lookupType(&pool, global, source_y.ptr, 0, 1);
+    if not_found != -1 { return 21; }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: scope parent lookup
+// ============================================================================
+
+fn test_scope_parent_lookup() i64 {
+    // Allocate scope pool storage
+    var scopes: [100]Scope = undefined;
+    var symbols: [1000]Symbol = undefined;
+
+    var pool: ScopePool = ScopePool{
+        .scopes = &scopes[0],
+        .count = 0,
+        .symbols = &symbols[0],
+        .symbols_count = 0,
+    };
+
+    // Create global scope with "x"
+    let global: i64 = ScopePool_new(&pool, -1);
+    let source: string = "xy";
+    let sym_x: Symbol = Symbol_new(0, 1, SymbolKind.Variable, 5, 0, true);  // "x" at offset 0
+    ScopePool_define(&pool, global, sym_x);
+
+    // Create child scope with "y"
+    let child: i64 = ScopePool_new(&pool, global);
+    let sym_y: Symbol = Symbol_new(1, 1, SymbolKind.Variable, 1, 0, false);  // "y" at offset 1, bool type
+    ScopePool_define(&pool, child, sym_y);
+
+    // From child, lookup "x" - should find in parent
+    let found_x: i64 = ScopePool_lookupType(&pool, child, source.ptr, 0, 1);
+    if found_x != 5 { return 30; }
+
+    // From child, lookup "y" - should find in child
+    let found_y: i64 = ScopePool_lookupType(&pool, child, source.ptr, 1, 1);
+    if found_y != 1 { return 31; }
+
+    // From global, lookup "y" - should NOT find (child scope only)
+    let not_found_y: i64 = ScopePool_lookupType(&pool, global, source.ptr, 1, 1);
+    if not_found_y != -1 { return 32; }
+
+    return 0;
+}

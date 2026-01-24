@@ -1,0 +1,46 @@
+// Trace with actual Parser struct
+import "token.cot"
+import "scanner.cot"
+import "ast.cot"
+import "parser.cot"
+import "types.cot"
+
+var g_nodes: [200]Node;
+var g_children: [1000]i64;
+var g_pool: NodePool;
+
+var g_types: [50]Type;
+var g_type_params: [50]i64;
+var g_type_fields: [50]FieldInfo;
+var g_type_registry: TypeRegistry;
+
+fn init_pool() *NodePool {
+    g_pool.nodes = &g_nodes[0];
+    g_pool.count = 0;
+    g_pool.children = &g_children[0];
+    g_pool.children_count = 0;
+    g_type_registry.types = &g_types[0];
+    g_type_registry.params = &g_type_params[0];
+    g_type_registry.fields = &g_type_fields[0];
+    TypeRegistry_init(&g_type_registry);
+    return &g_pool;
+}
+
+fn main() i64 {
+    let pool: *NodePool = init_pool();
+
+    // Call Parser_init which returns Parser by value (>16 bytes)
+    var p: Parser = Parser_init("42", pool, &g_type_registry);
+
+    // Check scanner field first
+    if len(p.scanner.source) != 2 { return 5; }
+    if p.scanner.source[0] != 52 { return 6; }
+
+    // Check token
+    if p.current.kind == TokenType.Int { return 100; }
+    if p.current.kind == TokenType.Ident { return 101; }
+    if p.current.kind == TokenType.Eof { return 130; }
+    if p.current.kind == TokenType.Error { return 131; }
+
+    return 199;
+}

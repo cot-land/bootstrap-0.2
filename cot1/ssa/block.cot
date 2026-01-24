@@ -1,0 +1,314 @@
+// Cot0 SSA Basic Block
+// Minimal basic block for self-hosting.
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/ssa/block.go
+// Reference: bootstrap-0.2/src/ssa/block.zig
+
+import "value.cot"
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+const INVALID_BLOCK: i64 = -1;
+const MAX_SUCCS: i64 = 2;     // At most 2 successors (branch)
+const MAX_VALUES_PER_BLOCK: i64 = 5000;
+
+// ============================================================================
+// Block Kind
+// ============================================================================
+
+enum BlockKind {
+    Invalid,      // Invalid/uninitialized
+    Plain,        // Single successor (fallthrough or jump)
+    If,           // Conditional branch (2 successors: then, else)
+    Return,       // Function return (no successors)
+    Exit,         // Function exit (e.g., panic, no successors)
+}
+
+// Check if block kind is a conditional branch
+// Reference: Zig's BlockKind.isConditional()
+fn BlockKind_isConditional(kind: BlockKind) bool {
+    return kind == BlockKind.If;
+}
+
+// Get number of successors for a block kind
+// Reference: Zig's BlockKind.numSuccs()
+fn BlockKind_numSuccs(kind: BlockKind) i64 {
+    if kind == BlockKind.Plain { return 1; }
+    if kind == BlockKind.If { return 2; }
+    if kind == BlockKind.Return { return 0; }
+    if kind == BlockKind.Exit { return 0; }
+    return 0;
+}
+
+// ============================================================================
+// SSA Block
+// ============================================================================
+
+// Block represents a basic block in SSA form.
+// A basic block is a sequence of values with:
+// - No internal control flow
+// - Single entry point
+// - Single exit point (terminator)
+struct Block {
+    id: i64,              // Unique identifier within function
+    kind: BlockKind,      // Block type
+
+    // Control value (condition for If blocks)
+    control: i64,         // Value ID for branch condition (-1 if none)
+
+    // Successors (blocks we can jump to)
+    succs: [2]i64,        // Successor block IDs
+    succs_count: i64,
+
+    // Predecessors (blocks that jump to us) - dynamic list
+    preds: I64List,       // Predecessor block IDs (no limit)
+
+    // Values in this block (indices into function's value array)
+    values_start: i64,    // First value index
+    values_count: i64,    // Number of values
+
+    // Position in dominator tree
+    dom: i64,             // Immediate dominator block ID (-1 for entry)
+    dom_level: i64,       // Depth in dominator tree
+
+    // Auxiliary data
+    aux_int: i64,         // For return blocks: return value ID
+}
+
+// ============================================================================
+// Block Constructors
+// ============================================================================
+
+fn Block_new(id: i64, kind: BlockKind) Block {
+    var b: Block = undefined;
+    b.id = id;
+    b.kind = kind;
+    b.control = INVALID_ID;
+    b.succs[0] = INVALID_BLOCK;
+    b.succs[1] = INVALID_BLOCK;
+    b.succs_count = 0;
+    // Initialize dynamic preds list
+    i64list_init(&b.preds);
+    b.values_start = 0;
+    b.values_count = 0;
+    b.dom = INVALID_BLOCK;
+    b.dom_level = 0;
+    b.aux_int = INVALID_ID;
+    return b;
+}
+
+// Get predecessor count (accessor for preds.count)
+fn Block_getPredsCount(b: *Block) i64 {
+    return b.preds.count;
+}
+
+// Get predecessor at index
+fn Block_getPred(b: *Block, idx: i64) i64 {
+    if idx < 0 or idx >= b.preds.count { return INVALID_BLOCK; }
+    return i64list_get(&b.preds, idx);
+}
+
+fn Block_newPlain(id: i64) Block {
+    return Block_new(id, BlockKind.Plain);
+}
+
+fn Block_newIf(id: i64) Block {
+    return Block_new(id, BlockKind.If);
+}
+
+fn Block_newReturn(id: i64) Block {
+    return Block_new(id, BlockKind.Return);
+}
+
+// ============================================================================
+// Successor Management
+// ============================================================================
+
+// Add a successor to this block
+fn Block_addSucc(b: *Block, succ_id: i64) {
+    if b.succs_count >= MAX_SUCCS { return; }
+    b.succs[b.succs_count] = succ_id;
+    b.succs_count = b.succs_count + 1;
+}
+
+// Set successor at index (for branch: 0=then, 1=else)
+fn Block_setSucc(b: *Block, idx: i64, succ_id: i64) {
+    if idx < 0 or idx >= MAX_SUCCS { return; }
+    b.succs[idx] = succ_id;
+    if idx >= b.succs_count {
+        b.succs_count = idx + 1;
+    }
+}
+
+// Get first successor (or INVALID_BLOCK)
+fn Block_succ0(b: *Block) i64 {
+    if b.succs_count < 1 { return INVALID_BLOCK; }
+    return b.succs[0];
+}
+
+// Get second successor (or INVALID_BLOCK)
+fn Block_succ1(b: *Block) i64 {
+    if b.succs_count < 2 { return INVALID_BLOCK; }
+    return b.succs[1];
+}
+
+// ============================================================================
+// Predecessor Management
+// ============================================================================
+
+// Add a predecessor to this block
+fn Block_addPred(b: *Block, pred_id: i64) {
+    i64list_append(&b.preds, pred_id);
+}
+
+// Check if block has predecessor
+fn Block_hasPred(b: *Block, pred_id: i64) bool {
+    var i: i64 = 0;
+    while i < b.preds.count {
+        if i64list_get(&b.preds, i) == pred_id { return true; }
+        i = i + 1;
+    }
+    return false;
+}
+
+// ============================================================================
+// Block Queries
+// ============================================================================
+
+// Check if block is entry block (no predecessors)
+fn Block_isEntry(b: *Block) bool {
+    return b.preds.count == 0;
+}
+
+// Check if block is exit block (no successors)
+fn Block_isExit(b: *Block) bool {
+    return b.succs_count == 0;
+}
+
+// Check if block ends with conditional branch
+fn Block_isIf(b: *Block) bool {
+    return b.kind == BlockKind.If;
+}
+
+// Check if block ends with return
+fn Block_isReturn(b: *Block) bool {
+    return b.kind == BlockKind.Return;
+}
+
+// Check if block is plain (unconditional jump or fallthrough)
+fn Block_isPlain(b: *Block) bool {
+    return b.kind == BlockKind.Plain;
+}
+
+// Get number of predecessors
+// Reference: Zig's Block.numPreds()
+fn Block_numPreds(b: *Block) i64 {
+    return b.preds.count;
+}
+
+// Get number of successors
+// Reference: Zig's Block.numSuccs()
+fn Block_numSuccs(b: *Block) i64 {
+    return b.succs_count;
+}
+
+// Get number of values in this block
+// Reference: Zig's Block.numValues()
+fn Block_numValues(b: *Block) i64 {
+    return b.values_count;
+}
+
+// Get number of control values (1 for If blocks, 0 for others)
+// Reference: Zig's Block.numControls()
+fn Block_numControls(b: *Block) i64 {
+    if b.kind == BlockKind.If {
+        return 1;
+    }
+    return 0;
+}
+
+// Set the control value (for If blocks)
+// Reference: Zig's Block.setControl()
+fn Block_setControl(b: *Block, v_id: i64) {
+    b.control = v_id;
+}
+
+// Get the control value (for If blocks)
+// Reference: Zig's Block.getControl()
+fn Block_getControl(b: *Block) i64 {
+    return b.control;
+}
+
+// Reset all control values
+// Reference: Zig's Block.resetControls()
+fn Block_resetControls(b: *Block) {
+    b.control = INVALID_ID;
+}
+
+// ============================================================================
+// Block Pool (arena allocation)
+// ============================================================================
+
+const MAX_BLOCKS: i64 = 5000;
+
+struct BlockPool {
+    blocks: *Block,       // Externally allocated array
+    count: i64,
+    cap: i64,
+}
+
+fn BlockPool_init(pool: *BlockPool, blocks: *Block, cap: i64) {
+    pool.blocks = blocks;
+    pool.count = 0;
+    pool.cap = cap;
+}
+
+fn BlockPool_alloc(pool: *BlockPool, kind: BlockKind) *Block {
+    if pool.count >= pool.cap {
+        return pool.blocks;  // Return first block as error placeholder
+    }
+
+    let id: i64 = pool.count;
+    let b: *Block = pool.blocks + id;
+    b.* = Block_new(id, kind);
+    pool.count = pool.count + 1;
+
+    return b;
+}
+
+fn BlockPool_get(pool: *BlockPool, id: i64) *Block {
+    if id < 0 or id >= pool.count {
+        return pool.blocks;  // Return first block as error placeholder
+    }
+    return pool.blocks + id;
+}
+
+// ============================================================================
+// Edge Management (connect blocks)
+// ============================================================================
+
+// Connect two blocks: from -> to (adds successor and predecessor)
+fn BlockPool_connect(pool: *BlockPool, from_id: i64, to_id: i64) {
+    let from: *Block = BlockPool_get(pool, from_id);
+    let to: *Block = BlockPool_get(pool, to_id);
+
+    Block_addSucc(from, to_id);
+    Block_addPred(to, from_id);
+}
+
+// Set up conditional branch: from -> then_id (if true), else_id (if false)
+fn BlockPool_setIf(pool: *BlockPool, from_id: i64, control: i64, then_id: i64, else_id: i64) {
+    let from: *Block = BlockPool_get(pool, from_id);
+    from.kind = BlockKind.If;
+    from.control = control;
+
+    Block_setSucc(from, 0, then_id);
+    Block_setSucc(from, 1, else_id);
+
+    let then_b: *Block = BlockPool_get(pool, then_id);
+    let else_b: *Block = BlockPool_get(pool, else_id);
+    Block_addPred(then_b, from_id);
+    Block_addPred(else_b, from_id);
+}

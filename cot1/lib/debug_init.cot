@@ -1,0 +1,303 @@
+// =============================================================================
+// Debug Infrastructure Initialization
+// =============================================================================
+//
+// Provides command-line flag parsing and initialization for the debug system.
+// Import this file early in main.cot to enable debug features.
+//
+// Supported flags:
+//   -d, --debug       Enable debug output
+//   -v, --verbose     Enable verbose output
+//   -t, --trace       Enable function tracing
+//   --debug-all       Enable all debug output
+//   --debug-ir        Enable IR debug output
+//   --debug-ssa       Enable SSA debug output
+//   --debug-codegen   Enable codegen debug output
+//   --debug-memory    Enable memory tracking debug output
+//   --debug-phase     Enable phase markers
+//
+// =============================================================================
+
+import "error.cot"
+import "debug.cot"
+
+// =============================================================================
+// Flag Parsing
+// =============================================================================
+
+// Check if a string equals another (null-terminated)
+fn streq_flag(a: *u8, b: *u8) bool {
+    if a == null or b == null { return false; }
+
+    var i: i64 = 0;
+    while (a + i).* != 0 and (b + i).* != 0 {
+        if (a + i).* != (b + i).* {
+            return false;
+        }
+        i = i + 1;
+    }
+    return (a + i).* == (b + i).*;
+}
+
+// Check if string starts with prefix
+fn starts_with(s: *u8, prefix: *u8) bool {
+    if s == null or prefix == null { return false; }
+
+    var i: i64 = 0;
+    while (prefix + i).* != 0 {
+        if (s + i).* == 0 { return false; }
+        if (s + i).* != (prefix + i).* { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Parse a single debug flag, returns true if recognized
+fn parse_debug_flag(arg: *u8) bool {
+    if arg == null { return false; }
+
+    // -d or --debug
+    if streq_flag(arg, "-d") or streq_flag(arg, "--debug") {
+        g_debug_verbose = true;
+        return true;
+    }
+
+    // -v or --verbose
+    if streq_flag(arg, "-v") or streq_flag(arg, "--verbose") {
+        g_debug_verbose = true;
+        return true;
+    }
+
+    // -t or --trace
+    if streq_flag(arg, "-t") or streq_flag(arg, "--trace") {
+        g_debug_trace = true;
+        return true;
+    }
+
+    // --debug-all
+    if streq_flag(arg, "--debug-all") {
+        debug_enable_all();
+        return true;
+    }
+
+    // --debug-ir
+    if streq_flag(arg, "--debug-ir") {
+        g_debug_ir = true;
+        return true;
+    }
+
+    // --debug-ssa
+    if streq_flag(arg, "--debug-ssa") {
+        g_debug_ssa = true;
+        return true;
+    }
+
+    // --debug-codegen
+    if streq_flag(arg, "--debug-codegen") {
+        g_debug_codegen = true;
+        return true;
+    }
+
+    // --debug-memory
+    if streq_flag(arg, "--debug-memory") {
+        g_debug_memory = true;
+        return true;
+    }
+
+    // --debug-phase
+    if streq_flag(arg, "--debug-phase") {
+        g_debug_phase = true;
+        return true;
+    }
+
+    return false;
+}
+
+// Parse all command line arguments for debug flags
+// Returns number of debug flags found
+fn parse_debug_flags(argc: i64, argv: **u8) i64 {
+    var count: i64 = 0;
+
+    var i: i64 = 1;  // Skip program name
+    while i < argc {
+        let arg_ptr: **u8 = argv + i;
+        let arg: *u8 = arg_ptr.*;
+
+        if parse_debug_flag(arg) {
+            count = count + 1;
+        }
+
+        i = i + 1;
+    }
+
+    return count;
+}
+
+// =============================================================================
+// Debug Infrastructure Initialization
+// =============================================================================
+
+fn debug_init() {
+    // Initialize error tracking
+    g_alloc_count = 0;
+    g_alloc_bytes = 0;
+    g_error_context_count = 0;
+
+    // Initialize tracing
+    g_trace_depth = 0;
+    g_trace_call_count = 0;
+    g_max_trace_depth = 0;
+
+    // Initialize phase tracking
+    g_phase_count = 0;
+    g_current_phase = null;
+    g_checkpoint_count = 0;
+
+    // All debug flags start false (can be enabled via command line)
+}
+
+// Print current debug configuration
+fn debug_print_config() {
+    if not g_debug_verbose { return; }
+
+    stderr_str("\n");
+    stderr_str("================================================================================\n");
+    stderr_str("DEBUG CONFIGURATION\n");
+    stderr_str("================================================================================\n");
+
+    stderr_str("  verbose:   ");
+    if g_debug_verbose { stderr_str("ON"); } else { stderr_str("OFF"); }
+    stderr_newline();
+
+    stderr_str("  trace:     ");
+    if g_debug_trace { stderr_str("ON"); } else { stderr_str("OFF"); }
+    stderr_newline();
+
+    stderr_str("  phase:     ");
+    if g_debug_phase { stderr_str("ON"); } else { stderr_str("OFF"); }
+    stderr_newline();
+
+    stderr_str("  memory:    ");
+    if g_debug_memory { stderr_str("ON"); } else { stderr_str("OFF"); }
+    stderr_newline();
+
+    stderr_str("  ir:        ");
+    if g_debug_ir { stderr_str("ON"); } else { stderr_str("OFF"); }
+    stderr_newline();
+
+    stderr_str("  ssa:       ");
+    if g_debug_ssa { stderr_str("ON"); } else { stderr_str("OFF"); }
+    stderr_newline();
+
+    stderr_str("  codegen:   ");
+    if g_debug_codegen { stderr_str("ON"); } else { stderr_str("OFF"); }
+    stderr_newline();
+
+    stderr_str("================================================================================\n");
+}
+
+// =============================================================================
+// Error Infrastructure Summary
+// =============================================================================
+
+fn debug_print_summary() {
+    stderr_str("\n");
+    stderr_str("================================================================================\n");
+    stderr_str("EXECUTION SUMMARY\n");
+    stderr_str("================================================================================\n");
+
+    stderr_str("Memory:\n");
+    stderr_str("  Total allocations: ");
+    stderr_int(g_alloc_count);
+    stderr_newline();
+    stderr_str("  Total bytes allocated: ");
+    stderr_int(g_alloc_bytes);
+    stderr_newline();
+
+    if g_debug_trace {
+        stderr_str("\nExecution:\n");
+        stderr_str("  Function calls traced: ");
+        stderr_int(g_trace_call_count);
+        stderr_newline();
+        stderr_str("  Max call depth: ");
+        stderr_int(g_max_trace_depth);
+        stderr_newline();
+    }
+
+    stderr_str("\nPhases:\n");
+    stderr_str("  Phases executed: ");
+    stderr_int(g_phase_count);
+    stderr_newline();
+    if g_current_phase != null {
+        stderr_str("  Last phase: ");
+        stderr_str(g_current_phase);
+        stderr_newline();
+    }
+
+    if g_checkpoint_count > 0 {
+        stderr_str("\nCheckpoints:\n");
+        stderr_str("  Checkpoints reached: ");
+        stderr_int(g_checkpoint_count);
+        stderr_newline();
+    }
+
+    stderr_str("================================================================================\n");
+}
+
+// =============================================================================
+// Quick Start Helpers
+// =============================================================================
+
+// Call this at the start of main() to set up debug infrastructure
+fn debug_startup(argc: i64, argv: **u8) {
+    debug_init();
+    let flag_count: i64 = parse_debug_flags(argc, argv);
+
+    if flag_count > 0 {
+        debug_print_config();
+    }
+}
+
+// Call this at the end of main() for summary
+fn debug_shutdown() {
+    if g_debug_verbose {
+        debug_print_summary();
+    }
+}
+
+// =============================================================================
+// Compiler Phase Markers
+// =============================================================================
+
+fn compiler_phase_read() {
+    phase_start("Reading source file");
+}
+
+fn compiler_phase_parse() {
+    phase_start("Parsing");
+}
+
+fn compiler_phase_lower() {
+    phase_start("Lowering to IR");
+}
+
+fn compiler_phase_ssa() {
+    phase_start("Building SSA");
+}
+
+fn compiler_phase_regalloc() {
+    phase_start("Register allocation");
+}
+
+fn compiler_phase_codegen() {
+    phase_start("Code generation");
+}
+
+fn compiler_phase_link() {
+    phase_start("Linking");
+}
+
+fn compiler_phase_write() {
+    phase_start("Writing output");
+}
+

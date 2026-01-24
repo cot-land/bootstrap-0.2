@@ -1,0 +1,74 @@
+// Types Test - Tests for types.cot
+// Run with: ./zig-out/bin/cot cot0/frontend/types_test.cot -o /tmp/types_test && /tmp/types_test
+//
+// Uses TYPE_* constants directly now that BUG-017 is fixed.
+
+import "types.cot"
+
+fn main() i64 {
+    let result: i64 = 0;
+
+    result = result + test_lookup_basic_type();
+    result = result + test_type_valid();
+
+    return result;
+}
+
+// ============================================================================
+// Test: Lookup basic type by name
+// ============================================================================
+
+fn test_lookup_basic_type() i64 {
+    // Test "i64"
+    let i64_str: string = "i64";
+    let i64_result: i64 = lookup_basic_type(i64_str.ptr, 0, 3);
+    if i64_result != TYPE_I64 { return 70; }
+
+    // Test "bool"
+    let bool_str: string = "bool";
+    let bool_result: i64 = lookup_basic_type(bool_str.ptr, 0, 4);
+    if bool_result != TYPE_BOOL { return 71; }
+
+    // Test "void"
+    let void_str: string = "void";
+    let void_result: i64 = lookup_basic_type(void_str.ptr, 0, 4);
+    if void_result != TYPE_VOID { return 72; }
+
+    // Test "string"
+    let string_str: string = "string";
+    let string_result: i64 = lookup_basic_type(string_str.ptr, 0, 6);
+    if string_result != TYPE_STRING { return 73; }
+
+    // Test unknown type
+    let unknown_str: string = "xyz";
+    let unknown_result: i64 = lookup_basic_type(unknown_str.ptr, 0, 3);
+    if unknown_result != INVALID_TYPE { return 74; }
+
+    // Test "u8"
+    let u8_str: string = "u8";
+    let u8_result: i64 = lookup_basic_type(u8_str.ptr, 0, 2);
+    if u8_result != TYPE_U8 { return 75; }
+
+    // Test "i32"
+    let i32_str: string = "i32";
+    let i32_result: i64 = lookup_basic_type(i32_str.ptr, 0, 3);
+    if i32_result != TYPE_I32 { return 76; }
+
+    return 0;
+}
+
+// ============================================================================
+// Test: type_valid function
+// ============================================================================
+
+fn test_type_valid() i64 {
+    // Valid type index should return true
+    if not type_valid(0) { return 80; }  // TYPE_INVALID = 0, but 0 is still a valid index
+    if not type_valid(5) { return 81; }  // TYPE_I64 = 5
+
+    // Negative index should return false
+    if type_valid(-1) { return 82; }
+    if type_valid(-100) { return 83; }
+
+    return 0;
+}

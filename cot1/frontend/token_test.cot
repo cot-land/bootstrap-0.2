@@ -1,0 +1,162 @@
+// Tests for token.cot
+// Sprint A: Extended keyword recognition
+import "token.cot"
+
+fn main() i64 {
+    var passed: i64 = 0;
+    var failed: i64 = 0;
+
+    // Test 1: Token_new creates token correctly
+    let t1: Token = Token_new(TokenType.Int, 10, 15);
+    if t1.start == 10 and t1.end == 15 {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_new");
+        failed = failed + 1;
+    }
+
+    // Test 2: Token_lookup recognizes "fn"
+    if Token_lookup("fn") == TokenType.Fn {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup fn");
+        failed = failed + 1;
+    }
+
+    // Test 3: Token_lookup recognizes "i64"
+    if Token_lookup("i64") == TokenType.I64 {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup i64");
+        failed = failed + 1;
+    }
+
+    // Test 4: Token_lookup recognizes "return"
+    if Token_lookup("return") == TokenType.Return {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup return");
+        failed = failed + 1;
+    }
+
+    // Test 5: Token_lookup returns Ident for non-keywords
+    if Token_lookup("foo") == TokenType.Ident {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup foo");
+        failed = failed + 1;
+    }
+
+    // Sprint A: New keyword tests
+
+    // Test 6: Token_lookup recognizes "let"
+    if Token_lookup("let") == TokenType.Let {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup let");
+        failed = failed + 1;
+    }
+
+    // Test 7: Token_lookup recognizes "var"
+    if Token_lookup("var") == TokenType.Var {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup var");
+        failed = failed + 1;
+    }
+
+    // Test 8: Token_lookup recognizes "if"
+    if Token_lookup("if") == TokenType.If {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup if");
+        failed = failed + 1;
+    }
+
+    // Test 9: Token_lookup recognizes "else"
+    if Token_lookup("else") == TokenType.Else {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup else");
+        failed = failed + 1;
+    }
+
+    // Test 10: Token_lookup recognizes "while"
+    if Token_lookup("while") == TokenType.While {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup while");
+        failed = failed + 1;
+    }
+
+    // Test 11: Token_lookup recognizes "bool"
+    if Token_lookup("bool") == TokenType.Bool {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup bool");
+        failed = failed + 1;
+    }
+
+    // Test 12: Token_lookup recognizes "true"
+    if Token_lookup("true") == TokenType.True {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup true");
+        failed = failed + 1;
+    }
+
+    // Test 13: Token_lookup recognizes "false"
+    if Token_lookup("false") == TokenType.False {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup false");
+        failed = failed + 1;
+    }
+
+    // Test 14: Token_lookup recognizes "and"
+    if Token_lookup("and") == TokenType.And {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup and");
+        failed = failed + 1;
+    }
+
+    // Test 15: Token_lookup recognizes "or"
+    if Token_lookup("or") == TokenType.Or {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup or");
+        failed = failed + 1;
+    }
+
+    // Test 16: Token_lookup recognizes "not"
+    if Token_lookup("not") == TokenType.Not {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup not");
+        failed = failed + 1;
+    }
+
+    // Test 17: Token_lookup recognizes "struct"
+    if Token_lookup("struct") == TokenType.Struct {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup struct");
+        failed = failed + 1;
+    }
+
+    // Test 18: Token_lookup recognizes "enum"
+    if Token_lookup("enum") == TokenType.Enum {
+        passed = passed + 1;
+    } else {
+        println("FAIL: Token_lookup enum");
+        failed = failed + 1;
+    }
+
+    if failed == 0 {
+        println("All 18 token tests passed!");
+    }
+
+    // Return 0 on success, failed count on failure
+    return failed;
+}

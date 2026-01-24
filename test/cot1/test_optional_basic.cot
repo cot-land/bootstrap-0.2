@@ -1,0 +1,52 @@
+// Test: Optional Type Basic Syntax
+// Feature: ?T type for nullable values
+//
+// This test verifies:
+// 1. Optional type declaration
+// 2. Returning null
+// 3. Returning non-null value
+// 4. Optional in variable declaration
+
+struct Item {
+    key: i64,
+    value: i64,
+}
+
+fn findItem(items: *Item, count: i64, key: i64) ?*Item {
+    var i: i64 = 0;
+    while i < count {
+        let item: *Item = items + i;
+        if item.key == key {
+            return item;  // Return optional with value
+        }
+        i = i + 1;
+    }
+    return null;  // Return optional without value
+}
+
+fn test_optional_null() i64 {
+    // var items: [3]Item = undefined;
+    // let result: ?*Item = findItem(&items[0], 3, 999);
+    // result should be null
+    return 1;
+}
+
+fn test_optional_some() i64 {
+    // var items: [3]Item = undefined;
+    // items[0].key = 42;
+    // let result: ?*Item = findItem(&items[0], 3, 42);
+    // result should be non-null
+    return 1;
+}
+
+fn test_optional_var() i64 {
+    // var maybe: ?i64 = null;
+    // maybe = 42;
+    // maybe should be non-null with value 42
+    return 1;
+}
+
+fn main() i64 {
+    // Placeholder until optionals are implemented
+    return 0;
+}

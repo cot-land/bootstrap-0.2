@@ -1,0 +1,40 @@
+// Test: Optional Orelse Operator
+// Feature: orelse for providing default values
+//
+// This test verifies:
+// 1. orelse with literal default
+// 2. orelse with expression default
+// 3. orelse chaining
+
+fn maybeValue(return_null: bool) ?i64 {
+    if return_null {
+        return null;
+    }
+    return 42;
+}
+
+fn test_orelse_null() i64 {
+    // let result: i64 = maybeValue(true) orelse 99;
+    // Expected: result == 99
+    return 1;
+}
+
+fn test_orelse_some() i64 {
+    // let result: i64 = maybeValue(false) orelse 99;
+    // Expected: result == 42
+    return 1;
+}
+
+fn test_orelse_chain() i64 {
+    // let a: ?i64 = null;
+    // let b: ?i64 = null;
+    // let c: ?i64 = 10;
+    // let result: i64 = a orelse b orelse c orelse 0;
+    // Expected: result == 10
+    return 1;
+}
+
+fn main() i64 {
+    // Placeholder until optionals are implemented
+    return 0;
+}

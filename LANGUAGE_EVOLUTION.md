@@ -3,6 +3,40 @@
 **Created:** 2026-01-25
 **Status:** Active Planning
 
+---
+
+## ⛔ MANDATORY: TEST-DRIVEN FEATURE DEVELOPMENT ⛔
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   EVERY NEW LANGUAGE FEATURE REQUIRES:                                        ║
+║                                                                               ║
+║   1. 3-5 tests written BEFORE implementing the feature                        ║
+║   2. Tests in test/cot1/, test/cot2/, etc. directories                        ║
+║   3. ALL existing tests must continue to pass (166 e2e + new feature tests)   ║
+║   4. Feature is not complete until all its tests pass                         ║
+║                                                                               ║
+║   Test Pattern:                                                               ║
+║   ┌─────────────────────────────────────────────────────────────────────────┐ ║
+║   │  test/cot1/                                                             │ ║
+║   │  ├── test_error_union_basic.cot      # Basic error!T syntax             │ ║
+║   │  ├── test_error_union_catch.cot      # catch |err| handling             │ ║
+║   │  ├── test_error_union_try.cot        # try propagation                  │ ║
+║   │  ├── test_optional_basic.cot         # ?T syntax and null               │ ║
+║   │  ├── test_optional_if_unwrap.cot     # if x |val| pattern               │ ║
+║   │  └── ...                                                                │ ║
+║   └─────────────────────────────────────────────────────────────────────────┘ ║
+║                                                                               ║
+║   Validation command:                                                         ║
+║   ./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/t && /tmp/t               ║
+║   ./zig-out/bin/cot test/cot1/test_*.cot -o /tmp/cot1_t && /tmp/cot1_t       ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+```
+
+---
+
 ## Vision
 
 Cot is a systems programming language designed for self-hosting compiler development. The language evolves through numbered stages (cot0 through cot9), where each stage:

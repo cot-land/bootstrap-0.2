@@ -1,0 +1,845 @@
+// Cot0 Intermediate Representation
+// Strongly typed IR following Go's cmd/compile/internal/ir patterns.
+//
+// Design principles (from Go + bootstrap-0.2):
+// 1. Op discriminator drives type switching
+// 2. Every operation has explicit fields
+// 3. Uses pointers for arrays (like ast.cot)
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/ir/
+// Reference: bootstrap-0.2/src/frontend/ir.zig
+
+import "types.cot"
+import "../lib/list.cot"
+
+// ============================================================================
+// Index Types - Distinct to prevent mixing
+// NOTE: NULL_NODE is defined in ast.cot to avoid redefinition
+// ============================================================================
+
+const NULL_IR_NODE: i64 = -1;
+const NULL_LOCAL: i64 = -1;
+const NULL_BLOCK: i64 = -1;
+
+// ============================================================================
+// Binary Operation Kinds (Go's OADD, OSUB, OEQ, etc.)
+// ============================================================================
+
+enum IRBinaryOp {
+    // Arithmetic
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+
+    // Comparison
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+
+    // Logical
+    And,
+    Or,
+
+    // Bitwise
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+}
+
+// Check if this is a comparison operation (returns bool)
+fn IR_isComparison(op: IRBinaryOp) bool {
+    if op == IRBinaryOp.Eq { return true; }
+    if op == IRBinaryOp.Ne { return true; }
+    if op == IRBinaryOp.Lt { return true; }
+    if op == IRBinaryOp.Le { return true; }
+    if op == IRBinaryOp.Gt { return true; }
+    if op == IRBinaryOp.Ge { return true; }
+    return false;
+}
+
+// Check if this is an arithmetic operation
+fn IR_isArithmetic(op: IRBinaryOp) bool {
+    if op == IRBinaryOp.Add { return true; }
+    if op == IRBinaryOp.Sub { return true; }
+    if op == IRBinaryOp.Mul { return true; }
+    if op == IRBinaryOp.Div { return true; }
+    if op == IRBinaryOp.Mod { return true; }
+    return false;
+}
+
+// Check if this is a logical operation
+fn IR_isLogical(op: IRBinaryOp) bool {
+    if op == IRBinaryOp.And { return true; }
+    if op == IRBinaryOp.Or { return true; }
+    return false;
+}
+
+// Check if this is a bitwise operation
+fn IR_isBitwise(op: IRBinaryOp) bool {
+    if op == IRBinaryOp.BitAnd { return true; }
+    if op == IRBinaryOp.BitOr { return true; }
+    if op == IRBinaryOp.BitXor { return true; }
+    if op == IRBinaryOp.Shl { return true; }
+    if op == IRBinaryOp.Shr { return true; }
+    return false;
+}
+
+// ============================================================================
+// Unary Operation Kinds (Go's ONEG, ONOT, etc.)
+// ============================================================================
+
+enum IRUnaryOp {
+    Neg,      // Arithmetic negation: -x
+    Not,      // Logical not: !x
+    BitNot,   // Bitwise not: ~x
+}
+
+// ============================================================================
+// IR Node Kinds (Go's Op enum)
+// ============================================================================
+
+enum IRNodeKind {
+    // Constants
+    ConstInt,
+    ConstBool,
+    ConstNull,
+    ConstString,  // String literal: str_start, str_len in source
+
+    // Builtins
+    MakeString,   // @string(ptr, len): left = ptr_expr, right = len_expr
+    MakeSlice,    // Slice from array: left = ptr_expr, right = len_expr
+    SlicePtr,     // Extract pointer from slice: left = slice_expr -> ptr
+    SliceLen,     // Extract length from slice: left = slice_expr -> len
+    StrConcat,    // String concatenation: left = str1, right = str2
+
+    // Local variable access
+    LoadLocal,
+    StoreLocal,
+    AddrLocal,
+
+    // Global variable access
+    LoadGlobal,   // Load global variable: left = global_idx
+    StoreGlobal,  // Store to global: left = global_idx, right = value
+    AddrGlobal,   // Address of global: left = global_idx
+
+    // Function address (for function pointers)
+    // Following Zig: src/frontend/ir.zig:1025-1028 emitFuncAddr
+    FuncAddr,     // Address of function: func_name_start, func_name_len
+
+    // Pointer operations
+    Load,         // Load from pointer: left = ptr_expr
+    Store,        // Store to pointer: left = ptr_expr, right = value
+
+    // Field access (struct fields)
+    FieldLocal,   // Access field of local struct: left = local_idx, right = offset
+    FieldValue,   // Access field via pointer: left = base_expr, right = offset
+    StoreFieldLocal,  // Store to field of local struct: left = local_idx, right = offset, value = stored_expr
+    StoreField,   // Store to field via pointer: left = base_expr, right = offset, value = stored_expr
+
+    // Array indexing
+    IndexLocal,   // Read from local array: left = local_idx, right = index_expr, value = elem_size
+    IndexValue,   // Read from computed address: left = base_expr, right = index_expr, value = elem_size
+    StoreIndexLocal,  // Store to local array element: left = local_idx, right = index_expr, value = stored_expr, op = elem_size
+    StoreIndexValue,  // Store via computed address: left = base_expr, right = index_expr, value = stored_expr, op = elem_size
+
+    // Operations
+    Binary,
+    Unary,
+
+    // Control flow
+    Call,
+    CallIndirect,  // Indirect call through function pointer: left = fn_ptr_expr
+    Return,
+    Jump,
+    Branch,
+
+    // Phi (SSA)
+    Phi,
+
+    // Conditional
+    Select,       // Conditional select: left = cond, right = true_val, value = false_val
+
+    // Misc
+    Nop,
+}
+
+// ============================================================================
+// IR Node - A single operation
+// ============================================================================
+
+struct IRNode {
+    kind: IRNodeKind,
+    type_idx: i64,        // Result type
+    block_id: i64,        // Block this node belongs to
+    pos: i64,             // Source position (byte offset in source)
+
+    // Fields used depending on kind:
+    // ConstInt: value
+    // ConstString: left (str_start), right (str_len)
+    // Binary: op, left, right
+    // Unary: op, left (operand)
+    // LoadLocal/StoreLocal/AddrLocal: left (local_idx)
+    // StoreLocal: right (value)
+    // Load: left (ptr_expr)
+    // Store: left (ptr_expr), right (value_expr)
+    // FieldLocal: left (local_idx), right (offset)
+    // FieldValue: left (base_expr), right (offset)
+    // StoreFieldLocal: left (local_idx), right (offset), value (stored_expr)
+    // StoreField: left (base_expr), right (offset), value (stored_expr)
+    // IndexLocal: left (local_idx), right (index_expr), value (elem_size)
+    // IndexValue: left (base_expr), right (index_expr), value (elem_size)
+    // StoreIndexLocal: left (local_idx), right (index_expr), value (stored_expr), op (elem_size)
+    // StoreIndexValue: left (base_expr), right (index_expr), value (stored_expr), op (elem_size)
+    // Call: func_name_start, func_name_len, args_start, args_count
+    // CallIndirect: left (fn_ptr_expr), args_start, args_count
+    // FuncAddr: func_name_start, func_name_len (address of named function)
+    // Return: left (value), or -1 for void
+    // Jump: left (target_block)
+    // Branch: left (condition), right (then_block), value (else_block)
+
+    value: i64,           // ConstInt value, or else_block for Branch
+    left: i64,            // Left operand, local_idx, condition, etc.
+    right: i64,           // Right operand, value for store, etc.
+    op: i64,              // Operator code (BinaryOp or UnaryOp cast to i64)
+
+    // For Call nodes
+    func_name_start: i64,
+    func_name_len: i64,
+    args_start: i64,      // DEPRECATED: Use call_args instead
+    args_count: i64,      // DEPRECATED: Use call_args.count instead
+    call_args: I64List,   // Direct storage of argument IR indices (matches Zig)
+}
+
+fn IRNode_new(kind: IRNodeKind, type_idx: i64) IRNode {
+    var node: IRNode = undefined;
+    node.kind = kind;
+    node.type_idx = type_idx;
+    node.block_id = 0;
+    node.pos = 0;
+    node.value = 0;
+    node.left = NULL_IR_NODE;
+    node.right = NULL_IR_NODE;
+    node.op = 0;
+    node.func_name_start = 0;
+    node.func_name_len = 0;
+    node.args_start = 0;
+    node.args_count = 0;
+    i64list_init(&node.call_args);
+    return node;
+}
+
+// Create a new IR node with source position
+fn IRNode_newWithPos(kind: IRNodeKind, type_idx: i64, pos: i64) IRNode {
+    var node: IRNode = IRNode_new(kind, type_idx);
+    node.pos = pos;
+    return node;
+}
+
+// Check if node is a terminator (ends a basic block)
+fn IRNode_isTerminator(node: *IRNode) bool {
+    if node.kind == IRNodeKind.Return { return true; }
+    if node.kind == IRNodeKind.Jump { return true; }
+    if node.kind == IRNodeKind.Branch { return true; }
+    return false;
+}
+
+// Check if node is a constant
+fn IRNode_isConstant(node: *IRNode) bool {
+    if node.kind == IRNodeKind.ConstInt { return true; }
+    if node.kind == IRNodeKind.ConstBool { return true; }
+    if node.kind == IRNodeKind.ConstNull { return true; }
+    return false;
+}
+
+// Check if node has side effects (cannot be eliminated)
+// Reference: Zig's Node.hasSideEffects()
+fn IRNode_hasSideEffects(node: *IRNode) bool {
+    if node.kind == IRNodeKind.StoreLocal { return true; }
+    if node.kind == IRNodeKind.Store { return true; }
+    if node.kind == IRNodeKind.StoreFieldLocal { return true; }
+    if node.kind == IRNodeKind.StoreField { return true; }
+    if node.kind == IRNodeKind.StoreIndexLocal { return true; }
+    if node.kind == IRNodeKind.StoreIndexValue { return true; }
+    if node.kind == IRNodeKind.Call { return true; }
+    if node.kind == IRNodeKind.CallIndirect { return true; }
+    if node.kind == IRNodeKind.Return { return true; }
+    if node.kind == IRNodeKind.Jump { return true; }
+    if node.kind == IRNodeKind.Branch { return true; }
+    return false;
+}
+
+// ============================================================================
+// IR Node Pool - Arena for IR nodes (pointer-based like ast.cot)
+// NOTE: Named IRNodePool to avoid conflict with ast.cot's NodePool
+// ============================================================================
+
+struct IRNodePool {
+    nodes: *IRNode,       // Externally allocated array
+    nodes_count: i64,
+    nodes_cap: i64,
+}
+
+fn IRNodePool_init(pool: *IRNodePool, nodes: *IRNode, cap: i64) {
+    pool.nodes = nodes;
+    pool.nodes_count = 0;
+    pool.nodes_cap = cap;
+}
+
+fn IRNodePool_add(pool: *IRNodePool, node: IRNode) i64 {
+    if pool.nodes_count >= pool.nodes_cap {
+        return NULL_IR_NODE;
+    }
+    let idx: i64 = pool.nodes_count;
+    let ptr: *IRNode = pool.nodes + idx;
+    ptr.* = node;
+    pool.nodes_count = pool.nodes_count + 1;
+    return idx;
+}
+
+fn IRNodePool_get(pool: *IRNodePool, idx: i64) *IRNode {
+    return pool.nodes + idx;
+}
+
+// Get number of IR nodes in pool
+fn IRNodePool_count(pool: *IRNodePool) i64 {
+    return pool.nodes_count;
+}
+
+fn IRNodePool_addConstInt(pool: *IRNodePool, value: i64, type_idx: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.ConstInt, type_idx);
+    node.value = value;
+    return IRNodePool_add(pool, node);
+}
+
+fn IRNodePool_addBinary(pool: *IRNodePool, op: i64, left: i64, right: i64, type_idx: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.Binary, type_idx);
+    node.op = op;
+    node.left = left;
+    node.right = right;
+    return IRNodePool_add(pool, node);
+}
+
+// ============================================================================
+// Local Variable
+// ============================================================================
+
+struct IRLocal {
+    name_start: i64,      // Offset into source for name
+    name_len: i64,        // Length of name
+    type_idx: i64,        // Type index
+    is_mutable: bool,     // Can be modified?
+    is_param: bool,       // Is this a parameter?
+    param_idx: i64,       // Parameter index (if is_param)
+    size: i64,            // Size in bytes
+    offset: i64,          // Stack frame offset
+    struct_type_start: i64,  // Struct type name offset (-1 if not struct)
+    struct_type_len: i64,    // Struct type name length
+}
+
+fn IRLocal_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) IRLocal {
+    return IRLocal{
+        .name_start = name_start,
+        .name_len = name_len,
+        .type_idx = type_idx,
+        .is_mutable = is_mutable,
+        .is_param = false,
+        .param_idx = 0,
+        .size = 8,
+        .offset = 0,
+        .struct_type_start = -1,
+        .struct_type_len = 0,
+    };
+}
+
+fn IRLocal_newParam(name_start: i64, name_len: i64, type_idx: i64, param_idx: i64) IRLocal {
+    return IRLocal{
+        .name_start = name_start,
+        .name_len = name_len,
+        .type_idx = type_idx,
+        .is_mutable = false,
+        .is_param = true,
+        .param_idx = param_idx,
+        .size = 8,
+        .offset = 0,
+        .struct_type_start = -1,
+        .struct_type_len = 0,
+    };
+}
+
+// ============================================================================
+// Global Variable
+// ============================================================================
+
+struct IRGlobal {
+    name_start: i64,      // Offset into source for name
+    name_len: i64,        // Length of name
+    type_idx: i64,        // Type index
+    is_mutable: bool,     // var (true) or const (false)
+    is_array: bool,       // Is this an array global?
+    array_len: i64,       // Array length if is_array
+    size: i64,            // Size in bytes
+    data_offset: i64,     // Offset in data section (set during codegen)
+    init_value: i64,      // Compile-time initialization value (for i64/u8/bool)
+    has_init: bool,       // Whether init_value is set
+}
+
+fn IRGlobal_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) IRGlobal {
+    return IRGlobal{
+        .name_start = name_start,
+        .name_len = name_len,
+        .type_idx = type_idx,
+        .is_mutable = is_mutable,
+        .is_array = false,
+        .array_len = 0,
+        .size = 8,
+        .data_offset = 0,
+        .init_value = 0,
+        .has_init = false,
+    };
+}
+
+// ============================================================================
+// IR Function Metadata - Tracks function boundaries in IR
+// ============================================================================
+
+struct IRFunc {
+    name_start: i64,      // Offset into source for name
+    name_len: i64,        // Length of name
+    return_type: i64,     // Return type index
+
+    nodes_start: i64,     // Start index in IR nodes array
+    nodes_count: i64,     // Number of IR nodes
+
+    locals_start: i64,    // Start index in locals array
+    locals_count: i64,    // Number of locals
+
+    code_offset: i64,     // Offset in generated code (set during codegen)
+}
+
+fn IRFunc_new(name_start: i64, name_len: i64, return_type: i64,
+               nodes_start: i64, nodes_count: i64,
+               locals_start: i64, locals_count: i64) IRFunc {
+    return IRFunc{
+        .name_start = name_start,
+        .name_len = name_len,
+        .return_type = return_type,
+        .nodes_start = nodes_start,
+        .nodes_count = nodes_count,
+        .locals_start = locals_start,
+        .locals_count = locals_count,
+        .code_offset = 0,
+    };
+}
+
+// ============================================================================
+// Function Builder - Constructs IR functions (pointer-based)
+// ============================================================================
+
+struct FuncBuilder {
+    name_start: i64,
+    name_len: i64,
+    return_type: i64,
+
+    locals: *IRLocal,         // Externally allocated
+    locals_count: i64,
+    locals_cap: i64,
+
+    nodes: *IRNode,           // Externally allocated
+    nodes_count: i64,
+    nodes_cap: i64,
+
+    // Block tracking
+    current_block: i64,       // Currently active block ID
+    next_block_id: i64,       // Next block ID to allocate
+
+    // Position tracking for debug info
+    current_pos: i64,         // Source position to tag emitted nodes with
+}
+
+fn FuncBuilder_init(fb: *FuncBuilder, name_start: i64, name_len: i64, return_type: i64,
+                     locals: *IRLocal, locals_cap: i64,
+                     nodes: *IRNode, nodes_cap: i64) {
+    fb.name_start = name_start;
+    fb.name_len = name_len;
+    fb.return_type = return_type;
+    fb.locals = locals;
+    fb.locals_count = 0;
+    fb.locals_cap = locals_cap;
+    fb.nodes = nodes;
+    fb.nodes_count = 0;
+    fb.nodes_cap = nodes_cap;
+    fb.current_block = 0;
+    fb.next_block_id = 1;  // Block 0 is the entry block
+    fb.current_pos = 0;
+}
+
+// Set the current source position for subsequent emits
+fn FuncBuilder_setPos(fb: *FuncBuilder, pos: i64) {
+    fb.current_pos = pos;
+}
+
+// Create a new block and return its ID
+fn FuncBuilder_newBlock(fb: *FuncBuilder) i64 {
+    let id: i64 = fb.next_block_id;
+    fb.next_block_id = fb.next_block_id + 1;
+    return id;
+}
+
+// Set the current block for subsequent nodes
+fn FuncBuilder_setBlock(fb: *FuncBuilder, block_id: i64) {
+    fb.current_block = block_id;
+}
+
+fn FuncBuilder_addLocal(fb: *FuncBuilder, name_start: i64, name_len: i64,
+                          type_idx: i64, is_mutable: bool) i64 {
+    if fb.locals_count >= fb.locals_cap {
+        return NULL_LOCAL;
+    }
+    let idx: i64 = fb.locals_count;
+    let ptr: *IRLocal = fb.locals + idx;
+    ptr.* = IRLocal_new(name_start, name_len, type_idx, is_mutable);
+    fb.locals_count = fb.locals_count + 1;
+    return idx;
+}
+
+fn FuncBuilder_addParam(fb: *FuncBuilder, name_start: i64, name_len: i64,
+                          type_idx: i64, param_idx: i64, size: i64) i64 {
+    // Following Zig pattern: ir.zig:869-875 addParam with explicit size
+    if fb.locals_count >= fb.locals_cap {
+        return NULL_LOCAL;
+    }
+    let idx: i64 = fb.locals_count;
+    let ptr: *IRLocal = fb.locals + idx;
+    ptr.* = IRLocal_newParam(name_start, name_len, type_idx, param_idx);
+    ptr.size = size;  // Set the parameter size (critical for struct parameters)
+    fb.locals_count = fb.locals_count + 1;
+    return idx;
+}
+
+// Set the size of a local variable (for arrays)
+fn FuncBuilder_setLocalSize(fb: *FuncBuilder, local_idx: i64, size: i64) {
+    if local_idx < 0 or local_idx >= fb.locals_count { return; }
+    let local: *IRLocal = fb.locals + local_idx;
+    local.size = size;
+}
+
+fn FuncBuilder_emit(fb: *FuncBuilder, node: IRNode) i64 {
+    if fb.nodes_count >= fb.nodes_cap {
+        return NULL_IR_NODE;
+    }
+    let idx: i64 = fb.nodes_count;
+    let ptr: *IRNode = fb.nodes + idx;
+    ptr.* = node;
+    ptr.block_id = fb.current_block;  // Tag node with current block
+    ptr.pos = fb.current_pos;         // Tag node with current source position
+    fb.nodes_count = fb.nodes_count + 1;
+    return idx;
+}
+
+fn FuncBuilder_emitConstInt(fb: *FuncBuilder, value: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.ConstInt, TYPE_I64);
+    node.value = value;
+    return FuncBuilder_emit(fb, node);
+}
+
+fn FuncBuilder_emitConstBool(fb: *FuncBuilder, value: bool) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.ConstBool, TYPE_BOOL);
+    if value {
+        node.value = 1;
+    } else {
+        node.value = 0;
+    }
+    return FuncBuilder_emit(fb, node);
+}
+
+fn FuncBuilder_emitConstString(fb: *FuncBuilder, str_start: i64, str_len: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.ConstString, TYPE_STRING);
+    node.left = str_start;   // Offset in source text
+    node.right = str_len;    // Length of string content
+    return FuncBuilder_emit(fb, node);
+}
+
+fn FuncBuilder_emitLoadLocal(fb: *FuncBuilder, local_idx: i64) i64 {
+    let local: *IRLocal = fb.locals + local_idx;
+    var node: IRNode = IRNode_new(IRNodeKind.LoadLocal, local.type_idx);
+    node.left = local_idx;
+    return FuncBuilder_emit(fb, node);
+}
+
+fn FuncBuilder_emitStoreLocal(fb: *FuncBuilder, local_idx: i64, value: i64) i64 {
+    let local: *IRLocal = fb.locals + local_idx;
+    var node: IRNode = IRNode_new(IRNodeKind.StoreLocal, local.type_idx);
+    node.left = local_idx;
+    node.right = value;
+    return FuncBuilder_emit(fb, node);
+}
+
+fn FuncBuilder_emitBinary(fb: *FuncBuilder, op: i64, left: i64, right: i64, type_idx: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.Binary, type_idx);
+    node.op = op;
+    node.left = left;
+    node.right = right;
+    return FuncBuilder_emit(fb, node);
+}
+
+fn FuncBuilder_emitUnary(fb: *FuncBuilder, op: i64, operand: i64, type_idx: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.Unary, type_idx);
+    node.op = op;
+    node.left = operand;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit a conditional select (ternary-like): cond ? true_val : false_val
+fn FuncBuilder_emitSelect(fb: *FuncBuilder, cond: i64, true_val: i64, false_val: i64, type_idx: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.Select, type_idx);
+    node.left = cond;
+    node.right = true_val;
+    node.value = false_val;
+    return FuncBuilder_emit(fb, node);
+}
+
+fn FuncBuilder_emitReturn(fb: *FuncBuilder, value: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.Return, TYPE_VOID);
+    node.left = value;
+    return FuncBuilder_emit(fb, node);
+}
+
+fn FuncBuilder_emitReturnVoid(fb: *FuncBuilder) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.Return, TYPE_VOID);
+    node.left = NULL_IR_NODE;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit a conditional branch
+// cond = condition IR node index
+// then_block, else_block = target block IDs
+fn FuncBuilder_emitBranch(fb: *FuncBuilder, cond: i64, then_block: i64, else_block: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.Branch, TYPE_VOID);
+    node.left = cond;
+    node.right = then_block;
+    node.value = else_block;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit an unconditional jump
+fn FuncBuilder_emitJump(fb: *FuncBuilder, target_block: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.Jump, TYPE_VOID);
+    node.left = target_block;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit a load from pointer (dereference)
+// ptr_expr = IR node index of pointer expression
+// result_type = type of the pointed-to value
+fn FuncBuilder_emitLoad(fb: *FuncBuilder, ptr_expr: i64, result_type: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.Load, result_type);
+    node.left = ptr_expr;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit a store through pointer (dereference assignment)
+// ptr_expr = IR node index of pointer expression
+// value_expr = IR node index of value to store
+fn FuncBuilder_emitStore(fb: *FuncBuilder, ptr_expr: i64, value_expr: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.Store, TYPE_VOID);
+    node.left = ptr_expr;
+    node.right = value_expr;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit address of local variable
+fn FuncBuilder_emitAddrLocal(fb: *FuncBuilder, local_idx: i64, ptr_type: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.AddrLocal, ptr_type);
+    node.left = local_idx;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Global variable access
+fn FuncBuilder_emitLoadGlobal(fb: *FuncBuilder, global_idx: i64, type_idx: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.LoadGlobal, type_idx);
+    node.left = global_idx;
+    return FuncBuilder_emit(fb, node);
+}
+
+fn FuncBuilder_emitStoreGlobal(fb: *FuncBuilder, global_idx: i64, value: i64, type_idx: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.StoreGlobal, type_idx);
+    node.left = global_idx;
+    node.right = value;
+    return FuncBuilder_emit(fb, node);
+}
+
+fn FuncBuilder_emitAddrGlobal(fb: *FuncBuilder, global_idx: i64, ptr_type: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.AddrGlobal, ptr_type);
+    node.left = global_idx;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit function address (for function pointers)
+// Following Zig: src/frontend/ir.zig:1025-1028 emitFuncAddr
+fn FuncBuilder_emitFuncAddr(fb: *FuncBuilder, name_start: i64, name_len: i64, type_idx: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.FuncAddr, type_idx);
+    node.func_name_start = name_start;
+    node.func_name_len = name_len;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit field access from local struct
+// local_idx = index of the local struct variable
+// offset = byte offset of field within struct
+// field_type = type of the field
+fn FuncBuilder_emitFieldLocal(fb: *FuncBuilder, local_idx: i64, offset: i64, field_type: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.FieldLocal, field_type);
+    node.left = local_idx;
+    node.right = offset;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit field access from computed address (pointer to struct)
+// base_expr = IR node index of base address expression
+// offset = byte offset of field within struct
+// field_type = type of the field
+fn FuncBuilder_emitFieldValue(fb: *FuncBuilder, base_expr: i64, offset: i64, field_type: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.FieldValue, field_type);
+    node.left = base_expr;
+    node.right = offset;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit store to field of local struct
+// local_idx = index of the local struct variable
+// offset = byte offset of field within struct
+// value_expr = IR node index of value to store
+fn FuncBuilder_emitStoreFieldLocal(fb: *FuncBuilder, local_idx: i64, offset: i64, value_expr: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.StoreFieldLocal, TYPE_VOID);
+    node.left = local_idx;
+    node.right = offset;
+    node.value = value_expr;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit store to field via pointer
+// base_expr = IR node index of base address expression
+// offset = byte offset of field within struct
+// value_expr = IR node index of value to store
+fn FuncBuilder_emitStoreField(fb: *FuncBuilder, base_expr: i64, offset: i64, value_expr: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.StoreField, TYPE_VOID);
+    node.left = base_expr;
+    node.right = offset;
+    node.value = value_expr;
+    return FuncBuilder_emit(fb, node);
+}
+
+// ============================================================================
+// Array Indexing Emit Functions
+// ============================================================================
+
+// Emit index into local array: arr[i] where arr is a local variable
+// local_idx = index of the local array variable
+// index_expr = IR node index of the index expression
+// elem_size = size of each element in bytes
+// elem_type = type of the elements
+fn FuncBuilder_emitIndexLocal(fb: *FuncBuilder, local_idx: i64, index_expr: i64,
+                                  elem_size: i64, elem_type: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.IndexLocal, elem_type);
+    node.left = local_idx;
+    node.right = index_expr;
+    node.value = elem_size;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit index into computed address: ptr[i]
+// base_expr = IR node index of base address expression
+// index_expr = IR node index of the index expression
+// elem_size = size of each element in bytes
+// elem_type = type of the elements
+fn FuncBuilder_emitIndexValue(fb: *FuncBuilder, base_expr: i64, index_expr: i64,
+                                  elem_size: i64, elem_type: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.IndexValue, elem_type);
+    node.left = base_expr;
+    node.right = index_expr;
+    node.value = elem_size;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit store to local array element: arr[i] = value
+// local_idx = index of the local array variable
+// index_expr = IR node index of the index expression
+// value_expr = IR node index of value to store
+// elem_size = size of each element in bytes
+fn FuncBuilder_emitStoreIndexLocal(fb: *FuncBuilder, local_idx: i64, index_expr: i64,
+                                        value_expr: i64, elem_size: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.StoreIndexLocal, TYPE_VOID);
+    node.left = local_idx;
+    node.right = index_expr;
+    node.value = value_expr;
+    node.op = elem_size;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit store to indexed address: ptr[i] = value
+// base_expr = IR node index of base address expression
+// index_expr = IR node index of the index expression
+// value_expr = IR node index of value to store
+// elem_size = size of each element in bytes
+fn FuncBuilder_emitStoreIndexValue(fb: *FuncBuilder, base_expr: i64, index_expr: i64,
+                                        value_expr: i64, elem_size: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.StoreIndexValue, TYPE_VOID);
+    node.left = base_expr;
+    node.right = index_expr;
+    node.value = value_expr;
+    node.op = elem_size;
+    return FuncBuilder_emit(fb, node);
+}
+
+// ============================================================================
+// Builtin Emit Functions
+// ============================================================================
+
+// Emit @string(ptr, len) builtin - construct string from pointer and length
+fn FuncBuilder_emitMakeString(fb: *FuncBuilder, ptr_expr: i64, len_expr: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.MakeString, TYPE_STRING);
+    node.left = ptr_expr;    // Pointer expression
+    node.right = len_expr;   // Length expression
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit slice creation: left = pointer to first element, right = length
+// Slice is represented as (ptr, len) tuple like strings
+fn FuncBuilder_emitMakeSlice(fb: *FuncBuilder, ptr_expr: i64, len_expr: i64, slice_type: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.MakeSlice, slice_type);
+    node.left = ptr_expr;    // Pointer to first element
+    node.right = len_expr;   // Length of slice
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit extract pointer from slice (Go: OpSlicePtr)
+// Following src/frontend/ir.zig:1133-1135
+fn FuncBuilder_emitSlicePtr(fb: *FuncBuilder, slice_expr: i64, ptr_type: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.SlicePtr, ptr_type);
+    node.left = slice_expr;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit extract length from slice (Go: OpSliceLen)
+fn FuncBuilder_emitSliceLen(fb: *FuncBuilder, slice_expr: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.SliceLen, TYPE_I64);
+    node.left = slice_expr;
+    return FuncBuilder_emit(fb, node);
+}
+
+// Emit indirect function call through function pointer (Go: ClosureCall)
+// Following Zig pattern: src/frontend/ir.zig:1168
+fn FuncBuilder_emitCallIndirect(fb: *FuncBuilder, fn_ptr_expr: i64, args_start: i64, args_count: i64, return_type: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.CallIndirect, return_type);
+    node.left = fn_ptr_expr;        // The loaded function pointer value
+    node.args_start = args_start;   // Index into call_args array
+    node.args_count = args_count;   // Number of arguments
+    return FuncBuilder_emit(fb, node);
+}

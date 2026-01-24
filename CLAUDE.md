@@ -1,5 +1,46 @@
 # Claude Development Guidelines
 
+## ⛔ MANDATORY: TEST-DRIVEN FEATURE DEVELOPMENT ⛔
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   WHEN ADDING NEW LANGUAGE FEATURES (cot1, cot2, etc.):                       ║
+║                                                                               ║
+║   1. Write 3-5 tests FIRST for the feature                                    ║
+║   2. Tests go in test/cot1/, test/cot2/, etc.                                 ║
+║   3. ALL existing tests must continue to pass                                 ║
+║   4. New feature tests must pass before moving on                             ║
+║                                                                               ║
+║   Test naming: test_<feature>_<case>.cot                                      ║
+║   Example: test_error_union_basic.cot                                         ║
+║            test_error_union_catch.cot                                         ║
+║            test_error_union_try.cot                                           ║
+║                                                                               ║
+║   Run ALL tests after each change:                                            ║
+║   ./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/t && /tmp/t                ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+```
+
+---
+
+## ⛔ STAGE1 TESTING - ALWAYS USE ALL_TESTS ⛔
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   When testing stage1 hasn't regressed, ALWAYS run e2e/all_tests:             ║
+║                                                                               ║
+║   /tmp/cot0-stage1 test/e2e/all_tests.cot -o /tmp/all_tests && /tmp/all_tests ║
+║                                                                               ║
+║   Verify ALL 166 TESTS PASS. Never use trivial "return 42" tests.             ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+```
+
+---
+
 ## ⛔⛔⛔ NEVER USE FIXED-SIZE ARRAYS IN COT0 ⛔⛔⛔
 
 ```

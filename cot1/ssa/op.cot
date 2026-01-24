@@ -1,0 +1,352 @@
+// Cot0 SSA Operation Definitions
+// Minimal SSA operations for self-hosting.
+//
+// Reference: ~/learning/go/src/cmd/compile/internal/ssa/op.go
+// Reference: bootstrap-0.2/src/ssa/op.zig
+
+// ============================================================================
+// SSA Operations
+// ============================================================================
+
+enum Op {
+    // Invalid/Placeholder
+    Invalid,
+
+    // Memory State
+    InitMem,        // Initial memory at function entry
+
+    // Constants (all rematerializable)
+    ConstBool,      // Boolean: aux_int = 0 or 1
+    ConstInt,       // Integer: aux_int = value
+    ConstNil,       // Nil pointer
+    ConstString,    // String: aux = string data
+    ConstPtr,       // Pointer constant
+
+    // Integer Arithmetic (64-bit)
+    Add64,          // arg0 + arg1
+    Sub64,          // arg0 - arg1
+    Mul64,          // arg0 * arg1
+    Div64,          // arg0 / arg1 (signed)
+    Mod64,          // arg0 % arg1 (signed)
+    Neg64,          // -arg0
+
+    // Bitwise Operations (64-bit)
+    And64,          // arg0 & arg1
+    Or64,           // arg0 | arg1
+    Xor64,          // arg0 ^ arg1
+    Shl64,          // arg0 << arg1
+    Shr64,          // arg0 >> arg1 (logical)
+    Sar64,          // arg0 >> arg1 (arithmetic)
+    Not64,          // ~arg0
+
+    // Comparisons (return bool)
+    Eq64,           // arg0 == arg1
+    Ne64,           // arg0 != arg1
+    Lt64,           // arg0 < arg1 (signed)
+    Le64,           // arg0 <= arg1 (signed)
+    Gt64,           // arg0 > arg1 (signed)
+    Ge64,           // arg0 >= arg1 (signed)
+    Ltu64,          // arg0 < arg1 (unsigned)
+    Leu64,          // arg0 <= arg1 (unsigned)
+
+    // Type Conversions
+    SignExt8to64,   // Sign-extend i8 to i64
+    SignExt16to64,  // Sign-extend i16 to i64
+    SignExt32to64,  // Sign-extend i32 to i64
+    ZeroExt8to64,   // Zero-extend u8 to u64
+    ZeroExt16to64,  // Zero-extend u16 to u64
+    ZeroExt32to64,  // Zero-extend u32 to u64
+    Trunc64to8,     // Truncate i64 to i8
+    Trunc64to16,    // Truncate i64 to i16
+    Trunc64to32,    // Truncate i64 to i32
+
+    // Memory Operations
+    Load,           // Load from memory: (ptr, mem) -> value
+    Store,          // Store to memory: (ptr, value, mem) -> mem
+    Move,           // Memory copy: (dst, src, size, mem) -> mem
+    Zero,           // Zero memory: (ptr, size, mem) -> mem
+
+    // Address Operations
+    Addr,           // Address of symbol: aux = symbol
+    LocalAddr,      // Address of local: aux_int = local index
+    GlobalAddr,     // Address of global: aux_int = global index
+    GlobalLoad,     // Load global: aux_int = global index
+    GlobalStore,    // Store to global: aux_int = global index, arg0 = value
+    OffPtr,         // Offset pointer: arg0 + aux_int
+    AddPtr,         // Pointer arithmetic: arg0 + arg1 (for computed offsets)
+
+    // Control Flow
+    Phi,            // SSA phi node: merge values from predecessors
+    Copy,           // Copy value (for register allocation)
+    Arg,            // Function argument: aux_int = arg index
+    FwdRef,         // Forward reference placeholder: aux_int = local index
+
+    // Function Calls
+    Call,           // Direct call: aux = function, args...
+    TailCall,       // Tail call
+    ClosureCall,    // Call via closure
+
+    // Return
+    Return,         // Return from function
+
+    // Slice Operations
+    SliceLen,       // Get slice length
+    SlicePtr,       // Get slice pointer
+    SliceMake,      // Make slice: (ptr, len) -> slice
+
+    // String Operations
+    StringLen,      // Get string length
+    StringPtr,      // Get string pointer
+    StringMake,     // Make string: (ptr, len) -> string
+    StringConcat,   // String concatenation: (ptr1, len1, ptr2, len2) -> string
+
+    // Struct Operations
+    StructMake,     // Make struct from fields
+    StructSelect,   // Select field from struct: aux_int = field index
+
+    // ARM64-specific (lowered)
+    ARM64_ADD,      // ARM64 ADD instruction
+    ARM64_SUB,      // ARM64 SUB instruction
+    ARM64_MUL,      // ARM64 MUL instruction
+    ARM64_SDIV,     // ARM64 SDIV instruction
+    ARM64_AND,      // ARM64 AND instruction
+    ARM64_ORR,      // ARM64 ORR instruction
+    ARM64_EOR,      // ARM64 EOR instruction
+    ARM64_LSL,      // ARM64 LSL instruction
+    ARM64_LSR,      // ARM64 LSR instruction
+    ARM64_ASR,      // ARM64 ASR instruction
+    ARM64_CMP,      // ARM64 CMP instruction
+    ARM64_CSEL,     // ARM64 conditional select
+    ARM64_LDR,      // ARM64 load register
+    ARM64_STR,      // ARM64 store register
+    ARM64_MOV,      // ARM64 move
+    ARM64_MOVK,     // ARM64 move with keep
+    ARM64_MOVZ,     // ARM64 move with zero
+    ARM64_MOVN,     // ARM64 move with NOT
+    ARM64_ADR,      // ARM64 address of label
+    ARM64_ADRP,     // ARM64 address of page
+    ARM64_BL,       // ARM64 branch with link (call)
+    ARM64_RET,      // ARM64 return
+
+    // Register Allocation
+    SpillReg,       // Spill register to stack
+    RestoreReg,     // Restore register from stack
+    StoreReg,       // Store to stack slot
+    LoadReg,        // Load from stack slot
+
+    // Special
+    Nop,            // No operation
+    Select,         // Conditional select: (cond, true_val, false_val)
+}
+
+// ============================================================================
+// Operation Properties
+// ============================================================================
+
+// Check if operation is a constant (rematerializable)
+fn Op_isConstant(op: Op) bool {
+    if op == Op.ConstBool { return true; }
+    if op == Op.ConstInt { return true; }
+    if op == Op.ConstNil { return true; }
+    if op == Op.ConstString { return true; }
+    if op == Op.ConstPtr { return true; }
+    return false;
+}
+
+// Check if operation is a comparison (returns bool)
+fn Op_isComparison(op: Op) bool {
+    if op == Op.Eq64 { return true; }
+    if op == Op.Ne64 { return true; }
+    if op == Op.Lt64 { return true; }
+    if op == Op.Le64 { return true; }
+    if op == Op.Gt64 { return true; }
+    if op == Op.Ge64 { return true; }
+    if op == Op.Ltu64 { return true; }
+    if op == Op.Leu64 { return true; }
+    return false;
+}
+
+// Check if operation is commutative
+fn Op_isCommutative(op: Op) bool {
+    if op == Op.Add64 { return true; }
+    if op == Op.Mul64 { return true; }
+    if op == Op.And64 { return true; }
+    if op == Op.Or64 { return true; }
+    if op == Op.Xor64 { return true; }
+    if op == Op.Eq64 { return true; }
+    if op == Op.Ne64 { return true; }
+    return false;
+}
+
+// Check if operation has side effects (can't be eliminated)
+fn Op_hasSideEffects(op: Op) bool {
+    if op == Op.Store { return true; }
+    if op == Op.Move { return true; }
+    if op == Op.Zero { return true; }
+    if op == Op.Call { return true; }
+    if op == Op.TailCall { return true; }
+    if op == Op.ClosureCall { return true; }
+    if op == Op.StringConcat { return true; }  // Calls runtime, allocates
+    if op == Op.Return { return true; }
+    if op == Op.ARM64_STR { return true; }
+    return false;
+}
+
+// Check if operation reads memory
+// Reference: Zig's OpInfo.reads_memory
+fn Op_readsMemory(op: Op) bool {
+    if op == Op.Load { return true; }
+    if op == Op.LoadReg { return true; }
+    if op == Op.ARM64_LDR { return true; }
+    if op == Op.Call { return true; }
+    if op == Op.TailCall { return true; }
+    if op == Op.ClosureCall { return true; }
+    return false;
+}
+
+// Check if operation writes memory
+// Reference: Zig's OpInfo.writes_memory
+fn Op_writesMemory(op: Op) bool {
+    if op == Op.Store { return true; }
+    if op == Op.Move { return true; }
+    if op == Op.Zero { return true; }
+    if op == Op.StoreReg { return true; }
+    if op == Op.ARM64_STR { return true; }
+    if op == Op.Call { return true; }
+    if op == Op.TailCall { return true; }
+    if op == Op.ClosureCall { return true; }
+    return false;
+}
+
+// Check if operation is a control flow terminator
+fn Op_isTerminator(op: Op) bool {
+    if op == Op.Return { return true; }
+    if op == Op.TailCall { return true; }
+    return false;
+}
+
+// Check if operation is ARM64-specific
+fn Op_isArm64(op: Op) bool {
+    if op == Op.ARM64_ADD { return true; }
+    if op == Op.ARM64_SUB { return true; }
+    if op == Op.ARM64_MUL { return true; }
+    if op == Op.ARM64_SDIV { return true; }
+    if op == Op.ARM64_AND { return true; }
+    if op == Op.ARM64_ORR { return true; }
+    if op == Op.ARM64_EOR { return true; }
+    if op == Op.ARM64_LSL { return true; }
+    if op == Op.ARM64_LSR { return true; }
+    if op == Op.ARM64_ASR { return true; }
+    if op == Op.ARM64_CMP { return true; }
+    if op == Op.ARM64_CSEL { return true; }
+    if op == Op.ARM64_LDR { return true; }
+    if op == Op.ARM64_STR { return true; }
+    if op == Op.ARM64_MOV { return true; }
+    if op == Op.ARM64_MOVK { return true; }
+    if op == Op.ARM64_MOVZ { return true; }
+    if op == Op.ARM64_MOVN { return true; }
+    if op == Op.ARM64_ADR { return true; }
+    if op == Op.ARM64_ADRP { return true; }
+    if op == Op.ARM64_BL { return true; }
+    if op == Op.ARM64_RET { return true; }
+    return false;
+}
+
+// Get number of arguments for an operation
+fn Op_numArgs(op: Op) i64 {
+    // Constants take 0 args
+    if Op_isConstant(op) { return 0; }
+    if op == Op.InitMem { return 0; }
+    if op == Op.Arg { return 0; }
+    if op == Op.Addr { return 0; }
+    if op == Op.LocalAddr { return 0; }
+    if op == Op.Nop { return 0; }
+
+    // Unary ops take 1 arg
+    if op == Op.Neg64 { return 1; }
+    if op == Op.Not64 { return 1; }
+    if op == Op.Copy { return 1; }
+    if op == Op.SliceLen { return 1; }
+    if op == Op.SlicePtr { return 1; }
+    if op == Op.StringLen { return 1; }
+    if op == Op.StringPtr { return 1; }
+    if op == Op.SignExt8to64 { return 1; }
+    if op == Op.SignExt16to64 { return 1; }
+    if op == Op.SignExt32to64 { return 1; }
+    if op == Op.ZeroExt8to64 { return 1; }
+    if op == Op.ZeroExt16to64 { return 1; }
+    if op == Op.ZeroExt32to64 { return 1; }
+    if op == Op.Trunc64to8 { return 1; }
+    if op == Op.Trunc64to16 { return 1; }
+    if op == Op.Trunc64to32 { return 1; }
+    if op == Op.OffPtr { return 1; }
+    if op == Op.Return { return 1; }
+
+    // Binary ops take 2 args
+    if op == Op.Add64 { return 2; }
+    if op == Op.Sub64 { return 2; }
+    if op == Op.Mul64 { return 2; }
+    if op == Op.Div64 { return 2; }
+    if op == Op.Mod64 { return 2; }
+    if op == Op.And64 { return 2; }
+    if op == Op.Or64 { return 2; }
+    if op == Op.Xor64 { return 2; }
+    if op == Op.Shl64 { return 2; }
+    if op == Op.Shr64 { return 2; }
+    if op == Op.Sar64 { return 2; }
+    if op == Op.Eq64 { return 2; }
+    if op == Op.Ne64 { return 2; }
+    if op == Op.Lt64 { return 2; }
+    if op == Op.Le64 { return 2; }
+    if op == Op.Gt64 { return 2; }
+    if op == Op.Ge64 { return 2; }
+    if op == Op.Ltu64 { return 2; }
+    if op == Op.Leu64 { return 2; }
+    if op == Op.Load { return 2; }
+    if op == Op.SliceMake { return 2; }
+    if op == Op.StringMake { return 2; }
+    if op == Op.AddPtr { return 2; }
+
+    // 3-arg ops
+    if op == Op.Store { return 3; }
+    if op == Op.Select { return 3; }
+
+    // Phi and Call have variable args
+    return -1;
+}
+
+// Check if operation is a branch (affects control flow)
+// Reference: Zig's Op.isBranch()
+fn Op_isBranch(op: Op) bool {
+    if op == Op.Return { return true; }
+    if op == Op.TailCall { return true; }
+    // Note: actual branch instructions are in block control, not values
+    return false;
+}
+
+// Check if operation is a call
+// Reference: Zig's Op.isCall()
+fn Op_isCall(op: Op) bool {
+    if op == Op.Call { return true; }
+    if op == Op.TailCall { return true; }
+    if op == Op.ClosureCall { return true; }
+    return false;
+}
+
+// Check if operation is a load
+// Reference: Zig's Op.isLoad()
+fn Op_isLoad(op: Op) bool {
+    if op == Op.Load { return true; }
+    if op == Op.LoadReg { return true; }
+    if op == Op.ARM64_LDR { return true; }
+    return false;
+}
+
+// Check if operation is a store
+// Reference: Zig's Op.isStore()
+fn Op_isStore(op: Op) bool {
+    if op == Op.Store { return true; }
+    if op == Op.StoreReg { return true; }
+    if op == Op.ARM64_STR { return true; }
+    return false;
+}

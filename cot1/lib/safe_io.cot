@@ -1,0 +1,725 @@
+// =============================================================================
+// Safe File I/O Wrappers
+// =============================================================================
+//
+// Provides safe wrappers around system calls for file operations:
+// 1. Validates all parameters before calling syscalls
+// 2. Provides clear error messages on failure
+// 3. Tracks file descriptor usage for debugging
+//
+// =============================================================================
+
+import "error.cot"
+
+// NOTE: This file expects externs.cot to be imported first!
+// Required externs: open, read, write, close, lseek
+
+// File open flags (POSIX)
+const O_RDONLY: i32 = 0;
+const O_WRONLY: i32 = 1;
+const O_RDWR: i32 = 2;
+const O_CREAT: i32 = 512;    // 0x200 on macOS
+const O_TRUNC: i32 = 1024;   // 0x400 on macOS
+const O_APPEND: i32 = 8;     // 0x008 on macOS
+
+// lseek whence values
+const SEEK_SET: i32 = 0;
+const SEEK_CUR: i32 = 1;
+const SEEK_END: i32 = 2;
+
+// Standard file descriptors
+const STDIN_FD: i32 = 0;
+const STDOUT_FD: i32 = 1;
+const STDERR_FD: i32 = 2;
+
+// =============================================================================
+// File Descriptor Tracking
+// =============================================================================
+
+var g_fd_count: i64 = 0;        // Number of open file descriptors
+var g_fd_max_seen: i32 = 2;     // Highest fd seen (starts at stderr)
+
+// =============================================================================
+// Safe Open
+// =============================================================================
+
+fn safe_open_read(path: *u8, context: *u8) i32 {
+    // Validate path
+    if path == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("FILE ERROR: null path in safe_open_read\n");
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Check path is not empty
+    if path.* == 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("FILE ERROR: empty path in safe_open_read\n");
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Attempt to open
+    let fd: i32 = open(path, O_RDONLY, 0);
+
+    if fd < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("FILE ERROR: cannot open file for reading\n");
+        stderr_str("  Path: ");
+        stderr_str(path);
+        stderr_newline();
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("  Error code: ");
+        stderr_int(@intCast(i64, fd));
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Track file descriptor
+    g_fd_count = g_fd_count + 1;
+    if fd > g_fd_max_seen {
+        g_fd_max_seen = fd;
+    }
+
+    if g_debug_verbose {
+        stderr_str("[FILE] Opened for read: ");
+        stderr_str(path);
+        stderr_str(" (fd=");
+        stderr_int(@intCast(i64, fd));
+        stderr_str(")\n");
+    }
+
+    return fd;
+}
+
+fn safe_open_write(path: *u8, context: *u8) i32 {
+    // Validate path
+    if path == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("FILE ERROR: null path in safe_open_write\n");
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Check path is not empty
+    if path.* == 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("FILE ERROR: empty path in safe_open_write\n");
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Attempt to open (create if doesn't exist, truncate if does)
+    let flags: i32 = O_WRONLY + O_CREAT + O_TRUNC;
+    let mode: i32 = 420;  // 0644 in octal - rw-r--r--
+    let fd: i32 = open(path, flags, mode);
+
+    if fd < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("FILE ERROR: cannot open file for writing\n");
+        stderr_str("  Path: ");
+        stderr_str(path);
+        stderr_newline();
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("  Error code: ");
+        stderr_int(@intCast(i64, fd));
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Track file descriptor
+    g_fd_count = g_fd_count + 1;
+    if fd > g_fd_max_seen {
+        g_fd_max_seen = fd;
+    }
+
+    if g_debug_verbose {
+        stderr_str("[FILE] Opened for write: ");
+        stderr_str(path);
+        stderr_str(" (fd=");
+        stderr_int(@intCast(i64, fd));
+        stderr_str(")\n");
+    }
+
+    return fd;
+}
+
+fn safe_open(path: *u8, flags: i32, mode: i32, context: *u8) i32 {
+    // Validate path
+    if path == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("FILE ERROR: null path in safe_open\n");
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    let fd: i32 = open(path, flags, mode);
+
+    if fd < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("FILE ERROR: cannot open file\n");
+        stderr_str("  Path: ");
+        stderr_str(path);
+        stderr_newline();
+        stderr_str("  Flags: ");
+        stderr_int(@intCast(i64, flags));
+        stderr_newline();
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    g_fd_count = g_fd_count + 1;
+    if fd > g_fd_max_seen {
+        g_fd_max_seen = fd;
+    }
+
+    return fd;
+}
+
+// =============================================================================
+// Safe Read
+// =============================================================================
+
+fn safe_read(fd: i32, buf: *u8, count: i64, context: *u8) i64 {
+    // Validate fd
+    if fd < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("READ ERROR: invalid file descriptor\n");
+        stderr_str("  fd: ");
+        stderr_int(@intCast(i64, fd));
+        stderr_newline();
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Validate buffer
+    if buf == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("READ ERROR: null buffer\n");
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Validate count
+    if count < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("READ ERROR: negative count\n");
+        stderr_str("  Count: ");
+        stderr_int(count);
+        stderr_newline();
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    if count == 0 {
+        return 0;
+    }
+
+    // Perform read
+    let result: i64 = read(fd, buf, count);
+
+    if result < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("READ ERROR: read failed\n");
+        stderr_str("  fd: ");
+        stderr_int(@intCast(i64, fd));
+        stderr_newline();
+        stderr_str("  Requested: ");
+        stderr_int(count);
+        stderr_str(" bytes\n");
+        stderr_str("  Result: ");
+        stderr_int(result);
+        stderr_newline();
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    if g_debug_verbose {
+        stderr_str("[FILE] Read ");
+        stderr_int(result);
+        stderr_str(" bytes from fd ");
+        stderr_int(@intCast(i64, fd));
+        stderr_newline();
+    }
+
+    return result;
+}
+
+// Read entire file into buffer, returns bytes read
+fn safe_read_all(fd: i32, buf: *u8, buf_cap: i64, context: *u8) i64 {
+    if buf == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("READ ERROR: null buffer in safe_read_all\n");
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    var total: i64 = 0;
+    var chunk: i64 = 0;
+
+    chunk = read(fd, buf, buf_cap);
+    while chunk > 0 {
+        total = total + chunk;
+        if total >= buf_cap {
+            stderr_str("\n");
+            stderr_str("================================================================================\n");
+            stderr_str("READ ERROR: buffer overflow in safe_read_all\n");
+            stderr_str("  Buffer capacity: ");
+            stderr_int(buf_cap);
+            stderr_str(" bytes\n");
+            stderr_str("  Read so far: ");
+            stderr_int(total);
+            stderr_str(" bytes\n");
+            stderr_str("  Context: ");
+            stderr_str(context);
+            stderr_newline();
+            stderr_str("================================================================================\n");
+            print_error_context_stack();
+            exit(1);
+        }
+        chunk = read(fd, buf + total, buf_cap - total);
+    }
+
+    if chunk < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("READ ERROR: read failed in safe_read_all\n");
+        stderr_str("  fd: ");
+        stderr_int(@intCast(i64, fd));
+        stderr_newline();
+        stderr_str("  Read so far: ");
+        stderr_int(total);
+        stderr_str(" bytes\n");
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    return total;
+}
+
+// =============================================================================
+// Safe Write
+// =============================================================================
+
+fn safe_write(fd: i32, buf: *u8, count: i64, context: *u8) i64 {
+    // Validate fd
+    if fd < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("WRITE ERROR: invalid file descriptor\n");
+        stderr_str("  fd: ");
+        stderr_int(@intCast(i64, fd));
+        stderr_newline();
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Validate buffer (null is OK for count==0)
+    if buf == null and count > 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("WRITE ERROR: null buffer\n");
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Validate count
+    if count < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("WRITE ERROR: negative count\n");
+        stderr_str("  Count: ");
+        stderr_int(count);
+        stderr_newline();
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    if count == 0 {
+        return 0;
+    }
+
+    // Perform write
+    let result: i64 = write(fd, buf, count);
+
+    if result < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("WRITE ERROR: write failed\n");
+        stderr_str("  fd: ");
+        stderr_int(@intCast(i64, fd));
+        stderr_newline();
+        stderr_str("  Requested: ");
+        stderr_int(count);
+        stderr_str(" bytes\n");
+        stderr_str("  Result: ");
+        stderr_int(result);
+        stderr_newline();
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    if result != count {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("WRITE ERROR: incomplete write\n");
+        stderr_str("  fd: ");
+        stderr_int(@intCast(i64, fd));
+        stderr_newline();
+        stderr_str("  Requested: ");
+        stderr_int(count);
+        stderr_str(" bytes\n");
+        stderr_str("  Written: ");
+        stderr_int(result);
+        stderr_str(" bytes\n");
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    if g_debug_verbose {
+        stderr_str("[FILE] Wrote ");
+        stderr_int(result);
+        stderr_str(" bytes to fd ");
+        stderr_int(@intCast(i64, fd));
+        stderr_newline();
+    }
+
+    return result;
+}
+
+// Write entire buffer, retrying on partial writes
+fn safe_write_all(fd: i32, buf: *u8, count: i64, context: *u8) {
+    if count <= 0 { return; }
+
+    if buf == null {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("WRITE ERROR: null buffer in safe_write_all\n");
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    var total: i64 = 0;
+    while total < count {
+        let chunk: i64 = write(fd, buf + total, count - total);
+
+        if chunk <= 0 {
+            stderr_str("\n");
+            stderr_str("================================================================================\n");
+            stderr_str("WRITE ERROR: write failed in safe_write_all\n");
+            stderr_str("  fd: ");
+            stderr_int(@intCast(i64, fd));
+            stderr_newline();
+            stderr_str("  Total to write: ");
+            stderr_int(count);
+            stderr_str(" bytes\n");
+            stderr_str("  Written so far: ");
+            stderr_int(total);
+            stderr_str(" bytes\n");
+            stderr_str("  Last result: ");
+            stderr_int(chunk);
+            stderr_newline();
+            stderr_str("  Context: ");
+            stderr_str(context);
+            stderr_newline();
+            stderr_str("================================================================================\n");
+            print_error_context_stack();
+            exit(1);
+        }
+
+        total = total + chunk;
+    }
+}
+
+// =============================================================================
+// Safe Close
+// =============================================================================
+
+fn safe_close(fd: i32, context: *u8) {
+    // Validate fd
+    if fd < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("CLOSE ERROR: invalid file descriptor\n");
+        stderr_str("  fd: ");
+        stderr_int(@intCast(i64, fd));
+        stderr_newline();
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Don't close stdin/stdout/stderr
+    if fd <= 2 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("CLOSE ERROR: attempted to close standard stream\n");
+        stderr_str("  fd: ");
+        stderr_int(@intCast(i64, fd));
+        if fd == 0 { stderr_str(" (stdin)"); }
+        if fd == 1 { stderr_str(" (stdout)"); }
+        if fd == 2 { stderr_str(" (stderr)"); }
+        stderr_newline();
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    let result: i32 = close(fd);
+
+    if result < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("CLOSE ERROR: close failed\n");
+        stderr_str("  fd: ");
+        stderr_int(@intCast(i64, fd));
+        stderr_newline();
+        stderr_str("  Result: ");
+        stderr_int(@intCast(i64, result));
+        stderr_newline();
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    g_fd_count = g_fd_count - 1;
+
+    if g_debug_verbose {
+        stderr_str("[FILE] Closed fd ");
+        stderr_int(@intCast(i64, fd));
+        stderr_newline();
+    }
+}
+
+// =============================================================================
+// Safe Seek
+// =============================================================================
+
+fn safe_lseek(fd: i32, offset: i64, whence: i32, context: *u8) i64 {
+    if fd < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("SEEK ERROR: invalid file descriptor\n");
+        stderr_str("  fd: ");
+        stderr_int(@intCast(i64, fd));
+        stderr_newline();
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    if whence < 0 or whence > 2 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("SEEK ERROR: invalid whence value\n");
+        stderr_str("  whence: ");
+        stderr_int(@intCast(i64, whence));
+        stderr_str(" (valid: 0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END)\n");
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    let result: i64 = lseek(fd, offset, whence);
+
+    if result < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("SEEK ERROR: lseek failed\n");
+        stderr_str("  fd: ");
+        stderr_int(@intCast(i64, fd));
+        stderr_newline();
+        stderr_str("  offset: ");
+        stderr_int(offset);
+        stderr_newline();
+        stderr_str("  whence: ");
+        stderr_int(@intCast(i64, whence));
+        stderr_newline();
+        stderr_str("  Result: ");
+        stderr_int(result);
+        stderr_newline();
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    return result;
+}
+
+// Get file size using seek
+fn safe_get_file_size(fd: i32, context: *u8) i64 {
+    // Save current position
+    let current: i64 = lseek(fd, 0, SEEK_CUR);
+    if current < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("FILE SIZE ERROR: cannot get current position\n");
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Seek to end
+    let end: i64 = lseek(fd, 0, SEEK_END);
+    if end < 0 {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("FILE SIZE ERROR: cannot seek to end\n");
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    // Restore position
+    let restored: i64 = lseek(fd, current, SEEK_SET);
+    if restored != current {
+        stderr_str("\n");
+        stderr_str("================================================================================\n");
+        stderr_str("FILE SIZE ERROR: cannot restore position\n");
+        stderr_str("  Context: ");
+        stderr_str(context);
+        stderr_newline();
+        stderr_str("================================================================================\n");
+        print_error_context_stack();
+        exit(1);
+    }
+
+    return end;
+}
+
+// =============================================================================
+// File I/O Statistics
+// =============================================================================
+
+fn print_io_stats() {
+    stderr_str("\n");
+    stderr_str("================================================================================\n");
+    stderr_str("FILE I/O STATISTICS\n");
+    stderr_str("================================================================================\n");
+    stderr_str("  Open file descriptors: ");
+    stderr_int(g_fd_count);
+    stderr_newline();
+    stderr_str("  Highest fd seen: ");
+    stderr_int(@intCast(i64, g_fd_max_seen));
+    stderr_newline();
+    stderr_str("================================================================================\n");
+}
+

@@ -1,0 +1,24 @@
+// Cot0 Standard Library
+// Basic functions: len, print, println, write
+// Import this file to get these utilities
+
+extern fn write(fd: i32, buf: *u8, count: i64) i64;
+
+// Length of a string
+// Note: For string literals, this is computed at compile time by the Zig compiler
+// For cot0-stage1, we need runtime support
+fn len(s: string) i64 {
+    return s.len;
+}
+
+// Print a string to stdout (no newline)
+fn print(s: string) {
+    write(1, s.ptr, s.len);
+}
+
+// Print a string to stdout with newline
+fn println(s: string) {
+    print(s);
+    var nl: u8 = 10;
+    write(1, &nl, 1);
+}

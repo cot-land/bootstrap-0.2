@@ -1,0 +1,525 @@
+// DWARF Debug Information Format Support
+// Provides constants and helpers for generating DWARF debug sections.
+//
+// Reference: DWARF v4 specification
+// Reference: Apple Mach-O DWARF format
+//
+// This file provides support for __debug_line section generation
+// to enable lldb to show source file:line for crash locations.
+
+// ============================================================================
+// DWARF Version
+// ============================================================================
+
+const DWARF_VERSION: i64 = 4;  // Using DWARF v4
+
+// ============================================================================
+// Line Number Program Opcodes (Standard)
+// ============================================================================
+
+const DW_LNS_copy: i64 = 1;
+const DW_LNS_advance_pc: i64 = 2;
+const DW_LNS_advance_line: i64 = 3;
+const DW_LNS_set_file: i64 = 4;
+const DW_LNS_set_column: i64 = 5;
+const DW_LNS_negate_stmt: i64 = 6;
+const DW_LNS_set_basic_block: i64 = 7;
+const DW_LNS_const_add_pc: i64 = 8;
+const DW_LNS_fixed_advance_pc: i64 = 9;
+const DW_LNS_set_prologue_end: i64 = 10;
+const DW_LNS_set_epilogue_begin: i64 = 11;
+const DW_LNS_set_isa: i64 = 12;
+
+// ============================================================================
+// Line Number Program Extended Opcodes
+// ============================================================================
+
+const DW_LNE_end_sequence: i64 = 1;
+const DW_LNE_set_address: i64 = 2;
+const DW_LNE_define_file: i64 = 3;
+const DW_LNE_set_discriminator: i64 = 4;
+
+// ============================================================================
+// DWARF Tags (DW_TAG_*)
+// ============================================================================
+
+const DW_TAG_compile_unit: i64 = 0x11;
+const DW_TAG_subprogram: i64 = 0x2e;
+
+// ============================================================================
+// DWARF Attributes (DW_AT_*)
+// ============================================================================
+
+const DW_AT_name: i64 = 0x03;
+const DW_AT_stmt_list: i64 = 0x10;
+const DW_AT_low_pc: i64 = 0x11;
+const DW_AT_high_pc: i64 = 0x12;
+const DW_AT_language: i64 = 0x13;
+const DW_AT_comp_dir: i64 = 0x1b;
+const DW_AT_producer: i64 = 0x25;
+
+// ============================================================================
+// DWARF Forms (DW_FORM_*)
+// ============================================================================
+
+const DW_FORM_addr: i64 = 0x01;        // Machine address
+const DW_FORM_data1: i64 = 0x0b;       // 1-byte constant
+const DW_FORM_data2: i64 = 0x05;       // 2-byte constant
+const DW_FORM_data4: i64 = 0x06;       // 4-byte constant
+const DW_FORM_data8: i64 = 0x07;       // 8-byte constant
+const DW_FORM_string: i64 = 0x08;      // Null-terminated string
+const DW_FORM_sec_offset: i64 = 0x17;  // Offset into section
+
+// ============================================================================
+// DWARF Children Flag
+// ============================================================================
+
+const DW_CHILDREN_no: i64 = 0;
+const DW_CHILDREN_yes: i64 = 1;
+
+// ============================================================================
+// DWARF Language Codes
+// ============================================================================
+
+const DW_LANG_C: i64 = 0x0002;  // Use C as closest match for Cot
+
+// ============================================================================
+// Line Number Program Header Constants
+// ============================================================================
+
+// Default values for line number state machine
+const DEFAULT_IS_STMT: i64 = 1;       // Default is_stmt value
+const LINE_BASE: i64 = -5;            // Line base for special opcodes
+const LINE_RANGE: i64 = 14;           // Line range for special opcodes
+const OPCODE_BASE: i64 = 13;          // First special opcode value
+
+// Minimum instruction length for ARM64 (4 bytes)
+const MIN_INST_LENGTH: i64 = 4;
+// Maximum operations per instruction (1 for non-VLIW)
+const MAX_OPS_PER_INST: i64 = 1;
+
+// ============================================================================
+// LEB128 Encoding Helpers
+// DWARF uses LEB128 (Little Endian Base 128) for variable-length integers
+// ============================================================================
+
+// Write unsigned LEB128 to buffer
+// Returns number of bytes written
+fn DWARF_writeULEB128(buf: *u8, value: i64) i64 {
+    var val: i64 = value;
+    var count: i64 = 0;
+    var more: bool = true;
+
+    while more {
+        var b: i64 = val & 127;  // Low 7 bits
+        val = val >> 7;
+
+        if val != 0 {
+            b = b | 128;  // Set high bit to indicate more bytes
+        } else {
+            more = false;
+        }
+
+        let p: *u8 = buf + count;
+        p.* = @intCast(u8, b);
+        count = count + 1;
+    }
+
+    return count;
+}
+
+// Write signed LEB128 to buffer
+// Returns number of bytes written
+fn DWARF_writeSLEB128(buf: *u8, value: i64) i64 {
+    var val: i64 = value;
+    var count: i64 = 0;
+    var more: bool = true;
+
+    while more {
+        var b: i64 = val & 127;  // Low 7 bits
+        val = val >> 7;  // Arithmetic shift for signed
+
+        // Check if more bytes needed
+        let sign_bit: i64 = b & 64;  // Bit 6 is sign bit
+        if (val == 0 and sign_bit == 0) or (val == -1 and sign_bit != 0) {
+            more = false;
+        } else {
+            b = b | 128;  // Set high bit
+        }
+
+        let p: *u8 = buf + count;
+        p.* = @intCast(u8, b);
+        count = count + 1;
+    }
+
+    return count;
+}
+
+// Calculate bytes needed for unsigned LEB128
+fn DWARF_uleb128Size(value: i64) i64 {
+    var val: i64 = value;
+    var size: i64 = 0;
+    if val == 0 {
+        return 1;
+    }
+    while val != 0 {
+        val = val >> 7;
+        size = size + 1;
+    }
+    return size;
+}
+
+// Calculate bytes needed for signed LEB128
+fn DWARF_sleb128Size(value: i64) i64 {
+    var val: i64 = value;
+    var size: i64 = 0;
+    var more: bool = true;
+
+    while more {
+        var b: i64 = val & 127;
+        val = val >> 7;
+        let sign_bit: i64 = b & 64;
+        if (val == 0 and sign_bit == 0) or (val == -1 and sign_bit != 0) {
+            more = false;
+        }
+        size = size + 1;
+    }
+
+    return size;
+}
+
+// ============================================================================
+// Special Opcode Helpers
+// Special opcodes encode both line and address advances in single byte
+// ============================================================================
+
+// Check if line/address advance can use special opcode
+fn DWARF_canUseSpecialOpcode(line_delta: i64, addr_delta: i64) bool {
+    // Line must be in range [LINE_BASE, LINE_BASE + LINE_RANGE)
+    if line_delta < LINE_BASE or line_delta >= LINE_BASE + LINE_RANGE {
+        return false;
+    }
+
+    // Address advance in instruction units
+    let addr_advance: i64 = addr_delta / MIN_INST_LENGTH;
+
+    // Calculate opcode
+    let opcode: i64 = (line_delta - LINE_BASE) + (LINE_RANGE * addr_advance) + OPCODE_BASE;
+
+    // Must fit in single byte (< 256)
+    return opcode >= OPCODE_BASE and opcode < 256;
+}
+
+// Encode special opcode for line/address advance
+fn DWARF_specialOpcode(line_delta: i64, addr_delta: i64) i64 {
+    let addr_advance: i64 = addr_delta / MIN_INST_LENGTH;
+    return (line_delta - LINE_BASE) + (LINE_RANGE * addr_advance) + OPCODE_BASE;
+}
+
+// ============================================================================
+// Debug Line Writer State
+// ============================================================================
+
+struct DebugLineWriter {
+    buf: *u8,          // Output buffer
+    count: i64,        // Current position
+    cap: i64,          // Buffer capacity
+}
+
+fn DebugLineWriter_init(w: *DebugLineWriter, buf: *u8, cap: i64) {
+    w.buf = buf;
+    w.count = 0;
+    w.cap = cap;
+}
+
+fn DebugLineWriter_writeByte(w: *DebugLineWriter, b: i64) {
+    if w.count < w.cap {
+        let p: *u8 = w.buf + w.count;
+        p.* = @intCast(u8, b & 255);
+        w.count = w.count + 1;
+    }
+}
+
+fn DebugLineWriter_writeU16(w: *DebugLineWriter, val: i64) {
+    DebugLineWriter_writeByte(w, val & 255);
+    DebugLineWriter_writeByte(w, (val >> 8) & 255);
+}
+
+fn DebugLineWriter_writeU32(w: *DebugLineWriter, val: i64) {
+    DebugLineWriter_writeByte(w, val & 255);
+    DebugLineWriter_writeByte(w, (val >> 8) & 255);
+    DebugLineWriter_writeByte(w, (val >> 16) & 255);
+    DebugLineWriter_writeByte(w, (val >> 24) & 255);
+}
+
+fn DebugLineWriter_writeU64(w: *DebugLineWriter, val: i64) {
+    DebugLineWriter_writeU32(w, val & 0xFFFFFFFF);
+    DebugLineWriter_writeU32(w, (val >> 32) & 0xFFFFFFFF);
+}
+
+fn DebugLineWriter_writeULEB128(w: *DebugLineWriter, val: i64) {
+    if w.count + 10 > w.cap {
+        return;
+    }
+    let bytes: i64 = DWARF_writeULEB128(w.buf + w.count, val);
+    w.count = w.count + bytes;
+}
+
+fn DebugLineWriter_writeSLEB128(w: *DebugLineWriter, val: i64) {
+    if w.count + 10 > w.cap {
+        return;
+    }
+    let bytes: i64 = DWARF_writeSLEB128(w.buf + w.count, val);
+    w.count = w.count + bytes;
+}
+
+fn DebugLineWriter_writeString(w: *DebugLineWriter, s: *u8, len: i64) {
+    var i: i64 = 0;
+    while i < len and w.count < w.cap {
+        let src: *u8 = s + i;
+        let dst: *u8 = w.buf + w.count;
+        dst.* = src.*;
+        w.count = w.count + 1;
+        i = i + 1;
+    }
+    // Null terminator
+    if w.count < w.cap {
+        let p: *u8 = w.buf + w.count;
+        p.* = 0;
+        w.count = w.count + 1;
+    }
+}
+
+fn DebugLineWriter_writeZeros(w: *DebugLineWriter, n: i64) {
+    var i: i64 = 0;
+    while i < n {
+        DebugLineWriter_writeByte(w, 0);
+        i = i + 1;
+    }
+}
+
+// ============================================================================
+// Extended Opcode Helpers
+// ============================================================================
+
+// Write DW_LNE_set_address extended opcode
+fn DebugLineWriter_writeSetAddress(w: *DebugLineWriter, addr: i64) {
+    // Extended opcode format: 0, length (ULEB128), opcode, operand
+    DebugLineWriter_writeByte(w, 0);           // Extended opcode marker
+    DebugLineWriter_writeULEB128(w, 9);        // Length: 1 (opcode) + 8 (address)
+    DebugLineWriter_writeByte(w, DW_LNE_set_address);
+    DebugLineWriter_writeU64(w, addr);
+}
+
+// Write DW_LNE_end_sequence extended opcode
+fn DebugLineWriter_writeEndSequence(w: *DebugLineWriter) {
+    DebugLineWriter_writeByte(w, 0);           // Extended opcode marker
+    DebugLineWriter_writeULEB128(w, 1);        // Length: 1 (opcode only)
+    DebugLineWriter_writeByte(w, DW_LNE_end_sequence);
+}
+
+// ============================================================================
+// Debug Abbrev Generation
+// ============================================================================
+
+// Generate __debug_abbrev section content
+// This defines the structure of DIEs in __debug_info
+// We only need one abbreviation: compile_unit
+// Returns bytes written
+fn DWARF_generateAbbrev(buf: *u8, cap: i64) i64 {
+    if cap < 32 {
+        return 0;
+    }
+
+    var count: i64 = 0;
+    var p: *u8 = buf;
+
+    // Abbreviation 1: DW_TAG_compile_unit
+    // Abbrev code
+    p.* = 1;
+    count = count + 1;
+    p = buf + count;
+
+    // Tag: DW_TAG_compile_unit
+    p.* = @intCast(u8, DW_TAG_compile_unit);
+    count = count + 1;
+    p = buf + count;
+
+    // Children: no (we don't emit subprogram DIEs yet)
+    p.* = @intCast(u8, DW_CHILDREN_no);
+    count = count + 1;
+    p = buf + count;
+
+    // Attributes:
+    // DW_AT_name, DW_FORM_string
+    p.* = @intCast(u8, DW_AT_name);
+    count = count + 1;
+    p = buf + count;
+    p.* = @intCast(u8, DW_FORM_string);
+    count = count + 1;
+    p = buf + count;
+
+    // DW_AT_comp_dir, DW_FORM_string
+    p.* = @intCast(u8, DW_AT_comp_dir);
+    count = count + 1;
+    p = buf + count;
+    p.* = @intCast(u8, DW_FORM_string);
+    count = count + 1;
+    p = buf + count;
+
+    // DW_AT_stmt_list, DW_FORM_sec_offset (offset to line table)
+    p.* = @intCast(u8, DW_AT_stmt_list);
+    count = count + 1;
+    p = buf + count;
+    p.* = @intCast(u8, DW_FORM_sec_offset);
+    count = count + 1;
+    p = buf + count;
+
+    // DW_AT_low_pc, DW_FORM_addr
+    p.* = @intCast(u8, DW_AT_low_pc);
+    count = count + 1;
+    p = buf + count;
+    p.* = @intCast(u8, DW_FORM_addr);
+    count = count + 1;
+    p = buf + count;
+
+    // DW_AT_high_pc, DW_FORM_data8 (size, not address - DWARF4 convention)
+    p.* = @intCast(u8, DW_AT_high_pc);
+    count = count + 1;
+    p = buf + count;
+    p.* = @intCast(u8, DW_FORM_data8);
+    count = count + 1;
+    p = buf + count;
+
+    // End of attributes (0, 0)
+    p.* = 0;
+    count = count + 1;
+    p = buf + count;
+    p.* = 0;
+    count = count + 1;
+    p = buf + count;
+
+    // End of abbreviation table (0)
+    p.* = 0;
+    count = count + 1;
+
+    return count;
+}
+
+// ============================================================================
+// Debug Info Generation
+// ============================================================================
+
+// Helper to write a null-terminated string
+fn DWARF_writeString(buf: *u8, offset: i64, s: *u8, len: i64) i64 {
+    var i: i64 = 0;
+    while i < len {
+        let src: *u8 = s + i;
+        let dst: *u8 = buf + offset + i;
+        dst.* = src.*;
+        i = i + 1;
+    }
+    // Null terminator
+    let null_ptr: *u8 = buf + offset + len;
+    null_ptr.* = 0;
+    return len + 1;
+}
+
+// Helper to write 4-byte little-endian value
+fn DWARF_writeU32(buf: *u8, offset: i64, val: i64) {
+    let p0: *u8 = buf + offset;
+    let p1: *u8 = buf + offset + 1;
+    let p2: *u8 = buf + offset + 2;
+    let p3: *u8 = buf + offset + 3;
+    p0.* = @intCast(u8, val & 255);
+    p1.* = @intCast(u8, (val >> 8) & 255);
+    p2.* = @intCast(u8, (val >> 16) & 255);
+    p3.* = @intCast(u8, (val >> 24) & 255);
+}
+
+// Helper to write 8-byte little-endian value
+fn DWARF_writeU64(buf: *u8, offset: i64, val: i64) {
+    DWARF_writeU32(buf, offset, val & 0xFFFFFFFF);
+    DWARF_writeU32(buf, offset + 4, (val >> 32) & 0xFFFFFFFF);
+}
+
+// Helper to write 2-byte little-endian value
+fn DWARF_writeU16(buf: *u8, offset: i64, val: i64) {
+    let p0: *u8 = buf + offset;
+    let p1: *u8 = buf + offset + 1;
+    p0.* = @intCast(u8, val & 255);
+    p1.* = @intCast(u8, (val >> 8) & 255);
+}
+
+// Generate __debug_info section content
+// filename: source file name
+// filename_len: length of filename
+// comp_dir: compilation directory
+// comp_dir_len: length of comp_dir
+// low_pc: start address of code (0 for object file, relocated by linker)
+// high_pc: size of code section
+// stmt_list_offset: offset to __debug_line section (usually 0)
+// Returns bytes written
+fn DWARF_generateInfo(buf: *u8, cap: i64,
+                      filename: *u8, filename_len: i64,
+                      comp_dir: *u8, comp_dir_len: i64,
+                      low_pc: i64, code_size: i64,
+                      stmt_list_offset: i64) i64 {
+    // Calculate total size needed
+    // Header: 4 (unit_length) + 2 (version) + 4 (abbrev_offset) + 1 (address_size) = 11 bytes
+    // DIE: 1 (abbrev code) + filename + comp_dir + 4 (stmt_list) + 8 (low_pc) + 8 (high_pc)
+    let header_size: i64 = 11;
+    let die_size: i64 = 1 + (filename_len + 1) + (comp_dir_len + 1) + 4 + 8 + 8;
+    let total_size: i64 = header_size + die_size;
+
+    if cap < total_size {
+        return 0;
+    }
+
+    var offset: i64 = 0;
+
+    // Unit length (not including the length field itself)
+    let unit_length: i64 = total_size - 4;
+    DWARF_writeU32(buf, offset, unit_length);
+    offset = offset + 4;
+
+    // DWARF version
+    DWARF_writeU16(buf, offset, DWARF_VERSION);
+    offset = offset + 2;
+
+    // Offset into __debug_abbrev (always 0 for us)
+    DWARF_writeU32(buf, offset, 0);
+    offset = offset + 4;
+
+    // Address size (8 bytes for 64-bit)
+    let p: *u8 = buf + offset;
+    p.* = 8;
+    offset = offset + 1;
+
+    // DIE: Compile unit (abbreviation code 1)
+    p = buf + offset;
+    p.* = 1;
+    offset = offset + 1;
+
+    // DW_AT_name: source filename
+    let name_bytes: i64 = DWARF_writeString(buf, offset, filename, filename_len);
+    offset = offset + name_bytes;
+
+    // DW_AT_comp_dir: compilation directory
+    let dir_bytes: i64 = DWARF_writeString(buf, offset, comp_dir, comp_dir_len);
+    offset = offset + dir_bytes;
+
+    // DW_AT_stmt_list: offset to line table (4 bytes, sec_offset form)
+    DWARF_writeU32(buf, offset, stmt_list_offset);
+    offset = offset + 4;
+
+    // DW_AT_low_pc: start address (will be relocated)
+    DWARF_writeU64(buf, offset, low_pc);
+    offset = offset + 8;
+
+    // DW_AT_high_pc: code size (DWARF4: when form is data8, this is size not address)
+    DWARF_writeU64(buf, offset, code_size);
+    offset = offset + 8;
+
+    return offset;
+}

@@ -1,0 +1,45 @@
+// Test: Error Union Catch Syntax
+// Feature: catch |err| { } handling
+//
+// This test verifies:
+// 1. catch with error capture
+// 2. catch with default value
+// 3. catch with block
+
+const TestError = error {
+    Fail,
+    NotFound,
+};
+
+fn mayFail(x: i64) TestError!i64 {
+    if x < 0 {
+        return error.Fail;
+    }
+    return x * 2;
+}
+
+fn test_catch_default() i64 {
+    // let result: i64 = mayFail(-1) catch 99;
+    // Expected: result == 99 (error caught, default used)
+    return 1;
+}
+
+fn test_catch_capture() i64 {
+    // let result: i64 = mayFail(-1) catch |err| {
+    //     if err == error.Fail { return 50; }
+    //     return 0;
+    // };
+    // Expected: result == 50
+    return 1;
+}
+
+fn test_catch_success() i64 {
+    // let result: i64 = mayFail(10) catch 99;
+    // Expected: result == 20 (no error, success value used)
+    return 1;
+}
+
+fn main() i64 {
+    // Placeholder until error unions are implemented
+    return 0;
+}
