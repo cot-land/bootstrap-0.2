@@ -6,12 +6,9 @@
 // After this pass completes: NO SSA Value has type > 32 bytes (MAX_SSA_SIZE)
 //
 // Types that fail CanSSA are handled via OpMove (bulk memory copy).
-
-import "../func.cot"
-import "../value.cot"
-import "../block.cot"
-import "../op.cot"
-import "../../frontend/types.cot"
+//
+// NOTE: No imports needed - func.cot, value.cot, block.cot, op.cot, types.cot
+// are already imported through main.cot -> genssa.cot and builder.cot
 
 const MAX_SSA_SIZE: i64 = 32;
 
@@ -28,6 +25,10 @@ fn canSSA(pool: *TypeRegistry, type_idx: i64) bool {
 // Reference: expand_calls.zig:53 expandCalls
 fn expandCalls(f: *Func, type_pool: *TypeRegistry) {
     if type_pool == null { return; }
+
+    // Pass 0: Expand call arguments - handle >16B struct args by reference (BUG-019)
+    // Reference: expand_calls.zig:333-441 expandCallArgs
+    expandCallArgs(f, type_pool);
 
     // Pass 1: Find and handle wide stores (Store of !canSSA type → Move)
     var b: i64 = 0;
@@ -67,6 +68,69 @@ fn expandCalls(f: *Func, type_pool: *TypeRegistry) {
 
     // Pass 2: Apply dec.rules optimizations
     applyDecRules(f);
+}
+
+// Expand call arguments - handle >16B struct args by reference
+// Reference: expand_calls.zig:333-441 expandCallArgs
+// BUG-019 FIX: For >16B struct args that are Loads, pass the source address
+// instead of the loaded value. ARM64 ABI requires pass-by-reference for these.
+fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
+    var b: i64 = 0;
+    while b < f.blocks_count {
+        let block: *Block = Func_getBlock(f, b);
+
+        var vi: i64 = 0;
+        while vi < block.values_count {
+            let v: *Value = Func_getValue(f, block.values_start + vi);
+
+            // Only process Call and ClosureCall values
+            if v.op != Op.Call and v.op != Op.ClosureCall {
+                vi = vi + 1;
+                continue;
+            }
+
+            // Determine start index (skip function pointer for ClosureCall)
+            var start_idx: i64 = 0;
+            if v.op == Op.ClosureCall { start_idx = 1; }
+
+            // Check each argument
+            var arg_idx: i64 = start_idx;
+            while arg_idx < v.args.count {
+                let arg_id: i64 = Value_getArg(v, arg_idx);
+                if arg_id < 0 {
+                    arg_idx = arg_idx + 1;
+                    continue;
+                }
+
+                let arg: *Value = Func_getValue(f, arg_id);
+
+                // BUG-019: Check for >16B struct types that need pass-by-reference
+                // Only applies to struct types loaded from memory
+                let is_struct: bool = TypeInfo_isStruct(type_pool, arg.type_idx);
+                if is_struct {
+                    let arg_size: i64 = TypeRegistry_sizeof(type_pool, arg.type_idx);
+                    if arg_size > 16 and arg.op == Op.Load and arg.args.count >= 1 {
+                        // Pass the source address instead of the loaded value
+                        // Go reference: expand_calls.go line 379 - use arg.Args[0]
+                        let source_addr_id: i64 = Value_getArg(arg, 0);
+
+                        // Update use counts
+                        arg.uses = arg.uses - 1;
+                        let source_addr: *Value = Func_getValue(f, source_addr_id);
+                        source_addr.uses = source_addr.uses + 1;
+
+                        // Replace the argument in the call
+                        Value_setArgById(v, arg_idx, source_addr_id);
+                    }
+                }
+
+                arg_idx = arg_idx + 1;
+            }
+
+            vi = vi + 1;
+        }
+        b = b + 1;
+    }
 }
 
 // Apply dec.rules optimizations

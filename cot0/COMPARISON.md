@@ -335,7 +335,7 @@ These are missing implementations, not just naming differences.
 | `stackalloc` | ssa/stackalloc.zig | ssa/stackalloc.cot | ✅ Exists |
 
 **Status**: All SSA passes implement actual transformations:
-- **expand_calls**: Store of >16B → Move, dec.rules (string_ptr/len → copy)
+- **expand_calls**: Store of >16B → Move, >16B struct args → pass-by-reference (BUG-019 fix), dec.rules (string_ptr/len → copy)
 - **decompose**: string_ptr/len(string_make) → copy with use count updates
 - **schedule**: Value reordering via swapValues() - phis first, control last, dependency sort
 - **lower**: Mul by 2^n → Shl, identity opts (add 0, mul 1, shift 0 → copy)

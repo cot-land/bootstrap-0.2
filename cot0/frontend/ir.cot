@@ -117,6 +117,7 @@ enum IRNodeKind {
     MakeSlice,    // Slice from array: left = ptr_expr, right = len_expr
     SlicePtr,     // Extract pointer from slice: left = slice_expr -> ptr
     SliceLen,     // Extract length from slice: left = slice_expr -> len
+    StrConcat,    // String concatenation: left = str1, right = str2
 
     // Local variable access
     LoadLocal,
@@ -509,13 +510,15 @@ fn FuncBuilder_addLocal(fb: *FuncBuilder, name_start: i64, name_len: i64,
 }
 
 fn FuncBuilder_addParam(fb: *FuncBuilder, name_start: i64, name_len: i64,
-                          type_idx: i64, param_idx: i64) i64 {
+                          type_idx: i64, param_idx: i64, size: i64) i64 {
+    // Following Zig pattern: ir.zig:869-875 addParam with explicit size
     if fb.locals_count >= fb.locals_cap {
         return NULL_LOCAL;
     }
     let idx: i64 = fb.locals_count;
     let ptr: *IRLocal = fb.locals + idx;
     ptr.* = IRLocal_newParam(name_start, name_len, type_idx, param_idx);
+    ptr.size = size;  // Set the parameter size (critical for struct parameters)
     fb.locals_count = fb.locals_count + 1;
     return idx;
 }

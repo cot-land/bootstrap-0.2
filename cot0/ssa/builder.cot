@@ -972,14 +972,35 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
     while i < arg_value_ids.count {
         let arg_val: *Value = Func_getValue(b.func, i64list_get(&arg_value_ids, i));
         let local_idx: i64 = i64list_get(&arg_local_indices, i);
+        let param_local: *Local = Func_getLocal(b.func, local_idx);
 
         // Create LocalAddr value for the stack slot
         let addr_val: *Value = Func_newValue(b.func, Op.LocalAddr, TYPE_I64);
         addr_val.aux_int = local_idx;
 
-        // Store Arg to stack slot
-        let store_val: *Value = Func_newValue(b.func, Op.Store, TYPE_VOID);
-        Value_addArg2(store_val, addr_val, arg_val);
+        // BUG-019 FIX: >16B struct types are passed by reference
+        // Following Zig ssa_builder.zig lines 222-238
+        // param_val is a POINTER to source, use OpMove to copy
+        var is_large_struct: bool = false;
+        var type_size: i64 = 8;
+        if b.type_registry != null {
+            type_size = TypeRegistry_sizeof(b.type_registry, param_local.type_idx);
+            let is_struct: bool = TypeInfo_isStruct(b.type_registry, param_local.type_idx);
+            if is_struct and type_size > 16 {
+                is_large_struct = true;
+            }
+        }
+
+        if is_large_struct {
+            // OpMove: copy from arg_val (source ptr) to addr_val (dest)
+            let move_val: *Value = Func_newValue(b.func, Op.Move, TYPE_VOID);
+            move_val.aux_int = type_size;
+            Value_addArg2(move_val, addr_val, arg_val);
+        } else {
+            // Store Arg to stack slot
+            let store_val: *Value = Func_newValue(b.func, Op.Store, TYPE_VOID);
+            Value_addArg2(store_val, addr_val, arg_val);
+        }
 
         i = i + 1;
     }
@@ -1087,6 +1108,8 @@ fn SSABuilder_convertNode(b: *SSABuilder, ir_node: *IRNode, ir_idx: i64) i64 {
         result_id = SSABuilder_convertCall(b, ir_node);
     } else if ir_node.kind == IRNodeKind.CallIndirect {
         result_id = SSABuilder_convertCallIndirect(b, ir_node);
+    } else if ir_node.kind == IRNodeKind.StrConcat {
+        result_id = SSABuilder_convertStrConcat(b, ir_node);
     } else if ir_node.kind == IRNodeKind.Select {
         result_id = SSABuilder_convertSelect(b, ir_node);
     } else if ir_node.kind == IRNodeKind.Branch {
@@ -1625,6 +1648,34 @@ fn SSABuilder_convertCallIndirect(b: *SSABuilder, ir_node: *IRNode) i64 {
         Value_addArg(val, arg_val);
         arg_idx = arg_idx + 1;
     }
+    SSABuilder_assignReg(b, val);
+    return val.id;
+}
+
+// --- String Concatenation ---
+// Following Zig pattern: src/frontend/ssa_builder.zig:851-859
+// Creates StringConcat SSA value with 4 args: ptr1, len1, ptr2, len2
+
+fn SSABuilder_convertStrConcat(b: *SSABuilder, ir_node: *IRNode) i64 {
+    // Create StringConcat value (returns string type)
+    let val: *Value = Func_newValue(b.func, Op.StringConcat, TYPE_STRING);
+
+    // Convert and add the 4 args: ptr1, len1, ptr2, len2
+    var arg_idx: i64 = 0;
+    while arg_idx < ir_node.call_args.count {
+        let arg_ir_rel: i64 = i64list_get(&ir_node.call_args, arg_idx);
+        if arg_ir_rel < 0 {
+            arg_idx = arg_idx + 1;
+            continue;
+        }
+        let abs_idx: i64 = b.ir_nodes_start + arg_ir_rel;
+        let arg_ir_node: *IRNode = b.ir_nodes + abs_idx;
+        let arg_value_id: i64 = SSABuilder_convertNode(b, arg_ir_node, abs_idx);
+        let arg_val: *Value = Func_getValue(b.func, arg_value_id);
+        Value_addArg(val, arg_val);
+        arg_idx = arg_idx + 1;
+    }
+
     SSABuilder_assignReg(b, val);
     return val.id;
 }

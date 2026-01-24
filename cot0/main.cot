@@ -172,6 +172,7 @@ import "codegen/genssa.cot"
 // SSA Builder - IR to SSA conversion (matches Zig's ssa_builder.zig)
 // Must be imported AFTER genssa.cot to avoid duplicate func.cot imports
 import "ssa/builder.cot"
+import "ssa/passes/expand_calls.cot"
 
 // Object file writer
 import "obj/macho.cot"
@@ -1051,6 +1052,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // Build SSA from IR (handles blocks, locals, params, conversion)
         let build_result: i64 = SSABuilder_build(&builder);
 
+        // Run expand_calls pass - handle >16B struct args and decompose aggregates
+        // Reference: driver.zig Phase 4a.5: expand_calls
+        expandCalls(&ssa_func, &g_type_pool);
+
         // Compute stack layout using StackAlloc pass
         // This assigns offsets to locals and computes frame_size with 16-byte alignment
         let stack_result: StackAllocResult = StackAlloc_run(&ssa_func);
@@ -1097,6 +1102,13 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     var call_idx: i64 = 0;
     while call_idx < gs.call_sites_count {
         let cs: *CallSite = g_call_sites + (call_idx);
+
+        // Skip runtime functions (func_name_start == -1 means __cot_str_concat)
+        // These are always external and handled later
+        if cs.func_name_start < 0 {
+            call_idx = call_idx + 1;
+            continue;
+        }
 
         // Find target function by name
         var target_offset: i64 = -1;
@@ -1199,41 +1211,69 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         let cs2: *CallSite = g_call_sites + (call_idx);
 
         // Check if this is an internal function (already found in ir_funcs)
+        // Runtime functions (func_name_start < 0) are never internal
         var is_internal: bool = false;
-        var target_idx2: i64 = 0;
-        while target_idx2 < lowerer.ir_funcs_count {
-            let ir_func2: *IRFunc = g_ir_funcs + (target_idx2);
-            if ir_func2.name_len == cs2.func_name_len {
-                var match2: bool = true;
-                var name_i3: i64 = 0;
-                while name_i3 < cs2.func_name_len {
-                    let src_char2: *u8 = g_source + ir_func2.name_start + name_i3;
-                    let call_char2: *u8 = g_source + cs2.func_name_start + name_i3;
-                    if src_char2.* != call_char2.* {
-                        match2 = false;
+        if cs2.func_name_start >= 0 {
+            var target_idx2: i64 = 0;
+            while target_idx2 < lowerer.ir_funcs_count {
+                let ir_func2: *IRFunc = g_ir_funcs + (target_idx2);
+                if ir_func2.name_len == cs2.func_name_len {
+                    var match2: bool = true;
+                    var name_i3: i64 = 0;
+                    while name_i3 < cs2.func_name_len {
+                        let src_char2: *u8 = g_source + ir_func2.name_start + name_i3;
+                        let call_char2: *u8 = g_source + cs2.func_name_start + name_i3;
+                        if src_char2.* != call_char2.* {
+                            match2 = false;
+                        }
+                        name_i3 = name_i3 + 1;
                     }
-                    name_i3 = name_i3 + 1;
+                    if match2 {
+                        is_internal = true;
+                    }
                 }
-                if match2 {
-                    is_internal = true;
-                }
+                target_idx2 = target_idx2 + 1;
             }
-            target_idx2 = target_idx2 + 1;
         }
 
         // If not internal, add as external symbol and relocation
         if not is_internal {
             // Build external symbol name: "_" + function name
+            var ext_sym_len: i64 = 0;
             let sn2: *u8 = sym_name.items;
-            sn2.* = 95;  // '_'
-            var ext_name_idx: i64 = 0;
-            while ext_name_idx < cs2.func_name_len and ext_name_idx < 126 {
-                let src_ptr2: *u8 = g_source + cs2.func_name_start + ext_name_idx;
-                let dest2: *u8 = sym_name.items + 1 + ext_name_idx;
-                dest2.* = src_ptr2.*;
-                ext_name_idx = ext_name_idx + 1;
+
+            // Special case: func_name_start == -1 means __cot_str_concat runtime function
+            if cs2.func_name_start == -1 {
+                // Hardcoded: "___cot_str_concat" (3 underscores - Zig adds extra prefix on macOS)
+                (sn2 + 0).* = 95;   // '_'
+                (sn2 + 1).* = 95;   // '_'
+                (sn2 + 2).* = 95;   // '_'
+                (sn2 + 3).* = 99;   // 'c'
+                (sn2 + 4).* = 111;  // 'o'
+                (sn2 + 5).* = 116;  // 't'
+                (sn2 + 6).* = 95;   // '_'
+                (sn2 + 7).* = 115;  // 's'
+                (sn2 + 8).* = 116;  // 't'
+                (sn2 + 9).* = 114;  // 'r'
+                (sn2 + 10).* = 95;  // '_'
+                (sn2 + 11).* = 99;  // 'c'
+                (sn2 + 12).* = 111; // 'o'
+                (sn2 + 13).* = 110; // 'n'
+                (sn2 + 14).* = 99;  // 'c'
+                (sn2 + 15).* = 97;  // 'a'
+                (sn2 + 16).* = 116; // 't'
+                ext_sym_len = 17;
+            } else {
+                sn2.* = 95;  // '_'
+                var ext_name_idx: i64 = 0;
+                while ext_name_idx < cs2.func_name_len and ext_name_idx < 126 {
+                    let src_ptr2: *u8 = g_source + cs2.func_name_start + ext_name_idx;
+                    let dest2: *u8 = sym_name.items + 1 + ext_name_idx;
+                    dest2.* = src_ptr2.*;
+                    ext_name_idx = ext_name_idx + 1;
+                }
+                ext_sym_len = 1 + cs2.func_name_len;
             }
-            let ext_sym_len: i64 = 1 + cs2.func_name_len;
 
             // Add undefined external symbol (section = 0)
             let sym_idx: i64 = MachOWriter_addSymbol(&writer, sym_name.items, ext_sym_len, 0, 0, true);

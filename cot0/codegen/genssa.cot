@@ -477,8 +477,16 @@ fn GenState_emitReload(gs: *GenState, v: *Value) {
     if v.spill_slot < 0 { return; }  // Not spilled
     if v.reg < 0 { return; }  // No register assigned
 
+    // Check if we need byte-sized load (TYPE_U8 = 6, TYPE_I8 = 2)
+    // Following GenState_load pattern: use ldrb for byte types
+    let is_byte: bool = v.type_idx == 6 or v.type_idx == 2;
+
     // spill_slot is the actual SP offset (stackalloc converted slot number to offset)
-    GenState_emitInst(gs, encode_ldr(v.reg, SP, v.spill_slot));
+    if is_byte {
+        GenState_emitInst(gs, encode_ldrb(v.reg, SP, v.spill_slot));
+    } else {
+        GenState_emitInst(gs, encode_ldr(v.reg, SP, v.spill_slot));
+    }
 }
 
 // Emit spill: store a value to its spill slot after computing it
@@ -488,8 +496,16 @@ fn GenState_emitSpill(gs: *GenState, v: *Value) {
     if v.spill_slot < 0 { return; }  // Not spilled
     if v.reg < 0 { return; }  // No register assigned
 
+    // Check if we need byte-sized store (TYPE_U8 = 6, TYPE_I8 = 2)
+    // Following GenState_store pattern: use strb for byte types
+    let is_byte: bool = v.type_idx == 6 or v.type_idx == 2;
+
     // spill_slot is the actual SP offset (stackalloc converted slot number to offset)
-    GenState_emitInst(gs, encode_str(v.reg, SP, v.spill_slot));
+    if is_byte {
+        GenState_emitInst(gs, encode_strb(v.reg, SP, v.spill_slot));
+    } else {
+        GenState_emitInst(gs, encode_str(v.reg, SP, v.spill_slot));
+    }
 }
 
 // Reload all spilled arguments of a value before processing it
@@ -736,6 +752,8 @@ fn GenState_value(gs: *GenState, v: *Value) {
         GenState_call(gs, v);
     } else if v.op == Op.ClosureCall {
         GenState_callIndirect(gs, v);
+    } else if v.op == Op.StringConcat {
+        GenState_stringConcat(gs, v);
     } else if v.op == Op.Return {
         GenState_return(gs, v);
     } else if v.op == Op.Copy {
@@ -880,14 +898,14 @@ fn GenState_slicePtr(gs: *GenState, v: *Value) {
 
     // For call results: ptr is in x0 (first return value)
     // For slice_make: ptr is args[0]
-    if slice_val.op == Op.Call {
-        // Call result: slice returned in (x0=ptr, x1=len)
+    if slice_val.op == Op.Call or slice_val.op == Op.StringConcat {
+        // Call/StringConcat result: slice/string returned in (x0=ptr, x1=len)
         // ptr is in x0
         if rd != X0 {
             GenState_emitInst(gs, ARM64_encodeMovReg(rd, X0));
         }
-    } else if slice_val.op == Op.SliceMake {
-        // slice_make: ptr is args[0]
+    } else if slice_val.op == Op.SliceMake or slice_val.op == Op.StringMake {
+        // slice_make/string_make: ptr is args[0]
         let ptr_val: *Value = Func_getValue(f, Value_getArg(slice_val, 0));
         if ptr_val.reg >= 0 and ptr_val.reg != rd {
             GenState_emitInst(gs, ARM64_encodeMovReg(rd, ptr_val.reg));
@@ -919,14 +937,14 @@ fn GenState_sliceLen(gs: *GenState, v: *Value) {
 
     // For call results: len is in x1 (second return value)
     // For slice_make: len is args[1]
-    if slice_val.op == Op.Call {
-        // Call result: slice returned in (x0=ptr, x1=len)
+    if slice_val.op == Op.Call or slice_val.op == Op.StringConcat {
+        // Call/StringConcat result: slice/string returned in (x0=ptr, x1=len)
         // len is in x1
         if rd != X1 {
             GenState_emitInst(gs, ARM64_encodeMovReg(rd, X1));
         }
-    } else if slice_val.op == Op.SliceMake {
-        // slice_make: len is args[1]
+    } else if slice_val.op == Op.SliceMake or slice_val.op == Op.StringMake {
+        // slice_make/string_make: len is args[1]
         let len_val: *Value = Func_getValue(f, Value_getArg(slice_val, 1));
         if len_val.reg >= 0 and len_val.reg != rd {
             GenState_emitInst(gs, ARM64_encodeMovReg(rd, len_val.reg));
@@ -1136,12 +1154,18 @@ fn GenState_load(gs: *GenState, v: *Value) {
     let addr: *Value = Func_getValue(f, Value_getArg(v, 0));
 
     // Check if we need byte-sized load (TYPE_U8 = 6, TYPE_I8 = 2)
-    let is_byte: bool = v.type_idx == 6 or v.type_idx == 2;
+    // IMPORTANT: Also check SOURCE type (from LocalAddr), not just Load value type
+    // This handles cases where the Load value type doesn't match the local's type
+    var is_byte: bool = v.type_idx == 6 or v.type_idx == 2;
 
     // Check if address is LocalAddr - emit SP-relative load directly
     if addr.op == Op.LocalAddr {
         let local_idx: i64 = addr.aux_int;
         let local: *Local = Func_getLocal(f, local_idx);
+        // Also check local's type in case Load value type is wrong
+        if local.type_idx == 6 or local.type_idx == 2 {
+            is_byte = true;
+        }
         if is_byte {
             GenState_emitInst(gs, encode_ldrb(rd, SP, local.offset));
         } else {
@@ -1186,7 +1210,16 @@ fn GenState_store(gs: *GenState, v: *Value) {
     let val: *Value = Func_getValue(f, Value_getArg(v, 1));
 
     // Check if we need byte-sized store (TYPE_U8 = 6, TYPE_I8 = 2)
-    let is_byte: bool = val.type_idx == 6 or val.type_idx == 2;
+    // IMPORTANT: Check DESTINATION type (from LocalAddr), not source value type
+    // This handles cases like "let d: u8 = 101" where 101 has type i64
+    var is_byte: bool = val.type_idx == 6 or val.type_idx == 2;
+    if addr.op == Op.LocalAddr {
+        let local_idx: i64 = addr.aux_int;
+        let local: *Local = Func_getLocal(f, local_idx);
+        if local.type_idx == 6 or local.type_idx == 2 {
+            is_byte = true;
+        }
+    }
 
     // Special handling for stack arguments (arg_idx >= 8)
     // The Arg value wasn't loaded in Op.Arg handling, so we load it here
@@ -1697,6 +1730,28 @@ fn GenState_call(gs: *GenState, v: *Value) {
                             let imm: i64 = 0;
                             if mi_val.aux_int != 0 { imm = 1; }
                             GenState_emitInst(gs, encode_movz(mi_dest, imm, 0));
+                        } else if mi_val.op == Op.ConstString {
+                            // String literal: need ADRP + ADD to load address
+                            // Record relocation and emit address computation
+                            let str_start: i64 = mi_val.aux_int;
+                            let str_len: i64 = mi_val.aux_ptr;
+                            let reloc_offset: i64 = gs.code_count;
+                            GenState_emitInst(gs, encode_adrp(mi_dest, 0));
+                            GenState_emitInst(gs, encode_add_imm(mi_dest, mi_dest, 0));
+                            // Record string relocation
+                            if gs.string_relocs != null and gs.string_relocs_count < gs.string_relocs_cap {
+                                let r: *StringReloc = gs.string_relocs + gs.string_relocs_count;
+                                r.code_offset = reloc_offset;
+                                r.str_start = str_start;
+                                r.str_len = str_len;
+                                gs.string_relocs_count = gs.string_relocs_count + 1;
+                            }
+                        } else if mi_val.op == Op.LocalAddr {
+                            // BUG-019: LocalAddr as call arg (>16B struct pass-by-reference)
+                            // emit ADD dest, SP, #offset to compute local address
+                            let local_idx: i64 = mi_val.aux_int;
+                            let local: *Local = Func_getLocal(f, local_idx);
+                            GenState_emitInst(gs, encode_add_imm(mi_dest, SP, local.offset));
                         } else if mi_src >= 0 {
                             // Non-constant with source register: emit MOV dest, src
                             GenState_emitInst(gs, ARM64_encodeMovReg(mi_dest, mi_src));
@@ -1887,6 +1942,106 @@ fn GenState_callIndirect(gs: *GenState, v: *Value) {
 
     // Clean up ABI info
     ABIParamResultInfo_deinit(&abi_info);
+}
+
+// String concatenation: call __cot_str_concat(ptr1, len1, ptr2, len2)
+// Following Zig pattern: src/codegen/arm64.zig:1593-1670
+// Args: ptr1 in x0, len1 in x1, ptr2 in x2, len2 in x3
+// Returns: ptr in x0, len in x1
+fn GenState_stringConcat(gs: *GenState, v: *Value) {
+    let f: *Func = gs.func;
+
+    // Should have exactly 4 args: ptr1, len1, ptr2, len2
+    if v.args.count < 4 {
+        return;
+    }
+
+    // Get the arg values
+    let ptr1_val: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let len1_val: *Value = Func_getValue(f, Value_getArg(v, 1));
+    let ptr2_val: *Value = Func_getValue(f, Value_getArg(v, 2));
+    let len2_val: *Value = Func_getValue(f, Value_getArg(v, 3));
+
+    // Following Zig pattern: use scratch registers x10-x13 to avoid clobbering
+    // Then copy to x0-x3 for the call
+
+    // Step 1: Materialize args into scratch registers x10-x13
+    // For ConstString, emit ADRP+ADD; for ConstInt, emit MOV; otherwise use reg
+    GenState_materializeArgToReg(gs, ptr1_val, X10);
+    GenState_materializeArgToReg(gs, len1_val, X11);
+    GenState_materializeArgToReg(gs, ptr2_val, X12);
+    GenState_materializeArgToReg(gs, len2_val, X13);
+
+    // Step 2: Move from scratch to call registers x0-x3
+    GenState_emitInst(gs, ARM64_encodeMovReg(X0, X10));
+    GenState_emitInst(gs, ARM64_encodeMovReg(X1, X11));
+    GenState_emitInst(gs, ARM64_encodeMovReg(X2, X12));
+    GenState_emitInst(gs, ARM64_encodeMovReg(X3, X13));
+
+    // Step 3: Emit BL to __cot_str_concat
+    // Record call site for relocation
+    let call_offset: i64 = gs.code_count;
+    GenState_emitInst(gs, encode_bl(0));  // Placeholder offset
+
+    // Record call site for later relocation
+    if gs.call_sites_count < gs.call_sites_cap {
+        let cs: *CallSite = gs.call_sites + gs.call_sites_count;
+        cs.code_offset = call_offset;
+        cs.func_name_start = -1;  // Special marker for __cot_str_concat
+        cs.func_name_len = 0;
+        gs.call_sites_count = gs.call_sites_count + 1;
+    }
+
+    // Step 4: Handle return - string returned in x0 (ptr), x1 (len)
+    // The StringConcat value's reg is for the ptr; len goes to x1
+    // If the result is used, it will be stored via StoreFieldLocal ops
+    // For now, leave result in x0 (ptr) - the caller handles storing both fields
+    let dest_reg: i64 = v.reg;
+    if dest_reg >= 0 and dest_reg != X0 {
+        GenState_emitInst(gs, ARM64_encodeMovReg(dest_reg, X0));
+    }
+}
+
+// Helper: Materialize an argument value into a target register
+// Handles ConstString (ADRP+ADD), ConstInt (MOV), and register values
+fn GenState_materializeArgToReg(gs: *GenState, arg_val: *Value, target_reg: i64) {
+    if arg_val.op == Op.ConstString {
+        // String literal: emit ADRP + ADD and record relocation
+        let str_start: i64 = arg_val.aux_int;
+        let str_len: i64 = arg_val.aux_ptr;
+        let reloc_offset: i64 = gs.code_count;
+        GenState_emitInst(gs, encode_adrp(target_reg, 0));
+        GenState_emitInst(gs, encode_add_imm(target_reg, target_reg, 0));
+        // Record string relocation
+        if gs.string_relocs != null and gs.string_relocs_count < gs.string_relocs_cap {
+            let r: *StringReloc = gs.string_relocs + gs.string_relocs_count;
+            r.code_offset = reloc_offset;
+            r.str_start = str_start;
+            r.str_len = str_len;
+            gs.string_relocs_count = gs.string_relocs_count + 1;
+        }
+    } else if arg_val.op == Op.ConstInt {
+        // Integer constant: emit MOV immediate
+        let imm: i64 = arg_val.aux_int;
+        if imm < 0 and imm >= (0 - 65536) {
+            let notval: i64 = (0 - imm) - 1;
+            GenState_emitInst(gs, encode_movn(target_reg, notval, 0));
+        } else if imm >= 0 and imm <= 65535 {
+            GenState_emitInst(gs, encode_movz(target_reg, imm, 0));
+        } else {
+            // Large value needs MOVZ + MOVK
+            GenState_emitInst(gs, encode_movz(target_reg, imm & 65535, 0));
+            let bits16: i64 = (imm / 65536) & 65535;
+            if bits16 != 0 {
+                GenState_emitInst(gs, encode_movk(target_reg, bits16, 1));
+            }
+        }
+    } else if arg_val.reg >= 0 {
+        // Value is in a register - just move it
+        if arg_val.reg != target_reg {
+            GenState_emitInst(gs, ARM64_encodeMovReg(target_reg, arg_val.reg));
+        }
+    }
 }
 
 fn GenState_return(gs: *GenState, v: *Value) {

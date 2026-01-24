@@ -7,15 +7,15 @@
 | Component | Status |
 |-----------|--------|
 | Zig compiler | ✅ 166 tests pass |
-| Stage 1 (Zig → cot0) | ⚠️ 146/166 tests pass (88%) |
+| Stage 1 (Zig → cot0) | ✅ 166/166 tests pass (100%) |
 | Stage 2 (cot0 → cot0) | ✅ Self-compilation works |
 | Self-hosting | ✅ Achieved (2026-01-24) |
 
-## Current Priority: Stage1 Test Parity
+## Current Priority: Stage1 Test Parity - COMPLETE ✅
 
 **Goal**: Make all 166 e2e tests pass when compiled with cot0-stage1.
 
-**Progress**: 146 passing, 20 failing
+**Progress**: 166 passing, 0 failing - **COMPLETE!**
 
 See [cot0/STAGE1_TEST_PLAN.md](cot0/STAGE1_TEST_PLAN.md) for detailed execution plan.
 
@@ -33,32 +33,34 @@ See [cot0/STAGE1_TEST_PLAN.md](cot0/STAGE1_TEST_PLAN.md) for detailed execution 
 | Global variables | ✅ PASS |
 | Crash handler integration | ✅ PASS |
 | **9+ argument function calls** | ✅ PASS (fixed 2026-01-24) |
-| **Large struct returns (>16B)** | ❌ FAIL (SIGSEGV - BUG-054) |
+| **Large struct returns (>16B)** | ✅ PASS |
 | **String literals** | ✅ PASS (fixed BUG-055 2026-01-24) |
+| **String operations** | ✅ PASS (copy, index, slice, concat all work) |
+| **Large struct arguments (>16B)** | ✅ PASS (fixed BUG-019 2026-01-24) |
 | **Self-compilation** | ✅ PASS (fixed BUG-057 2026-01-24) |
 | **Hex literal parsing** | ✅ PASS (fixed 2026-01-24) |
 | **Bitwise NOT** | ✅ PASS (fixed 2026-01-24) |
 | **Global variable init** | ✅ PASS (fixed BUG-058 2026-01-24) |
+| **else-if chains** | ✅ PASS (fixed 2026-01-24) |
 
 ### Known Issues (Priority Order)
 
-1. **String operations** (10 tests failing)
-   - Symptom: String copy, index, slice, concat not working
-   - Cause: String type is a slice (ptr, len) - slice semantics need work
-
-2. **@intCast truncation** (1 test failing)
-   - Symptom: @intCast to smaller type doesn't truncate
-   - Cause: cot0 lowerer passes through without conversion IR node
-
-3. **Phi node tests** (2 tests failing)
-   - test_phi_3way_driver, test_phi_4way_driver
-
-4. **Large struct arguments** (2 tests failing)
-   - test_bug019_large_struct_arg, test_bug019b_large_struct_literal_arg
+None - all 166 tests pass!
 
 ### Recently Fixed
 
-1. **Global variable initialization** (FIXED - BUG-058)
+1. **Large struct arguments (BUG-019)** (FIXED - 2026-01-24)
+   - Cause: ARM64 ABI requires pass-by-reference for >16B structs
+   - Fix: Added expand_calls pass integration, updated SSA builder to emit Move for large struct params,
+     updated FuncBuilder_addParam to take size parameter (following Zig pattern)
+   - Files: expand_calls.cot, builder.cot, ir.cot, lower.cot, genssa.cot
+
+2. **String concatenation** (FIXED - 2026-01-24)
+   - Cause: GenState_call had argument placement bugs for calls returning strings
+   - Fix: Added dedicated StringConcat SSA op (like Zig) with proper codegen handling
+   - All string tests now pass: copy, index, slice, concat (literal+literal, var+literal, var+var)
+
+2. **Global variable initialization** (FIXED - BUG-058)
    - Cause: Globals written as zeros instead of initialized values
    - Fix: Added init_value/has_init to IRGlobal, write values to data section
 

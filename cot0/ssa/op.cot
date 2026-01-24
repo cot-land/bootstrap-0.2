@@ -98,6 +98,7 @@ enum Op {
     StringLen,      // Get string length
     StringPtr,      // Get string pointer
     StringMake,     // Make string: (ptr, len) -> string
+    StringConcat,   // String concatenation: (ptr1, len1, ptr2, len2) -> string
 
     // Struct Operations
     StructMake,     // Make struct from fields
@@ -185,6 +186,7 @@ fn Op_hasSideEffects(op: Op) bool {
     if op == Op.Call { return true; }
     if op == Op.TailCall { return true; }
     if op == Op.ClosureCall { return true; }
+    if op == Op.StringConcat { return true; }  // Calls runtime, allocates
     if op == Op.Return { return true; }
     if op == Op.ARM64_STR { return true; }
     return false;
