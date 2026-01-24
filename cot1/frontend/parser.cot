@@ -209,6 +209,14 @@ fn Parser_parseType(p: *Parser) i64 {
     let kind: TokenType = p.current.kind;
     let type_start: i64 = p.current.start;
 
+    // cot1: Optional type: ?T
+    // Reference: Zig's Sema.zig zirOptionalType()
+    if kind == TokenType.Question {
+        Parser_advance(p);  // consume '?'
+        let inner: i64 = Parser_parseType(p);
+        return Node_typeExprOptional(p.pool, inner, type_start, p.current.start);
+    }
+
     // Built-in types - create TypeExprNamed node with type name
     // The checker will resolve "i64" -> TYPE_I64, etc.
     if kind == TokenType.I64 {

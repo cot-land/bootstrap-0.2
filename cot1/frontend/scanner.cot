@@ -214,6 +214,7 @@ fn Scanner_next(s: *Scanner) Token {
     if c == 46 { return Token_new(TokenType.Dot, start, 1); }      // .
     if c == 64 { return Token_new(TokenType.At, start, 1); }       // @
     if c == 126 { return Token_new(TokenType.Tilde, start, 1); }   // ~
+    if c == 63 { return Token_new(TokenType.Question, start, 1); } // ? (cot1: optional)
 
     // Two-character operators - following Go's scanner.go pattern
     // = or == or =>

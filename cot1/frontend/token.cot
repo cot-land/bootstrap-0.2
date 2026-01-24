@@ -66,6 +66,7 @@ enum TokenType {
     Semi,       // ;
     Dot,        // .
     At,         // @
+    Question,   // ? (cot1: optional type prefix)
 
     // Operators - arithmetic
     Plus,       // +

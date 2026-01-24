@@ -62,11 +62,34 @@ fn test_error_union_placeholder() i64 {
 }
 
 // ============================================================================
-// Feature: Optional Types (Placeholder tests until implemented)
+// Feature: Optional Types - IMPLEMENTED
 // ============================================================================
 
-fn test_optional_placeholder() i64 {
-    // Placeholder: returns 1 when feature not yet implemented
+struct OptTestItem {
+    key: i64,
+    value: i64,
+}
+
+fn test_optional_ptr_null() i64 {
+    let ptr: ?*OptTestItem = null;
+    if ptr == null { return 1; }
+    return 0;
+}
+
+fn test_optional_ptr_some() i64 {
+    var item: OptTestItem = undefined;
+    item.key = 42;
+    let ptr: ?*OptTestItem = &item;
+    if ptr != null { return 1; }
+    return 0;
+}
+
+fn test_optional_reassign() i64 {
+    var item: OptTestItem = undefined;
+    var ptr: ?*OptTestItem = null;
+    if ptr != null { return 0; }
+    ptr = &item;
+    if ptr == null { return 0; }
     return 1;
 }
 
@@ -133,9 +156,11 @@ fn main() i64 {
     print("Testing: Error Unions\n");
     run_test("error_union_placeholder", test_error_union_placeholder(), 1);
 
-    // Optional Type Tests (Feature 2)
+    // Optional Type Tests (Feature 2) - IMPLEMENTED
     print("Testing: Optional Types\n");
-    run_test("optional_placeholder", test_optional_placeholder(), 1);
+    run_test("optional_ptr_null", test_optional_ptr_null(), 1);
+    run_test("optional_ptr_some", test_optional_ptr_some(), 1);
+    run_test("optional_reassign", test_optional_reassign(), 1);
 
     // Type Alias Tests (Feature 3) - IMPLEMENTED
     print("Testing: Type Aliases\n");
