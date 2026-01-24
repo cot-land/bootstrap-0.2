@@ -15,8 +15,6 @@ import "ir.cot"
 import "types.cot"
 import "parser.cot"  // For parse_* functions
 
-
-
 // ============================================================================
 // Lowerer Context
 // ============================================================================
@@ -28,7 +26,14 @@ struct ConstEntry {
     value: i64,
 }
 
-const MAX_CONSTANTS: i64 = 2000;
+// MAX_CONSTANTS removed - using dynamic growth
+
+// Dynamic reallocation for growing arrays (after struct definitions)
+extern fn realloc_IRLocal(ptr: *IRLocal, old_count: i64, new_count: i64) *IRLocal;
+extern fn realloc_IRNode(ptr: *IRNode, old_count: i64, new_count: i64) *IRNode;
+extern fn realloc_IRFunc(ptr: *IRFunc, old_count: i64, new_count: i64) *IRFunc;
+extern fn realloc_IRGlobal(ptr: *IRGlobal, old_count: i64, new_count: i64) *IRGlobal;
+extern fn realloc_ConstEntry(ptr: *ConstEntry, old_count: i64, new_count: i64) *ConstEntry;
 
 // Struct field info for name-based lookup
 struct StructFieldLookup {
@@ -282,6 +287,79 @@ fn Lowerer_initDeferStack(l: *Lowerer, defer_stack: *i64, defer_stack_cap: i64) 
     l.defer_stack_cap = defer_stack_cap;
 }
 
+// Ensure ir_locals has at least 'additional' more capacity
+// Grows by 2x if needed
+fn Lowerer_ensureLocalsCapacity(l: *Lowerer, additional: i64) {
+    let needed: i64 = l.ir_locals_count + additional;
+    if needed <= l.ir_locals_cap {
+        return;  // Already have enough
+    }
+    // Grow by 2x or to needed, whichever is larger
+    var new_cap: i64 = l.ir_locals_cap * 2;
+    if new_cap < needed {
+        new_cap = needed;
+    }
+    // Realloc
+    l.ir_locals = realloc_IRLocal(l.ir_locals, l.ir_locals_cap, new_cap);
+    l.ir_locals_cap = new_cap;
+}
+
+// Ensure ir_nodes has at least 'additional' more capacity
+fn Lowerer_ensureNodesCapacity(l: *Lowerer, additional: i64) {
+    let needed: i64 = l.ir_nodes_count + additional;
+    if needed <= l.ir_nodes_cap {
+        return;
+    }
+    var new_cap: i64 = l.ir_nodes_cap * 2;
+    if new_cap < needed {
+        new_cap = needed;
+    }
+    l.ir_nodes = realloc_IRNode(l.ir_nodes, l.ir_nodes_cap, new_cap);
+    l.ir_nodes_cap = new_cap;
+}
+
+// Ensure ir_funcs has at least 'additional' more capacity
+fn Lowerer_ensureFuncsCapacity(l: *Lowerer, additional: i64) {
+    let needed: i64 = l.ir_funcs_count + additional;
+    if needed <= l.ir_funcs_cap {
+        return;
+    }
+    var new_cap: i64 = l.ir_funcs_cap * 2;
+    if new_cap < needed {
+        new_cap = needed;
+    }
+    l.ir_funcs = realloc_IRFunc(l.ir_funcs, l.ir_funcs_cap, new_cap);
+    l.ir_funcs_cap = new_cap;
+}
+
+// Ensure ir_globals has at least 'additional' more capacity
+fn Lowerer_ensureGlobalsCapacity(l: *Lowerer, additional: i64) {
+    let needed: i64 = l.ir_globals_count + additional;
+    if needed <= l.ir_globals_cap {
+        return;
+    }
+    var new_cap: i64 = l.ir_globals_cap * 2;
+    if new_cap < needed {
+        new_cap = needed;
+    }
+    l.ir_globals = realloc_IRGlobal(l.ir_globals, l.ir_globals_cap, new_cap);
+    l.ir_globals_cap = new_cap;
+}
+
+// Ensure constants has at least 'additional' more capacity
+fn Lowerer_ensureConstantsCapacity(l: *Lowerer, additional: i64) {
+    let needed: i64 = l.constants_count + additional;
+    if needed <= l.constants_cap {
+        return;
+    }
+    var new_cap: i64 = l.constants_cap * 2;
+    if new_cap < needed {
+        new_cap = needed;
+    }
+    l.constants = realloc_ConstEntry(l.constants, l.constants_cap, new_cap);
+    l.constants_cap = new_cap;
+}
+
 // Get current defer stack depth
 // Reference: Zig lower.zig:286 defer_depth
 fn Lowerer_getDeferDepth(l: *Lowerer) i64 {
@@ -333,9 +411,10 @@ fn Lowerer_setGlobals(l: *Lowerer, globals: *IRGlobal, globals_cap: i64) {
 
 // Register a global variable, returns its index
 fn Lowerer_registerGlobal(l: *Lowerer, name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) i64 {
-    if l.ir_globals == null or l.ir_globals_count >= l.ir_globals_cap {
-        return -1;  // No space
+    if l.ir_globals == null {
+        return -1;  // Not initialized
     }
+    Lowerer_ensureGlobalsCapacity(l, 1);
     let idx: i64 = l.ir_globals_count;
     let g: *IRGlobal = l.ir_globals + idx;
     g.name_start = name_start;
@@ -365,9 +444,10 @@ fn Lowerer_setGlobalInit(l: *Lowerer, global_idx: i64, value: i64) {
 
 // Register an array global variable
 fn Lowerer_registerArrayGlobal(l: *Lowerer, name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool, array_len: i64) i64 {
-    if l.ir_globals == null or l.ir_globals_count >= l.ir_globals_cap {
-        return -1;  // No space
+    if l.ir_globals == null {
+        return -1;  // Not initialized
     }
+    Lowerer_ensureGlobalsCapacity(l, 1);
     // Align to 8 bytes for arrays
     let aligned_offset: i64 = (l.globals_data_offset + 7) & (0 - 8);  // Round up to 8
     let idx: i64 = l.ir_globals_count;
@@ -505,9 +585,7 @@ fn Lowerer_hasConst(l: *Lowerer, name_start: i64, name_len: i64) bool {
 
 // Add a constant to the table
 fn Lowerer_addConst(l: *Lowerer, name_start: i64, name_len: i64, value: i64) {
-    if l.constants_count >= l.constants_cap {
-        return;
-    }
+    Lowerer_ensureConstantsCapacity(l, 1);
     let c: *ConstEntry = l.constants + l.constants_count;
     c.name_start = name_start;
     c.name_len = name_len;
@@ -762,6 +840,12 @@ fn Lowerer_lowerFnDecl(l: *Lowerer, node: *Node) {
     // field4 = ret_type
     // field5 = body (block node index)
 
+    // Ensure capacity for this function's locals and nodes
+    // Estimate: params + 100 locals per function should be safe
+    let estimated_locals: i64 = node.field3 + 100;
+    Lowerer_ensureLocalsCapacity(l, estimated_locals);
+    Lowerer_ensureNodesCapacity(l, 500);  // Estimate 500 IR nodes per function
+
     // Debug: find when corruption first occurs
     // Record starting positions for this function
     let nodes_start: i64 = l.ir_nodes_count;
@@ -776,13 +860,21 @@ fn Lowerer_lowerFnDecl(l: *Lowerer, node: *Node) {
 
     // Create function builder
     var fb: FuncBuilder = undefined;
+    let remaining_locals: i64 = l.ir_locals_cap - l.ir_locals_count;
+    let remaining_nodes: i64 = l.ir_nodes_cap - l.ir_nodes_count;
+
+    // DEBUG: Check capacity (disabled - using dynamic growth now)
+    // if remaining_locals <= 0 or remaining_nodes <= 0 {
+    //     io_print("LOWER ERROR: Out of capacity!\n");
+    // }
+
     FuncBuilder_init(&fb,
                       node.field0, node.field1,  // name_start, name_len
                       return_type,               // actual return type from parsed node
                       l.ir_locals + l.ir_locals_count,
-                      l.ir_locals_cap - l.ir_locals_count,
+                      remaining_locals,
                       l.ir_nodes + l.ir_nodes_count,
-                      l.ir_nodes_cap - l.ir_nodes_count);
+                      remaining_nodes);
 
     l.current_func = &fb;
 
@@ -843,21 +935,20 @@ fn Lowerer_lowerFnDecl(l: *Lowerer, node: *Node) {
     l.ir_nodes_count = l.ir_nodes_count + fb.nodes_count;
     l.ir_locals_count = l.ir_locals_count + fb.locals_count;
 
-    // Record function metadata
-    if l.ir_funcs_count < l.ir_funcs_cap {
-        let func_ptr: *IRFunc = l.ir_funcs + l.ir_funcs_count;
+    // Record function metadata - ensure capacity and register
+    Lowerer_ensureFuncsCapacity(l, 1);
+    let func_ptr: *IRFunc = l.ir_funcs + l.ir_funcs_count;
 
-        func_ptr.name_start = node.field0;
-        func_ptr.name_len = node.field1;
-        func_ptr.return_type = return_type;
-        func_ptr.nodes_start = nodes_start;
-        func_ptr.nodes_count = fb.nodes_count;
-        func_ptr.locals_start = locals_start;
-        func_ptr.locals_count = fb.locals_count;
-        func_ptr.code_offset = 0;
+    func_ptr.name_start = node.field0;
+    func_ptr.name_len = node.field1;
+    func_ptr.return_type = return_type;
+    func_ptr.nodes_start = nodes_start;
+    func_ptr.nodes_count = fb.nodes_count;
+    func_ptr.locals_start = locals_start;
+    func_ptr.locals_count = fb.locals_count;
+    func_ptr.code_offset = 0;
 
-        l.ir_funcs_count = l.ir_funcs_count + 1;
-    }
+    l.ir_funcs_count = l.ir_funcs_count + 1;
 
     l.current_func = null;
 }
@@ -1091,6 +1182,19 @@ fn Lowerer_lowerVarDecl(l: *Lowerer, node: *Node) {
     }
 
     let local_idx: i64 = FuncBuilder_addLocal(fb, node.field1, node.field2, local_type, is_mutable);
+
+    // DEBUG: Track local registration (enable with toggle)
+    if false {  // Toggle to true for debug
+        io_print("LOWER: Added local '");
+        Lowerer_printName(l, node.field1, node.field2);
+        io_print("' idx=");
+        io_print_int(local_idx);
+        io_print(" in func '");
+        Lowerer_printName(l, fb.name_start, fb.name_len);
+        io_print("' total=");
+        io_print_int(fb.locals_count);
+        io_print("\n");
+    }
 
     // Set slice/string local size to 16 bytes (ptr + len)
     // BUG-055 fix: Also handle TYPE_STRING
@@ -2336,7 +2440,7 @@ fn Lowerer_lowerIdent(l: *Lowerer, node: *Node) i64 {
         return FuncBuilder_emitFuncAddr(fb, node.field0, node.field1, TYPE_I64);
     }
 
-    // Not found - return null node
+    // Not found - return null node (silently for now)
     return NULL_NODE;
 }
 

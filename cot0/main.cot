@@ -221,7 +221,7 @@ var g_source_cap: i64 = 0;
 var g_source_path: *u8 = null;
 var g_source_path_len: i64 = 0;
 
-const MAIN_MAX_OUTPUT_PATH: i64 = 256;
+const INIT_OUTPUT_PATH: i64 = 256;
 var g_output_path: *u8 = null;
 var g_output_path_cap: i64 = 0;
 var g_output_path_len: i64 = 0;
@@ -232,9 +232,11 @@ var g_nodes_cap: i64 = 0;
 var g_pool: NodePool;       // children list is inside, initialized dynamically
 
 // Type pool storage
-const MAIN_MAX_TYPES: i64 = 1000;
-const MAIN_MAX_PARAMS: i64 = 5000;
-const MAIN_MAX_FIELDS: i64 = 5000;
+// Type pool initial capacities - dynamic growth
+// Note: These need to be large enough to avoid realloc issues with pointers
+const INIT_TYPES: i64 = 1024;
+const INIT_PARAMS: i64 = 5000;
+const INIT_FIELDS: i64 = 5000;
 var g_types: *Type = null;
 var g_types_cap: i64 = 0;
 var g_type_params: *i64 = null;
@@ -243,11 +245,13 @@ var g_type_fields: *FieldInfo = null;
 var g_type_fields_cap: i64 = 0;
 var g_type_pool: TypeRegistry;
 
-// IR storage
-const MAIN_MAX_IR_NODES: i64 = 100000;
-const MAIN_MAX_IR_LOCALS: i64 = 5000;
-const MAIN_MAX_IR_FUNCS: i64 = 1000;
-const MAIN_MAX_CONSTANTS: i64 = 2000;
+// IR storage - initial capacities (grow dynamically via realloc)
+// Note: These need to be large enough to avoid realloc during lowering,
+// since FuncBuilder stores direct pointers into these arrays
+const INIT_IR_NODES: i64 = 100000;
+const INIT_IR_LOCALS: i64 = 50000;
+const INIT_IR_FUNCS: i64 = 1024;
+const INIT_CONSTANTS: i64 = 2048;
 // MAIN_MAX_CALL_ARGS removed - args stored in IRNode.call_args
 var g_ir_nodes: *IRNode = null;
 var g_ir_nodes_cap: i64 = 0;
@@ -261,19 +265,19 @@ var g_constants_cap: i64 = 0;
 
 // Defer stack storage (for defer statement semantics)
 // Reference: Zig lower.zig:59 defer_stack
-const MAIN_MAX_DEFER_STACK: i64 = 256;
+const INIT_DEFER_STACK: i64 = 256;
 var g_defer_stack: *i64 = null;
 var g_defer_stack_cap: i64 = 0;
 
-// Global variable storage
-const MAIN_MAX_IR_GLOBALS: i64 = 500;
+// Global variable storage - dynamic growth
+const INIT_IR_GLOBALS: i64 = 512;
 var g_ir_globals: *IRGlobal = null;
 var g_ir_globals_cap: i64 = 0;
 
-// SSA storage
-const MAIN_MAX_SSA_BLOCKS: i64 = 50000;
-const MAIN_MAX_SSA_VALUES: i64 = 500000;
-const MAIN_MAX_SSA_LOCALS: i64 = 20000;
+// SSA storage - reused per function (doesn't accumulate)
+const INIT_SSA_BLOCKS: i64 = 5000;
+const INIT_SSA_VALUES: i64 = 50000;
+const INIT_SSA_LOCALS: i64 = 2000;
 var g_ssa_blocks: *Block = null;
 var g_ssa_blocks_cap: i64 = 0;
 var g_ssa_values: *Value = null;
@@ -282,8 +286,8 @@ var g_ssa_locals: *Local = null;
 var g_ssa_locals_cap: i64 = 0;
 
 // Codegen storage - g_code is dynamically allocated
-const MAIN_MAX_CALL_SITES: i64 = 5000;
-const MAIN_MAX_LINE_ENTRIES: i64 = 50000;
+const INIT_CALL_SITES: i64 = 5000;
+const INIT_LINE_ENTRIES: i64 = 50000;
 var g_code: *u8 = null;
 var g_code_cap: i64 = 0;
 var g_bstart: *i64 = null;
@@ -305,10 +309,10 @@ var g_line_entries: *u8 = null;
 var g_line_entries_cap: i64 = 0;
 
 // Mach-O storage - g_data dynamically allocated
-const MAIN_MAX_SYMBOLS: i64 = 2000;  // 808 functions + many globals
+const INIT_SYMBOLS: i64 = 2000;
 // g_strings dynamically allocated
-const MAIN_MAX_RELOCS: i64 = 10000;
-const MAIN_MAX_DEBUG_LINE: i64 = 65536;
+const INIT_RELOCS: i64 = 10000;
+const INIT_DEBUG_LINE: i64 = 65536;
 var g_data: *u8 = null;
 var g_data_cap: i64 = 0;
 var g_symbols: *Symbol = null;
@@ -339,10 +343,10 @@ var g_ir_to_ssa_id_cap: i64 = 0;
 var g_local_to_ssa_id: *i64 = null;
 var g_local_to_ssa_id_cap: i64 = 0;
 
-// SSABuilder storage arrays (for builder.cot)
-const BUILDER_MAX_BLOCK_DEFS: i64 = 500;
-const BUILDER_MAX_VAR_DEFS: i64 = 50000;
-const BUILDER_MAX_BLOCK_MAP: i64 = 500;
+// SSABuilder storage arrays (for builder.cot) - reused per function
+const INIT_BLOCK_DEFS: i64 = 500;
+const INIT_VAR_DEFS: i64 = 50000;
+const INIT_BLOCK_MAP: i64 = 500;
 var g_builder_all_defs: *BlockDefs = null;
 var g_builder_all_defs_cap: i64 = 0;
 var g_builder_block_map: *BlockMapping = null;
@@ -353,8 +357,8 @@ var g_builder_var_storage: *VarDef = null;
 var g_builder_var_storage_cap: i64 = 0;
 
 // Import tracking - store imported file paths to avoid duplicates
-const MAX_IMPORT_PATHS: i64 = 100;
-const MAX_IMPORT_PATH_LEN: i64 = 256;
+const INIT_IMPORT_PATHS: i64 = 100;
+const INIT_IMPORT_PATH_LEN: i64 = 256;
 var g_import_paths: *u8 = null;
 var g_import_paths_cap: i64 = 0;
 var g_import_path_lens: *i64 = null;
@@ -488,6 +492,7 @@ fn write_file(path: *u8, data: *u8, data_len: i64) i64 {
 fn init_node_pool() *NodePool {
     g_pool.nodes = g_nodes;
     g_pool.count = 0;
+    g_pool.capacity = g_nodes_cap;  // Set capacity from allocated size
     i64list_init(&g_pool.children);  // Dynamic list - grows as needed
     return &g_pool;
 }
@@ -504,7 +509,7 @@ fn is_path_imported(path: *u8, path_len: i64) bool {
         let stored_len: i64 = stored_len_ptr.*;
         if stored_len == path_len {
             // Compare paths
-            let stored_path: *u8 = g_import_paths + (i * MAX_IMPORT_PATH_LEN);
+            let stored_path: *u8 = g_import_paths + (i * INIT_IMPORT_PATH_LEN);
             var match: bool = true;
             var j: i64 = 0;
             while j < path_len {
@@ -526,12 +531,12 @@ fn is_path_imported(path: *u8, path_len: i64) bool {
 
 // Add a path to the imported list
 fn add_imported_path(path: *u8, path_len: i64) {
-    if g_import_count >= MAX_IMPORT_PATHS {
+    if g_import_count >= INIT_IMPORT_PATHS {
         return;
     }
-    let dest: *u8 = g_import_paths + (g_import_count * MAX_IMPORT_PATH_LEN);
+    let dest: *u8 = g_import_paths + (g_import_count * INIT_IMPORT_PATH_LEN);
     var i: i64 = 0;
-    while i < path_len and i < MAX_IMPORT_PATH_LEN {
+    while i < path_len and i < INIT_IMPORT_PATH_LEN {
         let src_c: *u8 = path + i;
         let dst_c: *u8 = dest + i;
         dst_c.* = src_c.*;
@@ -578,7 +583,7 @@ fn build_import_path(import_path: *u8, import_path_len: i64) i64 {
 
     // Copy base directory
     var i: i64 = 0;
-    while i < g_base_dir_len and result_len < MAX_IMPORT_PATH_LEN {
+    while i < g_base_dir_len and result_len < INIT_IMPORT_PATH_LEN {
         (g_import_path_buf + (result_len)).* = (g_base_dir + (i)).*;
         result_len = result_len + 1;
         i = i + 1;
@@ -586,7 +591,7 @@ fn build_import_path(import_path: *u8, import_path_len: i64) i64 {
 
     // Copy import path
     i = 0;
-    while i < import_path_len and result_len < MAX_IMPORT_PATH_LEN {
+    while i < import_path_len and result_len < INIT_IMPORT_PATH_LEN {
         let c: *u8 = import_path + i;
         (g_import_path_buf + (result_len)).* = c.*;
         result_len = result_len + 1;
@@ -604,7 +609,7 @@ fn resolve_import_path(base_dir: *u8, base_len: i64, rel_path: *u8, rel_len: i64
     // Copy base_dir to result buffer first
     var result_len: i64 = 0;
     var i: i64 = 0;
-    while i < base_len and result_len < MAX_IMPORT_PATH_LEN {
+    while i < base_len and result_len < INIT_IMPORT_PATH_LEN {
         let c: *u8 = base_dir + i;
         (g_import_path_buf + (result_len)).* = c.*;
         result_len = result_len + 1;
@@ -656,7 +661,7 @@ fn resolve_import_path(base_dir: *u8, base_len: i64, rel_path: *u8, rel_len: i64
             }
         }
         // Regular character, copy it
-        if result_len < MAX_IMPORT_PATH_LEN {
+        if result_len < INIT_IMPORT_PATH_LEN {
             let c: *u8 = rel_path + i;
             (g_import_path_buf + (result_len)).* = c.*;
             result_len = result_len + 1;
@@ -803,7 +808,11 @@ fn parse_import_file_with_dir(import_path: *u8, import_path_len: i64, pool: *Nod
     close(fd);
 
     if bytes_read < 0 {
-        print("  Warning: Cannot read import\n");
+        print("  Warning: Cannot read import: ");
+        write(1, g_import_path_buf, full_path_len);
+        print(" (base_dir: ");
+        write(1, base_dir, base_dir_len);
+        print(")\n");
         return 0;
     }
 
@@ -864,37 +873,31 @@ fn parse_import_file(import_path: *u8, import_path_len: i64, pool: *NodePool) i6
 
 // Process all imports in the parsed AST (matches src/driver.zig parseFileRecursive)
 // This scans for ImportDecl nodes and recursively parses imported files
-fn Driver_parseFileRecursive(pool: *NodePool) {
-    // Process imports iteratively - new nodes from imports may have their own imports
-    var last_count: i64 = 0;
+fn Driver_parseFileRecursive(pool: *NodePool, main_file_nodes: i64) {
+    // Only process imports from the MAIN file (not from imported files)
+    // Nested imports are handled recursively by parse_import_file_with_dir
+    var i: i64 = 0;
+    while i < main_file_nodes {
+        let node: *Node = pool.nodes + i;
+        if node.kind == NodeKind.ImportDecl {
+            // field0 = path_start (offset in source), field1 = path_len
+            let path_start: i64 = node.field0;
+            let path_len: i64 = node.field1;
 
-    while last_count < pool.count {
-        let start_idx: i64 = last_count;
-        last_count = pool.count;
+            // Get pointer to path in source
+            let import_path: *u8 = g_source + path_start;
 
-        var i: i64 = start_idx;
-        while i < last_count {
-            let node: *Node = pool.nodes + i;
-            if node.kind == NodeKind.ImportDecl {
-                // field0 = path_start (offset in source), field1 = path_len
-                let path_start: i64 = node.field0;
-                let path_len: i64 = node.field1;
-
-                // Get pointer to path in source
-                let import_path: *u8 = g_source + path_start;
-
-                // Parse the imported file
-                let new_nodes: i64 = parse_import_file(import_path, path_len, pool);
-                if new_nodes > 0 {
-                    print("  Imported: ");
-                    write(1, import_path, path_len);
-                    print(" (");
-                    print_int(new_nodes);
-                    print(" nodes)\n");
-                }
+            // Parse the imported file (this handles nested imports recursively)
+            let new_nodes: i64 = parse_import_file(import_path, path_len, pool);
+            if new_nodes > 0 {
+                print("  Imported: ");
+                write(1, import_path, path_len);
+                print(" (");
+                print_int(new_nodes);
+                print(" nodes)\n");
             }
-            i = i + 1;
         }
+        i = i + 1;
     }
 }
 
@@ -917,11 +920,11 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print_int(tok_count);
     print("\n");
 
-    // Initialize type registry (needed for parser)
-    g_type_pool.types = g_types;
-    g_type_pool.params = g_type_params;
-    g_type_pool.fields = g_type_fields;
-    TypeRegistry_init(&g_type_pool);
+    // Initialize type registry (needed for parser) - with capacities for dynamic growth
+    TypeRegistry_initWithStorage(&g_type_pool,
+                                  g_types, g_types_cap,
+                                  g_type_params, g_type_params_cap,
+                                  g_type_fields, g_type_fields_cap);
 
     // Phase 2: Parse
     print("Phase 2: Parsing...\n");
@@ -942,14 +945,25 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print_int(pool.children.count);
     print("\n");
 
+    // Save main file node count before imports are added
+    let main_file_nodes: i64 = pool.count;
+
     // Phase 2.5: Process imports
     print("Phase 2.5: Processing imports...\n");
-    Driver_parseFileRecursive(pool);
+    Driver_parseFileRecursive(pool, main_file_nodes);
     print("  Total nodes after imports: ");
     print_int(pool.count);
     print(", Children: ");
     print_int(pool.children.count);
     print("\n");
+
+    // Sync TypeRegistry globals after potential reallocations during parsing
+    g_types = g_type_pool.types;
+    g_types_cap = g_type_pool.types_cap;
+    g_type_params = g_type_pool.params;
+    g_type_params_cap = g_type_pool.params_cap;
+    g_type_fields = g_type_pool.fields;
+    g_type_fields_cap = g_type_pool.fields_cap;
 
     // Phase 3: Lower to IR
     print("Phase 3: Lowering to IR...\n");
@@ -963,14 +977,26 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
                  pool.children.items, pool.children.count,
                  g_source, g_source_len,
                  &g_type_pool,
-                 g_ir_nodes, MAIN_MAX_IR_NODES,
-                 g_ir_locals, MAIN_MAX_IR_LOCALS,
-                 g_ir_funcs, MAIN_MAX_IR_FUNCS,
-                 g_constants, MAIN_MAX_CONSTANTS);
+                 g_ir_nodes, g_ir_nodes_cap,
+                 g_ir_locals, g_ir_locals_cap,
+                 g_ir_funcs, g_ir_funcs_cap,
+                 g_constants, g_constants_cap);
     Lowerer_initDeferStack(&lowerer, g_defer_stack, g_defer_stack_cap);
-    Lowerer_setGlobals(&lowerer, g_ir_globals, MAIN_MAX_IR_GLOBALS);
+    Lowerer_setGlobals(&lowerer, g_ir_globals, g_ir_globals_cap);
 
     let ir_count: i64 = Lowerer_lowerAll(&lowerer);
+
+    // Sync globals from Lowerer after potential reallocations
+    g_ir_nodes = lowerer.ir_nodes;
+    g_ir_nodes_cap = lowerer.ir_nodes_cap;
+    g_ir_locals = lowerer.ir_locals;
+    g_ir_locals_cap = lowerer.ir_locals_cap;
+    g_ir_funcs = lowerer.ir_funcs;
+    g_ir_funcs_cap = lowerer.ir_funcs_cap;
+    g_ir_globals = lowerer.ir_globals;
+    g_ir_globals_cap = lowerer.ir_globals_cap;
+    g_constants = lowerer.constants;
+    g_constants_cap = lowerer.constants_cap;
 
     print("  IR nodes: ");
     print_int(ir_count);
@@ -987,9 +1013,9 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     var gs: GenState = undefined;
     GenState_init(&gs, null,  // Will set func for each function
                   g_code, g_code_cap,
-                  g_bstart, MAIN_MAX_SSA_BLOCKS,
+                  g_bstart, INIT_SSA_BLOCKS,
                   g_branches, 1000,
-                  g_call_sites, MAIN_MAX_CALL_SITES);
+                  g_call_sites, INIT_CALL_SITES);
 
     // Enable line tracking for DWARF debug info
     GenState_setLineTracking(&gs, g_line_entries, g_line_entries_cap, g_source, g_source_len);
@@ -1019,9 +1045,9 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // Initialize SSA function (reuse global arrays, they'll be overwritten)
         var ssa_func: Func = undefined;
         Func_init(&ssa_func, ir_func.name_start, ir_func.name_len, ir_func.return_type,
-                  g_ssa_blocks, MAIN_MAX_SSA_BLOCKS,
-                  g_ssa_values, MAIN_MAX_SSA_VALUES,
-                  g_ssa_locals, MAIN_MAX_SSA_LOCALS);
+                  g_ssa_blocks, INIT_SSA_BLOCKS,
+                  g_ssa_values, INIT_SSA_VALUES,
+                  g_ssa_locals, INIT_SSA_LOCALS);
 
         // BUG-054: Compute return type size for hidden return detection
         // Following Zig: src/codegen/arm64.zig:493-522
@@ -1036,9 +1062,9 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // Initialize SSA builder with storage arrays (split to avoid >8 args)
         var builder: SSABuilder = undefined;
         SSABuilder_init(&builder, &ssa_func,
-                        g_builder_all_defs, BUILDER_MAX_BLOCK_DEFS,
-                        g_builder_block_map, BUILDER_MAX_BLOCK_MAP,
-                        g_builder_node_values, BUILDER_MAX_VAR_DEFS);
+                        g_builder_all_defs, INIT_BLOCK_DEFS,
+                        g_builder_block_map, INIT_BLOCK_MAP,
+                        g_builder_node_values, INIT_VAR_DEFS);
         SSABuilder_initStorage(&builder, g_builder_var_storage, 100000);
 
         // Set IR references for this function (split to avoid >8 args)
@@ -1165,9 +1191,9 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     MachOWriter_init(&writer,
                       g_code, gs.code_count,
                       g_data, g_data_cap,
-                      g_symbols, MAIN_MAX_SYMBOLS,
+                      g_symbols, INIT_SYMBOLS,
                       g_strings, g_strings_cap,
-                      g_relocs, MAIN_MAX_RELOCS,
+                      g_relocs, INIT_RELOCS,
                       g_output, g_output_cap);
 
     // Copy code from genssa output
@@ -1723,13 +1749,13 @@ fn main(argc: i64, argv: **u8) i64 {
     g_data = malloc_u8(g_data_cap);
     g_strings_cap = 32768;
     g_strings = malloc_u8(g_strings_cap);
-    g_debug_line_cap = MAIN_MAX_DEBUG_LINE;
+    g_debug_line_cap = INIT_DEBUG_LINE;
     g_debug_line = malloc_u8(g_debug_line_cap);
     g_debug_abbrev_cap = 64;
     g_debug_abbrev = malloc_u8(g_debug_abbrev_cap);
     g_debug_info_cap = 512;
     g_debug_info = malloc_u8(g_debug_info_cap);
-    g_line_entries_cap = MAIN_MAX_LINE_ENTRIES;
+    g_line_entries_cap = INIT_LINE_ENTRIES;
     g_line_entries = malloc_u8(g_line_entries_cap * 32);
     g_import_paths_cap = 25600;
     g_import_paths = malloc_u8(g_import_paths_cap);
@@ -1744,36 +1770,36 @@ fn main(argc: i64, argv: **u8) i64 {
     g_nodes_cap = 100000;
     g_nodes = malloc_Node(g_nodes_cap);
 
-    // Type storage
-    g_types_cap = MAIN_MAX_TYPES;
+    // Type storage - dynamic growth
+    g_types_cap = INIT_TYPES;
     g_types = malloc_Type(g_types_cap);
-    g_type_fields_cap = MAIN_MAX_FIELDS;
+    g_type_fields_cap = INIT_FIELDS;
     g_type_fields = malloc_FieldInfo(g_type_fields_cap);
 
-    // IR storage
-    g_ir_nodes_cap = MAIN_MAX_IR_NODES;
+    // IR storage - dynamic growth
+    g_ir_nodes_cap = INIT_IR_NODES;
     g_ir_nodes = malloc_IRNode(g_ir_nodes_cap);
-    g_ir_locals_cap = MAIN_MAX_IR_LOCALS;
+    g_ir_locals_cap = INIT_IR_LOCALS;
     g_ir_locals = malloc_IRLocal(g_ir_locals_cap);
-    g_ir_funcs_cap = MAIN_MAX_IR_FUNCS;
+    g_ir_funcs_cap = INIT_IR_FUNCS;
     g_ir_funcs = malloc_IRFunc(g_ir_funcs_cap);
-    g_constants_cap = MAIN_MAX_CONSTANTS;
+    g_constants_cap = INIT_CONSTANTS;
     g_constants = malloc_ConstEntry(g_constants_cap);
-    g_ir_globals_cap = MAIN_MAX_IR_GLOBALS;
+    g_ir_globals_cap = INIT_IR_GLOBALS;
     g_ir_globals = malloc_IRGlobal(g_ir_globals_cap);
 
     // SSA storage
-    g_ssa_blocks_cap = MAIN_MAX_SSA_BLOCKS;
+    g_ssa_blocks_cap = INIT_SSA_BLOCKS;
     g_ssa_blocks = malloc_Block(g_ssa_blocks_cap);
-    g_ssa_values_cap = MAIN_MAX_SSA_VALUES;
+    g_ssa_values_cap = INIT_SSA_VALUES;
     g_ssa_values = malloc_Value(g_ssa_values_cap);
-    g_ssa_locals_cap = MAIN_MAX_SSA_LOCALS;
+    g_ssa_locals_cap = INIT_SSA_LOCALS;
     g_ssa_locals = malloc_Local(g_ssa_locals_cap);
 
     // Codegen storage
     g_branches_cap = 5000;
     g_branches = malloc_Branch(g_branches_cap);
-    g_call_sites_cap = MAIN_MAX_CALL_SITES;
+    g_call_sites_cap = INIT_CALL_SITES;
     g_call_sites = malloc_CallSite(g_call_sites_cap);
     g_global_relocs_cap = 5000;
     g_global_relocs = malloc_GlobalReloc(g_global_relocs_cap);
@@ -1785,7 +1811,7 @@ fn main(argc: i64, argv: **u8) i64 {
     // Mach-O storage
     g_symbols_cap = 2000;
     g_symbols = malloc_Symbol(g_symbols_cap);
-    g_relocs_cap = MAIN_MAX_RELOCS;
+    g_relocs_cap = INIT_RELOCS;
     g_relocs = malloc_Reloc(g_relocs_cap);
     g_debug_line_relocs_cap = 16;
     g_debug_line_relocs = malloc_Reloc(g_debug_line_relocs_cap);
@@ -1793,20 +1819,20 @@ fn main(argc: i64, argv: **u8) i64 {
     g_debug_info_relocs = malloc_Reloc(g_debug_info_relocs_cap);
 
     // SSABuilder storage
-    g_builder_all_defs_cap = BUILDER_MAX_BLOCK_DEFS;
+    g_builder_all_defs_cap = INIT_BLOCK_DEFS;
     g_builder_all_defs = malloc_BlockDefs(g_builder_all_defs_cap);
-    g_builder_block_map_cap = BUILDER_MAX_BLOCK_MAP;
+    g_builder_block_map_cap = INIT_BLOCK_MAP;
     g_builder_block_map = malloc_BlockMapping(g_builder_block_map_cap);
-    g_builder_node_values_cap = BUILDER_MAX_VAR_DEFS;
+    g_builder_node_values_cap = INIT_VAR_DEFS;
     g_builder_node_values = malloc_VarDef(g_builder_node_values_cap);
     g_builder_var_storage_cap = 100000;
     g_builder_var_storage = malloc_VarDef(g_builder_var_storage_cap);
 
     // i64 arrays
-    g_type_params_cap = 5000;
+    g_type_params_cap = INIT_PARAMS;
     g_type_params = malloc_i64(g_type_params_cap);
     // g_call_args removed - args stored in IRNode.call_args
-    g_defer_stack_cap = MAIN_MAX_DEFER_STACK;
+    g_defer_stack_cap = INIT_DEFER_STACK;
     g_defer_stack = malloc_i64(g_defer_stack_cap);
     g_bstart_cap = 5000;
     g_bstart = malloc_i64(g_bstart_cap);
@@ -1851,7 +1877,7 @@ fn main(argc: i64, argv: **u8) i64 {
     let output_len: i64 = strlen(output_path);
 
     // Copy output path to global buffer (for null-termination)
-    g_output_path_len = strcpy(g_output_path, output_path, MAIN_MAX_OUTPUT_PATH);
+    g_output_path_len = strcpy(g_output_path, output_path, INIT_OUTPUT_PATH);
 
     // Read source file
     print("Reading: ");

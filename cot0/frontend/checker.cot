@@ -81,7 +81,7 @@ fn Symbol_newExtern(name_start: i64, name_len: i64, kind: SymbolKind, type_idx: 
 // Scope (Go's Scope)
 // ============================================================================
 
-const MAX_SYMBOLS: i64 = 5000;
+// MAX_SYMBOLS removed - not used (ScopePool uses external arrays)
 
 struct Scope {
     symbols: *Symbol,       // Array of symbols
@@ -93,7 +93,7 @@ struct Scope {
 // Scope Pool
 // ============================================================================
 
-const MAX_SCOPES: i64 = 500;
+// MAX_SCOPES removed - not used (ScopePool uses external arrays)
 
 struct ScopePool {
     scopes: *Scope,         // Array of scopes

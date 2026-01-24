@@ -5,11 +5,11 @@
 | Stage | Status | Description |
 |-------|--------|-------------|
 | Stage 0 | ✅ Complete | Zig compiler (`src/*.zig`) - 166 tests pass |
-| Stage 1 | ✅ Complete | Zig compiles cot0 → `cot0-stage1` works |
-| Stage 2 | ⚠️ Blocked | Stage1 compiles cot0 → crashes in SSABuilder_build |
-| Stage 3+ | Pending | Self-hosting achieved when stageN = stageN+1 |
+| Stage 1 | ✅ Complete | Zig compiles cot0 → `cot0-stage1` works, 166/166 tests pass |
+| Stage 2 | ⚠️ Partial | Stage1 compiles cot0 → `cot0-stage2` compiles but has bugs |
+| Stage 3+ | ⚠️ Blocked | Self-hosting blocked by stage2 issues |
 
-**Blocker**: Stage 2 crashes with SIGBUS during SSA building. The crash occurs when processing the large cot0 codebase (861 functions, 64k+ nodes).
+**Status**: Stage1 works correctly (166/166 tests pass). Stage2 compiles but has SSA errors causing incorrect code generation (argc/argv not read correctly).
 
 ## What Works
 
@@ -43,19 +43,13 @@ Copy algorithms and patterns from Zig compiler to cot0, adapting for Cot syntax.
 | 5.2 | codegen/genssa.cot | ✅ Complete |
 | 6.1 | obj/macho.cot | ✅ Complete |
 
-### Phase 2: Fix the Stage 2 Crash
+### Phase 2: Fix the Stage 2 Crash - COMPLETE
 
-The crash occurs in `SSABuilder_build` with a SIGBUS error (address 0x0000000ae4000029 - corrupted pointer).
-
-**Debug tools available**:
-- DWARF debug info shows crash source location
-- Runtime crash handler shows registers and stack trace
-- lldb works with source code
-
-**Theories**:
-1. Import processing corrupts node/children indices when merging multiple files
-2. Large codebase exceeds some internal limit
-3. Missing validation in SSA builder for edge cases
+**Fixed 2026-01-24!** The issues were:
+1. Large struct arguments (>16B) needed ARM64 ABI pass-by-reference via `expand_calls` pass
+2. String concatenation needed dedicated `StringConcat` SSA op
+3. malloc sizes in runtime were too small for cot0's larger structs
+4. Various codegen fixes for LocalAddr handling in call arguments
 
 ### Phase 3: Verify Self-Hosting
 
@@ -89,8 +83,9 @@ After self-hosting is achieved:
 | Zig compiler complete | 166 tests pass | ✅ |
 | Stage 1 works | Compiles simple programs | ✅ |
 | Stage 1 compiles cot0 | Produces executable | ✅ |
-| Stage 2 runs | No crash | ⚠️ Blocked |
-| Stage 2 = Stage 3 | Self-hosting | Pending |
+| Stage 1 test parity | 166/166 tests pass | ✅ |
+| Stage 2 runs | No crash | ⚠️ Runs but buggy |
+| Stage 2 = Stage 3 | Self-hosting | ⚠️ Blocked |
 
 ## Verification Commands
 

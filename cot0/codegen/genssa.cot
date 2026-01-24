@@ -173,6 +173,11 @@ struct GenState {
     // Set during codegen if this is the main function
     crash_handler_offset: i64,
 
+    // Is this the main function? (for crash handler insertion)
+    is_main: bool,
+    // Has crash handler been emitted? (to ensure only once)
+    crash_handler_emitted: bool,
+
     // BUG-054: Hidden return pointer for functions returning structs >16B
     // Following Zig: src/codegen/arm64.zig has_hidden_return, hidden_ret_ptr_offset
     has_hidden_return: bool,     // True if function returns >16B
@@ -231,6 +236,8 @@ fn GenState_init(gs: *GenState, f: *Func,
     gs.string_relocs_count = 0;
     gs.string_relocs_cap = 0;
     gs.crash_handler_offset = -1;
+    gs.is_main = false;
+    gs.crash_handler_emitted = false;
     // BUG-054: Hidden return tracking
     gs.has_hidden_return = false;
     gs.hidden_ret_ptr_offset = 0;
@@ -571,18 +578,16 @@ fn GenState_generate(gs: *GenState) i64 {
         GenState_emitInst(gs, encode_str(X8, SP, gs.hidden_ret_ptr_offset));
     }
 
-    // If this is the main function, emit call to install_crash_handler
-    // Check if function name is "main" (length 4)
-    // Following pattern from lower.cot:190-198 for checking type names
+    // Check if this is the main function (for crash handler insertion)
+    // Following Zig pattern: detect "main" by name, insert crash handler after param stores
+    gs.is_main = false;
     if f.name_len == 4 and gs.source != null {
         // Check "main": m=109, a=97, i=105, n=110
         if (gs.source + f.name_start).* == 109 {  // 'm'
             if (gs.source + f.name_start + 1).* == 97 {  // 'a'
                 if (gs.source + f.name_start + 2).* == 105 {  // 'i'
                     if (gs.source + f.name_start + 3).* == 110 {  // 'n'
-                        // This is "main" - emit BL instruction placeholder
-                        gs.crash_handler_offset = gs.code_count;
-                        GenState_emitInst(gs, encode_bl(0));  // Offset will be patched
+                        gs.is_main = true;
                     }
                 }
             }
@@ -631,6 +636,22 @@ fn GenState_blockValues(gs: *GenState, block: *Block) {
     while i < block.values_count {
         let value_id: i64 = block.values_start + i;
         let v: *Value = Func_getValue(f, value_id);
+
+        // In entry block of main(), insert crash handler after param setup
+        // The param setup ops are: Arg, LocalAddr, Store, Phi, Nop
+        // Insert before the first "real" op (ConstInt, Call, etc.)
+        if gs.current_block == 0 and gs.is_main and !gs.crash_handler_emitted {
+            // Check if this is a "real" op (not param setup)
+            let is_param_setup: bool = v.op == Op.Arg or v.op == Op.LocalAddr or
+                                        v.op == Op.Store or v.op == Op.Phi or
+                                        v.op == Op.Nop or v.op == Op.Move;
+            if !is_param_setup {
+                // Emit crash handler call before this value
+                gs.crash_handler_offset = gs.code_count;
+                GenState_emitInst(gs, encode_bl(0));  // Offset will be patched
+                gs.crash_handler_emitted = true;
+            }
+        }
 
         // Record line entry for DWARF debug info
         GenState_recordLine(gs, v.pos);

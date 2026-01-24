@@ -11,6 +11,7 @@
 // Reference: bootstrap-0.2/src/frontend/types.zig
 
 import "token.cot"
+import "../lib/list.cot"  // For realloc_i64
 
 // ============================================================================
 // Type Index
@@ -93,21 +94,27 @@ struct FieldInfo {
 // Type Pool (arena allocation for type interning)
 // ============================================================================
 
-const MAX_TYPES: i64 = 1024;
-const MAX_PARAMS: i64 = 5000;  // For function parameter lists
-const MAX_FIELDS: i64 = 5000;  // For struct field info
+// MAX_TYPES, MAX_PARAMS, MAX_FIELDS removed - using dynamic growth
+
+// Realloc externs for dynamic growth
+// Note: realloc_i64 is declared in lib/list.cot
+extern fn realloc_Type(ptr: *Type, old_count: i64, new_count: i64) *Type;
+extern fn realloc_FieldInfo(ptr: *FieldInfo, old_count: i64, new_count: i64) *FieldInfo;
 
 struct TypeRegistry {
     types: *Type,        // Pointer to array of types
     count: i64,          // Current type count
+    types_cap: i64,      // Types array capacity
 
     // Parameter arrays (for function types)
     params: *i64,        // Pointer to array of type indices
     params_count: i64,
+    params_cap: i64,     // Params array capacity
 
     // Field arrays (for struct types)
     fields: *FieldInfo,  // Pointer to array of field information
     fields_count: i64,   // Current field count
+    fields_cap: i64,     // Fields array capacity
 
     // Source text for name comparison
     source: *u8,
@@ -213,15 +220,63 @@ fn ptype_TypeInfo_isSlice(ptype: i64) bool {
 }
 
 // ============================================================================
+// Type Pool Dynamic Growth
+// ============================================================================
+
+fn TypeRegistry_ensureTypesCapacity(pool: *TypeRegistry, additional: i64) {
+    let needed: i64 = pool.count + additional;
+    if needed <= pool.types_cap {
+        return;
+    }
+    var new_cap: i64 = pool.types_cap * 2;
+    if new_cap < needed {
+        new_cap = needed;
+    }
+    pool.types = realloc_Type(pool.types, pool.types_cap, new_cap);
+    pool.types_cap = new_cap;
+}
+
+fn TypeRegistry_ensureParamsCapacity(pool: *TypeRegistry, additional: i64) {
+    let needed: i64 = pool.params_count + additional;
+    if needed <= pool.params_cap {
+        return;
+    }
+    var new_cap: i64 = pool.params_cap * 2;
+    if new_cap < needed {
+        new_cap = needed;
+    }
+    pool.params = realloc_i64(pool.params, pool.params_cap, new_cap);
+    pool.params_cap = new_cap;
+}
+
+fn TypeRegistry_ensureFieldsCapacity(pool: *TypeRegistry, additional: i64) {
+    let needed: i64 = pool.fields_count + additional;
+    if needed <= pool.fields_cap {
+        return;
+    }
+    var new_cap: i64 = pool.fields_cap * 2;
+    if new_cap < needed {
+        new_cap = needed;
+    }
+    pool.fields = realloc_FieldInfo(pool.fields, pool.fields_cap, new_cap);
+    pool.fields_cap = new_cap;
+}
+
+// ============================================================================
 // Type Pool Initialization
 // ============================================================================
 
-// Initialize type pool with backing storage arrays
+// Initialize type pool with backing storage arrays and capacities
 // This is the preferred init function - provides explicit backing storage
-fn TypeRegistry_initWithStorage(pool: *TypeRegistry, types: *Type, params: *i64, fields: *FieldInfo) {
+fn TypeRegistry_initWithStorage(pool: *TypeRegistry, types: *Type, types_cap: i64,
+                                 params: *i64, params_cap: i64,
+                                 fields: *FieldInfo, fields_cap: i64) {
     pool.types = types;
+    pool.types_cap = types_cap;
     pool.params = params;
+    pool.params_cap = params_cap;
     pool.fields = fields;
+    pool.fields_cap = fields_cap;
     pool.count = 0;
     pool.params_count = 0;
     pool.fields_count = 0;
@@ -276,6 +331,7 @@ fn TypeRegistry_init(pool: *TypeRegistry) {
 
 // Helper to register a basic type
 fn TypeRegistry_registerBasic(pool: *TypeRegistry, kind: TypeKind, size: i64, align: i64) i64 {
+    TypeRegistry_ensureTypesCapacity(pool, 1);
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
 
@@ -357,6 +413,7 @@ fn TypeRegistry_findByName(pool: *TypeRegistry, name_start: i64, name_len: i64) 
 
 // Create a pointer type: *elem
 fn TypeRegistry_makePointer(pool: *TypeRegistry, elem: i64) i64 {
+    TypeRegistry_ensureTypesCapacity(pool, 1);
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
 
@@ -377,6 +434,7 @@ fn TypeRegistry_makePointer(pool: *TypeRegistry, elem: i64) i64 {
 
 // Create a slice type: []elem
 fn TypeRegistry_makeSlice(pool: *TypeRegistry, elem: i64) i64 {
+    TypeRegistry_ensureTypesCapacity(pool, 1);
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
 
@@ -397,6 +455,7 @@ fn TypeRegistry_makeSlice(pool: *TypeRegistry, elem: i64) i64 {
 
 // Create an array type: [len]elem
 fn TypeRegistry_makeArray(pool: *TypeRegistry, elem: i64, array_len: i64) i64 {
+    TypeRegistry_ensureTypesCapacity(pool, 1);
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
 
@@ -420,6 +479,7 @@ fn TypeRegistry_makeArray(pool: *TypeRegistry, elem: i64, array_len: i64) i64 {
 
 // Create a function type: fn(params) ret
 fn TypeRegistry_makeFunc(pool: *TypeRegistry, params_start: i64, params_count: i64, ret_type: i64) i64 {
+    TypeRegistry_ensureTypesCapacity(pool, 1);
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
 
@@ -440,6 +500,7 @@ fn TypeRegistry_makeFunc(pool: *TypeRegistry, params_start: i64, params_count: i
 
 // Add a parameter type to the params array
 fn TypeRegistry_addParam(pool: *TypeRegistry, param_type: i64) i64 {
+    TypeRegistry_ensureParamsCapacity(pool, 1);
     let idx: i64 = pool.params_count;
     let ptr: *i64 = pool.params + idx;
     ptr.* = param_type;
@@ -451,6 +512,7 @@ fn TypeRegistry_addParam(pool: *TypeRegistry, param_type: i64) i64 {
 // fields_start and fields_count index into params array (used for field types)
 fn TypeRegistry_makeStruct(pool: *TypeRegistry, name_start: i64, name_len: i64,
                     fields_start: i64, fields_count: i64, size: i64, align: i64) i64 {
+    TypeRegistry_ensureTypesCapacity(pool, 1);
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
 
@@ -473,6 +535,7 @@ fn TypeRegistry_makeStruct(pool: *TypeRegistry, name_start: i64, name_len: i64,
 // Enums are i32-sized by default (like Go)
 fn TypeRegistry_makeEnum(pool: *TypeRegistry, name_start: i64, name_len: i64,
                   variants_count: i64) i64 {
+    TypeRegistry_ensureTypesCapacity(pool, 1);
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
 
@@ -850,6 +913,7 @@ fn TypeRegistry_setSource(pool: *TypeRegistry, source: *u8, source_len: i64) {
 // Add a field to the fields array, return its index
 fn TypeRegistry_addField(pool: *TypeRegistry, name_start: i64, name_len: i64,
                   type_idx: i64, offset: i64) i64 {
+    TypeRegistry_ensureFieldsCapacity(pool, 1);
     let idx: i64 = pool.fields_count;
     pool.fields_count = pool.fields_count + 1;
 

@@ -8,16 +8,29 @@
 |-----------|--------|
 | Zig compiler | ✅ 166 tests pass |
 | Stage 1 (Zig → cot0) | ✅ 166/166 tests pass (100%) |
-| Stage 2 (cot0 → cot0) | ✅ Self-compilation works |
-| Self-hosting | ✅ Achieved (2026-01-24) |
+| Stage 2 (cot0 → cot0) | ⚠️ Compiles with SSA errors |
+| Self-hosting | ⚠️ Blocked by stage2 SSA errors |
+| Fixed arrays removal | ✅ COMPLETE |
 
-## Current Priority: Stage1 Test Parity - COMPLETE ✅
+## Current Priority: Fix Stage 2 SSA Errors
 
-**Goal**: Make all 166 e2e tests pass when compiled with cot0-stage1.
+**Goal**: Make stage2 produce correct code so stage3 = stage2.
 
-**Progress**: 166 passing, 0 failing - **COMPLETE!**
+**Issue**: When stage1 compiles cot0, there are SSA errors ("Invalid arg ir_rel=-1"). This is a separate bug from the fixed arrays issue (which is now resolved).
 
-See [cot0/STAGE1_TEST_PLAN.md](cot0/STAGE1_TEST_PLAN.md) for detailed execution plan.
+See [SELF_HOSTING.md](SELF_HOSTING.md) for details.
+
+## Recent: Fixed Arrays Conversion (COMPLETE)
+
+All accumulating fixed-size arrays have been converted to dynamic allocation:
+
+- **IR Storage**: `ir_nodes`, `ir_locals`, `ir_funcs`, `constants`, `ir_globals` - all use realloc
+- **Type Pool**: `types`, `params`, `fields` - all use realloc with capacity tracking
+- **Node Pool**: Uses `capacity` field instead of hardcoded MAX_NODES
+
+Remaining `MAX_*` constants are intentional per-function limits (SSA, codegen) that don't accumulate.
+
+See [cot0/FIXED_ARRAYS_AUDIT.md](cot0/FIXED_ARRAYS_AUDIT.md) for full details.
 
 ### Stage1 Test Results
 
@@ -94,6 +107,7 @@ None - all 166 tests pass!
 
 ## Recent Milestones
 
+- **2026-01-24**: **Completed fixed arrays removal** - All accumulating arrays (IR, types, nodes) now use dynamic allocation with realloc. Stage2 no longer crashes from capacity exhaustion.
 - **2026-01-24**: **Fixed 9+ argument function calls** - Parser extended to 16 args, ABI stack alignment fixed, genssa store handler updated
 - **2026-01-24**: Converted all core fixed-size arrays to dynamic allocation (Value.args, Block.preds, local arrays in builder/genssa/lower/parser/regalloc/main)
 - **2026-01-24**: Crash handler works in cot0-compiled programs (DWARF parsing, source location display)
@@ -120,4 +134,4 @@ None - all 166 tests pass!
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Compiler design |
 | [SELF_HOSTING.md](SELF_HOSTING.md) | Path to self-hosting |
 | [cot0/COMPARISON.md](cot0/COMPARISON.md) | Function parity checklist |
-| [cot0/STAGE1_TEST_PLAN.md](cot0/STAGE1_TEST_PLAN.md) | **Stage1 test parity plan** |
+| [cot0/FIXED_ARRAYS_AUDIT.md](cot0/FIXED_ARRAYS_AUDIT.md) | Dynamic allocation status (COMPLETE) |

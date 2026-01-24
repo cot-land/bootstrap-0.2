@@ -164,12 +164,12 @@ struct Node {
 // Node Pool (arena allocation)
 // ============================================================================
 
-// Maximum nodes - still fixed for now (nodes are larger, less frequent)
-const MAX_NODES: i64 = 100000;  // 100k nodes should handle any file
+// MAX_NODES removed - using capacity field
 
 struct NodePool {
-    nodes: *Node,           // Array of MAX_NODES nodes
+    nodes: *Node,           // Array of nodes (externally allocated)
     count: i64,             // Current node count
+    capacity: i64,          // Allocated capacity
 
     // Child arrays - DYNAMIC (grows as needed)
     children: I64List,      // Dynamic list of node indices for args/stmts/params
@@ -889,7 +889,7 @@ fn Node_fieldInit(pool: *NodePool, field_name_start: i64, field_name_len: i64,
     let idx: i64 = pool.count;
 
     // Bounds check - prevent overflow
-    if idx >= MAX_NODES {
+    if idx >= pool.capacity {
         return -1;  // Error: exceeded max nodes
     }
 

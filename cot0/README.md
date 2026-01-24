@@ -6,9 +6,9 @@ The Cot compiler written in Cot, targeting self-hosting.
 
 | Stage | Status |
 |-------|--------|
-| Stage 1 (Zig builds cot0) | ✅ Working |
-| Stage 2 (cot0-stage1 builds cot0) | ⚠️ Compiles, crashes at runtime |
-| Stage 3+ (self-hosting) | Pending |
+| Stage 1 (Zig builds cot0) | ✅ Working - 166/166 tests pass |
+| Stage 2 (cot0-stage1 builds cot0) | ⚠️ Compiles with SSA errors |
+| Stage 3+ (self-hosting) | ⚠️ Blocked by stage2 bugs |
 
 See [SELF_HOSTING.md](../SELF_HOSTING.md) for details.
 

@@ -984,3 +984,45 @@ export fn malloc_ValState(count: i64) ?*anyopaque { return malloc_struct(count, 
 export fn malloc_RegState(count: i64) ?*anyopaque { return malloc_struct(count, 16); }  // RegState: value_id(8) + dirty(8 padded) = 16
 export fn malloc_LiveInfo(count: i64) ?*anyopaque { return malloc_struct(count, 24); }  // LiveInfo: id(8) + dist(8) + pos(8) = 24
 export fn malloc_BlockLiveness(count: i64) ?*anyopaque { return malloc_struct(count, 48); }  // BlockLiveness: 6 * 8 = 48
+
+// Struct reallocation functions - reallocate with copy
+fn realloc_struct(ptr: ?*anyopaque, old_count: i64, new_count: i64, struct_size: i64) ?*anyopaque {
+    const allocator = std.heap.c_allocator;
+    const new_total: usize = @intCast(new_count * struct_size);
+    if (ptr) |p| {
+        const old_total: usize = @intCast(old_count * struct_size);
+        const new_mem = allocator.alloc(u8, new_total) catch return null;
+        const copy_size = @min(old_total, new_total);
+        const src: [*]u8 = @ptrCast(p);
+        @memcpy(new_mem[0..copy_size], src[0..copy_size]);
+        return @ptrCast(new_mem.ptr);
+    } else {
+        return malloc_struct(new_count, struct_size);
+    }
+}
+
+export fn realloc_Node(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 72); }
+export fn realloc_Type(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 80); }
+export fn realloc_FieldInfo(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 40); }
+export fn realloc_IRNode(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 96); }
+export fn realloc_IRLocal(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 80); }
+export fn realloc_IRFunc(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 64); }
+export fn realloc_ConstEntry(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 24); }
+export fn realloc_IRGlobal(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 80); }
+export fn realloc_Block(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 80); }
+export fn realloc_Value(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 128); }
+export fn realloc_Local(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 72); }
+export fn realloc_Branch(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 24); }
+export fn realloc_CallSite(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 16); }
+export fn realloc_GlobalReloc(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 16); }
+export fn realloc_FuncAddrReloc(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 24); }
+export fn realloc_StringReloc(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 24); }
+export fn realloc_Symbol(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 40); }
+export fn realloc_Reloc(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 24); }
+export fn realloc_BlockDefs(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 24); }
+export fn realloc_BlockMapping(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 16); }
+export fn realloc_VarDef(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 24); }
+export fn realloc_ValState(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 24); }
+export fn realloc_RegState(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 16); }
+export fn realloc_LiveInfo(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 24); }
+export fn realloc_BlockLiveness(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 48); }

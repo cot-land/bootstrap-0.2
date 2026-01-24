@@ -28,8 +28,9 @@ struct Parser {
     nest_lev: i64,            // Nesting depth for recursion limit (follows Zig parser.zig:50)
 }
 
-// Maximum nesting level (Zig uses 10000, following parser.zig:53)
-const MAX_NEST_LEV: i64 = 10000;
+// Maximum nesting level for recursion protection (not a storage limit)
+// Zig uses 10000, following parser.zig:53
+const LIMIT_NEST_LEV: i64 = 10000;
 
 // ============================================================================
 // Parser Initialization
@@ -93,7 +94,7 @@ fn Parser_atEnd(p: *Parser) bool {
 // Returns true if OK, false if exceeded maximum (sets had_error)
 fn Parser_incNest(p: *Parser) bool {
     p.nest_lev = p.nest_lev + 1;
-    if p.nest_lev > MAX_NEST_LEV {
+    if p.nest_lev > LIMIT_NEST_LEV {
         p.had_error = true;
         return false;  // Exceeded maximum nesting depth
     }
