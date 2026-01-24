@@ -385,6 +385,8 @@ struct IRGlobal {
     array_len: i64,       // Array length if is_array
     size: i64,            // Size in bytes
     data_offset: i64,     // Offset in data section (set during codegen)
+    init_value: i64,      // Compile-time initialization value (for i64/u8/bool)
+    has_init: bool,       // Whether init_value is set
 }
 
 fn IRGlobal_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) IRGlobal {
@@ -397,6 +399,8 @@ fn IRGlobal_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool)
         .array_len = 0,
         .size = 8,
         .data_offset = 0,
+        .init_value = 0,
+        .has_init = false,
     };
 }
 

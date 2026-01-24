@@ -346,9 +346,21 @@ fn Lowerer_registerGlobal(l: *Lowerer, name_start: i64, name_len: i64, type_idx:
     g.array_len = 0;
     g.size = 8;  // 64-bit value
     g.data_offset = l.globals_data_offset;
+    g.init_value = 0;
+    g.has_init = false;
     l.globals_data_offset = l.globals_data_offset + 8;  // Advance by size
     l.ir_globals_count = l.ir_globals_count + 1;
     return idx;
+}
+
+// Set initial value for a global variable
+fn Lowerer_setGlobalInit(l: *Lowerer, global_idx: i64, value: i64) {
+    if l.ir_globals == null or global_idx < 0 or global_idx >= l.ir_globals_count {
+        return;
+    }
+    let g: *IRGlobal = l.ir_globals + global_idx;
+    g.init_value = value;
+    g.has_init = true;
 }
 
 // Register an array global variable
@@ -368,6 +380,8 @@ fn Lowerer_registerArrayGlobal(l: *Lowerer, name_start: i64, name_len: i64, type
     g.array_len = array_len;
     g.size = array_len;  // For u8 arrays, size = length
     g.data_offset = aligned_offset;
+    g.init_value = 0;
+    g.has_init = false;
     l.globals_data_offset = aligned_offset + array_len;  // Advance by size
     l.ir_globals_count = l.ir_globals_count + 1;
     return idx;
@@ -539,6 +553,7 @@ fn Lowerer_registerGlobalVar(l: *Lowerer, node: *Node) {
     let is_mutable: bool = node.field0 == 0;  // 0 = var (mutable), 1 = let (immutable)
     let name_start: i64 = node.field1;
     let name_len: i64 = node.field2;
+    let init_expr_idx: i64 = node.field3;
     let type_expr_idx: i64 = node.field5;
 
     // Resolve TypeExpr AST node to TypeRegistry index
@@ -548,11 +563,23 @@ fn Lowerer_registerGlobalVar(l: *Lowerer, node: *Node) {
     }
 
     // Check if this is an array type
+    var global_idx: i64 = 0 - 1;
     let type_info: *Type = TypeRegistry_get(l.type_pool, type_idx);
     if type_info.kind == TypeKind.Array {
-        Lowerer_registerArrayGlobal(l, name_start, name_len, type_idx, is_mutable, type_info.len);
+        global_idx = Lowerer_registerArrayGlobal(l, name_start, name_len, type_idx, is_mutable, type_info.len);
     } else {
-        Lowerer_registerGlobal(l, name_start, name_len, type_idx, is_mutable);
+        global_idx = Lowerer_registerGlobal(l, name_start, name_len, type_idx, is_mutable);
+    }
+
+    // Check for compile-time constant initializer
+    if init_expr_idx >= 0 and global_idx >= 0 {
+        let init_node: *Node = l.nodes + init_expr_idx;
+        // If it's an integer literal, use it as the init value
+        if init_node.kind == NodeKind.IntLit {
+            // IntLit: field0 = parsed integer value (set by parser)
+            let init_val: i64 = init_node.field0;
+            Lowerer_setGlobalInit(l, global_idx, init_val);
+        }
     }
 }
 

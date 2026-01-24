@@ -58,10 +58,10 @@ fn Op_fromIRBinaryOp(ir_op: i64) Op {
 }
 
 fn Op_fromIRUnaryOp(ir_op: i64) Op {
-    // IR unary ops: Neg=0, Not=1, BitNot=2 (from ir.cot IRUnaryOp enum)
-    if ir_op == 0 { return Op.Neg64; }     // IRUnaryOp.Neg
-    if ir_op == 1 { return Op.Not64; }     // IRUnaryOp.Not
-    if ir_op == 2 { return Op.Not64; }     // IRUnaryOp.BitNot (use Not64 for now)
+    // IR unary op constants from lower.cot: NEG=18, NOT=19, BIT_NOT=20
+    if ir_op == 18 { return Op.Neg64; }    // IR_OP_NEG
+    if ir_op == 19 { return Op.Not64; }    // IR_OP_NOT
+    if ir_op == 20 { return Op.Not64; }    // IR_OP_BIT_NOT
     return Op.Neg64;  // Default fallback
 }
 

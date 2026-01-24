@@ -1307,10 +1307,24 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         global_idx = global_idx + 1;
     }
 
-    // Allocate actual space in data section for all globals
-    // (This extends the data section to hold the globals)
-    let total_globals_size: i64 = lowerer.globals_data_offset;
-    MachOWriter_addDataZeros(&writer, total_globals_size);
+    // Write initial values for globals to data section
+    // For globals with has_init=true, write their init_value
+    // For others (arrays, uninit), write zeros
+    global_idx = 0;
+    while global_idx < lowerer.ir_globals_count {
+        let g: *IRGlobal = g_ir_globals + (global_idx);
+        if g.is_array {
+            // Arrays are zero-initialized for now
+            MachOWriter_addDataZeros(&writer, g.size);
+        } else if g.has_init {
+            // Write 8-byte little-endian value
+            MachOWriter_addDataI64(&writer, g.init_value);
+        } else {
+            // Zero-initialized scalar
+            MachOWriter_addDataZeros(&writer, 8);
+        }
+        global_idx = global_idx + 1;
+    }
 
     // Add relocations for global address accesses
     print("  Adding global relocs, count=");

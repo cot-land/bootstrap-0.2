@@ -470,6 +470,19 @@ fn MachOWriter_addDataByte(w: *MachOWriter, b: i64) {
     }
 }
 
+// Add an 8-byte little-endian value to data section
+fn MachOWriter_addDataI64(w: *MachOWriter, value: i64) {
+    // Write 8 bytes in little-endian order
+    MachOWriter_addDataByte(w, value & 0xFF);
+    MachOWriter_addDataByte(w, (value >> 8) & 0xFF);
+    MachOWriter_addDataByte(w, (value >> 16) & 0xFF);
+    MachOWriter_addDataByte(w, (value >> 24) & 0xFF);
+    MachOWriter_addDataByte(w, (value >> 32) & 0xFF);
+    MachOWriter_addDataByte(w, (value >> 40) & 0xFF);
+    MachOWriter_addDataByte(w, (value >> 48) & 0xFF);
+    MachOWriter_addDataByte(w, (value >> 56) & 0xFF);
+}
+
 // Add zero-filled data to data section (for BSS-style globals)
 fn MachOWriter_addDataZeros(w: *MachOWriter, len: i64) i64 {
     let offset: i64 = w.data_count;
