@@ -22,6 +22,17 @@
 
 See [cot0/STAGE2_INVESTIGATION.md](cot0/STAGE2_INVESTIGATION.md) for detailed analysis.
 
+## Strategic Direction: cot0 → cot9 Evolution
+
+Rather than perfecting cot0, we're moving forward to cot1 with improved language features:
+
+- **cot0**: Minimal self-hosting (ACHIEVED - core compiler works)
+- **cot1**: Error handling & safety (error unions, optionals, type aliases)
+- **cot2**: Basic generics & abstractions
+- **cot3-cot9**: Progressive feature additions toward production-ready language
+
+See [LANGUAGE_EVOLUTION.md](LANGUAGE_EVOLUTION.md) for the complete roadmap.
+
 ## Recent: Fixed Arrays Conversion (COMPLETE)
 
 All accumulating fixed-size arrays have been converted to dynamic allocation:
