@@ -369,15 +369,61 @@ fn Type_pointee(type_handle: i64) i64 {
 // Primitive Expression Parsing
 // ============================================================================
 
-// Parse integer literal: 42
+// Parse integer literal: 42, 0xFF, 0b1010, 0o777
+// Following Zig: src/frontend/parser.zig number parsing
 fn Parser_parseIntLit(p: *Parser) i64 {
     let start: i64 = p.current.start;
-    let end: i64 = p.current.end;
+    let len: i64 = p.current.end;
 
     // Parse the integer value from source
     var value: i64 = 0;
     var i: i64 = start;
-    while i < start + end {
+
+    // Check for 0x, 0b, 0o prefix
+    if len >= 2 and p.source[start] == 48 {  // starts with '0'
+        let prefix: u8 = p.source[start + 1];
+        if prefix == 120 or prefix == 88 {  // 'x' or 'X' - hex
+            i = start + 2;
+            while i < start + len {
+                let c: u8 = p.source[i];
+                if c >= 48 and c <= 57 {  // '0'-'9'
+                    value = value * 16 + (c - 48);
+                } else if c >= 65 and c <= 70 {  // 'A'-'F'
+                    value = value * 16 + (c - 55);
+                } else if c >= 97 and c <= 102 {  // 'a'-'f'
+                    value = value * 16 + (c - 87);
+                }
+                i = i + 1;
+            }
+            Parser_advance(p);
+            return Node_intLit(p.pool, value, start, start + len);
+        } else if prefix == 98 or prefix == 66 {  // 'b' or 'B' - binary
+            i = start + 2;
+            while i < start + len {
+                let c: u8 = p.source[i];
+                if c == 48 or c == 49 {  // '0' or '1'
+                    value = value * 2 + (c - 48);
+                }
+                i = i + 1;
+            }
+            Parser_advance(p);
+            return Node_intLit(p.pool, value, start, start + len);
+        } else if prefix == 111 or prefix == 79 {  // 'o' or 'O' - octal
+            i = start + 2;
+            while i < start + len {
+                let c: u8 = p.source[i];
+                if c >= 48 and c <= 55 {  // '0'-'7'
+                    value = value * 8 + (c - 48);
+                }
+                i = i + 1;
+            }
+            Parser_advance(p);
+            return Node_intLit(p.pool, value, start, start + len);
+        }
+    }
+
+    // Decimal number
+    while i < start + len {
         let c: u8 = p.source[i];
         if c >= 48 and c <= 57 {  // '0' - '9'
             value = value * 10 + (c - 48);
@@ -386,7 +432,7 @@ fn Parser_parseIntLit(p: *Parser) i64 {
     }
 
     Parser_advance(p);
-    return Node_intLit(p.pool, value, start, start + end);
+    return Node_intLit(p.pool, value, start, start + len);
 }
 
 // Parse identifier: foo (not including call - that's handled separately)

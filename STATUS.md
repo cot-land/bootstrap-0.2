@@ -32,24 +32,30 @@ See [cot0/STAGE1_TEST_PLAN.md](cot0/STAGE1_TEST_PLAN.md) for detailed execution 
 | Crash handler integration | ✅ PASS |
 | **9+ argument function calls** | ✅ PASS (fixed 2026-01-24) |
 | **Large struct returns (>16B)** | ❌ FAIL (SIGSEGV - BUG-054) |
-| **String literals** | ❌ FAIL (garbled output - BUG-055) |
+| **String literals** | ✅ PASS (fixed BUG-055 2026-01-24) |
+| **Self-compilation** | ✅ PASS (fixed BUG-057 2026-01-24) |
+| **Hex literal parsing** | ✅ PASS (fixed 2026-01-24) |
 
 ### Known Issues (Priority Order)
 
-1. **Self-compilation crash** (CRITICAL)
-   - Symptom: cot0-stage1 crashes during Phase 4/5 (SSA/codegen) when compiling main.cot
-   - Location: main.cot:1055 (during code generation)
-   - Note: Same crash occurs with Zig-built cot0, indicating pre-existing issue
-   - Investigating: Likely memory/pointer issue in SSA builder or codegen
-
-2. **Large Struct Returns** (CRITICAL - BUG-054)
+1. **Large Struct Returns** (CRITICAL - BUG-054)
    - Symptom: SIGSEGV crash in programs returning structs >16 bytes
    - Cause: ARM64 ABI requires hidden pointer in x8 for large struct returns, not implemented in cot0
    - First failure: test_bug004_large_struct_return (line 1901 in all_tests.cot)
 
-3. **String Literals** (HIGH - BUG-055)
-   - Symptom: String content is garbled/wrong
-   - Cause: String data relocation or slice construction issue in cot0
+### Recently Fixed
+
+1. **Self-compilation crash** (FIXED - BUG-057)
+   - Cause: malloc_IRLocal allocated only 32 bytes, but IRLocal is 80 bytes
+   - Fix: Updated runtime/cot_runtime.zig malloc sizes
+
+2. **String Literals** (FIXED - BUG-055)
+   - Cause: TYPE_STRING not handled in FieldAccess, escape sequences not processed
+   - Fix: Handle TYPE_STRING in lower.cot, process escapes in main.cot
+
+3. **Hex Literals** (FIXED)
+   - Cause: Scanner and parser didn't handle 0x prefix
+   - Fix: Added hex/octal/binary literal support to scanner.cot and parser.cot
 
 ## What Works (with Zig Compiler)
 

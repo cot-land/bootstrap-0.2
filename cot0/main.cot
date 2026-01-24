@@ -719,8 +719,8 @@ fn adjust_node_positions(pool: *NodePool, start_idx: i64, end_idx: i64, offset: 
             // field0 = name_start
             node.field0 = node.field0 + offset;
         } else if node.kind == NodeKind.VarDecl {
-            // field0 = name_start
-            node.field0 = node.field0 + offset;
+            // field0 = is_let, field1 = name_start, field2 = name_len
+            node.field1 = node.field1 + offset;
         } else if node.kind == NodeKind.ConstDecl {
             // field0 = name_start
             node.field0 = node.field0 + offset;
@@ -740,9 +740,22 @@ fn adjust_node_positions(pool: *NodePool, start_idx: i64, end_idx: i64, offset: 
         } else if node.kind == NodeKind.StringLit {
             // field0 = content_start (source position of string content)
             node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.ParamDecl {
+            // field0 = name_start (source position)
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.GlobalVarDecl {
+            // field0 = is_mutable, field1 = name_start, field2 = name_len
+            node.field1 = node.field1 + offset;
+        } else if node.kind == NodeKind.FieldInit {
+            // field0 = field_name_start (source position)
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.StructLit {
+            // field0 = type_name_start (source position)
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.FieldAccess {
+            // field1 = field_name_start (source position)
+            node.field1 = node.field1 + offset;
         }
-        // Other node kinds don't have source positions in their fields
-        // (they have node indices, values, or type handles instead)
 
         i = i + 1;
     }
@@ -957,6 +970,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     Lowerer_setGlobals(&lowerer, g_ir_globals, MAIN_MAX_IR_GLOBALS);
 
     let ir_count: i64 = Lowerer_lowerAll(&lowerer);
+
     print("  IR nodes: ");
     print_int(ir_count);
     print(", Functions: ");
@@ -1056,6 +1070,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // Clear branch fixups at start of each function
         gs.func = &ssa_func;
         gs.branches_count = 0;  // Reset branches for this function
+
         let genssa_result: i64 = GenState_generate(&gs);
         if genssa_result != 0 {
             print("  FAIL: genssa error\n");
@@ -1389,16 +1404,35 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         let sr: *StringReloc = g_string_relocs + (str_idx);
 
         // Copy string data from source to data section
+        // Process escape sequences: \n, \t, \r, \0, \\, \"
         var str_copy_idx: i64 = 0;
+        var actual_len: i64 = 0;
         while str_copy_idx < sr.str_len {
             let src_char: *u8 = g_source + sr.str_start + str_copy_idx;
-            // Cast u8 to i64 for function call
-            let char_val: i64 = @intCast(i64, src_char.*);
+            var char_val: i64 = @intCast(i64, src_char.*);
+
+            // Check for escape sequence
+            if char_val == 92 and str_copy_idx + 1 < sr.str_len {  // backslash
+                str_copy_idx = str_copy_idx + 1;
+                let next_char: *u8 = g_source + sr.str_start + str_copy_idx;
+                let next_val: i64 = @intCast(i64, next_char.*);
+                if next_val == 110 { char_val = 10; }       // \n -> newline
+                else if next_val == 116 { char_val = 9; }   // \t -> tab
+                else if next_val == 114 { char_val = 13; }  // \r -> carriage return
+                else if next_val == 48 { char_val = 0; }    // \0 -> null
+                else if next_val == 92 { char_val = 92; }   // \\ -> backslash
+                else if next_val == 34 { char_val = 34; }   // \" -> double quote
+                else { char_val = next_val; }               // Unknown escape, use as-is
+            }
+
             MachOWriter_addDataByte(&writer, char_val);
+            actual_len = actual_len + 1;
             str_copy_idx = str_copy_idx + 1;
         }
         // Add null terminator for safety
         MachOWriter_addDataByte(&writer, 0);
+        // Update sr.str_len to actual length after escape processing
+        sr.str_len = actual_len;
 
         // Align to 8 bytes after each string
         while (writer.data_count - strings_base_offset) % 8 != 0 {

@@ -917,7 +917,6 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
         local_idx = local_idx + 1;
         ssa_local_idx = ssa_local_idx + 1;
     }
-
     // Step 4: Handle parameters with 3-phase approach (BUG-056 fix)
     // Following Zig's ssa_builder.zig lines 111-242
     //
@@ -1030,7 +1029,6 @@ fn SSABuilder_convertNode(b: *SSABuilder, ir_node: *IRNode, ir_idx: i64) i64 {
     }
 
     // Dispatch based on node kind
-    // This will be filled in by subsequent steps
     var result_id: i64 = INVALID_ID;
 
     if ir_node.kind == IRNodeKind.ConstInt {
@@ -1574,20 +1572,25 @@ fn SSABuilder_convertSliceLen(b: *SSABuilder, ir_node: *IRNode) i64 {
 // --- Function Call ---
 
 fn SSABuilder_convertCall(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // BUG-054: Use the IRNode's type_idx which contains the actual return type
-    // This is set during lowering based on the called function's return type
     let val: *Value = Func_emitCall(b.func,
                                      ir_node.func_name_start,
                                      ir_node.func_name_len,
                                      ir_node.type_idx);
-    // Add arguments - call convertNode for each arg (matches Zig exactly)
-    // Zig: for (c.args) |arg_idx| { const arg_val = try self.convertNode(arg_idx)... }
     var arg_idx: i64 = 0;
     while arg_idx < ir_node.call_args.count {
         let arg_ir_rel: i64 = i64list_get(&ir_node.call_args, arg_idx);
+        // Validate arg index
+        if arg_ir_rel < 0 {
+            io_print("SSA ERROR: Invalid arg ir_rel=");
+            io_print_int(arg_ir_rel);
+            io_print(" for call arg ");
+            io_print_int(arg_idx);
+            io_print("\n");
+            arg_idx = arg_idx + 1;
+            continue;
+        }
         let abs_idx: i64 = b.ir_nodes_start + arg_ir_rel;
         let arg_ir_node: *IRNode = b.ir_nodes + abs_idx;
-        // Call convertNode like Zig does (handles caching internally)
         let arg_value_id: i64 = SSABuilder_convertNode(b, arg_ir_node, abs_idx);
         let arg_val: *Value = Func_getValue(b.func, arg_value_id);
         Value_addArg(val, arg_val);

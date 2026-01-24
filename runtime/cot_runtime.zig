@@ -961,13 +961,13 @@ export fn malloc_Node(count: i64) ?*anyopaque { return malloc_struct(count, 72);
 export fn malloc_Type(count: i64) ?*anyopaque { return malloc_struct(count, 80); }  // Type: kind(4) + pad(4) + 9*i64 = 80
 export fn malloc_FieldInfo(count: i64) ?*anyopaque { return malloc_struct(count, 40); }
 export fn malloc_IRNode(count: i64) ?*anyopaque { return malloc_struct(count, 96); }  // IRNode: 12 fields * 8 = 96
-export fn malloc_IRLocal(count: i64) ?*anyopaque { return malloc_struct(count, 32); }
+export fn malloc_IRLocal(count: i64) ?*anyopaque { return malloc_struct(count, 80); }  // IRLocal: 10 fields * 8 = 80
 export fn malloc_IRFunc(count: i64) ?*anyopaque { return malloc_struct(count, 64); }
 export fn malloc_ConstEntry(count: i64) ?*anyopaque { return malloc_struct(count, 24); }
 export fn malloc_IRGlobal(count: i64) ?*anyopaque { return malloc_struct(count, 40); }
 export fn malloc_Block(count: i64) ?*anyopaque { return malloc_struct(count, 80); }
 export fn malloc_Value(count: i64) ?*anyopaque { return malloc_struct(count, 128); }
-export fn malloc_Local(count: i64) ?*anyopaque { return malloc_struct(count, 32); }
+export fn malloc_Local(count: i64) ?*anyopaque { return malloc_struct(count, 72); }  // Local: 9 fields * 8 = 72
 export fn malloc_Branch(count: i64) ?*anyopaque { return malloc_struct(count, 24); }
 export fn malloc_CallSite(count: i64) ?*anyopaque { return malloc_struct(count, 16); }
 export fn malloc_GlobalReloc(count: i64) ?*anyopaque { return malloc_struct(count, 16); }

@@ -9,9 +9,10 @@
 ```
 
 **Current blockers:**
-- String literals - garbled output (BUG-055)
+- ~~Self-compilation crash (BUG-057) - crashes in codegen~~ FIXED (malloc_IRLocal size 32->80)
+- ~~String literals - garbled output (BUG-055)~~ FIXED (escape sequences + TYPE_STRING field access)
 
-**Current status:** 21+ tests verified passing (arithmetic, bitwise, control flow, functions, pointers, arrays, globals, small structs)
+**Current status:** Self-compilation works! BUG-055 and BUG-057 fixed (2026-01-24)
 
 ---
 
@@ -46,25 +47,87 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
+### BUG-057: Self-compilation crashes in Phase 4/5 (SSA build)
+
+**Status:** OPEN - INVESTIGATION IN PROGRESS
+**Priority:** P0 (blocking self-hosting)
+**Discovered:** 2026-01-24
+
+**Symptoms:**
+- cot0-stage1 crashes during SSABuilder_build when compiling main.cot
+- Same crash occurs with Zig-built cot0 (not a cot0-stage1 specific issue)
+- Invalid memory access at address pattern `0x...fff88` (always ends in fff88)
+
+**Investigation Findings (2026-01-24):**
+
+1. **Crash Location:** During Step 5 of SSABuilder_build (IR to SSA conversion)
+   - Processing function 0 (the main merged function)
+   - Function has: 19795 IR nodes, 1050 locals, 198 blocks
+   - Successfully converts nodes 0-480 (481 conversions)
+   - Crashes during/after converting node 481
+
+2. **Debug Output Before Crash:**
+   ```
+   convert #478 ir_idx=478 values=2245
+   convert #479 ir_idx=479 values=2246
+   convert #480 ir_idx=480 values=2247
+   CRASH DETECTED
+   ```
+
+3. **Register State at Crash:**
+   ```
+   x00=0x6427fff88 (invalid address being accessed, always ends in fff88)
+   x03=0x19e (414), x04=0x19f (415) - possibly value IDs or indices
+   x16=-1, x17=-1 (temp registers in invalid state)
+   ```
+
+4. **Related Bug:** io_print_int(0) doesn't print zero correctly (separate issue in lib/io.cot)
+
+**Analysis:**
+- The crash address pattern `fff88` suggests offset into struct with invalid base pointer
+- Crash is NOT in GenState_generate but in SSABuilder_build
+- Values count at crash: ~2247 (well under MAIN_MAX_SSA_VALUES=500000)
+- Crash happens reliably at the same conversion count
+
+**Suspected Causes:**
+1. Pointer arithmetic issue in convert function for specific IR node type
+2. Out-of-bounds access when looking up a value/block/local
+3. Memory corruption from earlier operation affecting node 481's data
+
+**Next Steps:**
+1. Print IR node kind for nodes 478-485 to identify what type triggers crash
+2. Add bounds checking to Func_getValue, Func_getBlock, Func_getLocal
+3. Check if node 481 references an invalid value ID or block ID
+4. Compare convert function dispatch with Zig's implementation
+
+**Workaround:** None - blocks self-hosting
+
+---
+
 ### BUG-055: String literals produce garbled output in cot0-stage1
 
-**Status:** OPEN
-**Priority:** P0 (blocking string tests)
+**Status:** FIXED
+**Priority:** P0 (was blocking string tests)
 **Discovered:** 2026-01-24
+**Fixed:** 2026-01-24
 
 **Symptoms:**
 - String content appears garbled when printed or compared
 - Tests using string literals fail with wrong content
 
 **Root Cause:**
-Unknown - likely string data relocation or slice construction issue in cot0.
+Two issues:
+1. FieldAccess for `string` type (s.ptr, s.len) wasn't handled - only TYPE_SLICE was checked, not TYPE_STRING
+2. Escape sequences weren't processed when copying string data to Mach-O data section
+3. String length wasn't adjusted for escape sequences
 
-**Next Steps:**
-1. Compare string relocation handling in Zig compiler vs cot0
-2. Check if string data is correctly placed in __cstring section
-3. Verify slice construction (ptr + len) is correct
+**Fix:**
+1. `lower.cot:2866-2871`: Check for TYPE_STRING and TypeKind.String in addition to TYPE_SLICE
+2. `main.cot:1407-1430`: Process escape sequences (\n, \t, \r, etc.) when copying string data
+3. `lower.cot:compute_escaped_length()`: Calculate actual string length after escape processing
+4. `lower.cot:1055-1070`: Use actual length for ConstInt node (for s.len)
 
-**Location:** cot0/main.cot (string relocation handling)
+**Location:** cot0/main.cot, cot0/frontend/lower.cot
 
 ---
 

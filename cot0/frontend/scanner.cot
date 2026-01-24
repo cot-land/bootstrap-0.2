@@ -89,6 +89,38 @@ fn Scanner_skipWhitespace(s: *Scanner) {
 
 fn Scanner_scanNumber(s: *Scanner) Token {
     let start: i64 = s.pos;
+
+    // Handle hex, octal, binary prefixes
+    // Following Zig: src/frontend/scanner.zig:190-208
+    if Scanner_peek(s) == 48 {  // '0'
+        Scanner_advance(s);
+        let next: u8 = Scanner_peek(s);
+        if next == 120 or next == 88 {  // 'x' or 'X'
+            Scanner_advance(s);
+            // Scan hex digits
+            while isHexDigit(Scanner_peek(s)) {
+                Scanner_advance(s);
+            }
+            return Token_new(TokenType.Int, start, s.pos - start);
+        } else if next == 111 or next == 79 {  // 'o' or 'O'
+            Scanner_advance(s);
+            // Scan octal digits (0-7)
+            while Scanner_peek(s) >= 48 and Scanner_peek(s) <= 55 {
+                Scanner_advance(s);
+            }
+            return Token_new(TokenType.Int, start, s.pos - start);
+        } else if next == 98 or next == 66 {  // 'b' or 'B'
+            Scanner_advance(s);
+            // Scan binary digits (0-1)
+            while Scanner_peek(s) == 48 or Scanner_peek(s) == 49 {
+                Scanner_advance(s);
+            }
+            return Token_new(TokenType.Int, start, s.pos - start);
+        }
+        // Fall through for plain decimal starting with 0
+    }
+
+    // Scan decimal digits
     while isDigit(Scanner_peek(s)) {
         Scanner_advance(s);
     }
