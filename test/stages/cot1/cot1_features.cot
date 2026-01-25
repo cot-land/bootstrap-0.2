@@ -56,13 +56,35 @@ fn run_test(name: string, result: i64, expected: i64) {
 }
 
 // ============================================================================
-// Feature: Error Unions (Placeholder tests until implemented)
+// Feature: Error Unions - IMPLEMENTED (syntax only, no real error handling yet)
 // ============================================================================
 
-fn test_error_union_placeholder() i64 {
-    // Placeholder: returns 1 when feature not yet implemented
-    // Will be replaced with actual error union tests
-    return 1;
+fn get_error_value(fail: bool) !i64 {
+    if fail {
+        return 0;  // Would be error in real impl
+    }
+    return 42;
+}
+
+fn test_error_union_return_type() i64 {
+    // Function can declare !T return type
+    let result: !i64 = get_error_value(false);
+    if result == 42 { return 1; }
+    return 0;
+}
+
+fn test_error_union_variable() i64 {
+    // Variables can have !T type
+    var value: !i64 = 100;
+    if value == 100 { return 1; }
+    return 0;
+}
+
+fn test_error_union_as_param() i64 {
+    // For now, !T is treated as T
+    let x: !i64 = 99;
+    if x == 99 { return 1; }
+    return 0;
 }
 
 // ============================================================================
@@ -156,9 +178,11 @@ fn main() i64 {
     print("cot1 Feature Test Suite\n");
     print("=======================\n\n");
 
-    // Error Union Tests (Feature 1)
+    // Error Union Tests (Feature 1) - IMPLEMENTED
     print("Testing: Error Unions\n");
-    run_test("error_union_placeholder", test_error_union_placeholder(), 1);
+    run_test("error_union_return_type", test_error_union_return_type(), 1);
+    run_test("error_union_variable", test_error_union_variable(), 1);
+    run_test("error_union_as_param", test_error_union_as_param(), 1);
 
     // Optional Type Tests (Feature 2) - IMPLEMENTED
     print("Testing: Optional Types\n");

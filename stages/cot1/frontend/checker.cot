@@ -658,6 +658,13 @@ fn Checker_resolveTypeNode(chk: *Checker, type_node_idx: i64) i64 {
         return Checker_resolveTypeNode(chk, inner_idx);
     }
 
+    // TypeExprErrorUnion: !T (for now, treat as inner type)
+    // Reference: Zig's checker.zig:1677-1679
+    if node.kind == NodeKind.TypeExprErrorUnion {
+        let payload_idx: i64 = node.field0;
+        return Checker_resolveTypeNode(chk, payload_idx);
+    }
+
     // TypeExprArray: [N]T
     if node.kind == NodeKind.TypeExprArray {
         let size_node_idx: i64 = node.field0;

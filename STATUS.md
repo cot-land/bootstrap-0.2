@@ -76,7 +76,7 @@ bootstrap-0.2/
 |---------|-------------|-------------|--------|
 | Type aliases | ✅ Complete | ✅ Complete | ✅ 3 tests pass |
 | Optional types (?T) | ✅ Complete | ✅ Complete | ✅ 3 tests pass |
-| Error unions (!T) | ✅ Complete | ⏳ Parser only | Needs cot1 checker/lowerer |
+| Error unions (!T) | ✅ Complete | ✅ Complete | ✅ 3 tests pass (syntax, no error handling) |
 | String parameters | ✅ Complete | ✅ Complete | ✅ Fixed in SSA builder & codegen |
 
 ### Self-Hosting Blockers

@@ -175,6 +175,15 @@ fn resolve_type_expr(l: *Lowerer, type_expr_idx: i64) i64 {
         return inner_type;
     }
 
+    // TypeExprErrorUnion: !T
+    // Reference: Zig's lower.zig:2425-2427
+    if node.kind == NodeKind.TypeExprErrorUnion {
+        let payload_idx: i64 = node.field0;
+        let payload_type: i64 = resolve_type_expr(l, payload_idx);
+        // TODO: TypeRegistry_makeErrorUnion
+        return payload_type;
+    }
+
     // TypeExprFunc: fn(params) -> ret
     // The type was pre-resolved during parsing and stored in field1
     if node.kind == NodeKind.TypeExprFunc {
@@ -2198,6 +2207,16 @@ fn Lowerer_printNodeKind(kind: NodeKind) {
     else if kind == NodeKind.ArrayLit { print("ArrayLit"); }
     else if kind == NodeKind.BuiltinCall { print("BuiltinCall"); }
     else if kind == NodeKind.SwitchExpr { print("SwitchExpr"); }
+    else if kind == NodeKind.TypeExprNamed { print("TypeExprNamed"); }
+    else if kind == NodeKind.TypeExprPointer { print("TypeExprPointer"); }
+    else if kind == NodeKind.TypeExprArray { print("TypeExprArray"); }
+    else if kind == NodeKind.TypeExprSlice { print("TypeExprSlice"); }
+    else if kind == NodeKind.TypeExprOptional { print("TypeExprOptional"); }
+    else if kind == NodeKind.TypeExprErrorUnion { print("TypeExprErrorUnion"); }
+    else if kind == NodeKind.TypeExprFunc { print("TypeExprFunc"); }
+    else if kind == NodeKind.TypeAliasDecl { print("TypeAliasDecl"); }
+    else if kind == NodeKind.VarDecl { print("VarDecl"); }
+    else if kind == NodeKind.ParamDecl { print("ParamDecl"); }
     else { print("UNKNOWN"); }
 }
 

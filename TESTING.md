@@ -38,8 +38,8 @@ The Cot compiler uses a staged bootstrap architecture where each stage must pass
 | Compiler | Bootstrap Tests | Feature Tests | Total |
 |----------|-----------------|---------------|-------|
 | Zig bootstrap | 166 | - | 166 |
-| cot1-stage1 | 166 | 9 | **175** |
-| cot2-stage1 | 166 | 9 + N | 175+ |
+| cot1-stage1 | 166 | 11 | **177** |
+| cot2-stage1 | 166 | 11 + N | 177+ |
 
 ## Running Tests
 
@@ -87,7 +87,7 @@ cp /tmp/f.o /tmp/ft.o && zig cc /tmp/ft.o runtime/cot_runtime.o -o /tmp/ft && /t
 |---------|-------|--------|
 | Type aliases (`type Name = T`) | 3 | ✅ Pass |
 | Optional types (`?*T`) | 3 | ✅ Pass |
-| Error unions (placeholder) | 1 | ✅ Pass (placeholder) |
+| Error unions (`!T`) | 3 | ✅ Pass (syntax only, no real error handling) |
 | Labeled break (placeholder) | 1 | ✅ Pass (placeholder) |
 | Struct shorthand (placeholder) | 1 | ✅ Pass (placeholder) |
 
