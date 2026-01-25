@@ -50,6 +50,12 @@ import "lib/debug_init.cot"
 // Import processing - path tracking, resolution, cycle detection
 import "lib/import.cot"
 
+// Source position tracking - Pos, Span, Source, Position
+import "lib/source.cot"
+
+// Error reporter - accumulates multiple errors without immediate panic
+import "lib/reporter.cot"
+
 // ============================================================================
 // Compiler Module Imports
 // ============================================================================

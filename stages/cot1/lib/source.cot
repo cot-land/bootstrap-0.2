@@ -1,0 +1,302 @@
+// =============================================================================
+// Source Position Tracking
+// =============================================================================
+//
+// Reference: src/frontend/source.zig
+// Reference: Go's go/token/position.go
+//
+// Provides:
+// - Pos: compact byte-offset position
+// - Span: position ranges for AST nodes and errors
+// - Source: file content with lazy line offset computation
+// - Position computation (line/column from offset)
+//
+// =============================================================================
+
+import "stdlib.cot"
+
+extern fn malloc_u8(count: i64) *u8;
+extern fn malloc_i64(count: i64) *i64;
+
+// =============================================================================
+// Constants
+// =============================================================================
+
+const SOURCE_MAX_LINES: i64 = 100000;  // Max lines in a source file
+
+// =============================================================================
+// Pos - Compact source position (byte offset)
+// =============================================================================
+
+// A position is just a byte offset from start of file
+// Line/column computed on demand from Source
+
+fn Pos_advance(offset: i64, n: i64) i64 {
+    return offset + n;
+}
+
+fn Pos_isValid(offset: i64) bool {
+    return offset >= 0;
+}
+
+// =============================================================================
+// Span - Range in source code
+// =============================================================================
+
+struct Span {
+    start: i64,  // Start byte offset
+    end: i64,    // End byte offset (exclusive)
+}
+
+fn Span_init(start: i64, end: i64) Span {
+    var s: Span = undefined;
+    s.start = start;
+    s.end = end;
+    return s;
+}
+
+fn Span_fromPos(pos: i64) Span {
+    var s: Span = undefined;
+    s.start = pos;
+    s.end = pos;
+    return s;
+}
+
+fn Span_merge(a: *Span, b: *Span) Span {
+    var result: Span = undefined;
+    if a.start < b.start {
+        result.start = a.start;
+    } else {
+        result.start = b.start;
+    }
+    if a.end > b.end {
+        result.end = a.end;
+    } else {
+        result.end = b.end;
+    }
+    return result;
+}
+
+fn Span_len(s: *Span) i64 {
+    return s.end - s.start;
+}
+
+// =============================================================================
+// Position - Human-readable (line/column)
+// =============================================================================
+
+struct Position {
+    filename: *u8,
+    filename_len: i64,
+    offset: i64,    // 0-based byte offset
+    line: i64,      // 1-based line number
+    column: i64,    // 1-based column number
+}
+
+fn Position_init() Position {
+    var p: Position = undefined;
+    p.filename = null;
+    p.filename_len = 0;
+    p.offset = 0;
+    p.line = 1;
+    p.column = 1;
+    return p;
+}
+
+// Print position as "file:line:col" to stderr
+fn Position_print(p: *Position) {
+    if p.filename != null and p.filename_len > 0 {
+        // Print filename character by character
+        var i: i64 = 0;
+        while i < p.filename_len {
+            var ch: [1]u8 = undefined;
+            ch[0] = (p.filename + i).*;
+            eprint(@string(&ch[0], 1));
+            i = i + 1;
+        }
+        eprint(":");
+    }
+    eprint(p.line);
+    eprint(":");
+    eprint(p.column);
+}
+
+// =============================================================================
+// Source - File content with line tracking
+// =============================================================================
+
+struct Source {
+    filename: *u8,
+    filename_len: i64,
+    content: *u8,
+    content_len: i64,
+    line_offsets: *i64,     // Byte offsets of line starts
+    line_count: i64,        // Number of lines
+    offsets_computed: bool, // Lazy computation flag
+}
+
+fn Source_init(src: *Source, filename: *u8, filename_len: i64, content: *u8, content_len: i64) {
+    src.filename = filename;
+    src.filename_len = filename_len;
+    src.content = content;
+    src.content_len = content_len;
+    src.line_offsets = null;
+    src.line_count = 0;
+    src.offsets_computed = false;
+}
+
+// Allocate storage for line offsets
+fn Source_allocateOffsets(src: *Source) {
+    if src.line_offsets != null {
+        return;
+    }
+    src.line_offsets = malloc_i64(SOURCE_MAX_LINES);
+}
+
+// Compute line offsets (lazy)
+fn Source_ensureLineOffsets(src: *Source) {
+    if src.offsets_computed {
+        return;
+    }
+
+    Source_allocateOffsets(src);
+
+    // Line 1 starts at offset 0
+    src.line_offsets.* = 0;
+    src.line_count = 1;
+
+    // Scan for newlines
+    var i: i64 = 0;
+    while i < src.content_len {
+        let c: u8 = (src.content + i).*;
+        if c == 10 {  // '\n'
+            if src.line_count < SOURCE_MAX_LINES {
+                (src.line_offsets + src.line_count).* = i + 1;
+                src.line_count = src.line_count + 1;
+            }
+        }
+        i = i + 1;
+    }
+
+    src.offsets_computed = true;
+}
+
+// Get byte at position, or 0 if past end
+fn Source_at(src: *Source, offset: i64) u8 {
+    if offset < 0 or offset >= src.content_len {
+        return 0;
+    }
+    return (src.content + offset).*;
+}
+
+// Get slice of content (returns pointer, caller must track length)
+fn Source_slice(src: *Source, start: i64, end: i64) *u8 {
+    var s: i64 = start;
+    var e: i64 = end;
+    if s < 0 { s = 0; }
+    if e > src.content_len { e = src.content_len; }
+    if s > e { s = e; }
+    return src.content + s;
+}
+
+fn Source_sliceLen(src: *Source, start: i64, end: i64) i64 {
+    var s: i64 = start;
+    var e: i64 = end;
+    if s < 0 { s = 0; }
+    if e > src.content_len { e = src.content_len; }
+    if s > e { s = e; }
+    return e - s;
+}
+
+// Convert byte offset to line/column Position
+fn Source_position(src: *Source, offset: i64) Position {
+    Source_ensureLineOffsets(src);
+
+    var result: Position = undefined;
+    result.filename = src.filename;
+    result.filename_len = src.filename_len;
+    result.offset = offset;
+
+    // Binary search for line containing offset
+    var line: i64 = 0;
+    var lo: i64 = 0;
+    var hi: i64 = src.line_count;
+
+    while lo < hi {
+        let mid: i64 = lo + (hi - lo) / 2;
+        let line_start: i64 = (src.line_offsets + mid).*;
+        if line_start <= offset {
+            line = mid;
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+    }
+
+    let line_start: i64 = (src.line_offsets + line).*;
+    let column: i64 = offset - line_start;
+
+    result.line = line + 1;      // 1-based
+    result.column = column + 1;  // 1-based
+
+    return result;
+}
+
+// Get the line containing a position (for error context)
+// Returns pointer to start of line, sets out_len to length
+fn Source_getLine(src: *Source, offset: i64, out_len: *i64) *u8 {
+    Source_ensureLineOffsets(src);
+
+    let pos: Position = Source_position(src, offset);
+    let line_idx: i64 = pos.line - 1;
+
+    let start: i64 = (src.line_offsets + line_idx).*;
+
+    // Find end of line (next newline or end of content)
+    var end: i64 = start;
+    while end < src.content_len {
+        let c: u8 = (src.content + end).*;
+        if c == 10 {  // '\n'
+            break;
+        }
+        end = end + 1;
+    }
+
+    out_len.* = end - start;
+    return src.content + start;
+}
+
+// Get total line count
+fn Source_lineCount(src: *Source) i64 {
+    Source_ensureLineOffsets(src);
+    return src.line_count;
+}
+
+// =============================================================================
+// Utility: Print source line with caret indicator
+// =============================================================================
+
+fn Source_printErrorContext(src: *Source, offset: i64) {
+    var line_len: i64 = 0;
+    let line: *u8 = Source_getLine(src, offset, &line_len);
+    let pos: Position = Source_position(src, offset);
+
+    // Print the line
+    eprint("    ");
+    eprint(@string(line, line_len));
+    eprintln("");
+
+    // Print caret indicator
+    eprint("    ");
+    var i: i64 = 0;
+    while i < pos.column - 1 {
+        let c: u8 = (line + i).*;
+        if c == 9 {  // '\t'
+            eprint("\t");
+        } else {
+            eprint(" ");
+        }
+        i = i + 1;
+    }
+    eprintln("^");
+}

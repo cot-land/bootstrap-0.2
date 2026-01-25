@@ -1087,8 +1087,8 @@ pub const Parser = struct {
                         .args = .{ ptr_arg, len_arg },
                         .span = Span.init(start, self.pos()),
                     } });
-                } else if (std.mem.eql(u8, builtin_name, "intCast")) {
-                    // @intCast(Type, value) - type argument and expression argument
+                } else if (std.mem.eql(u8, builtin_name, "intCast") or std.mem.eql(u8, builtin_name, "ptrCast")) {
+                    // @intCast(Type, value) or @ptrCast(Type, value) - type argument and expression argument
                     const type_arg = try self.parseType() orelse {
                         self.err.errorWithCode(self.pos(), .e202, "expected type argument");
                         return null;

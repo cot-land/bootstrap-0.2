@@ -866,7 +866,9 @@ pub const Checker = struct {
                     if (std.mem.eql(u8, name, "len")) {
                         return self.checkBuiltinLen(c);
                     }
-                    if (std.mem.eql(u8, name, "print") or std.mem.eql(u8, name, "println")) {
+                    if (std.mem.eql(u8, name, "print") or std.mem.eql(u8, name, "println") or
+                        std.mem.eql(u8, name, "eprint") or std.mem.eql(u8, name, "eprintln"))
+                    {
                         return self.checkBuiltinPrint(c);
                     }
                     if (std.mem.eql(u8, name, "__string_make")) {
@@ -1059,6 +1061,25 @@ pub const Checker = struct {
                 self.err.errorWithCode(bc.span.start, .e300, "@intCast source must be integer");
                 return invalid_type;
             }
+
+            return target_type;
+        } else if (std.mem.eql(u8, bc.name, "ptrCast")) {
+            // @ptrCast(Type, value) - reinterpret pointer type
+            const target_type = try self.resolveTypeExpr(bc.type_arg);
+            if (target_type == invalid_type) {
+                self.err.errorWithCode(bc.span.start, .e300, "@ptrCast requires a valid type");
+                return invalid_type;
+            }
+
+            // Target must be a pointer type
+            const target_info = self.types.get(target_type);
+            if (target_info != .pointer) {
+                self.err.errorWithCode(bc.span.start, .e300, "@ptrCast target type must be a pointer");
+                return invalid_type;
+            }
+
+            // Check the source expression (but allow any pointer type)
+            _ = try self.checkExpr(bc.args[0]);
 
             return target_type;
         } else if (std.mem.eql(u8, bc.name, "ptrToInt")) {

@@ -1937,7 +1937,10 @@ pub const Lowerer = struct {
             return try self.lowerBuiltinStringMake(call);
         }
         if (std.mem.eql(u8, func_name, "print") or std.mem.eql(u8, func_name, "println")) {
-            return try self.lowerBuiltinPrint(call, std.mem.eql(u8, func_name, "println"));
+            return try self.lowerBuiltinPrint(call, std.mem.eql(u8, func_name, "println"), 1); // stdout
+        }
+        if (std.mem.eql(u8, func_name, "eprint") or std.mem.eql(u8, func_name, "eprintln")) {
+            return try self.lowerBuiltinPrint(call, std.mem.eql(u8, func_name, "eprintln"), 2); // stderr
         }
 
         // Lower arguments
@@ -2187,10 +2190,11 @@ pub const Lowerer = struct {
         ));
     }
 
-    /// Lower builtin print(x) and println(x) functions.
+    /// Lower builtin print(x), println(x), eprint(x), eprintln(x) functions.
     /// Handles both strings and integers automatically.
     /// Following Go's pattern of lowering print to runtime calls.
-    fn lowerBuiltinPrint(self: *Lowerer, call: ast.Call, is_println: bool) Error!ir.NodeIndex {
+    /// fd: 1 for stdout, 2 for stderr
+    fn lowerBuiltinPrint(self: *Lowerer, call: ast.Call, is_println: bool, fd: i32) Error!ir.NodeIndex {
         const fb = self.current_func orelse return ir.null_node;
 
         if (call.args.len != 1) return ir.null_node;
@@ -2211,21 +2215,22 @@ pub const Lowerer = struct {
             arg_type == TypeRegistry.U64;
 
         if (is_integer) {
-            // Integer: call runtime __print_int(n)
+            // Integer: call runtime __print_int(n) or __eprint_int(n)
             const int_val = try self.lowerExprNode(call.args[0]);
             var print_args = [_]ir.NodeIndex{int_val};
-            _ = try fb.emitCall("__print_int", &print_args, false, TypeRegistry.VOID, call.span);
+            const runtime_fn = if (fd == 2) "__eprint_int" else "__print_int";
+            _ = try fb.emitCall(runtime_fn, &print_args, false, TypeRegistry.VOID, call.span);
         } else {
             // String: extract ptr and len, call write()
             const str_val = try self.lowerExprNode(call.args[0]);
             const ptr_val = try fb.emitSlicePtr(str_val, ptr_type, call.span);
             const len_val = try fb.emitSliceLen(str_val, call.span);
-            const fd_val = try fb.emitConstInt(1, TypeRegistry.I32, call.span);
+            const fd_val = try fb.emitConstInt(fd, TypeRegistry.I32, call.span);
             var write_args = [_]ir.NodeIndex{ fd_val, ptr_val, len_val };
             _ = try fb.emitCall("write", &write_args, false, TypeRegistry.I64, call.span);
         }
 
-        // For println, also write a newline
+        // For println/eprintln, also write a newline
         if (is_println) {
             const nl_idx = try fb.addStringLiteral("\n");
             const nl_str = try fb.emit(ir.Node.init(
@@ -2235,12 +2240,12 @@ pub const Lowerer = struct {
             ));
             const nl_ptr = try fb.emitSlicePtr(nl_str, ptr_type, call.span);
             const nl_len = try fb.emitConstInt(1, TypeRegistry.I64, call.span);
-            const fd_val = try fb.emitConstInt(1, TypeRegistry.I32, call.span);
+            const fd_val = try fb.emitConstInt(fd, TypeRegistry.I32, call.span);
             var nl_args = [_]ir.NodeIndex{ fd_val, nl_ptr, nl_len };
             _ = try fb.emitCall("write", &nl_args, false, TypeRegistry.I64, call.span);
         }
 
-        // print/println returns void
+        // print/println/eprint/eprintln returns void
         return ir.null_node;
     }
 
@@ -2439,6 +2444,14 @@ pub const Lowerer = struct {
             const operand = try self.lowerExprNode(bc.args[0]);
             const from_type = self.inferExprType(bc.args[0]);
             debug.log(.lower, "@intCast({d}, expr) from_type={d} to_type={d}", .{ target_type, from_type, target_type });
+            return try fb.emitConvert(operand, from_type, target_type, bc.span);
+        } else if (std.mem.eql(u8, bc.name, "ptrCast")) {
+            // @ptrCast(Type, value) - pointer type conversion
+            const target_type = self.resolveTypeNode(bc.type_arg);
+            const operand = try self.lowerExprNode(bc.args[0]);
+            const from_type = self.inferExprType(bc.args[0]);
+            debug.log(.lower, "@ptrCast({d}, expr) from_type={d} to_type={d}", .{ target_type, from_type, target_type });
+            // For pointers, we just reinterpret the bits - emit a bitcast/convert
             return try fb.emitConvert(operand, from_type, target_type, bc.span);
         } else if (std.mem.eql(u8, bc.name, "ptrToInt")) {
             // @ptrToInt(ptr) - convert pointer to i64

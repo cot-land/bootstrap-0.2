@@ -883,18 +883,28 @@ export fn __cot_str_concat(ptr1: [*]const u8, len1: i64, ptr2: [*]const u8, len2
 
 /// Print an integer to stdout - called by print() and println() for integer arguments
 export fn __print_int(n: i64) void {
+    printIntToFd(n, std.posix.STDOUT_FILENO);
+}
+
+/// Print an integer to stderr - called by eprint() and eprintln() for integer arguments
+export fn __eprint_int(n: i64) void {
+    printIntToFd(n, std.posix.STDERR_FILENO);
+}
+
+/// Common implementation for printing integer to file descriptor
+fn printIntToFd(n: i64, fd: std.posix.fd_t) void {
     var buf: [20]u8 = undefined;
     var i: usize = 19;
     var val: i64 = n;
 
     if (val == 0) {
         buf[i] = '0';
-        _ = std.posix.write(std.posix.STDOUT_FILENO, buf[i..20]) catch {};
+        _ = std.posix.write(fd, buf[i..20]) catch {};
         return;
     }
 
     if (val < 0) {
-        _ = std.posix.write(std.posix.STDOUT_FILENO, "-") catch {};
+        _ = std.posix.write(fd, "-") catch {};
         val = -val;
     }
 
@@ -904,7 +914,7 @@ export fn __print_int(n: i64) void {
         val = @divTrunc(val, 10);
     }
 
-    _ = std.posix.write(std.posix.STDOUT_FILENO, buf[i + 1 .. 20]) catch {};
+    _ = std.posix.write(fd, buf[i + 1 .. 20]) catch {};
 }
 
 /// Memory allocation wrappers for Cot

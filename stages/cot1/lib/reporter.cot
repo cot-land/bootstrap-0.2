@@ -1,0 +1,347 @@
+// =============================================================================
+// Error Reporter - Accumulate Multiple Errors
+// =============================================================================
+//
+// Reference: src/frontend/errors.zig
+// Reference: Go's cmd/compile/internal/base error handling
+//
+// Unlike panic() which exits immediately, ErrorReporter:
+// - Accumulates multiple errors
+// - Continues compilation to find more errors
+// - Reports all errors at the end
+// - Follows Go's "report up to 10 errors then stop" pattern
+//
+// =============================================================================
+
+import "stdlib.cot"
+import "source.cot"
+
+extern fn malloc_u8(count: i64) *u8;
+extern fn malloc_i64(count: i64) *i64;
+extern fn exit(code: i32);
+
+// =============================================================================
+// Constants
+// =============================================================================
+
+const MAX_ERRORS: i64 = 10;           // Stop after this many errors (Go pattern)
+const MAX_ERROR_MSG_LEN: i64 = 256;   // Max length of error message
+const MAX_STORED_ERRORS: i64 = 64;    // Max errors to store
+
+// =============================================================================
+// Error Codes (categorized like Go/Zig)
+// =============================================================================
+
+// Error codes:
+// 1xx: Scanner errors
+// 2xx: Parser errors
+// 3xx: Type errors
+// 4xx: Semantic errors
+
+const ERR_UNTERMINATED_STRING: i64 = 100;
+const ERR_UNTERMINATED_CHAR: i64 = 101;
+const ERR_INVALID_ESCAPE: i64 = 102;
+const ERR_INVALID_NUMBER: i64 = 103;
+const ERR_UNEXPECTED_CHAR: i64 = 104;
+
+const ERR_UNEXPECTED_TOKEN: i64 = 200;
+const ERR_EXPECTED_EXPR: i64 = 201;
+const ERR_EXPECTED_TYPE: i64 = 202;
+const ERR_EXPECTED_IDENT: i64 = 203;
+const ERR_EXPECTED_LBRACE: i64 = 204;
+const ERR_EXPECTED_RBRACE: i64 = 205;
+const ERR_EXPECTED_LPAREN: i64 = 206;
+const ERR_EXPECTED_RPAREN: i64 = 207;
+const ERR_EXPECTED_SEMICOLON: i64 = 208;
+
+const ERR_TYPE_MISMATCH: i64 = 300;
+const ERR_UNDEFINED_IDENT: i64 = 301;
+const ERR_REDEFINED_IDENT: i64 = 302;
+const ERR_INVALID_OP: i64 = 303;
+const ERR_WRONG_ARG_COUNT: i64 = 304;
+const ERR_NOT_CALLABLE: i64 = 305;
+const ERR_FIELD_NOT_FOUND: i64 = 306;
+
+const ERR_BREAK_OUTSIDE_LOOP: i64 = 400;
+const ERR_CONTINUE_OUTSIDE_LOOP: i64 = 401;
+const ERR_RETURN_TYPE_MISMATCH: i64 = 402;
+const ERR_MISSING_RETURN: i64 = 403;
+
+// =============================================================================
+// Error struct
+// =============================================================================
+
+struct Error {
+    offset: i64,      // Source position (byte offset)
+    code: i64,        // Error code (0 = no code)
+    msg: *u8,         // Error message
+    msg_len: i64,     // Message length
+}
+
+// =============================================================================
+// ErrorReporter struct
+// =============================================================================
+
+struct ErrorReporter {
+    src: *Source,          // Source for position lookup
+    errors: *u8,           // Array of errors (as raw bytes)
+    error_count: i64,      // Number of errors
+    error_cap: i64,        // Capacity
+    suppressed: bool,      // True if we stopped reporting
+    msg_buffer: *u8,       // Buffer for error messages
+    msg_buffer_pos: i64,   // Current position in buffer
+    msg_buffer_cap: i64,   // Capacity
+}
+
+// Module-level storage (self-allocation pattern)
+var g_reporter_errors: *u8 = null;
+var g_reporter_msg_buffer: *u8 = null;
+var g_reporter_initialized: bool = false;
+
+fn ErrorReporter_allocateStorage() {
+    if g_reporter_initialized {
+        return;
+    }
+    g_reporter_errors = malloc_u8(MAX_STORED_ERRORS * 32);  // sizeof(Error) ~= 32
+    g_reporter_msg_buffer = malloc_u8(MAX_STORED_ERRORS * MAX_ERROR_MSG_LEN);
+    g_reporter_initialized = true;
+}
+
+// Initialize reporter
+fn ErrorReporter_init(reporter: *ErrorReporter, src: *Source) {
+    ErrorReporter_allocateStorage();
+
+    reporter.src = src;
+    reporter.errors = g_reporter_errors;
+    reporter.error_count = 0;
+    reporter.error_cap = MAX_STORED_ERRORS;
+    reporter.suppressed = false;
+    reporter.msg_buffer = g_reporter_msg_buffer;
+    reporter.msg_buffer_pos = 0;
+    reporter.msg_buffer_cap = MAX_STORED_ERRORS * MAX_ERROR_MSG_LEN;
+}
+
+// Copy message to buffer and return pointer
+fn ErrorReporter_copyMsg(reporter: *ErrorReporter, msg: *u8, msg_len: i64) *u8 {
+    if reporter.msg_buffer_pos + msg_len >= reporter.msg_buffer_cap {
+        // Buffer full, just return original (won't be stored properly but avoids crash)
+        return msg;
+    }
+
+    let dest: *u8 = reporter.msg_buffer + reporter.msg_buffer_pos;
+    var i: i64 = 0;
+    while i < msg_len {
+        (dest + i).* = (msg + i).*;
+        i = i + 1;
+    }
+    reporter.msg_buffer_pos = reporter.msg_buffer_pos + msg_len;
+
+    return dest;
+}
+
+// Report an error at position
+fn ErrorReporter_errorAt(reporter: *ErrorReporter, offset: i64, msg: *u8, msg_len: i64) {
+    ErrorReporter_errorWithCode(reporter, offset, 0, msg, msg_len);
+}
+
+// Report an error with code
+fn ErrorReporter_errorWithCode(reporter: *ErrorReporter, offset: i64, code: i64, msg: *u8, msg_len: i64) {
+    // Stop reporting after MAX_ERRORS (Go pattern)
+    if reporter.error_count >= MAX_ERRORS {
+        if not reporter.suppressed {
+            reporter.suppressed = true;
+            eprint("error: too many errors (");
+            eprint(MAX_ERRORS);
+            eprintln("), stopping");
+        }
+        return;
+    }
+
+    // Store error in buffer (manual struct access via offsets)
+    if reporter.error_count < reporter.error_cap {
+        let base: *u8 = reporter.errors + reporter.error_count * 32;
+        // Error struct: offset(8), code(8), msg(8), msg_len(8)
+        let offset_ptr: *i64 = @ptrCast(*i64, base);
+        let code_ptr: *i64 = @ptrCast(*i64, base + 8);
+        let msg_ptr: **u8 = @ptrCast(**u8, base + 16);
+        let len_ptr: *i64 = @ptrCast(*i64, base + 24);
+
+        offset_ptr.* = offset;
+        code_ptr.* = code;
+        msg_ptr.* = ErrorReporter_copyMsg(reporter, msg, msg_len);
+        len_ptr.* = msg_len;
+    }
+
+    reporter.error_count = reporter.error_count + 1;
+
+    // Print error immediately (like Zig/Go do)
+    ErrorReporter_printError(reporter, offset, code, msg, msg_len);
+}
+
+// Print a single error
+fn ErrorReporter_printError(reporter: *ErrorReporter, offset: i64, code: i64, msg: *u8, msg_len: i64) {
+    let pos: Position = Source_position(reporter.src, offset);
+
+    // Format: filename:line:column: error[Exxx]: message
+    Position_print(&pos);
+    eprint(": error");
+
+    if code > 0 {
+        eprint("[E");
+        eprint(code);
+        eprint("]");
+    }
+
+    eprint(": ");
+    eprint(@string(msg, msg_len));
+    eprintln("");
+
+    // Show source context
+    Source_printErrorContext(reporter.src, offset);
+}
+
+// Check if any errors were reported
+fn ErrorReporter_hasErrors(reporter: *ErrorReporter) bool {
+    return reporter.error_count > 0;
+}
+
+// Get error count
+fn ErrorReporter_errorCount(reporter: *ErrorReporter) i64 {
+    return reporter.error_count;
+}
+
+// =============================================================================
+// Convenience functions for common error patterns
+// =============================================================================
+
+fn ErrorReporter_unexpectedToken(reporter: *ErrorReporter, offset: i64, expected: *u8, expected_len: i64) {
+    // Build message: "expected X"
+    var buf: [128]u8 = undefined;
+    var pos: i64 = 0;
+
+    // "expected "
+    let prefix: string = "expected ";
+    var i: i64 = 0;
+    while i < prefix.len and pos < 127 {
+        buf[pos] = (prefix.ptr + i).*;
+        pos = pos + 1;
+        i = i + 1;
+    }
+
+    // Copy expected
+    i = 0;
+    while i < expected_len and pos < 127 {
+        buf[pos] = (expected + i).*;
+        pos = pos + 1;
+        i = i + 1;
+    }
+
+    ErrorReporter_errorWithCode(reporter, offset, ERR_UNEXPECTED_TOKEN, &buf[0], pos);
+}
+
+fn ErrorReporter_undefinedIdent(reporter: *ErrorReporter, offset: i64, name: *u8, name_len: i64) {
+    // Build message: "undefined identifier 'X'"
+    var buf: [128]u8 = undefined;
+    var pos: i64 = 0;
+
+    let prefix: string = "undefined identifier '";
+    var i: i64 = 0;
+    while i < prefix.len and pos < 127 {
+        buf[pos] = (prefix.ptr + i).*;
+        pos = pos + 1;
+        i = i + 1;
+    }
+
+    i = 0;
+    while i < name_len and pos < 126 {
+        buf[pos] = (name + i).*;
+        pos = pos + 1;
+        i = i + 1;
+    }
+
+    buf[pos] = 39;  // '
+    pos = pos + 1;
+
+    ErrorReporter_errorWithCode(reporter, offset, ERR_UNDEFINED_IDENT, &buf[0], pos);
+}
+
+fn ErrorReporter_typeMismatch(reporter: *ErrorReporter, offset: i64, expected: *u8, expected_len: i64, actual: *u8, actual_len: i64) {
+    // Build message: "type mismatch: expected X, got Y"
+    var buf: [196]u8 = undefined;
+    var pos: i64 = 0;
+
+    let prefix: string = "type mismatch: expected ";
+    var i: i64 = 0;
+    while i < prefix.len and pos < 195 {
+        buf[pos] = (prefix.ptr + i).*;
+        pos = pos + 1;
+        i = i + 1;
+    }
+
+    i = 0;
+    while i < expected_len and pos < 195 {
+        buf[pos] = (expected + i).*;
+        pos = pos + 1;
+        i = i + 1;
+    }
+
+    let mid: string = ", got ";
+    i = 0;
+    while i < mid.len and pos < 195 {
+        buf[pos] = (mid.ptr + i).*;
+        pos = pos + 1;
+        i = i + 1;
+    }
+
+    i = 0;
+    while i < actual_len and pos < 195 {
+        buf[pos] = (actual + i).*;
+        pos = pos + 1;
+        i = i + 1;
+    }
+
+    ErrorReporter_errorWithCode(reporter, offset, ERR_TYPE_MISMATCH, &buf[0], pos);
+}
+
+fn ErrorReporter_redefinedIdent(reporter: *ErrorReporter, offset: i64, name: *u8, name_len: i64) {
+    var buf: [128]u8 = undefined;
+    var pos: i64 = 0;
+
+    let prefix: string = "redefinition of '";
+    var i: i64 = 0;
+    while i < prefix.len and pos < 127 {
+        buf[pos] = (prefix.ptr + i).*;
+        pos = pos + 1;
+        i = i + 1;
+    }
+
+    i = 0;
+    while i < name_len and pos < 126 {
+        buf[pos] = (name + i).*;
+        pos = pos + 1;
+        i = i + 1;
+    }
+
+    buf[pos] = 39;  // '
+    pos = pos + 1;
+
+    ErrorReporter_errorWithCode(reporter, offset, ERR_REDEFINED_IDENT, &buf[0], pos);
+}
+
+// =============================================================================
+// Summary printing
+// =============================================================================
+
+fn ErrorReporter_printSummary(reporter: *ErrorReporter) {
+    if reporter.error_count == 0 {
+        return;
+    }
+
+    eprintln("");
+    eprint(reporter.error_count);
+    if reporter.error_count == 1 {
+        eprintln(" error generated.");
+    } else {
+        eprintln(" errors generated.");
+    }
+}
