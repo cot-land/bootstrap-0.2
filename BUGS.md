@@ -47,6 +47,92 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
+### BUG-063: Self-hosted cot1-stage2 crashes on startup (SIGBUS)
+
+**Status:** OPEN
+**Priority:** HIGH (blocks cot1 self-hosting chain)
+**Discovered:** 2026-01-25
+
+**Symptoms:**
+- cot1-stage1 (built by Zig) successfully compiles cot1 source to produce cot1-stage2
+- cot1-stage2 links successfully with zig cc
+- cot1-stage2 crashes immediately on startup with SIGBUS
+
+**Error Output:**
+```
+Cot0 Self-Hosting Compiler v0.2
+ ================================
+
+========================================================================
+                           CRASH DETECTED
+========================================================================
+
+Signal:  SIGBUS (10)
+Reason:  Bus error (misaligned access or bad address)
+```
+
+**Related Warnings During Compilation:**
+During cot1-stage1's compilation of cot1 source, the lowerer reports warnings that may be related:
+- `PTR_ARITH: left_type=172 elem_size=64` (multiple occurrences)
+- Various pointer arithmetic type warnings
+
+**Possible Causes:**
+1. Pointer arithmetic codegen producing misaligned addresses
+2. Incorrect struct field offset calculations
+3. Stack frame layout issues in generated code
+4. Global variable address calculations
+
+**Investigation Steps:**
+1. Run cot1-stage2 under lldb to get crash location
+2. Disassemble the crashing instruction
+3. Compare generated code with cot1-stage1's code for same function
+4. Check pointer arithmetic lowering in `stages/cot1/frontend/lower.cot`
+
+**Reproduction:**
+```bash
+# Build cot1-stage1
+./zig-out/bin/cot stages/cot1/main.cot -o /tmp/cot1-stage1
+
+# Build cot1-stage2
+/tmp/cot1-stage1 stages/cot1/main.cot -o /tmp/cot1-stage2
+
+# Link cot1-stage2
+cp /tmp/cot1-stage2 /tmp/cot1-stage2.o
+zig cc /tmp/cot1-stage2.o runtime/cot_runtime.o -o /tmp/cot1-stage2-linked
+
+# Run (crashes)
+/tmp/cot1-stage2-linked
+```
+
+---
+
+### BUG-062: SSA builder reports "Invalid arg ir_rel=-1" for calls with many arguments
+
+**Status:** FIXED (2026-01-25)
+**Priority:** HIGH (was blocking cot1 self-hosting)
+**Discovered:** 2026-01-25
+
+**Symptoms:**
+- When cot1-stage1 compiles cot1 source code, SSA builder reports errors for calls with 16+ arguments
+- Error message: "Invalid arg ir_rel=-1 for call arg 16" (or higher arg numbers)
+- Affects functions like `MachOWriter_init` with 22 arguments
+
+**Root Cause:**
+The cot1 parser (`stages/cot1/frontend/parser.cot`) only stored up to 16 call arguments in local variables (arg0-arg15). Arguments beyond 16 were parsed but NOT stored or added to the children array, causing the lowerer to read garbage or incorrect indices.
+
+**Fix:**
+Changed the parser's call argument handling to use a dynamic `I64List` instead of 16 fixed local variables. Now unlimited call arguments are properly stored and added to the children array.
+
+**Key Code Changed:**
+- `stages/cot1/frontend/parser.cot:862-899` - Replaced 16 fixed arg vars with I64List
+
+**Verification:**
+- cot1-stage1 now compiles cot1 source successfully (produces 459KB Mach-O object)
+- All 166 bootstrap tests pass
+- No more "Invalid arg ir_rel=-1" errors for 16+ arg calls
+
+---
+
 ### BUG-061: DWARF debug_line relocation not 4-byte aligned
 
 **Status:** OPEN

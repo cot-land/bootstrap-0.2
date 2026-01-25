@@ -1,0 +1,92 @@
+// Test: Labeled break/continue
+// Feature: break :label and continue :label for nested loops
+//
+// cot1 feature: Allows breaking out of outer loops in nested loop structures.
+// Syntax:
+//   outer: while condition { break :outer; }
+
+// Test 1: Basic labeled break exits outer loop
+fn test_labeled_break_basic() i64 {
+    var result: i64 = 0;
+    var outer_count: i64 = 0;
+
+    outer: while outer_count < 10 {
+        var inner: i64 = 0;
+        while inner < 5 {
+            if inner == 2 {
+                result = 42;
+                break :outer;
+            }
+            inner = inner + 1;
+        }
+        outer_count = outer_count + 1;
+    }
+
+    // If labeled break worked, result should be 42 and outer_count should be 0
+    if result == 42 and outer_count == 0 {
+        return 1;
+    }
+    return 0;
+}
+
+// Test 2: Labeled continue jumps to outer loop header
+fn test_labeled_continue_basic() i64 {
+    var outer_iterations: i64 = 0;
+    var total_inner_iterations: i64 = 0;
+
+    outer: while outer_iterations < 3 {
+        outer_iterations = outer_iterations + 1;
+        var inner: i64 = 0;
+        while inner < 10 {
+            inner = inner + 1;
+            total_inner_iterations = total_inner_iterations + 1;
+            if inner >= 2 {
+                continue :outer;  // Skip rest of inner iterations
+            }
+        }
+    }
+
+    // Each outer iteration should only do 2 inner iterations
+    if total_inner_iterations == 6 {  // 3 outer * 2 inner
+        return 1;
+    }
+    return 0;
+}
+
+// Test 3: Unlabeled break still works in inner loop
+fn test_unlabeled_break() i64 {
+    var outer_count: i64 = 0;
+    var inner_total: i64 = 0;
+
+    outer: while outer_count < 3 {
+        var inner: i64 = 0;
+        while inner < 10 {
+            inner = inner + 1;
+            inner_total = inner_total + 1;
+            if inner == 2 {
+                break;  // Only breaks inner loop
+            }
+        }
+        outer_count = outer_count + 1;
+    }
+
+    // Each outer iteration should run inner twice (break at inner==2)
+    if inner_total == 6 and outer_count == 3 {
+        return 1;
+    }
+    return 0;
+}
+
+fn main() i64 {
+    var passed: i64 = 0;
+
+    if test_labeled_break_basic() == 1 { passed = passed + 1; }
+    if test_labeled_continue_basic() == 1 { passed = passed + 1; }
+    if test_unlabeled_break() == 1 { passed = passed + 1; }
+
+    // Return 0 if all 3 tests pass
+    if passed == 3 {
+        return 0;
+    }
+    return 1;
+}

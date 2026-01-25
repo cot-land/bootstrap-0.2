@@ -484,8 +484,10 @@ fn Node_ifStmt(pool: *NodePool, cond: i64, then_body: i64, else_body: i64,
 // Create a while statement node
 // field0: condition expr node index
 // field1: body node index (block)
-// field2, field3: unused
-fn Node_whileStmt(pool: *NodePool, cond: i64, body: i64, start: i64, end: i64) i64 {
+// field2: label name start (0 if no label) - cot1: labeled loops
+// field3: label name len (0 if no label)
+fn Node_whileStmt(pool: *NodePool, cond: i64, body: i64,
+                  label_start: i64, label_len: i64, start: i64, end: i64) i64 {
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
 
@@ -495,8 +497,8 @@ fn Node_whileStmt(pool: *NodePool, cond: i64, body: i64, start: i64, end: i64) i
     n.end = end;
     n.field0 = cond;            // Condition expression
     n.field1 = body;            // Body block
-    n.field2 = 0;
-    n.field3 = 0;
+    n.field2 = label_start;     // Label name start (cot1)
+    n.field3 = label_len;       // Label name len (cot1)
 
     return idx;
 }
@@ -525,7 +527,10 @@ fn Node_forStmt(pool: *NodePool, binding_start: i64, binding_len: i64,
 }
 
 // Create a break statement node
-fn Node_breakStmt(pool: *NodePool, start: i64, end: i64) i64 {
+// field0: label name start (0 if no label) - cot1: labeled break
+// field1: label name len (0 if no label)
+fn Node_breakStmt(pool: *NodePool, label_start: i64, label_len: i64,
+                  start: i64, end: i64) i64 {
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
 
@@ -533,8 +538,8 @@ fn Node_breakStmt(pool: *NodePool, start: i64, end: i64) i64 {
     n.kind = NodeKind.BreakStmt;
     n.start = start;
     n.end = end;
-    n.field0 = 0;
-    n.field1 = 0;
+    n.field0 = label_start;     // Label name start (cot1)
+    n.field1 = label_len;       // Label name len (cot1)
     n.field2 = 0;
     n.field3 = 0;
 
@@ -542,7 +547,10 @@ fn Node_breakStmt(pool: *NodePool, start: i64, end: i64) i64 {
 }
 
 // Create a continue statement node
-fn Node_continueStmt(pool: *NodePool, start: i64, end: i64) i64 {
+// field0: label name start (0 if no label) - cot1: labeled continue
+// field1: label name len (0 if no label)
+fn Node_continueStmt(pool: *NodePool, label_start: i64, label_len: i64,
+                     start: i64, end: i64) i64 {
     let idx: i64 = pool.count;
     pool.count = pool.count + 1;
 
@@ -550,8 +558,8 @@ fn Node_continueStmt(pool: *NodePool, start: i64, end: i64) i64 {
     n.kind = NodeKind.ContinueStmt;
     n.start = start;
     n.end = end;
-    n.field0 = 0;
-    n.field1 = 0;
+    n.field0 = label_start;     // Label name start (cot1)
+    n.field1 = label_len;       // Label name len (cot1)
     n.field2 = 0;
     n.field3 = 0;
 

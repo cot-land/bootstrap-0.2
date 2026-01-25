@@ -426,9 +426,11 @@ pub const IfStmt = struct {
 };
 
 /// while condition { body }
+/// cot1: Supports labeled while loops
 pub const WhileStmt = struct {
     condition: NodeIndex,
     body: NodeIndex,
+    label: ?[]const u8 = null, // cot1: optional label for labeled break/continue
     span: Span,
 };
 
@@ -446,13 +448,15 @@ pub const BlockStmt = struct {
     span: Span,
 };
 
-/// break
+/// break (cot1: supports break :label)
 pub const BreakStmt = struct {
+    label: ?[]const u8 = null, // cot1: optional target label
     span: Span,
 };
 
-/// continue
+/// continue (cot1: supports continue :label)
 pub const ContinueStmt = struct {
+    label: ?[]const u8 = null, // cot1: optional target label
     span: Span,
 };
 

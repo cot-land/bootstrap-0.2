@@ -104,6 +104,16 @@ struct Lowerer {
     loop_break_block: i64,
     loop_defer_depth: i64,        // defer_stack depth at loop entry
 
+    // cot1: Label stack for labeled break/continue
+    // Reference: Zig lower.zig label handling in GenZir
+    label_names_start: *i64,      // Start positions of label names in source
+    label_names_len: *i64,        // Lengths of label names
+    label_break_blocks: *i64,     // Break block for each labeled loop
+    label_continue_blocks: *i64,  // Continue block for each labeled loop
+    label_defer_depths: *i64,     // Defer depth at each labeled loop entry
+    label_count: i64,             // Current label stack depth
+    label_cap: i64,               // Label stack capacity
+
     // Defer stack for pending defer expressions (Zig-style scope tracking)
     // When entering a block, record the current depth. On block exit, emit
     // defers from current depth down to recorded depth in LIFO order.
@@ -392,6 +402,14 @@ fn Lowerer_init(l: *Lowerer,
     l.defer_stack = null;
     l.defer_stack_count = 0;
     l.defer_stack_cap = 0;
+    // cot1: Initialize label stack
+    l.label_names_start = null;
+    l.label_names_len = null;
+    l.label_break_blocks = null;
+    l.label_continue_blocks = null;
+    l.label_defer_depths = null;
+    l.label_count = 0;
+    l.label_cap = 0;
     // call_args removed - args stored in IRNode.call_args
 }
 
@@ -449,6 +467,100 @@ fn Lowerer_lookupTypeAlias(l: *Lowerer, name_start: i64, name_len: i64) i64 {
         i = i + 1;
     }
     return -1;  // Not found
+}
+
+// cot1: Set label stack storage (for labeled break/continue)
+// Reference: Zig lower.zig label handling
+fn Lowerer_initLabelStack(l: *Lowerer, names_start: *i64, names_len: *i64,
+                          break_blocks: *i64, continue_blocks: *i64,
+                          defer_depths: *i64, cap: i64) {
+    l.label_names_start = names_start;
+    l.label_names_len = names_len;
+    l.label_break_blocks = break_blocks;
+    l.label_continue_blocks = continue_blocks;
+    l.label_defer_depths = defer_depths;
+    l.label_count = 0;
+    l.label_cap = cap;
+}
+
+// cot1: Push a labeled loop onto the stack
+fn Lowerer_pushLabel(l: *Lowerer, name_start: i64, name_len: i64,
+                     break_block: i64, continue_block: i64, defer_depth: i64) {
+    if l.label_names_start == null { return; }
+    if l.label_count >= l.label_cap { return; }
+
+    let idx: i64 = l.label_count;
+    let ns: *i64 = l.label_names_start + idx;
+    let nl: *i64 = l.label_names_len + idx;
+    let bb: *i64 = l.label_break_blocks + idx;
+    let cb: *i64 = l.label_continue_blocks + idx;
+    let dd: *i64 = l.label_defer_depths + idx;
+
+    ns.* = name_start;
+    nl.* = name_len;
+    bb.* = break_block;
+    cb.* = continue_block;
+    dd.* = defer_depth;
+    l.label_count = l.label_count + 1;
+}
+
+// cot1: Pop a labeled loop from the stack
+fn Lowerer_popLabel(l: *Lowerer) {
+    if l.label_count > 0 {
+        l.label_count = l.label_count - 1;
+    }
+}
+
+// cot1: Find a labeled loop by name, returns index or -1 if not found
+fn Lowerer_findLabel(l: *Lowerer, name_start: i64, name_len: i64) i64 {
+    if l.label_names_start == null { return -1; }
+    if name_len == 0 { return -1; }
+
+    var i: i64 = 0;
+    while i < l.label_count {
+        let stored_start: *i64 = l.label_names_start + i;
+        let stored_len: *i64 = l.label_names_len + i;
+        if stored_len.* == name_len {
+            // Compare names
+            var match: bool = true;
+            var j: i64 = 0;
+            while j < name_len {
+                let c1: u8 = (l.source + stored_start.* + j).*;
+                let c2: u8 = (l.source + name_start + j).*;
+                if c1 != c2 {
+                    match = false;
+                    break;
+                }
+                j = j + 1;
+            }
+            if match {
+                return i;
+            }
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// cot1: Get break block for label at index
+fn Lowerer_getLabelBreakBlock(l: *Lowerer, idx: i64) i64 {
+    if idx < 0 or idx >= l.label_count { return -1; }
+    let bb: *i64 = l.label_break_blocks + idx;
+    return bb.*;
+}
+
+// cot1: Get continue block for label at index
+fn Lowerer_getLabelContinueBlock(l: *Lowerer, idx: i64) i64 {
+    if idx < 0 or idx >= l.label_count { return -1; }
+    let cb: *i64 = l.label_continue_blocks + idx;
+    return cb.*;
+}
+
+// cot1: Get defer depth for label at index
+fn Lowerer_getLabelDeferDepth(l: *Lowerer, idx: i64) i64 {
+    if idx < 0 or idx >= l.label_count { return 0; }
+    let dd: *i64 = l.label_defer_depths + idx;
+    return dd.*;
 }
 
 // Ensure ir_locals has at least 'additional' more capacity
@@ -1253,9 +1365,9 @@ fn Lowerer_lowerStmt(l: *Lowerer, node: *Node) {
     } else if node.kind == NodeKind.ForStmt {
         Lowerer_lowerFor(l, node);
     } else if node.kind == NodeKind.BreakStmt {
-        Lowerer_lowerBreak(l);
+        Lowerer_lowerBreak(l, node);
     } else if node.kind == NodeKind.ContinueStmt {
-        Lowerer_lowerContinue(l);
+        Lowerer_lowerContinue(l, node);
     } else if node.kind == NodeKind.DeferStmt {
         // Push deferred expression onto stack - will be emitted at scope exit
         // Reference: Zig lower.zig:314-318
@@ -1891,6 +2003,8 @@ fn Lowerer_lowerWhile(l: *Lowerer, node: *Node) {
     // WhileStmt fields:
     // field0 = condition expr
     // field1 = body
+    // field2 = label name start (0 if no label) - cot1
+    // field3 = label name len (0 if no label) - cot1
 
     let fb: *FuncBuilder = l.current_func;
     if fb == null { return; }
@@ -1909,6 +2023,15 @@ fn Lowerer_lowerWhile(l: *Lowerer, node: *Node) {
     l.loop_break_block = exit_block;
     l.loop_defer_depth = Lowerer_getDeferDepth(l);
 
+    // cot1: If this while loop has a label, push it onto the label stack
+    let label_start: i64 = node.field2;
+    let label_len: i64 = node.field3;
+    let has_label: bool = label_len > 0;
+    if has_label {
+        Lowerer_pushLabel(l, label_start, label_len, exit_block, header_block,
+                          Lowerer_getDeferDepth(l));
+    }
+
     // Jump from current block to header
     FuncBuilder_emitJump(fb, header_block);
 
@@ -1923,11 +2046,18 @@ fn Lowerer_lowerWhile(l: *Lowerer, node: *Node) {
     let body_node: *Node = l.nodes + node.field1;
     // Safety check: ensure body is a BlockStmt
     if body_node.kind != NodeKind.BlockStmt {
+        // cot1: Pop label before early return
+        if has_label { Lowerer_popLabel(l); }
         return;
     }
     let body_terminated: bool = Lowerer_lowerBlockCheckTerminated(l, body_node);
     if not body_terminated {
         FuncBuilder_emitJump(fb, header_block);
+    }
+
+    // cot1: Pop label from stack
+    if has_label {
+        Lowerer_popLabel(l);
     }
 
     // Restore outer loop context
@@ -2087,28 +2217,64 @@ fn Lowerer_lowerFor(l: *Lowerer, node: *Node) {
     FuncBuilder_setBlock(fb, exit_block);
 }
 
-fn Lowerer_lowerBreak(l: *Lowerer) {
+// cot1: Updated to accept node for labeled break support
+fn Lowerer_lowerBreak(l: *Lowerer, node: *Node) {
     let fb: *FuncBuilder = l.current_func;
     if fb == null { return; }
-    if l.loop_break_block < 0 { return; }  // Not in a loop
 
-    // Emit defers from current depth down to loop entry
+    // cot1: Check for labeled break
+    let label_start: i64 = node.field0;
+    let label_len: i64 = node.field1;
+
+    var target_block: i64 = l.loop_break_block;
+    var defer_depth: i64 = l.loop_defer_depth;
+
+    if label_len > 0 {
+        // Labeled break: look up the label
+        let label_idx: i64 = Lowerer_findLabel(l, label_start, label_len);
+        if label_idx >= 0 {
+            target_block = Lowerer_getLabelBreakBlock(l, label_idx);
+            defer_depth = Lowerer_getLabelDeferDepth(l, label_idx);
+        }
+    }
+
+    if target_block < 0 { return; }  // Not in a loop
+
+    // Emit defers from current depth down to target loop entry
     // Reference: Zig lower.zig:1125
-    Lowerer_emitDeferredExprs(l, l.loop_defer_depth);
+    Lowerer_emitDeferredExprs(l, defer_depth);
 
-    FuncBuilder_emitJump(fb, l.loop_break_block);
+    FuncBuilder_emitJump(fb, target_block);
 }
 
-fn Lowerer_lowerContinue(l: *Lowerer) {
+// cot1: Updated to accept node for labeled continue support
+fn Lowerer_lowerContinue(l: *Lowerer, node: *Node) {
     let fb: *FuncBuilder = l.current_func;
     if fb == null { return; }
-    if l.loop_continue_block < 0 { return; }  // Not in a loop
 
-    // Emit defers from current depth down to loop entry
+    // cot1: Check for labeled continue
+    let label_start: i64 = node.field0;
+    let label_len: i64 = node.field1;
+
+    var target_block: i64 = l.loop_continue_block;
+    var defer_depth: i64 = l.loop_defer_depth;
+
+    if label_len > 0 {
+        // Labeled continue: look up the label
+        let label_idx: i64 = Lowerer_findLabel(l, label_start, label_len);
+        if label_idx >= 0 {
+            target_block = Lowerer_getLabelContinueBlock(l, label_idx);
+            defer_depth = Lowerer_getLabelDeferDepth(l, label_idx);
+        }
+    }
+
+    if target_block < 0 { return; }  // Not in a loop
+
+    // Emit defers from current depth down to target loop entry
     // Reference: Zig lower.zig:1135
-    Lowerer_emitDeferredExprs(l, l.loop_defer_depth);
+    Lowerer_emitDeferredExprs(l, defer_depth);
 
-    FuncBuilder_emitJump(fb, l.loop_continue_block);
+    FuncBuilder_emitJump(fb, target_block);
 }
 
 // ============================================================================

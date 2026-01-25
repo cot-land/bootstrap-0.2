@@ -1332,22 +1332,42 @@ pub const Parser = struct {
                 return self.parseIfStmt();
             },
             .kw_while => {
-                return self.parseWhileStmt();
+                return self.parseWhileStmt(null);
             },
             .kw_for => {
                 return self.parseForStmt();
             },
             .kw_break => {
                 self.advance();
+                // cot1: Check for optional :label
+                var label: ?[]const u8 = null;
+                if (self.check(.colon)) {
+                    self.advance(); // consume colon
+                    if (self.check(.ident)) {
+                        label = self.tok.text;
+                        self.advance(); // consume identifier
+                    }
+                }
                 _ = self.match(.semicolon);
                 return try self.tree.addStmt(.{ .break_stmt = .{
+                    .label = label,
                     .span = Span.init(start, self.pos()),
                 } });
             },
             .kw_continue => {
                 self.advance();
+                // cot1: Check for optional :label
+                var label: ?[]const u8 = null;
+                if (self.check(.colon)) {
+                    self.advance(); // consume colon
+                    if (self.check(.ident)) {
+                        label = self.tok.text;
+                        self.advance(); // consume identifier
+                    }
+                }
                 _ = self.match(.semicolon);
                 return try self.tree.addStmt(.{ .continue_stmt = .{
+                    .label = label,
                     .span = Span.init(start, self.pos()),
                 } });
             },
@@ -1356,6 +1376,45 @@ pub const Parser = struct {
                 const expr = try self.parseExpr() orelse return null;
                 _ = self.match(.semicolon);
                 return try self.tree.addStmt(.{ .defer_stmt = .{
+                    .expr = expr,
+                    .span = Span.init(start, self.pos()),
+                } });
+            },
+            .ident => {
+                // cot1: Check for labeled while: label: while condition { body }
+                // Use single lookahead: peek to check if next is colon
+                const peek_tok = self.peekToken();
+                if (peek_tok.tok == .colon) {
+                    // Could be labeled while - consume ident and colon, then check for while
+                    const label_text = self.tok.text;
+                    self.advance(); // consume identifier
+                    self.advance(); // consume colon
+                    if (self.check(.kw_while)) {
+                        return self.parseWhileStmt(label_text);
+                    }
+                    // Not labeled while - this is an error (label: without while)
+                    self.err.errorWithCode(self.pos(), .e201, "expected 'while' after label");
+                    return null;
+                }
+                // Not a labeled while, fall through to expression parsing
+                const expr = try self.parseExpr() orelse return null;
+
+                // Check for assignment
+                if (self.tok.tok == .assign or self.tok.tok.isAssignment()) {
+                    const op = self.tok.tok;
+                    self.advance();
+                    const value = try self.parseExpr() orelse return null;
+                    _ = self.match(.semicolon);
+                    return try self.tree.addStmt(.{ .assign_stmt = .{
+                        .target = expr,
+                        .op = op,
+                        .value = value,
+                        .span = Span.init(start, self.pos()),
+                    } });
+                }
+
+                _ = self.match(.semicolon);
+                return try self.tree.addStmt(.{ .expr_stmt = .{
                     .expr = expr,
                     .span = Span.init(start, self.pos()),
                 } });
@@ -1451,8 +1510,8 @@ pub const Parser = struct {
         } });
     }
 
-    /// Parse while statement.
-    fn parseWhileStmt(self: *Parser) ParseError!?NodeIndex {
+    /// Parse while statement (cot1: supports labeled while)
+    fn parseWhileStmt(self: *Parser, label: ?[]const u8) ParseError!?NodeIndex {
         const start = self.pos();
         self.advance(); // consume 'while'
 
@@ -1467,6 +1526,7 @@ pub const Parser = struct {
         return try self.tree.addStmt(.{ .while_stmt = .{
             .condition = condition,
             .body = body,
+            .label = label,
             .span = Span.init(start, self.pos()),
         } });
     }

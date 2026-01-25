@@ -153,12 +153,66 @@ fn test_type_alias_function_return() i64 {
 }
 
 // ============================================================================
-// Feature: Labeled Break/Continue
+// Feature: Labeled Break/Continue - IMPLEMENTED
 // ============================================================================
 
-fn test_labeled_break_placeholder() i64 {
-    // Placeholder until labeled control flow is added
-    return 1;
+fn test_labeled_break_basic() i64 {
+    var result: i64 = 0;
+    var outer_count: i64 = 0;
+
+    outer: while outer_count < 10 {
+        var inner: i64 = 0;
+        while inner < 5 {
+            if inner == 2 {
+                result = 42;
+                break :outer;
+            }
+            inner = inner + 1;
+        }
+        outer_count = outer_count + 1;
+    }
+    // If labeled break worked, result should be 42 and outer_count should be 0
+    if result == 42 and outer_count == 0 { return 1; }
+    return 0;
+}
+
+fn test_labeled_continue_basic() i64 {
+    var outer_iterations: i64 = 0;
+    var total_inner: i64 = 0;
+
+    outer: while outer_iterations < 3 {
+        outer_iterations = outer_iterations + 1;
+        var inner: i64 = 0;
+        while inner < 10 {
+            inner = inner + 1;
+            total_inner = total_inner + 1;
+            if inner >= 2 {
+                continue :outer;
+            }
+        }
+    }
+    // Each outer iteration should only do 2 inner iterations
+    if total_inner == 6 { return 1; }  // 3 outer * 2 inner
+    return 0;
+}
+
+fn test_unlabeled_break_in_labeled() i64 {
+    var outer_count: i64 = 0;
+    var inner_total: i64 = 0;
+
+    outer: while outer_count < 3 {
+        var inner: i64 = 0;
+        while inner < 10 {
+            inner = inner + 1;
+            inner_total = inner_total + 1;
+            if inner == 2 {
+                break;  // Only breaks inner loop
+            }
+        }
+        outer_count = outer_count + 1;
+    }
+    if inner_total == 6 and outer_count == 3 { return 1; }
+    return 0;
 }
 
 // ============================================================================
@@ -196,9 +250,11 @@ fn main() i64 {
     run_test("type_alias_assignment", test_type_alias_assignment(), 1);
     run_test("type_alias_function_return", test_type_alias_function_return(), 1);
 
-    // Labeled Break/Continue Tests (Feature 5)
+    // Labeled Break/Continue Tests (Feature 5) - IMPLEMENTED
     print("Testing: Labeled Break/Continue\n");
-    run_test("labeled_break_placeholder", test_labeled_break_placeholder(), 1);
+    run_test("labeled_break_basic", test_labeled_break_basic(), 1);
+    run_test("labeled_continue_basic", test_labeled_continue_basic(), 1);
+    run_test("unlabeled_break_in_labeled", test_unlabeled_break_in_labeled(), 1);
 
     // Struct Init Shorthand Tests (Feature 7)
     print("Testing: Struct Init Shorthand\n");

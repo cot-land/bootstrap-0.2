@@ -7,11 +7,17 @@
 | Component | Status |
 |-----------|--------|
 | Zig compiler (Stage 0) | ✅ 166 tests pass |
-| cot1-stage1 (built by Zig) | ✅ **177 tests pass** (166 bootstrap + 11 features) |
-| cot1 self-hosting | ⏳ Produces output but has lowerer warnings |
+| cot1-stage1 (built by Zig) | ✅ **180 tests pass** (166 bootstrap + 14 features) |
+| cot1 self-hosting | ✅ **Compiles successfully!** (459KB output) |
 | Dogfooding | ✅ Started - type aliases in use |
 
 ## Recent Progress (2026-01-25)
+
+### cot1 Self-Hosting Success! ✅
+- **BUG-062 FIXED**: Parser 16+ args limitation fixed with dynamic I64List
+- cot1-stage1 now compiles cot1 source successfully (459KB Mach-O object)
+- All 166 bootstrap tests pass
+- Labeled break/continue tests pass
 
 ### cot1 Feature Implementation ✅
 All cot1 Phase 1 features are COMPLETE and passing tests:
@@ -21,10 +27,12 @@ All cot1 Phase 1 features are COMPLETE and passing tests:
 | Type aliases (`type Name = T`) | ✅ Complete | 3 tests pass |
 | Optional types (`?*T`) | ✅ Complete | 3 tests pass |
 | Error unions (`!T` syntax) | ✅ Complete | 3 tests pass |
+| Labeled break/continue | ✅ Complete | 3 tests pass |
 | String parameter passing | ✅ Fixed | All string tests pass |
 | Bootstrap test parity | ✅ Complete | 166 tests pass |
+| Parser unlimited args | ✅ Fixed | Calls with 16+ args work |
 
-**Total: 177 tests passing with cot1-stage1**
+**Total: 180+ tests passing with cot1-stage1**
 
 ### Dogfooding Initiative ✅
 The compiler source now uses its own features:
@@ -47,10 +55,10 @@ The compiler source now uses its own features:
 - Updated all test paths and architecture diagrams
 
 ### Self-Hosting Status
-- cot1-stage1 compiles cot1 source with warnings (VarDecl, ExprStmt)
-- Output is produced (52417 IR nodes, 932 functions)
-- SSA builder has some arg resolution issues
-- Strategy: Continue dogfooding, return to self-hosting later
+- ✅ cot1-stage1 compiles cot1 source successfully (459KB Mach-O object)
+- ✅ Output links successfully with zig cc
+- ⚠️ cot1-stage2 crashes on startup with SIGBUS (BUG-063)
+- Next step: Debug SIGBUS crash to complete self-hosting chain
 
 ## Major Update: New Bootstrap Architecture
 
@@ -96,11 +104,14 @@ bootstrap-0.2/
 
 ### Self-Hosting Blockers
 
-When cot1-stage1 compiles cot1 source, the lowerer encounters:
-1. "Unhandled expr kind=UNKNOWN" - Type expression nodes not recognized
-2. "ExprStmt passed to lowerExpr" - Statement nodes in expression context
+**BUG-063: cot1-stage2 SIGBUS crash** - The self-hosted binary crashes immediately on startup with a bus error (misaligned access or bad address). This is the last blocker for full self-hosting.
 
-These bugs in `stages/cot1/frontend/lower.cot` need to be fixed before self-hosting works.
+Possible causes:
+1. Pointer arithmetic generating misaligned addresses
+2. Incorrect struct field offset calculations
+3. Stack frame layout issues in generated code
+
+See BUGS.md for full details and investigation steps.
 
 ### Development Workflow
 

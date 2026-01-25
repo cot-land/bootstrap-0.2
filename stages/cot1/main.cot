@@ -274,6 +274,15 @@ const INIT_TYPE_ALIASES: i64 = 256;
 var g_type_aliases: *TypeAliasEntry = null;
 var g_type_aliases_cap: i64 = 0;
 
+// cot1: Label stack storage (for labeled break/continue)
+const INIT_LABEL_STACK: i64 = 64;
+var g_label_names_start: *i64 = null;
+var g_label_names_len: *i64 = null;
+var g_label_break_blocks: *i64 = null;
+var g_label_continue_blocks: *i64 = null;
+var g_label_defer_depths: *i64 = null;
+var g_label_cap: i64 = 0;
+
 // Global variable storage - dynamic growth
 const INIT_IR_GLOBALS: i64 = 512;
 var g_ir_globals: *IRGlobal = null;
@@ -1000,6 +1009,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
                  g_constants, g_constants_cap);
     Lowerer_initDeferStack(&lowerer, g_defer_stack, g_defer_stack_cap);
     Lowerer_initTypeAliases(&lowerer, g_type_aliases, g_type_aliases_cap);
+    // cot1: Initialize label stack for labeled break/continue
+    Lowerer_initLabelStack(&lowerer, g_label_names_start, g_label_names_len,
+                           g_label_break_blocks, g_label_continue_blocks,
+                           g_label_defer_depths, g_label_cap);
     Lowerer_setGlobals(&lowerer, g_ir_globals, g_ir_globals_cap);
 
     let ir_count: i64 = Lowerer_lowerAll(&lowerer);
@@ -1987,6 +2000,13 @@ fn main(argc: i64, argv: **u8) i64 {
     // g_call_args removed - args stored in IRNode.call_args
     g_defer_stack_cap = INIT_DEFER_STACK;
     g_defer_stack = malloc_i64(g_defer_stack_cap);
+    // cot1: Label stack for labeled break/continue
+    g_label_cap = INIT_LABEL_STACK;
+    g_label_names_start = malloc_i64(g_label_cap);
+    g_label_names_len = malloc_i64(g_label_cap);
+    g_label_break_blocks = malloc_i64(g_label_cap);
+    g_label_continue_blocks = malloc_i64(g_label_cap);
+    g_label_defer_depths = malloc_i64(g_label_cap);
     g_bstart_cap = 5000;
     g_bstart = malloc_i64(g_bstart_cap);
     g_ir_to_ssa_id_cap = 50000;

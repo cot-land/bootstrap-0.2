@@ -68,6 +68,7 @@ pub const Lowerer = struct {
         cond_block: ir.BlockIndex, // Jump target for continue
         exit_block: ir.BlockIndex, // Jump target for break
         defer_depth: usize, // Defer stack depth at loop entry (for break/continue)
+        label: ?[]const u8 = null, // cot1: Optional label for labeled break/continue
     };
 
     pub fn init(
@@ -299,12 +300,12 @@ pub const Lowerer = struct {
                 try self.emitDeferredExprs(defer_depth);
                 return false;
             },
-            .break_stmt => {
-                try self.lowerBreak();
+            .break_stmt => |bs| {
+                try self.lowerBreak(bs.label);
                 return true;
             },
-            .continue_stmt => {
-                try self.lowerContinue();
+            .continue_stmt => |cs| {
+                try self.lowerContinue(cs.label);
                 return true;
             },
             .expr_stmt => |expr_s| {
@@ -945,6 +946,7 @@ pub const Lowerer = struct {
             .cond_block = cond_block,
             .exit_block = exit_block,
             .defer_depth = self.defer_stack.items.len,
+            .label = while_stmt.label, // cot1: labeled while support
         });
 
         // Body block
@@ -1117,24 +1119,53 @@ pub const Lowerer = struct {
         fb.setBlock(exit_block);
     }
 
-    fn lowerBreak(self: *Lowerer) !void {
+    /// cot1: Updated to support labeled break
+    fn lowerBreak(self: *Lowerer, target_label: ?[]const u8) !void {
         const fb = self.current_func orelse return;
-        if (self.loop_stack.items.len > 0) {
-            const ctx = self.loop_stack.items[self.loop_stack.items.len - 1];
-            // Emit defers from current depth down to loop entry
-            try self.emitDeferredExprs(ctx.defer_depth);
-            _ = try fb.emitJump(ctx.exit_block, Span.fromPos(Pos.zero));
-        }
+        if (self.loop_stack.items.len == 0) return;
+
+        // cot1: Find the target loop context
+        const ctx = if (target_label) |label|
+            self.findLabeledLoop(label) orelse
+                self.loop_stack.items[self.loop_stack.items.len - 1]
+        else
+            self.loop_stack.items[self.loop_stack.items.len - 1];
+
+        // Emit defers from current depth down to loop entry
+        try self.emitDeferredExprs(ctx.defer_depth);
+        _ = try fb.emitJump(ctx.exit_block, Span.fromPos(Pos.zero));
     }
 
-    fn lowerContinue(self: *Lowerer) !void {
+    /// cot1: Updated to support labeled continue
+    fn lowerContinue(self: *Lowerer, target_label: ?[]const u8) !void {
         const fb = self.current_func orelse return;
-        if (self.loop_stack.items.len > 0) {
-            const ctx = self.loop_stack.items[self.loop_stack.items.len - 1];
-            // Emit defers from current depth down to loop entry
-            try self.emitDeferredExprs(ctx.defer_depth);
-            _ = try fb.emitJump(ctx.cond_block, Span.fromPos(Pos.zero));
+        if (self.loop_stack.items.len == 0) return;
+
+        // cot1: Find the target loop context
+        const ctx = if (target_label) |label|
+            self.findLabeledLoop(label) orelse
+                self.loop_stack.items[self.loop_stack.items.len - 1]
+        else
+            self.loop_stack.items[self.loop_stack.items.len - 1];
+
+        // Emit defers from current depth down to loop entry
+        try self.emitDeferredExprs(ctx.defer_depth);
+        _ = try fb.emitJump(ctx.cond_block, Span.fromPos(Pos.zero));
+    }
+
+    /// cot1: Find a labeled loop in the loop stack
+    fn findLabeledLoop(self: *Lowerer, target_label: []const u8) ?LoopContext {
+        var i: usize = self.loop_stack.items.len;
+        while (i > 0) {
+            i -= 1;
+            const ctx = self.loop_stack.items[i];
+            if (ctx.label) |label| {
+                if (std.mem.eql(u8, label, target_label)) {
+                    return ctx;
+                }
+            }
         }
+        return null;
     }
 
     // ========================================================================
