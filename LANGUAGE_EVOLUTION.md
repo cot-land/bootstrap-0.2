@@ -40,24 +40,25 @@
 ║   EVERY NEW LANGUAGE FEATURE REQUIRES:                                        ║
 ║                                                                               ║
 ║   1. 3-5 tests written BEFORE implementing the feature                        ║
-║   2. Tests in test/cot1/, test/cot2/, etc. directories                        ║
+║   2. Tests in test/stages/cot1/, test/stages/cot2/, etc. directories          ║
 ║   3. ALL existing tests must continue to pass (166 e2e + new feature tests)   ║
 ║   4. Feature is not complete until all its tests pass                         ║
 ║                                                                               ║
 ║   Test Pattern:                                                               ║
 ║   ┌─────────────────────────────────────────────────────────────────────────┐ ║
-║   │  test/cot1/                                                             │ ║
-║   │  ├── test_error_union_basic.cot      # Basic error!T syntax             │ ║
-║   │  ├── test_error_union_catch.cot      # catch |err| handling             │ ║
-║   │  ├── test_error_union_try.cot        # try propagation                  │ ║
-║   │  ├── test_optional_basic.cot         # ?T syntax and null               │ ║
-║   │  ├── test_optional_if_unwrap.cot     # if x |val| pattern               │ ║
-║   │  └── ...                                                                │ ║
+║   │  test/bootstrap/all_tests.cot        # 166 baseline tests               │ ║
+║   │  test/stages/cot1/cot1_features.cot  # 11 cot1 feature tests            │ ║
+║   │  test/stages/cot2/cot2_features.cot  # (future) cot2 feature tests      │ ║
 ║   └─────────────────────────────────────────────────────────────────────────┘ ║
 ║                                                                               ║
-║   Validation command:                                                         ║
-║   ./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/t && /tmp/t               ║
-║   ./zig-out/bin/cot test/cot1/test_*.cot -o /tmp/cot1_t && /tmp/cot1_t       ║
+║   Validation commands:                                                        ║
+║   # Bootstrap tests with Zig compiler                                         ║
+║   ./zig-out/bin/cot test/bootstrap/all_tests.cot -o /tmp/t && /tmp/t         ║
+║                                                                               ║
+║   # cot1 feature tests (must use cot1-stage1, not Zig bootstrap!)            ║
+║   ./zig-out/bin/cot stages/cot1/main.cot -o /tmp/cot1-stage1                 ║
+║   /tmp/cot1-stage1 test/stages/cot1/cot1_features.cot -o /tmp/ft.o           ║
+║   zig cc /tmp/ft.o runtime/cot_runtime.o -o /tmp/ft && /tmp/ft               ║
 ║                                                                               ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 ```
@@ -104,37 +105,55 @@ Cot is a systems programming language designed for self-hosting compiler develop
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Current Status: cot0
+## Current Status: cot1 In Development
 
-### What cot0 Has
+### Bootstrap Architecture
 
-| Feature | Status | Notes |
+The Zig compiler serves as Stage 0 (trusted bootstrap) for all Cot stages:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│   Zig Compiler (src/*.zig) ─── Stage 0, trusted bootstrap                   │
+│        │                                                                    │
+│        ├── compiles stages/cot1/main.cot → cot1-stage1                      │
+│        │        │                                                           │
+│        │        └── cot1-stage1 compiles cot1 source (in progress)          │
+│        │                                                                    │
+│        └── compiles test/bootstrap/all_tests.cot (166 tests)                │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Test Status
+
+| Compiler | Bootstrap Tests | Feature Tests | Total |
+|----------|-----------------|---------------|-------|
+| Zig bootstrap | 166 | - | 166 |
+| cot1-stage1 | 166 | 11 | **177** |
+
+### cot1 Feature Progress
+
+| Feature | Status | Tests |
 |---------|--------|-------|
-| Basic types (i64, u8, bool) | ✅ | Working |
-| Structs | ✅ | Value types, field access |
-| Arrays | ✅ | Fixed-size, stack allocated |
-| Pointers | ✅ | Raw pointers, arithmetic |
-| Functions | ✅ | Up to 16 arguments |
-| Control flow | ✅ | if/else, while, break/continue |
-| Strings | ✅ | Slice-based (ptr + len) |
-| Imports | ✅ | Single-file imports |
-| Constants | ✅ | Compile-time integers |
-| Defer | ✅ | Basic defer statements |
-| DWARF debug info | ⚠️ | Relocation alignment issue |
+| Type aliases (`type Name = T`) | ✅ DONE | 3 pass |
+| Optional types (`?*T`) | ✅ DONE | 3 pass |
+| Error unions (`!T` syntax) | ✅ DONE | 3 pass |
+| String parameter passing | ✅ FIXED | All string tests pass |
+| errdefer | Planned | - |
+| Labeled break/continue | Planned | - |
+| Struct init shorthand | Planned | - |
 
 ### Self-Hosting Status
 
-- **Stage 1** (Zig → cot0): ✅ 166/166 tests pass
-- **Stage 2** (cot0 → cot0): ✅ Compiles with correct code
-- **Stage 3** verification: ⏳ Blocked by DWARF issue (non-critical)
+- **cot1-stage1** (Zig → cot1): ✅ 177 tests pass
+- **cot1-stage2** (cot1 → cot1): ⏳ Blocked by lowerer bugs
+  - Error: TypeExpr* nodes passed to lowerExpr instead of resolve_type_expr
+  - Needs investigation in `stages/cot1/frontend/lower.cot`
 
-### Decision: Move Forward
+### Historical Note
 
-The DWARF debug info issue (BUG-061) is a polish problem, not a correctness problem. We will:
-
-1. Optionally disable DWARF generation to prove stage2 = stage3
-2. Begin cot1 development with improved language features
-3. Fix DWARF when convenient (possibly easier with cot1 features)
+cot0 self-hosting was abandoned due to DWARF relocation issues. The archive/cot0/ directory is preserved for reference but is no longer actively developed.
 
 ---
 
@@ -142,8 +161,10 @@ The DWARF debug info issue (BUG-061) is a polish problem, not a correctness prob
 
 **Goal:** Make cot1 a language where errors are explicit and null-safety is enforced.
 
-**Compiled by:** cot0
-**Compiles:** Itself (cot1)
+**Compiled by:** Zig Bootstrap (Stage 0)
+**Compiles:** Test programs, working toward self-hosting
+
+**Current Status:** Phase 1 complete (type aliases, optionals, error union syntax)
 
 ### Feature 1: Error Union Types
 
@@ -356,18 +377,20 @@ switch char {
 
 ### cot1 Implementation Priority
 
-| Priority | Feature | Effort | Impact |
-|----------|---------|--------|--------|
-| P0 | Error unions | High | Critical for robust code |
-| P0 | Optional types | Medium | Eliminates null bugs |
-| P1 | Type aliases | Low | Code clarity |
-| P1 | errdefer | Medium | Resource safety |
-| P1 | Const pointers | Medium | Better type checking |
-| P2 | Labeled break | Low | Convenience |
-| P2 | Struct shorthand | Low | Less boilerplate |
-| P2 | Default params | Medium | API convenience |
-| P2 | String improvements | Medium | Better ergonomics |
-| P2 | Improved switch | Medium | Pattern matching |
+| Priority | Feature | Effort | Impact | Status |
+|----------|---------|--------|--------|--------|
+| P0 | Error unions (syntax) | High | Critical for robust code | ✅ DONE |
+| P0 | Optional types | Medium | Eliminates null bugs | ✅ DONE |
+| P1 | Type aliases | Low | Code clarity | ✅ DONE |
+| P1 | errdefer | Medium | Resource safety | Planned |
+| P1 | Const pointers | Medium | Better type checking | Planned |
+| P2 | Labeled break | Low | Convenience | Planned |
+| P2 | Struct shorthand | Low | Less boilerplate | Planned |
+| P2 | Default params | Medium | API convenience | Planned |
+| P2 | String improvements | Medium | Better ergonomics | Planned |
+| P2 | Improved switch | Medium | Pattern matching | Planned |
+
+**Note:** Error unions currently use simplified semantics where `!T` is treated as `T`. Full error handling (try/catch/errdefer) is planned for later phases.
 
 ---
 
@@ -661,40 +684,49 @@ We follow their patterns while making Cot's unique choices.
 
 ## Immediate Next Steps
 
-1. **Disable DWARF temporarily** in cot0 to prove stage2 = stage3
-2. **Create cot1 directory** with initial structure
-3. **Implement error unions** (highest impact feature)
-4. **Port cot0 to use cot1 features** as they're implemented
-5. **Achieve cot1 self-hosting**
+1. ~~**Create cot1 directory** with initial structure~~ ✅ Done (stages/cot1/)
+2. ~~**Implement type aliases**~~ ✅ Done (3 tests pass)
+3. ~~**Implement optional types**~~ ✅ Done (3 tests pass)
+4. ~~**Implement error union syntax**~~ ✅ Done (3 tests pass)
+5. **Fix self-hosting lowerer bugs** - TypeExpr* nodes not routed correctly
+6. **Achieve cot1 self-hosting** - cot1 compiles itself
+7. **Implement errdefer** - Critical for resource safety
+8. **Implement full error handling** - try/catch semantics
 
 ---
 
-## File Structure (Proposed)
+## File Structure (Current)
 
 ```
 bootstrap-0.2/
-├── src/                    # Zig compiler (bootstrap)
-├── cot0/                   # cot0 compiler source
-│   ├── main.cot
-│   ├── frontend/
-│   ├── ssa/
-│   ├── codegen/
-│   └── obj/
-├── cot1/                   # cot1 compiler source (NEW)
-│   ├── main.cot
-│   ├── frontend/
-│   │   ├── error.cot       # Error handling module
-│   │   ├── optional.cot    # Optional type support
-│   │   └── ...
-│   ├── ssa/
-│   ├── codegen/
-│   └── obj/
+├── src/                      # Stage 0: Zig compiler (bootstrap)
+│   └── frontend/
+│       ├── parser.zig
+│       ├── checker.zig
+│       ├── lower.zig
+│       └── ...
+├── stages/
+│   └── cot1/                 # Stage 1: First self-hosting target
+│       ├── main.cot
+│       ├── frontend/
+│       │   ├── parser.cot
+│       │   ├── checker.cot
+│       │   ├── lower.cot
+│       │   └── ...
+│       ├── ssa/
+│       ├── codegen/
+│       └── obj/
+├── runtime/                  # Shared runtime
+│   ├── cot_runtime.zig
+│   └── cot_runtime.o
 ├── test/
-│   ├── e2e/                # End-to-end tests
-│   ├── cot1/               # cot1-specific tests
-│   └── ...
+│   ├── bootstrap/            # Zig compiler tests (166 tests)
+│   │   └── all_tests.cot
+│   └── stages/
+│       └── cot1/             # cot1 feature tests (11 tests)
+│           └── cot1_features.cot
+├── archive/
+│   └── cot0/                 # Historical reference (deprecated)
 └── docs/
-    ├── LANGUAGE_EVOLUTION.md  # This document
-    └── cot1/
-        └── FEATURES.md     # cot1 feature specifications
+    └── LANGUAGE_EVOLUTION.md # This document
 ```

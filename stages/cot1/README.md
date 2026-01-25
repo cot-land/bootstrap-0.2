@@ -1,103 +1,96 @@
 # cot1 - Error Handling & Safety
 
-**Status:** In Development
-**Compiled by:** cot0
-**Compiles:** Itself (self-hosting target)
+**Status:** In Development (Phase 1 Complete)
+**Compiled by:** Zig Bootstrap (Stage 0)
+**Compiles:** Test programs, working toward self-hosting
 
 ## Overview
 
-cot1 extends cot0 with error handling and safety features that make writing robust code easier. The primary additions are error unions and optional types.
+cot1 extends the baseline Cot language with error handling and safety features. The primary additions are error unions, optional types, and type aliases.
 
-## Features
+## Current Progress
+
+**177 tests pass** (166 bootstrap + 11 feature tests)
 
 | Feature | Status | Tests |
 |---------|--------|-------|
-| Error unions (`Error!T`) | Planned | test/cot1/test_error_union_*.cot |
-| **Optional types (`?T`)** | **DONE** | test/cot1/test_optional_*.cot (4 tests) |
-| **Type aliases** | **DONE** | test/cot1/test_type_alias_*.cot (3 tests) |
-| errdefer | Planned | test/cot1/test_errdefer_*.cot |
-| Const pointers | Planned | test/cot1/test_const_ptr_*.cot |
-| Labeled break/continue | Planned | test/cot1/test_labeled_*.cot |
-| String improvements | Planned | test/cot1/test_string_*.cot |
-| Struct init shorthand | Planned | test/cot1/test_struct_short_*.cot |
-| Default parameters | Planned | test/cot1/test_default_param_*.cot |
-| Improved switch | Planned | test/cot1/test_switch_*.cot |
+| **Type aliases** | ✅ DONE | 3 tests pass |
+| **Optional types (`?T`)** | ✅ DONE | 3 tests pass |
+| **Error unions (`!T`)** | ✅ DONE (syntax) | 3 tests pass |
+| String parameters | ✅ FIXED | All string tests pass |
+| errdefer | Planned | - |
+| Labeled break/continue | Planned | - |
+| Struct init shorthand | Planned | - |
 
 ## Building
 
 ```bash
-# Build cot1 with cot0 (stage1)
-/tmp/cot0-stage1 cot1/main.cot -o /tmp/cot1-stage1
+# Build cot1-stage1 with Zig bootstrap
+./zig-out/bin/cot stages/cot1/main.cot -o /tmp/cot1-stage1
 
-# Build cot1 with itself (stage2) - self-hosting proof
-/tmp/cot1-stage1 cot1/main.cot -o /tmp/cot1-stage2
-
-# Verify stage1 == stage2
-diff <(xxd /tmp/cot1-stage1) <(xxd /tmp/cot1-stage2)
+# Self-hosting (in progress - has lowerer bugs)
+/tmp/cot1-stage1 stages/cot1/main.cot -o /tmp/cot1-stage2
 ```
 
 ## Testing
 
 ```bash
-# Run all cot1 feature tests
-./zig-out/bin/cot test/cot1/all_cot1_tests.cot -o /tmp/cot1_tests && /tmp/cot1_tests
+# Build cot1-stage1
+./zig-out/bin/cot stages/cot1/main.cot -o /tmp/cot1-stage1
 
-# Ensure cot0 tests still pass (no regressions)
-./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/all_tests && /tmp/all_tests
+# Run bootstrap tests (166 tests)
+/tmp/cot1-stage1 test/bootstrap/all_tests.cot -o /tmp/bt.o
+cp /tmp/bt.o /tmp/bootstrap_test.o
+zig cc /tmp/bootstrap_test.o runtime/cot_runtime.o -o /tmp/bootstrap_test
+/tmp/bootstrap_test
+
+# Run cot1 feature tests (11 tests)
+/tmp/cot1-stage1 test/stages/cot1/cot1_features.cot -o /tmp/ft.o
+cp /tmp/ft.o /tmp/feature_test.o
+zig cc /tmp/feature_test.o runtime/cot_runtime.o -o /tmp/feature_test
+/tmp/feature_test
 ```
+
+## Self-Hosting Blocker
+
+When cot1-stage1 tries to compile its own source, it encounters lowerer errors:
+- TypeExpr* nodes passed to `lowerExpr` (should go to `resolve_type_expr`)
+- ExprStmt nodes in expression context
+
+This needs investigation in `stages/cot1/frontend/lower.cot`.
 
 ## Development Rules
 
-1. **3-5 tests per feature** - Write tests before implementing
-2. **All tests must pass** - No regressions allowed
-3. **Copy from Zig** - Error unions follow Zig's design
-4. **Self-hosting** - cot1 must compile itself
+1. **Copy from Zig** - All features follow Zig's patterns (src/frontend/*.zig)
+2. **Test first** - Write 3-5 tests before implementing
+3. **All 177 tests must pass** - No regressions (166 bootstrap + 11 features)
+4. **Self-hosting** - Ultimate goal: cot1 compiles itself
 
-## Feature Specifications
+## Current Feature Implementation
 
-### Error Unions
-
+### Type Aliases (DONE)
 ```cot
-// Error set definition
-const FileError = error {
-    NotFound,
-    PermissionDenied,
-};
-
-// Function returning error union
-fn readFile(path: string) FileError!string {
-    if not exists(path) {
-        return error.NotFound;
-    }
-    return contents;
-}
-
-// Using try
-fn process() FileError!void {
-    let data: string = try readFile("config.txt");
-    // ...
-}
-
-// Using catch
-let data: string = readFile("config.txt") catch |err| "default";
+type Index = i64
+type Offset = i64
+let x: Index = 42;
 ```
 
-### Optional Types
-
+### Optional Types (DONE)
 ```cot
-// Optional type
-fn find(items: []Item, key: i64) ?*Item {
-    // ...
-    return null;
-}
-
-// If-unwrap
-if find(items, 42) |item| {
-    use(item);
-}
-
-// Orelse
-let item: *Item = find(items, 42) orelse &default;
+let ptr: ?*Item = null;
+if ptr == null { ... }
+ptr = &item;
 ```
 
-See [LANGUAGE_EVOLUTION.md](../LANGUAGE_EVOLUTION.md) for complete specifications.
+### Error Unions (DONE - syntax only)
+```cot
+fn getValue() !i64 {
+    return 42;
+}
+let result: !i64 = getValue();
+```
+
+Note: Error unions use simplified semantics (`!T` treated as `T`).
+Full error handling (try/catch/errdefer) planned for future.
+
+See [LANGUAGE_EVOLUTION.md](../LANGUAGE_EVOLUTION.md) for complete roadmap.
