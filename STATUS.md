@@ -7,35 +7,45 @@
 | Component | Status |
 |-----------|--------|
 | Zig compiler (Stage 0) | ✅ 166 tests pass |
-| cot1-stage1 (built by Zig) | ✅ 175 tests pass (166 bootstrap + 9 features) |
-| cot1 self-hosting | ⏳ Blocked by lowerer bugs |
-| Project restructure | ✅ Complete |
+| cot1-stage1 (built by Zig) | ✅ **177 tests pass** (166 bootstrap + 11 features) |
+| cot1 self-hosting | ⏳ Produces output but has lowerer warnings |
+| Dogfooding | ✅ Started - type aliases in use |
 
 ## Recent Progress (2026-01-25)
 
 ### cot1 Feature Implementation ✅
-All cot1 Phase 1 features are now COMPLETE and passing tests:
+All cot1 Phase 1 features are COMPLETE and passing tests:
 
 | Feature | Status | Tests |
 |---------|--------|-------|
 | Type aliases (`type Name = T`) | ✅ Complete | 3 tests pass |
 | Optional types (`?*T`) | ✅ Complete | 3 tests pass |
+| Error unions (`!T` syntax) | ✅ Complete | 3 tests pass |
 | String parameter passing | ✅ Fixed | All string tests pass |
 | Bootstrap test parity | ✅ Complete | 166 tests pass |
 
-**Total: 175 tests passing with cot1-stage1**
+**Total: 177 tests passing with cot1-stage1**
 
-### Technical Fixes Applied
-1. **String parameter passing** - Fixed SSA builder to create two Arg ops (ptr, len) for string parameters, combined with StringMake
-2. **String codegen** - Fixed genssa.cot to handle StringPtr/StringLen in call argument processing
-3. **Type aliases** - Parser, checker, and lowerer all handle `type Name = T` correctly
-4. **Optional types** - Parser recognizes `?T` syntax, checker/lowerer treat as pointer type (sentinel optimization)
+### Dogfooding Initiative ✅
+The compiler source now uses its own features:
+
+| File | Type Aliases Added |
+|------|-------------------|
+| ast.cot | `NodeIndex`, `SourcePos` |
+| types.cot | `TypeId` |
+| ir.cot | `IRIndex`, `LocalIndex`, `BlockIndex` |
+| checker.cot | `SymbolIndex` |
+
+### Documentation Updates ✅
+- Added "MANDATORY: DOGFOOD NEW FEATURES" to CLAUDE.md
+- Added "Dogfood Every Feature" principle to LANGUAGE_EVOLUTION.md
+- Updated all test paths and architecture diagrams
 
 ### Self-Hosting Status
-- cot1-stage1 compiles cot1 source but encounters lowerer errors
-- Errors: "Unhandled expr kind=UNKNOWN" and "ExprStmt passed to lowerExpr"
-- Root cause: cot1's lowerer doesn't handle all node types when compiling itself
-- Next step: Debug and fix lowerer to handle type expression nodes properly
+- cot1-stage1 compiles cot1 source with warnings (VarDecl, ExprStmt)
+- Output is produced (52417 IR nodes, 932 functions)
+- SSA builder has some arg resolution issues
+- Strategy: Continue dogfooding, return to self-hosting later
 
 ## Major Update: New Bootstrap Architecture
 
