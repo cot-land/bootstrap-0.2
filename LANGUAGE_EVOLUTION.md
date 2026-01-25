@@ -680,6 +680,34 @@ Both languages have successful bootstrap stories:
 
 We follow their patterns while making Cot's unique choices.
 
+### 6. Dogfood Every Feature
+
+**A feature is NOT complete until the compiler uses it.**
+
+When a new language feature is implemented:
+1. Parser, checker, lowerer all handle the syntax
+2. Test suite has 3+ passing tests
+3. **The compiler source must be updated to USE the feature**
+
+This ensures:
+- Features work in real-world code (not just minimal tests)
+- Self-hosting exercises all features
+- The compiler becomes production-quality, not minimal
+- Each stage N+1 is written using stage N features
+
+**Examples:**
+```cot
+// Type aliases - used in ast.cot
+type NodeIndex = i64
+type SourcePos = i64
+
+// Optional types - used in parser.cot
+fn findSymbol(name: string) ?*Symbol { ... }
+
+// Error unions - used in checker.cot
+fn resolveType(node: NodeIndex) !TypeId { ... }
+```
+
 ---
 
 ## Immediate Next Steps

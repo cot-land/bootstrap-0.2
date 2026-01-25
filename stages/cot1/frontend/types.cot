@@ -14,11 +14,19 @@ import "token.cot"
 import "../lib/list.cot"  // For realloc_i64
 
 // ============================================================================
+// Type Aliases (cot1 feature: dogfooding our own language features)
+// ============================================================================
+
+// TypeId: Index into type pool
+// Makes code more readable - clear that we're dealing with type indices
+type TypeId = i64
+
+// ============================================================================
 // Type Index
 // ============================================================================
 
 // Index into type pool. -1 = invalid/error type.
-const INVALID_TYPE: i64 = -1;
+const INVALID_TYPE: TypeId = -1;
 
 // ============================================================================
 // Type Kinds (Go's Kind enum)

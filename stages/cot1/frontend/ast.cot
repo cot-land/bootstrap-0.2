@@ -12,6 +12,17 @@ import "token.cot"
 import "../lib/list.cot"
 
 // ============================================================================
+// Type Aliases (cot1 feature: dogfooding our own language features)
+// ============================================================================
+
+// NodeIndex: Index into node arrays (nodes, children)
+// Using type alias makes code more readable and documents intent
+type NodeIndex = i64
+
+// SourcePos: Position in source text (byte offset)
+type SourcePos = i64
+
+// ============================================================================
 // Node Kinds
 // ============================================================================
 
@@ -139,8 +150,8 @@ struct Node {
     kind: NodeKind,
 
     // Source location (token start/end)
-    start: i64,
-    end: i64,
+    start: SourcePos,
+    end: SourcePos,
 
     // Kind-specific fields (union-like, interpret based on kind)
     // For IntLit: value is the integer value

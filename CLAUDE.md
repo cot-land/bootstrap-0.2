@@ -59,6 +59,38 @@
 
 ---
 
+## ⛔ MANDATORY: DOGFOOD NEW FEATURES ⛔
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   WHEN A FEATURE IS IMPLEMENTED, IT MUST BE USED IN THE COMPILER:             ║
+║                                                                               ║
+║   A feature is NOT complete until the compiler itself uses it.                ║
+║                                                                               ║
+║   Example: When implementing type aliases for cot1:                           ║
+║   1. ✅ Parser parses `type Name = T`                                         ║
+║   2. ✅ Checker validates type aliases                                        ║
+║   3. ✅ Lowerer generates correct code                                        ║
+║   4. ✅ Test suite has 3+ tests passing                                       ║
+║   5. ⚠️ MUST ALSO: Update cot1/*.cot to USE type aliases                      ║
+║                                                                               ║
+║   Why: This ensures:                                                          ║
+║   - Features actually work in real-world code (not just tests)                ║
+║   - Self-hosting exercises all features                                       ║
+║   - The compiler becomes production-quality, not minimal                      ║
+║   - Each stage N+1 is written using stage N features                          ║
+║                                                                               ║
+║   Examples of dogfooding:                                                     ║
+║   - Type aliases: `type NodeIndex = i64` in ast.cot                           ║
+║   - Optional types: `?*Node` for nullable pointers in parser.cot              ║
+║   - Error unions: `!TypeId` for fallible type resolution                      ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+```
+
+---
+
 ## ⛔ STAGE1 TESTING - ALWAYS USE ALL_TESTS ⛔
 
 ```
