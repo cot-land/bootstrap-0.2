@@ -13,13 +13,26 @@ import "types.cot"
 import "../lib/list.cot"
 
 // ============================================================================
-// Index Types - Distinct to prevent mixing
+// Type Aliases (cot1 feature: dogfooding our own language features)
+// ============================================================================
+
+// IRIndex: Index into IR node arrays
+type IRIndex = i64
+
+// LocalIndex: Index into function's local variables
+type LocalIndex = i64
+
+// BlockIndex: Index into function's basic blocks
+type BlockIndex = i64
+
+// ============================================================================
+// Index Constants
 // NOTE: NULL_NODE is defined in ast.cot to avoid redefinition
 // ============================================================================
 
-const NULL_IR_NODE: i64 = -1;
-const NULL_LOCAL: i64 = -1;
-const NULL_BLOCK: i64 = -1;
+const NULL_IR_NODE: IRIndex = -1;
+const NULL_LOCAL: LocalIndex = -1;
+const NULL_BLOCK: BlockIndex = -1;
 
 // ============================================================================
 // Binary Operation Kinds (Go's OADD, OSUB, OEQ, etc.)
