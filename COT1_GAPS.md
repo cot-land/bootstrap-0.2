@@ -173,19 +173,21 @@ Zig has 8+ optimization passes not implemented in cot1:
 ## Priority for Self-Hosting
 
 ### High Priority (Required for reliable self-hosting)
-1. **Error collection** - Need to handle multiple errors without panic
-2. **SSA verification** - Need to verify generated code is correct
-3. **Complete ARM64 codegen** - Current stub may have gaps
+1. ~~**Error collection**~~ - DONE (lib/reporter.cot)
+2. ~~**SSA verification**~~ - DONE (ssa/debug.cot with verify())
+3. **Complete ARM64 codegen** - Current stub may have gaps (2% complete)
 
 ### Medium Priority (Improves reliability)
-4. **Pass infrastructure** - Organize passes systematically
-5. **Position tracking** - Better error messages
-6. **DWARF generation** - Debug support
+4. ~~**Pass infrastructure**~~ - DONE (ssa/compile.cot)
+5. ~~**Position tracking**~~ - DONE (lib/source.cot)
+6. **DWARF generation** - Debug support (30% complete)
+7. **SSA builder** - IR to SSA conversion (67% complete)
+8. **Register allocator** - Physical register assignment (54% complete)
 
 ### Low Priority (Optimizations)
-7. **Optimization passes** - earlyDeadcode, CSE, etc.
-8. **Block layout** - Better cache behavior
-9. **Debug HTML output** - Compiler development
+9. **Optimization passes** - earlyDeadcode, CSE, etc. (all MISSING)
+10. **Block layout** - Better cache behavior (MISSING)
+11. **Debug HTML output** - Compiler development (DOT/text done, HTML missing)
 
 ## Test Files (Not Dead Code)
 
