@@ -254,8 +254,11 @@ struct MachOWriter {
     data_count: i64,
     data_cap: i64,
 
-    // Symbol table
-    symbols: *Symbol,
+    // Symbol table (parallel arrays to avoid struct pointer arithmetic)
+    sym_name_offsets: *i64,
+    sym_values: *i64,
+    sym_sections: *i64,
+    sym_is_externals: *i64,
     symbols_count: i64,
     symbols_cap: i64,
 
@@ -264,8 +267,14 @@ struct MachOWriter {
     strings_count: i64,
     strings_cap: i64,
 
-    // Relocations
-    relocs: *Reloc,
+    // Relocations (parallel arrays to avoid struct pointer arithmetic)
+    // target is stored as string table offset + length (not pointer)
+    reloc_offsets: *i64,
+    reloc_target_str_offs: *i64,    // Offset into strings table
+    reloc_target_lens: *i64,
+    reloc_types: *i64,
+    reloc_is_pcrels: *i64,
+    reloc_lengths: *i64,
     relocs_count: i64,
     relocs_cap: i64,
 
@@ -274,8 +283,13 @@ struct MachOWriter {
     debug_line_count: i64,
     debug_line_cap: i64,
 
-    // Debug line relocations
-    debug_line_relocs: *Reloc,
+    // Debug line relocations (parallel arrays)
+    dbg_line_reloc_offsets: *i64,
+    dbg_line_reloc_target_str_offs: *i64,
+    dbg_line_reloc_target_lens: *i64,
+    dbg_line_reloc_types: *i64,
+    dbg_line_reloc_is_pcrels: *i64,
+    dbg_line_reloc_lengths: *i64,
     debug_line_relocs_count: i64,
     debug_line_relocs_cap: i64,
 
@@ -289,8 +303,13 @@ struct MachOWriter {
     debug_info_count: i64,
     debug_info_cap: i64,
 
-    // Debug info relocations (for low_pc address)
-    debug_info_relocs: *Reloc,
+    // Debug info relocations (parallel arrays)
+    dbg_info_reloc_offsets: *i64,
+    dbg_info_reloc_target_str_offs: *i64,
+    dbg_info_reloc_target_lens: *i64,
+    dbg_info_reloc_types: *i64,
+    dbg_info_reloc_is_pcrels: *i64,
+    dbg_info_reloc_lengths: *i64,
     debug_info_relocs_count: i64,
     debug_info_relocs_cap: i64,
 
@@ -307,9 +326,11 @@ struct MachOWriter {
 fn MachOWriter_init(w: *MachOWriter,
                      code: *u8, code_cap: i64,
                      data: *u8, data_cap: i64,
-                     symbols: *Symbol, symbols_cap: i64,
+                     sym_name_offsets: *i64, sym_values: *i64, sym_sections: *i64, sym_is_externals: *i64, symbols_cap: i64,
                      strings: *u8, strings_cap: i64,
-                     relocs: *Reloc, relocs_cap: i64,
+                     reloc_offsets: *i64, reloc_target_ptrs: *i64, reloc_target_lens: *i64,
+                     reloc_types: *i64, reloc_is_pcrels: *i64, reloc_lengths: *i64,
+                     relocs_cap: i64,
                      output: *u8, output_cap: i64) {
     w.code = code;
     w.code_count = 0;
@@ -319,7 +340,11 @@ fn MachOWriter_init(w: *MachOWriter,
     w.data_count = 0;
     w.data_cap = data_cap;
 
-    w.symbols = symbols;
+    // Symbol table (parallel arrays)
+    w.sym_name_offsets = sym_name_offsets;
+    w.sym_values = sym_values;
+    w.sym_sections = sym_sections;
+    w.sym_is_externals = sym_is_externals;
     w.symbols_count = 0;
     w.symbols_cap = symbols_cap;
 
@@ -331,7 +356,13 @@ fn MachOWriter_init(w: *MachOWriter,
         strings.* = 0;
     }
 
-    w.relocs = relocs;
+    // Main relocations (parallel arrays)
+    w.reloc_offsets = reloc_offsets;
+    w.reloc_target_str_offs = reloc_target_ptrs;  // Renamed but same type
+    w.reloc_target_lens = reloc_target_lens;
+    w.reloc_types = reloc_types;
+    w.reloc_is_pcrels = reloc_is_pcrels;
+    w.reloc_lengths = reloc_lengths;
     w.relocs_count = 0;
     w.relocs_cap = relocs_cap;
 
@@ -341,7 +372,12 @@ fn MachOWriter_init(w: *MachOWriter,
     w.debug_line_cap = 0;
 
     // Debug line relocations (set via MachOWriter_setDebugLineRelocs)
-    w.debug_line_relocs = null;
+    w.dbg_line_reloc_offsets = null;
+    w.dbg_line_reloc_target_str_offs = null;
+    w.dbg_line_reloc_target_lens = null;
+    w.dbg_line_reloc_types = null;
+    w.dbg_line_reloc_is_pcrels = null;
+    w.dbg_line_reloc_lengths = null;
     w.debug_line_relocs_count = 0;
     w.debug_line_relocs_cap = 0;
 
@@ -355,8 +391,13 @@ fn MachOWriter_init(w: *MachOWriter,
     w.debug_info_count = 0;
     w.debug_info_cap = 0;
 
-    // Debug info relocations
-    w.debug_info_relocs = null;
+    // Debug info relocations (parallel arrays)
+    w.dbg_info_reloc_offsets = null;
+    w.dbg_info_reloc_target_str_offs = null;
+    w.dbg_info_reloc_target_lens = null;
+    w.dbg_info_reloc_types = null;
+    w.dbg_info_reloc_is_pcrels = null;
+    w.dbg_info_reloc_lengths = null;
     w.debug_info_relocs_count = 0;
     w.debug_info_relocs_cap = 0;
 
@@ -372,32 +413,49 @@ fn MachOWriter_setDebugLine(w: *MachOWriter, debug_line: *u8, debug_line_cap: i6
     w.debug_line_cap = debug_line_cap;
 }
 
-// Set up debug line relocations buffer
-fn MachOWriter_setDebugLineRelocs(w: *MachOWriter, relocs: *Reloc, cap: i64) {
-    w.debug_line_relocs = relocs;
+// Set up debug line relocations buffer (parallel arrays)
+fn MachOWriter_setDebugLineRelocs(w: *MachOWriter,
+                                   offsets: *i64, target_str_offs: *i64, target_lens: *i64,
+                                   types: *i64, is_pcrels: *i64, lengths: *i64,
+                                   cap: i64) {
+    w.dbg_line_reloc_offsets = offsets;
+    w.dbg_line_reloc_target_str_offs = target_str_offs;
+    w.dbg_line_reloc_target_lens = target_lens;
+    w.dbg_line_reloc_types = types;
+    w.dbg_line_reloc_is_pcrels = is_pcrels;
+    w.dbg_line_reloc_lengths = lengths;
     w.debug_line_relocs_count = 0;
     w.debug_line_relocs_cap = cap;
 }
 
 // Add a debug line relocation
 fn MachOWriter_addDebugLineReloc(w: *MachOWriter, offset: i64, symbol_idx: i64) {
-    if w.debug_line_relocs == null or w.debug_line_relocs_count >= w.debug_line_relocs_cap {
+    if w.dbg_line_reloc_offsets == null or w.debug_line_relocs_count >= w.debug_line_relocs_cap {
         return;
     }
 
-    // Get symbol name from strings buffer
-    let sym: *Symbol = w.symbols + symbol_idx;
-    let name_ptr: *u8 = w.strings + sym.name_offset;
+    // Get symbol name offset from parallel arrays
+    let no_ptr: *i64 = w.sym_name_offsets + symbol_idx;
+    let name_str_off: i64 = no_ptr.*;
+    let name_ptr: *u8 = w.strings + name_str_off;
     var name_len: i64 = 0;
     while (name_ptr + name_len).* != 0 { name_len = name_len + 1; }
 
-    let r: *Reloc = w.debug_line_relocs + w.debug_line_relocs_count;
-    r.offset = offset;
-    r.target_ptr = name_ptr;
-    r.target_len = name_len;
-    r.reloc_type = ARM64_RELOC_UNSIGNED;
-    r.is_pcrel = 0;
-    r.length = 3;  // 8 bytes (2^3) for 64-bit address
+    // Store in parallel arrays
+    let idx: i64 = w.debug_line_relocs_count;
+    let off_ptr: *i64 = w.dbg_line_reloc_offsets + idx;
+    let tgt_ptr: *i64 = w.dbg_line_reloc_target_str_offs + idx;
+    let len_ptr: *i64 = w.dbg_line_reloc_target_lens + idx;
+    let typ_ptr: *i64 = w.dbg_line_reloc_types + idx;
+    let pcr_ptr: *i64 = w.dbg_line_reloc_is_pcrels + idx;
+    let lng_ptr: *i64 = w.dbg_line_reloc_lengths + idx;
+
+    off_ptr.* = offset;
+    tgt_ptr.* = name_str_off;  // Store offset instead of pointer
+    len_ptr.* = name_len;
+    typ_ptr.* = ARM64_RELOC_UNSIGNED;
+    pcr_ptr.* = 0;
+    lng_ptr.* = 3;  // 8 bytes (2^3) for 64-bit address
 
     w.debug_line_relocs_count = w.debug_line_relocs_count + 1;
 }
@@ -416,32 +474,49 @@ fn MachOWriter_setDebugInfo(w: *MachOWriter, buf: *u8, cap: i64) {
     w.debug_info_cap = cap;
 }
 
-// Set up debug info relocations buffer
-fn MachOWriter_setDebugInfoRelocs(w: *MachOWriter, relocs: *Reloc, cap: i64) {
-    w.debug_info_relocs = relocs;
+// Set up debug info relocations buffer (parallel arrays)
+fn MachOWriter_setDebugInfoRelocs(w: *MachOWriter,
+                                   offsets: *i64, target_str_offs: *i64, target_lens: *i64,
+                                   types: *i64, is_pcrels: *i64, lengths: *i64,
+                                   cap: i64) {
+    w.dbg_info_reloc_offsets = offsets;
+    w.dbg_info_reloc_target_str_offs = target_str_offs;
+    w.dbg_info_reloc_target_lens = target_lens;
+    w.dbg_info_reloc_types = types;
+    w.dbg_info_reloc_is_pcrels = is_pcrels;
+    w.dbg_info_reloc_lengths = lengths;
     w.debug_info_relocs_count = 0;
     w.debug_info_relocs_cap = cap;
 }
 
 // Add a debug info relocation (for low_pc address)
 fn MachOWriter_addDebugInfoReloc(w: *MachOWriter, offset: i64, symbol_idx: i64) {
-    if w.debug_info_relocs == null or w.debug_info_relocs_count >= w.debug_info_relocs_cap {
+    if w.dbg_info_reloc_offsets == null or w.debug_info_relocs_count >= w.debug_info_relocs_cap {
         return;
     }
 
-    // Get symbol name from strings buffer
-    let sym: *Symbol = w.symbols + symbol_idx;
-    let name_ptr: *u8 = w.strings + sym.name_offset;
+    // Get symbol name offset from parallel arrays
+    let no_ptr: *i64 = w.sym_name_offsets + symbol_idx;
+    let name_str_off: i64 = no_ptr.*;
+    let name_ptr: *u8 = w.strings + name_str_off;
     var name_len: i64 = 0;
     while (name_ptr + name_len).* != 0 { name_len = name_len + 1; }
 
-    let r: *Reloc = w.debug_info_relocs + w.debug_info_relocs_count;
-    r.offset = offset;
-    r.target_ptr = name_ptr;
-    r.target_len = name_len;
-    r.reloc_type = ARM64_RELOC_UNSIGNED;
-    r.is_pcrel = 0;
-    r.length = 3;  // 8 bytes (2^3) for 64-bit address
+    // Store in parallel arrays
+    let idx: i64 = w.debug_info_relocs_count;
+    let off_ptr: *i64 = w.dbg_info_reloc_offsets + idx;
+    let tgt_ptr: *i64 = w.dbg_info_reloc_target_str_offs + idx;
+    let len_ptr: *i64 = w.dbg_info_reloc_target_lens + idx;
+    let typ_ptr: *i64 = w.dbg_info_reloc_types + idx;
+    let pcr_ptr: *i64 = w.dbg_info_reloc_is_pcrels + idx;
+    let lng_ptr: *i64 = w.dbg_info_reloc_lengths + idx;
+
+    off_ptr.* = offset;
+    tgt_ptr.* = name_str_off;  // Store offset instead of pointer
+    len_ptr.* = name_len;
+    typ_ptr.* = ARM64_RELOC_UNSIGNED;
+    pcr_ptr.* = 0;
+    lng_ptr.* = 3;  // 8 bytes (2^3) for 64-bit address
 
     w.debug_info_relocs_count = w.debug_info_relocs_count + 1;
 }
@@ -556,7 +631,7 @@ fn MachOWriter_addString(w: *MachOWriter, s: *u8, len: i64) i64 {
     return offset;
 }
 
-// Add a symbol
+// Add a symbol (using parallel arrays)
 fn MachOWriter_addSymbol(w: *MachOWriter, name: *u8, name_len: i64,
                     value: i64, section: i64, is_external: bool) i64 {
     if w.symbols_count >= w.symbols_cap {
@@ -565,26 +640,35 @@ fn MachOWriter_addSymbol(w: *MachOWriter, name: *u8, name_len: i64,
 
     let name_offset: i64 = MachOWriter_addString(w, name, name_len);
 
-    let sym: *Symbol = w.symbols + w.symbols_count;
-    sym.name_offset = name_offset;
-    sym.value = value;
-    sym.section = section;
-    sym.is_external = is_external;
-
     let idx: i64 = w.symbols_count;
+    let no_ptr: *i64 = w.sym_name_offsets + idx;
+    let v_ptr: *i64 = w.sym_values + idx;
+    let s_ptr: *i64 = w.sym_sections + idx;
+    let e_ptr: *i64 = w.sym_is_externals + idx;
+
+    no_ptr.* = name_offset;
+    v_ptr.* = value;
+    s_ptr.* = section;
+    if is_external {
+        e_ptr.* = 1;
+    } else {
+        e_ptr.* = 0;
+    }
+
     w.symbols_count = w.symbols_count + 1;
     return idx;
 }
 
 // Find symbol index by name (comparing against strings buffer)
 // Following Zig: sym_name_to_idx.get(reloc.target)
-// Returns -1 if not found
+// Returns -1 if not found (using parallel arrays)
 fn MachOWriter_findSymbol(w: *MachOWriter, name: *u8, name_len: i64) i64 {
     var i: i64 = 0;
     while i < w.symbols_count {
-        let sym: *Symbol = w.symbols + i;
-        // Compare name against strings buffer at sym.name_offset
-        let sym_name: *u8 = w.strings + sym.name_offset;
+        // Get name_offset from parallel array
+        let no_ptr: *i64 = w.sym_name_offsets + i;
+        let sym_name_offset: i64 = no_ptr.*;
+        let sym_name: *u8 = w.strings + sym_name_offset;
         var match: bool = true;
         var j: i64 = 0;
         while j < name_len {
@@ -606,20 +690,32 @@ fn MachOWriter_findSymbol(w: *MachOWriter, name: *u8, name_len: i64) i64 {
 }
 
 // Add a relocation (for code section)
-// Following Zig: stores target as slice, looks up index at write time
+// Now looks up symbol index immediately and stores it (parallel arrays)
 fn MachOWriter_addReloc(w: *MachOWriter, offset: i64, target_ptr: *u8, target_len: i64,
                    reloc_type: i64, is_pcrel: i64) {
-    if w.relocs_count >= w.relocs_cap {
+    if w.reloc_offsets == null or w.relocs_count >= w.relocs_cap {
         return;
     }
 
-    let r: *Reloc = w.relocs + w.relocs_count;
-    r.offset = offset;
-    r.target_ptr = target_ptr;
-    r.target_len = target_len;
-    r.reloc_type = reloc_type;
-    r.is_pcrel = is_pcrel;
-    r.length = 2;
+    // Look up symbol index now instead of at write time
+    var sym_idx: i64 = MachOWriter_findSymbol(w, target_ptr, target_len);
+    if sym_idx < 0 { sym_idx = 0; }
+
+    // Store in parallel arrays
+    let idx: i64 = w.relocs_count;
+    let off_ptr: *i64 = w.reloc_offsets + idx;
+    let tgt_ptr: *i64 = w.reloc_target_str_offs + idx;  // Now stores symbol index
+    let len_ptr: *i64 = w.reloc_target_lens + idx;
+    let typ_ptr: *i64 = w.reloc_types + idx;
+    let pcr_ptr: *i64 = w.reloc_is_pcrels + idx;
+    let lng_ptr: *i64 = w.reloc_lengths + idx;
+
+    off_ptr.* = offset;
+    tgt_ptr.* = sym_idx;  // Store symbol index instead of name pointer
+    len_ptr.* = target_len;
+    typ_ptr.* = reloc_type;
+    pcr_ptr.* = is_pcrel;
+    lng_ptr.* = 2;  // Default length
 
     w.relocs_count = w.relocs_count + 1;
 }
@@ -775,43 +871,78 @@ fn MachOWriter_writeSymtabCmd(w: *MachOWriter, symoff: i64, nsyms: i64,
 }
 
 // ============================================================================
-// Relocation Entry Writer
+// Relocation Entry Writer (using parallel arrays)
 // ============================================================================
 
-// Following Zig: looks up symbol index by name at write time
-fn MachOWriter_writeReloc(w: *MachOWriter, r: *Reloc) {
-    MachOWriter_outU32(w, r.offset);  // r_address
-    // Look up symbol index by name (following Zig: sym_name_to_idx.get(reloc.target))
-    var sym_idx: i64 = MachOWriter_findSymbol(w, r.target_ptr, r.target_len);
-    if sym_idx < 0 { sym_idx = 0; }  // Default to 0 if not found
-    // Build r_info: symbolnum (24) | pcrel (1) | length (2) | extern (1) | type (4)
-    let is_pcrel: bool = r.is_pcrel != 0;
-    let info: i64 = RelocInfo_make(sym_idx, is_pcrel, r.length, true, r.reloc_type);
+// Write a text relocation from parallel arrays
+fn MachOWriter_writeTextReloc(w: *MachOWriter, idx: i64) {
+    let offset_ptr: *i64 = w.reloc_offsets + idx;
+    let sym_idx_ptr: *i64 = w.reloc_target_str_offs + idx;  // Now stores symbol index
+    let type_ptr: *i64 = w.reloc_types + idx;
+    let is_pcrel_ptr: *i64 = w.reloc_is_pcrels + idx;
+    let length_ptr: *i64 = w.reloc_lengths + idx;
+
+    let offset: i64 = offset_ptr.*;
+    let sym_idx: i64 = sym_idx_ptr.*;  // Symbol index was stored by addReloc
+    let reloc_type: i64 = type_ptr.*;
+    let is_pcrel: i64 = is_pcrel_ptr.*;
+    let length: i64 = length_ptr.*;
+
+    MachOWriter_outU32(w, offset);  // r_address
+    let is_pcrel_bool: bool = is_pcrel != 0;
+    let info: i64 = RelocInfo_make(sym_idx, is_pcrel_bool, length, true, reloc_type);
     MachOWriter_outU32(w, info);
 }
 
-// Debug version that prints source info for bad relocations
-fn MachOWriter_writeRelocDbg(w: *MachOWriter, r: *Reloc, src: i64, idx: i64) {
-    // Look up symbol index by name
-    var sym_idx: i64 = MachOWriter_findSymbol(w, r.target_ptr, r.target_len);
+// Write a debug line relocation from parallel arrays
+fn MachOWriter_writeDbgLineReloc(w: *MachOWriter, idx: i64) {
+    let offset_ptr: *i64 = w.dbg_line_reloc_offsets + idx;
+    let target_str_off_ptr: *i64 = w.dbg_line_reloc_target_str_offs + idx;
+    let target_len_ptr: *i64 = w.dbg_line_reloc_target_lens + idx;
+    let type_ptr: *i64 = w.dbg_line_reloc_types + idx;
+    let is_pcrel_ptr: *i64 = w.dbg_line_reloc_is_pcrels + idx;
+    let length_ptr: *i64 = w.dbg_line_reloc_lengths + idx;
+
+    let offset: i64 = offset_ptr.*;
+    let target_str_off: i64 = target_str_off_ptr.*;
+    let target_len: i64 = target_len_ptr.*;
+    let reloc_type: i64 = type_ptr.*;
+    let is_pcrel: i64 = is_pcrel_ptr.*;
+    let length: i64 = length_ptr.*;
+
+    let target_ptr: *u8 = w.strings + target_str_off;
+
+    MachOWriter_outU32(w, offset);
+    var sym_idx: i64 = MachOWriter_findSymbol(w, target_ptr, target_len);
     if sym_idx < 0 { sym_idx = 0; }
-    // Debug: detect bad relocations
-    if r.offset < 0 or r.offset > 500000 or sym_idx > 10000 or (r.offset % 4) != 0 {
-        io_print("BAD RELOC[src=");
-        io_print_int(src);
-        io_print(",idx=");
-        io_print_int(idx);
-        io_print("]: offset=");
-        io_print_int(r.offset);
-        io_print(" sym=");
-        io_print_int(sym_idx);
-        io_print(" type=");
-        io_print_int(r.reloc_type);
-        io_print("\n");
-    }
-    MachOWriter_outU32(w, r.offset);  // r_address
-    let is_pcrel: bool = r.is_pcrel != 0;
-    let info: i64 = RelocInfo_make(sym_idx, is_pcrel, r.length, true, r.reloc_type);
+    let is_pcrel_bool: bool = is_pcrel != 0;
+    let info: i64 = RelocInfo_make(sym_idx, is_pcrel_bool, length, true, reloc_type);
+    MachOWriter_outU32(w, info);
+}
+
+// Write a debug info relocation from parallel arrays
+fn MachOWriter_writeDbgInfoReloc(w: *MachOWriter, idx: i64) {
+    let offset_ptr: *i64 = w.dbg_info_reloc_offsets + idx;
+    let target_str_off_ptr: *i64 = w.dbg_info_reloc_target_str_offs + idx;
+    let target_len_ptr: *i64 = w.dbg_info_reloc_target_lens + idx;
+    let type_ptr: *i64 = w.dbg_info_reloc_types + idx;
+    let is_pcrel_ptr: *i64 = w.dbg_info_reloc_is_pcrels + idx;
+    let length_ptr: *i64 = w.dbg_info_reloc_lengths + idx;
+
+    let offset: i64 = offset_ptr.*;
+    let target_str_off: i64 = target_str_off_ptr.*;
+    let target_len: i64 = target_len_ptr.*;
+    let reloc_type: i64 = type_ptr.*;
+    let is_pcrel: i64 = is_pcrel_ptr.*;
+    let length: i64 = length_ptr.*;
+
+    let target_ptr: *u8 = w.strings + target_str_off;
+
+    MachOWriter_outU32(w, offset);
+    var sym_idx: i64 = MachOWriter_findSymbol(w, target_ptr, target_len);
+    if sym_idx < 0 { sym_idx = 0; }
+    let is_pcrel_bool: bool = is_pcrel != 0;
+    let info: i64 = RelocInfo_make(sym_idx, is_pcrel_bool, length, true, reloc_type);
     MachOWriter_outU32(w, info);
 }
 
@@ -819,27 +950,38 @@ fn MachOWriter_writeRelocDbg(w: *MachOWriter, r: *Reloc, src: i64, idx: i64) {
 // Symbol Entry Writer (nlist64)
 // ============================================================================
 
-fn MachOWriter_writeNlist64(w: *MachOWriter, sym: *Symbol) {
-    MachOWriter_outU32(w, sym.name_offset);  // n_strx
+fn MachOWriter_writeNlist64(w: *MachOWriter, sym_idx: i64) {
+    // Read from parallel arrays
+    let no_ptr: *i64 = w.sym_name_offsets + sym_idx;
+    let v_ptr: *i64 = w.sym_values + sym_idx;
+    let s_ptr: *i64 = w.sym_sections + sym_idx;
+    let e_ptr: *i64 = w.sym_is_externals + sym_idx;
+
+    let sym_name_offset: i64 = no_ptr.*;
+    let sym_value: i64 = v_ptr.*;
+    let sym_section: i64 = s_ptr.*;
+    let sym_is_external: i64 = e_ptr.*;
+
+    MachOWriter_outU32(w, sym_name_offset);  // n_strx
 
     // n_type: N_SECT | N_EXT for defined external, N_EXT for undefined
-    let n_type: i64 = 0;
-    if sym.section == 0 {
+    var n_type: i64 = 0;
+    if sym_section == 0 {
         // Undefined external symbol
         n_type = N_EXT;
     } else {
         // Defined in section
         n_type = N_SECT;
-        if sym.is_external {
+        if sym_is_external != 0 {
             n_type = n_type | N_EXT;
         }
     }
     MachOWriter_outByte(w, n_type);  // n_type
 
-    MachOWriter_outByte(w, sym.section);  // n_sect
+    MachOWriter_outByte(w, sym_section);  // n_sect
     MachOWriter_outByte(w, 0);  // n_desc low byte
     MachOWriter_outByte(w, 0);  // n_desc high byte
-    MachOWriter_outU64(w, sym.value);  // n_value
+    MachOWriter_outU64(w, sym_value);  // n_value
 }
 
 // ============================================================================
@@ -1178,11 +1320,10 @@ fn MachOWriter_write(w: *MachOWriter) i64 {
     let pad2: i64 = reloc_offset - (data_offset + data_size);
     MachOWriter_outZeros(w, pad2);
 
-    // Write relocations
+    // Write relocations (using parallel arrays)
     var i: i64 = 0;
     while i < w.relocs_count {
-        let r: *Reloc = w.relocs + i;
-        MachOWriter_writeReloc(w, r);
+        MachOWriter_writeTextReloc(w, i);
         i = i + 1;
     }
 
@@ -1190,11 +1331,10 @@ fn MachOWriter_write(w: *MachOWriter) i64 {
     let pad3: i64 = symtab_offset - (reloc_offset + reloc_size);
     MachOWriter_outZeros(w, pad3);
 
-    // Write symbol table
+    // Write symbol table (using parallel arrays)
     i = 0;
     while i < w.symbols_count {
-        let sym: *Symbol = w.symbols + i;
-        MachOWriter_writeNlist64(w, sym);
+        MachOWriter_writeNlist64(w, i);
         i = i + 1;
     }
 
@@ -1410,37 +1550,34 @@ fn MachOWriter_writeWithDebug(w: *MachOWriter) i64 {
     let pad3: i64 = text_reloc_offset - last_debug_end;
     MachOWriter_outZeros(w, pad3);
 
-    // Write text section relocations
-    io_print("Writing text relocs, count=");
-    io_print_int(w.relocs_count);
-    io_print("\n");
+    // Write text section relocations (using parallel arrays)
+    print("Writing text relocs, count=");
+    print(w.relocs_count);
+    print("\n");
     var i: i64 = 0;
     while i < w.relocs_count {
-        let r: *Reloc = w.relocs + i;
-        MachOWriter_writeRelocDbg(w, r, 1, i);
+        MachOWriter_writeTextReloc(w, i);
         i = i + 1;
     }
 
-    // Write debug_line section relocations
-    io_print("Writing debug_line relocs, count=");
-    io_print_int(w.debug_line_relocs_count);
-    io_print("\n");
+    // Write debug_line section relocations (using parallel arrays)
+    print("Writing debug_line relocs, count=");
+    print(w.debug_line_relocs_count);
+    print("\n");
     i = 0;
     while i < w.debug_line_relocs_count {
-        let r: *Reloc = w.debug_line_relocs + i;
-        MachOWriter_writeRelocDbg(w, r, 2, i);
+        MachOWriter_writeDbgLineReloc(w, i);
         i = i + 1;
     }
 
-    // Write debug_info section relocations
+    // Write debug_info section relocations (using parallel arrays)
     if has_full_debug {
-        io_print("Writing debug_info relocs, count=");
-        io_print_int(w.debug_info_relocs_count);
-        io_print("\n");
+        print("Writing debug_info relocs, count=");
+        print(w.debug_info_relocs_count);
+        print("\n");
         i = 0;
         while i < w.debug_info_relocs_count {
-            let r: *Reloc = w.debug_info_relocs + i;
-            MachOWriter_writeRelocDbg(w, r, 3, i);
+            MachOWriter_writeDbgInfoReloc(w, i);
             i = i + 1;
         }
     }
@@ -1449,11 +1586,10 @@ fn MachOWriter_writeWithDebug(w: *MachOWriter) i64 {
     let pad4: i64 = symtab_offset - (text_reloc_offset + total_reloc_size);
     MachOWriter_outZeros(w, pad4);
 
-    // Write symbol table
+    // Write symbol table (using parallel arrays)
     i = 0;
     while i < w.symbols_count {
-        let sym: *Symbol = w.symbols + i;
-        MachOWriter_writeNlist64(w, sym);
+        MachOWriter_writeNlist64(w, i);
         i = i + 1;
     }
 

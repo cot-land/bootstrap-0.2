@@ -2355,6 +2355,7 @@ pub const SSABuilder = struct {
             .neg => .neg,
             .not => .not,
             .bit_not => .not,
+            .optional_unwrap => .copy, // Just pass through the value with new type
         };
     }
 };

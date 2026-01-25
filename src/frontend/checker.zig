@@ -798,6 +798,14 @@ pub const Checker = struct {
                 }
                 return operand_type;
             },
+            .question => {
+                // Optional unwrap: x.? where x is ?T returns T
+                if (operand == .optional) {
+                    return operand.optional.elem;
+                }
+                self.err.errorWithCode(un.span.start, .e303, "'.?' requires optional operand");
+                return invalid_type;
+            },
             else => return invalid_type,
         }
     }
@@ -1665,6 +1673,10 @@ pub const Checker = struct {
             .optional => |elem_idx| {
                 const elem = try self.resolveTypeExpr(elem_idx);
                 return try self.types.makeOptional(elem);
+            },
+            .error_union => |elem_idx| {
+                const elem = try self.resolveTypeExpr(elem_idx);
+                return try self.types.makeErrorUnion(elem);
             },
             .slice => |elem_idx| {
                 const elem = try self.resolveTypeExpr(elem_idx);

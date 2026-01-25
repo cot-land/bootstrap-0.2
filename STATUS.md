@@ -6,145 +6,126 @@
 
 | Component | Status |
 |-----------|--------|
-| Zig compiler | ✅ 166 tests pass |
-| Stage 1 (Zig → cot0) | ✅ 166/166 tests pass (100%) |
-| Stage 2 (cot0 → cot0) | ✅ Compiles with correct GlobalRelocs |
-| Self-hosting | ⚠️ Blocked by DWARF relocation alignment |
-| Fixed arrays removal | ✅ COMPLETE |
+| Zig compiler (Stage 0) | ✅ 166 tests pass |
+| cot1-stage1 (built by Zig) | ✅ 175 tests pass (166 bootstrap + 9 features) |
+| cot1 self-hosting | ⏳ Blocked by lowerer bugs |
+| Project restructure | ✅ Complete |
 
-## Current Priority: Fix DWARF Relocation Alignment
+## Recent Progress (2026-01-25)
 
-**Goal**: Make stage1-compiled binaries executable.
+### cot1 Feature Implementation ✅
+All cot1 Phase 1 features are now COMPLETE and passing tests:
 
-**Issue**: DWARF debug_line section has a relocation at offset 59 (not 4-byte aligned), which causes "exec format error" on macOS.
+| Feature | Status | Tests |
+|---------|--------|-------|
+| Type aliases (`type Name = T`) | ✅ Complete | 3 tests pass |
+| Optional types (`?*T`) | ✅ Complete | 3 tests pass |
+| String parameter passing | ✅ Fixed | All string tests pass |
+| Bootstrap test parity | ✅ Complete | 166 tests pass |
 
-**Progress (2026-01-25)**: Fixed nested struct field lookup bug (BUG-060). GlobalReloc corruption is resolved - stage1 now produces correct relocation values.
+**Total: 175 tests passing with cot1-stage1**
 
-See [cot0/STAGE2_INVESTIGATION.md](cot0/STAGE2_INVESTIGATION.md) for detailed analysis.
+### Technical Fixes Applied
+1. **String parameter passing** - Fixed SSA builder to create two Arg ops (ptr, len) for string parameters, combined with StringMake
+2. **String codegen** - Fixed genssa.cot to handle StringPtr/StringLen in call argument processing
+3. **Type aliases** - Parser, checker, and lowerer all handle `type Name = T` correctly
+4. **Optional types** - Parser recognizes `?T` syntax, checker/lowerer treat as pointer type (sentinel optimization)
 
-## Strategic Direction: cot0 → cot9 Evolution
+### Self-Hosting Status
+- cot1-stage1 compiles cot1 source but encounters lowerer errors
+- Errors: "Unhandled expr kind=UNKNOWN" and "ExprStmt passed to lowerExpr"
+- Root cause: cot1's lowerer doesn't handle all node types when compiling itself
+- Next step: Debug and fix lowerer to handle type expression nodes properly
 
-Rather than perfecting cot0, we're moving forward to cot1 with improved language features:
+## Major Update: New Bootstrap Architecture
 
-- **cot0**: Minimal self-hosting (ACHIEVED - core compiler works)
-- **cot1**: Error handling & safety (error unions, optionals, type aliases)
-- **cot2**: Basic generics & abstractions
-- **cot3-cot9**: Progressive feature additions toward production-ready language
+**Decision (2026-01-25)**: Abandoned cot0 self-hosting attempts. The Zig compiler now serves as Stage 0 (trusted bootstrap) for the cot1→cot9 evolution chain.
 
-See [LANGUAGE_EVOLUTION.md](LANGUAGE_EVOLUTION.md) for the complete roadmap.
+See [BOOTSTRAP.md](BOOTSTRAP.md) for full documentation.
 
-## Recent: Fixed Arrays Conversion (COMPLETE)
+### Why This Change?
 
-All accumulating fixed-size arrays have been converted to dynamic allocation:
+cot0 had blocking issues:
+- DWARF relocation alignment on ARM64 macOS
+- Struct pointer arithmetic bugs for large codebases
 
-- **IR Storage**: `ir_nodes`, `ir_locals`, `ir_funcs`, `constants`, `ir_globals` - all use realloc
-- **Type Pool**: `types`, `params`, `fields` - all use realloc with capacity tracking
-- **Node Pool**: Uses `capacity` field instead of hardcoded MAX_NODES
+Rather than fix these, we recognized that the **Zig compiler already works perfectly** and can bootstrap all Cot stages.
 
-Remaining `MAX_*` constants are intentional per-function limits (SSA, codegen) that don't accumulate.
+### New Directory Structure
 
-See [cot0/FIXED_ARRAYS_AUDIT.md](cot0/FIXED_ARRAYS_AUDIT.md) for full details.
+```
+bootstrap-0.2/
+├── src/                  # Stage 0: Zig compiler
+├── stages/
+│   └── cot1/            # Stage 1: First self-hosting target
+├── runtime/              # Shared runtime
+├── test/
+│   ├── bootstrap/       # Zig compiler tests (166 tests)
+│   └── stages/cot1/     # cot1 feature tests
+└── archive/
+    └── cot0/            # Historical reference (deprecated)
+```
 
-### Stage1 Test Results
+## Current Priority: cot1 Self-Hosting
 
-| Category | Status |
-|----------|--------|
-| Basic return, arithmetic, locals | ✅ PASS |
-| Function calls | ✅ PASS |
-| If/else, while, break, continue | ✅ PASS |
-| Small structs (≤16 bytes) | ✅ PASS |
-| Arrays | ✅ PASS |
-| Pointer dereference/write | ✅ PASS |
-| Comparisons, bitwise ops | ✅ PASS |
-| Global variables | ✅ PASS |
-| Crash handler integration | ✅ PASS |
-| **9+ argument function calls** | ✅ PASS (fixed 2026-01-24) |
-| **Large struct returns (>16B)** | ✅ PASS |
-| **String literals** | ✅ PASS (fixed BUG-055 2026-01-24) |
-| **String operations** | ✅ PASS (copy, index, slice, concat all work) |
-| **Large struct arguments (>16B)** | ✅ PASS (fixed BUG-019 2026-01-24) |
-| **Self-compilation** | ✅ PASS (fixed BUG-057 2026-01-24) |
-| **Hex literal parsing** | ✅ PASS (fixed 2026-01-24) |
-| **Bitwise NOT** | ✅ PASS (fixed 2026-01-24) |
-| **Global variable init** | ✅ PASS (fixed BUG-058 2026-01-24) |
-| **else-if chains** | ✅ PASS (fixed 2026-01-24) |
+**CRITICAL**: The goal is for cot1 to compile itself. This requires fixing lowerer bugs discovered during self-hosting attempts.
 
-### Known Issues (Priority Order)
+### Feature Status
 
-None - all 166 tests pass!
+| Feature | Zig Compiler | cot1 Source | Status |
+|---------|-------------|-------------|--------|
+| Type aliases | ✅ Complete | ✅ Complete | ✅ 3 tests pass |
+| Optional types (?T) | ✅ Complete | ✅ Complete | ✅ 3 tests pass |
+| Error unions (!T) | ✅ Complete | ⏳ Parser only | Needs cot1 checker/lowerer |
+| String parameters | ✅ Complete | ✅ Complete | ✅ Fixed in SSA builder & codegen |
 
-### Recently Fixed
+### Self-Hosting Blockers
 
-1. **Large struct arguments (BUG-019)** (FIXED - 2026-01-24)
-   - Cause: ARM64 ABI requires pass-by-reference for >16B structs
-   - Fix: Added expand_calls pass integration, updated SSA builder to emit Move for large struct params,
-     updated FuncBuilder_addParam to take size parameter (following Zig pattern)
-   - Files: expand_calls.cot, builder.cot, ir.cot, lower.cot, genssa.cot
+When cot1-stage1 compiles cot1 source, the lowerer encounters:
+1. "Unhandled expr kind=UNKNOWN" - Type expression nodes not recognized
+2. "ExprStmt passed to lowerExpr" - Statement nodes in expression context
 
-2. **String concatenation** (FIXED - 2026-01-24)
-   - Cause: GenState_call had argument placement bugs for calls returning strings
-   - Fix: Added dedicated StringConcat SSA op (like Zig) with proper codegen handling
-   - All string tests now pass: copy, index, slice, concat (literal+literal, var+literal, var+var)
+These bugs in `stages/cot1/frontend/lower.cot` need to be fixed before self-hosting works.
 
-2. **Global variable initialization** (FIXED - BUG-058)
-   - Cause: Globals written as zeros instead of initialized values
-   - Fix: Added init_value/has_init to IRGlobal, write values to data section
+### Development Workflow
 
-2. **Bitwise NOT** (FIXED)
-   - Cause: Op_fromIRUnaryOp expected enum values 0,1,2 but got IR_OP_* constants 18,19,20
-   - Fix: Updated Op_fromIRUnaryOp in builder.cot
+1. Add feature to Zig compiler (src/*.zig)
+2. Add tests to test/bootstrap/
+3. Verify tests pass
+4. Add feature to stages/cot1/*.cot
+5. Add tests to test/stages/cot1/
+6. Verify cot1 compiles and passes tests
 
-3. **Self-compilation crash** (FIXED - BUG-057)
-   - Cause: malloc_IRLocal allocated only 32 bytes, but IRLocal is 80 bytes
-   - Fix: Updated runtime/cot_runtime.zig malloc sizes
+## Commands
 
-4. **String Literals** (FIXED - BUG-055)
-   - Cause: TYPE_STRING not handled in FieldAccess, escape sequences not processed
-   - Fix: Handle TYPE_STRING in lower.cot, process escapes in main.cot
+```bash
+# Build Zig compiler
+zig build
 
-5. **Hex Literals** (FIXED)
-   - Cause: Scanner and parser didn't handle 0x prefix
-   - Fix: Added hex/octal/binary literal support to scanner.cot and parser.cot
+# Run bootstrap tests (166 tests)
+./zig-out/bin/cot test/bootstrap/all_tests.cot -o /tmp/tests && /tmp/tests
 
-## What Works (with Zig Compiler)
+# Build cot1
+./zig-out/bin/cot stages/cot1/main.cot -o /tmp/cot1
 
-- ✅ All 166 end-to-end tests pass
-- ✅ Simple struct field access (`p.x = 10`)
-- ✅ Nested struct field access (`o.inner.y = 20`)
-- ✅ Array indexing with struct fields (`points[0].x`)
-- ✅ Defer statements with proper scope handling
-- ✅ Control flow (if/else, while, break, continue)
-- ✅ Function calls with any number of arguments (9+ use stack)
-- ✅ String literals and global variables
-- ✅ DWARF debug info (source locations in crash reports)
+# Run cot1 feature tests
+./zig-out/bin/cot test/stages/cot1/cot1_features.cot -o /tmp/cot1_tests && /tmp/cot1_tests
+```
 
-## Recent Milestones
+## Stage Roadmap
 
-- **2026-01-24**: **Completed fixed arrays removal** - All accumulating arrays (IR, types, nodes) now use dynamic allocation with realloc. Stage2 no longer crashes from capacity exhaustion.
-- **2026-01-24**: **Fixed 9+ argument function calls** - Parser extended to 16 args, ABI stack alignment fixed, genssa store handler updated
-- **2026-01-24**: Converted all core fixed-size arrays to dynamic allocation (Value.args, Block.preds, local arrays in builder/genssa/lower/parser/regalloc/main)
-- **2026-01-24**: Crash handler works in cot0-compiled programs (DWARF parsing, source location display)
-- **2026-01-24**: Error reporting shows file:line:column with source context
-- **2026-01-24**: 21+ basic tests verified passing (arithmetic, bitwise, control flow, functions, pointers, arrays, globals, small structs)
-- **2026-01-24**: Identified Stage1 test failures, created test plan
-- **2026-01-24**: Added SSABuilder_verify() for SSA validation/debugging
-- **2026-01-24**: Added parser nesting depth protection (Parser_incNest/decNest)
-- **2026-01-24**: Added node index validation in lowerBlockCheckTerminated
-- **2026-01-24**: Added BlockStmt handling in lowerStmt
-- **2026-01-24**: Fixed nested struct field assignment (TypeRegistry-based lookup)
-- **2026-01-24**: SSA passes with full logic (schedule, lower, decompose, expand_calls)
-- **2026-01-23**: Added defer statement support
-- **2026-01-23**: Added FwdRef pattern to SSA builder
-- **2026-01-23**: Added emitPhiMoves() for correct phi semantics
-- **2026-01-23**: DWARF debug info implementation
+| Stage | Focus | Key Features | Status |
+|-------|-------|--------------|--------|
+| cot1 | Error handling | Type aliases, optionals, error unions | In Progress |
+| cot2 | Generics | Generic functions, generic structs | Not Started |
+| cot3 | Traits | Interfaces, trait implementations | Not Started |
+| cot4 | Memory | ARC, custom allocators | Not Started |
+| cot5 | Modules | Module system, visibility | Not Started |
+| cot6 | Metaprogramming | Comptime, reflection | Not Started |
+| cot7 | Optimization | Inlining, DCE, constant folding | Not Started |
+| cot8 | Tooling | LSP, formatter, docs | Not Started |
+| cot9 | Production | Full optimization, stable ABI | Not Started |
 
-## Documentation
+## Historical Note
 
-| Document | Purpose |
-|----------|---------|
-| [README.md](README.md) | Project overview and vision |
-| [CLAUDE.md](CLAUDE.md) | Development workflow |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Compiler design |
-| [SELF_HOSTING.md](SELF_HOSTING.md) | Path to self-hosting |
-| [cot0/COMPARISON.md](cot0/COMPARISON.md) | Function parity checklist |
-| [cot0/FIXED_ARRAYS_AUDIT.md](cot0/FIXED_ARRAYS_AUDIT.md) | Dynamic allocation status (COMPLETE) |
+The `archive/cot0/` directory contains the original self-hosting attempt that demonstrated Cot could compile itself. It's preserved as historical reference but is no longer actively developed.

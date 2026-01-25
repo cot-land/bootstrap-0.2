@@ -602,6 +602,92 @@ fn Checker_resolveTypeHandle(chk: *Checker, type_handle: i64) i64 {
     return TYPE_INVALID;
 }
 
+// Resolve a TypeExpr AST node to a TypeRegistry index
+// Mirrors Zig bootstrap's resolveTypeExpr() and lowerer's resolve_type_expr()
+// This is needed because the parser stores AST node indices, not PTYPE_* handles
+fn Checker_resolveTypeNode(chk: *Checker, type_node_idx: i64) i64 {
+    if type_node_idx < 0 {
+        return TYPE_INVALID;
+    }
+
+    let node: *Node = node_get(chk.ast_pool, type_node_idx);
+
+    // TypeExprNamed: look up type by name (handles built-in types and user types)
+    if node.kind == NodeKind.TypeExprNamed {
+        let name_start: i64 = node.field0;
+        let name_len: i64 = node.field1;
+        // Check built-in types first
+        if name_len == 3 {
+            let c0: u8 = (chk.source + name_start).*;
+            if c0 == 105 {  // 'i'
+                let c1: u8 = (chk.source + name_start + 1).*;
+                let c2: u8 = (chk.source + name_start + 2).*;
+                if c1 == 54 and c2 == 52 { return TYPE_I64; }  // i64
+                if c1 == 51 and c2 == 50 { return TYPE_I32; }  // i32
+            }
+        }
+        if name_len == 2 {
+            let c0: u8 = (chk.source + name_start).*;
+            let c1: u8 = (chk.source + name_start + 1).*;
+            if c0 == 117 and c1 == 56 { return TYPE_U8; }  // u8
+        }
+        if name_len == 4 {
+            let c0: u8 = (chk.source + name_start).*;
+            if c0 == 98 { return TYPE_BOOL; }   // bool
+            if c0 == 118 { return TYPE_VOID; }  // void
+        }
+        if name_len == 6 {
+            let c0: u8 = (chk.source + name_start).*;
+            if c0 == 115 { return TYPE_STRING; }  // string
+        }
+        // Look up user-defined type in scope
+        return ScopePool_lookupType(chk.scope_pool, chk.current_scope,
+                                    chk.source, name_start, name_len);
+    }
+
+    // TypeExprPointer: *T
+    if node.kind == NodeKind.TypeExprPointer {
+        let inner_idx: i64 = node.field0;
+        let inner_type: i64 = Checker_resolveTypeNode(chk, inner_idx);
+        return TypeRegistry_makePointer(chk.type_pool, inner_type);
+    }
+
+    // TypeExprOptional: ?T (for now, treat as inner type)
+    if node.kind == NodeKind.TypeExprOptional {
+        let inner_idx: i64 = node.field0;
+        return Checker_resolveTypeNode(chk, inner_idx);
+    }
+
+    // TypeExprArray: [N]T
+    if node.kind == NodeKind.TypeExprArray {
+        let size_node_idx: i64 = node.field0;
+        let elem_node_idx: i64 = node.field1;
+        var array_size: i64 = 0;
+        if size_node_idx >= 0 {
+            let size_node: *Node = node_get(chk.ast_pool, size_node_idx);
+            if size_node.kind == NodeKind.IntLit {
+                array_size = size_node.field0;
+            }
+        }
+        let elem_type: i64 = Checker_resolveTypeNode(chk, elem_node_idx);
+        return TypeRegistry_makeArray(chk.type_pool, elem_type, array_size);
+    }
+
+    // TypeExprSlice: []T
+    if node.kind == NodeKind.TypeExprSlice {
+        let elem_node_idx: i64 = node.field0;
+        let elem_type: i64 = Checker_resolveTypeNode(chk, elem_node_idx);
+        return TypeRegistry_makeSlice(chk.type_pool, elem_type);
+    }
+
+    // TypeExprFunc: fn(params) -> ret (pre-resolved by parser)
+    if node.kind == NodeKind.TypeExprFunc {
+        return node.field1;  // Pre-resolved TypeRegistry index
+    }
+
+    return TYPE_INVALID;
+}
+
 // ============================================================================
 // Type Checking - Struct/Enum Declarations
 // ============================================================================
@@ -742,10 +828,31 @@ fn Checker_errors(chk: *Checker) i64 {
     return chk.error_count;
 }
 
+// cot1: Check a type alias declaration and register it
+// type Name = TargetType
+fn Checker_checkTypeAliasDecl(chk: *Checker, node_idx: i64) {
+    if node_idx < 0 { return; }
+
+    let node: *Node = node_get(chk.ast_pool, node_idx);
+    if node.kind != NodeKind.TypeAliasDecl { return; }
+
+    let name_start: i64 = node.field0;
+    let name_len: i64 = node.field1;
+    let type_node_idx: i64 = node.field2;  // AST node index (NOT PTYPE_*)
+
+    // Resolve the target type from AST node
+    let target_type: i64 = Checker_resolveTypeNode(chk, type_node_idx);
+
+    // Register alias name as a TypeName symbol pointing to the target type
+    let sym: Symbol = Symbol_new(name_start, name_len, SymbolKind.TypeName,
+                                  target_type, node_idx, false);
+    ScopePool_define(chk.scope_pool, chk.current_scope, sym);
+}
+
 // Check all declarations in the file
 // Following Zig checker.zig:checkFile pattern
 fn Checker_checkFile(chk: *Checker) {
-    // Phase 1: Process all struct and enum declarations first
+    // Phase 1: Process all struct, enum, and type alias declarations first
     // This registers types with correct field offsets in the type pool
     var i: i64 = 0;
     while i < chk.ast_pool.count {
@@ -754,6 +861,8 @@ fn Checker_checkFile(chk: *Checker) {
             Checker_checkStructDecl(chk, i);
         } else if node.kind == NodeKind.EnumDecl {
             Checker_checkEnumDecl(chk, i);
+        } else if node.kind == NodeKind.TypeAliasDecl {
+            Checker_checkTypeAliasDecl(chk, i);
         }
         i = i + 1;
     }

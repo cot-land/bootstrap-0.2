@@ -26,6 +26,13 @@ struct ConstEntry {
     value: i64,
 }
 
+// cot1: Type alias entry for tracking type Name = TargetType
+struct TypeAliasEntry {
+    name_start: i64,    // Offset in source
+    name_len: i64,      // Length of alias name
+    target_type: i64,   // Resolved TypeRegistry type index
+}
+
 // MAX_CONSTANTS removed - using dynamic growth
 
 // Dynamic reallocation for growing arrays (after struct definitions)
@@ -34,6 +41,8 @@ extern fn realloc_IRNode(ptr: *IRNode, old_count: i64, new_count: i64) *IRNode;
 extern fn realloc_IRFunc(ptr: *IRFunc, old_count: i64, new_count: i64) *IRFunc;
 extern fn realloc_IRGlobal(ptr: *IRGlobal, old_count: i64, new_count: i64) *IRGlobal;
 extern fn realloc_ConstEntry(ptr: *ConstEntry, old_count: i64, new_count: i64) *ConstEntry;
+
+// print() and println() are built-in functions that handle strings and integers
 
 // Struct field info for name-based lookup
 struct StructFieldLookup {
@@ -85,6 +94,11 @@ struct Lowerer {
     constants_count: i64,
     constants_cap: i64,
 
+    // cot1: Type aliases
+    type_aliases: *TypeAliasEntry,
+    type_aliases_count: i64,
+    type_aliases_cap: i64,
+
     // Loop context for break/continue (block indices, -1 if not in loop)
     loop_continue_block: i64,
     loop_break_block: i64,
@@ -116,10 +130,11 @@ fn resolve_type_expr(l: *Lowerer, type_expr_idx: i64) i64 {
     let node: *Node = l.nodes + type_expr_idx;
 
     // TypeExprNamed: look up type by name
+    // cot1: Updated to use Lowerer_resolveNamedType which checks type aliases first
     if node.kind == NodeKind.TypeExprNamed {
         let name_start: i64 = node.field0;
         let name_len: i64 = node.field1;
-        return resolve_named_type(l.type_pool, l.source, name_start, name_len);
+        return Lowerer_resolveNamedType(l, name_start, name_len);
     }
 
     // TypeExprPointer: *T
@@ -210,6 +225,19 @@ fn resolve_named_type(pool: *TypeRegistry, source: *u8, name_start: i64, name_le
     return TypeRegistry_findByName(pool, name_start, name_len);
 }
 
+// cot1: Resolve a named type with support for type aliases
+// First checks type aliases, then falls back to built-in and struct/enum types
+fn Lowerer_resolveNamedType(l: *Lowerer, name_start: i64, name_len: i64) i64 {
+    // First check type aliases
+    let alias_type: i64 = Lowerer_lookupTypeAlias(l, name_start, name_len);
+    if alias_type >= 0 {
+        return alias_type;
+    }
+
+    // Fall back to built-in and struct/enum types
+    return resolve_named_type(l.type_pool, l.source, name_start, name_len);
+}
+
 // Resolve type from source text - handles pointer types like *GlobalReloc
 // This parses the type expression from source and creates/finds the appropriate type
 fn resolve_type_from_source(pool: *TypeRegistry, source: *u8, type_start: i64, type_len: i64) i64 {
@@ -247,6 +275,52 @@ fn resolve_type_handle(pool: *TypeRegistry, source: *u8, type_handle: i64) i64 {
     if type_handle >= 0 and type_handle < 100 {
         return type_handle;
     }
+    return TYPE_INVALID;
+}
+
+// cot1: Resolve type handle with support for user-defined types (including type aliases)
+// Reference: Zig bootstrap checker.zig resolveTypeExpr()
+fn Lowerer_resolveTypeHandle(l: *Lowerer, type_handle: i64) i64 {
+    // Basic types: direct mapping (0-9)
+    if type_handle >= 0 and type_handle < PTYPE_PTR_BASE {
+        return type_handle;
+    }
+
+    // Pointer types: PTYPE_PTR_BASE (10) + pointee_handle
+    if type_handle >= PTYPE_PTR_BASE and type_handle < PTYPE_USER_BASE {
+        let pointee_handle: i64 = type_handle - PTYPE_PTR_BASE;
+        let pointee_type: i64 = Lowerer_resolveTypeHandle(l, pointee_handle);
+        return TypeRegistry_makePointer(l.type_pool, pointee_type);
+    }
+
+    // User-defined types: PTYPE_USER_BASE (100) + source_offset
+    if type_handle >= PTYPE_USER_BASE {
+        let name_start: i64 = type_handle - PTYPE_USER_BASE;
+        // Scan to find the end of the type name
+        var name_len: i64 = 0;
+        var pos: i64 = name_start;
+        while true {
+            let c: u8 = (l.source + pos).*;
+            // Identifier char: a-z, A-Z, 0-9, _
+            if (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or
+               (c >= 48 and c <= 57) or c == 95 {
+                name_len = name_len + 1;
+                pos = pos + 1;
+            } else {
+                break;
+            }
+        }
+
+        // First check type aliases
+        let alias_type: i64 = Lowerer_lookupTypeAlias(l, name_start, name_len);
+        if alias_type >= 0 {
+            return alias_type;
+        }
+
+        // Fall back to TypeRegistry lookup for structs/enums
+        return TypeRegistry_lookupByName(l.type_pool, l.source, name_start, name_len);
+    }
+
     return TYPE_INVALID;
 }
 
@@ -300,6 +374,9 @@ fn Lowerer_init(l: *Lowerer,
     l.constants = constants;
     l.constants_count = 0;
     l.constants_cap = constants_cap;
+    l.type_aliases = null;
+    l.type_aliases_count = 0;
+    l.type_aliases_cap = 0;
     l.loop_continue_block = 0 - 1;  // -1 means not in a loop
     l.loop_break_block = 0 - 1;
     l.loop_defer_depth = 0;
@@ -315,6 +392,54 @@ fn Lowerer_initDeferStack(l: *Lowerer, defer_stack: *i64, defer_stack_cap: i64) 
     l.defer_stack = defer_stack;
     l.defer_stack_count = 0;
     l.defer_stack_cap = defer_stack_cap;
+}
+
+// cot1: Set type aliases storage
+fn Lowerer_initTypeAliases(l: *Lowerer, type_aliases: *TypeAliasEntry, type_aliases_cap: i64) {
+    l.type_aliases = type_aliases;
+    l.type_aliases_count = 0;
+    l.type_aliases_cap = type_aliases_cap;
+}
+
+// cot1: Register a type alias
+fn Lowerer_registerTypeAlias(l: *Lowerer, name_start: i64, name_len: i64, target_type: i64) {
+    if l.type_aliases == null { return; }
+    if l.type_aliases_count >= l.type_aliases_cap { return; }
+
+    let entry: *TypeAliasEntry = l.type_aliases + l.type_aliases_count;
+    entry.name_start = name_start;
+    entry.name_len = name_len;
+    entry.target_type = target_type;
+    l.type_aliases_count = l.type_aliases_count + 1;
+}
+
+// cot1: Look up a type alias by name
+fn Lowerer_lookupTypeAlias(l: *Lowerer, name_start: i64, name_len: i64) i64 {
+    if l.type_aliases == null { return -1; }
+
+    var i: i64 = 0;
+    while i < l.type_aliases_count {
+        let entry: *TypeAliasEntry = l.type_aliases + i;
+        if entry.name_len == name_len {
+            // Compare names
+            var match: bool = true;
+            var j: i64 = 0;
+            while j < name_len {
+                let c1: u8 = (l.source + entry.name_start + j).*;
+                let c2: u8 = (l.source + name_start + j).*;
+                if c1 != c2 {
+                    match = false;
+                    break;
+                }
+                j = j + 1;
+            }
+            if match {
+                return entry.target_type;
+            }
+        }
+        i = i + 1;
+    }
+    return -1;  // Not found
 }
 
 // Ensure ir_locals has at least 'additional' more capacity
@@ -822,6 +947,23 @@ fn Lowerer_lowerAll(l: *Lowerer) i64 {
         i = i + 1;
     }
 
+    // cot1 Pass 0.5: Register type aliases
+    // TypeAliasDecl: field0=name_start, field1=name_len, field2=type_node_idx (AST node, NOT PTYPE_*)
+    i = 0;
+    while i < l.nodes_count {
+        let node: *Node = l.nodes + i;
+        if node.kind == NodeKind.TypeAliasDecl {
+            let name_start: i64 = node.field0;
+            let name_len: i64 = node.field1;
+            let type_node_idx: i64 = node.field2;
+            // Resolve the target type from AST node (not PTYPE_* handle!)
+            let target_type: i64 = resolve_type_expr(l, type_node_idx);
+            // Register the alias
+            Lowerer_registerTypeAlias(l, name_start, name_len, target_type);
+        }
+        i = i + 1;
+    }
+
     // First pass: process const declarations
     i = 0;
     while i < l.nodes_count {
@@ -895,7 +1037,7 @@ fn Lowerer_lowerFnDecl(l: *Lowerer, node: *Node) {
 
     // DEBUG: Check capacity (disabled - using dynamic growth now)
     // if remaining_locals <= 0 or remaining_nodes <= 0 {
-    //     io_print("LOWER ERROR: Out of capacity!\n");
+    //     print("LOWER ERROR: Out of capacity!\n");
     // }
 
     FuncBuilder_init(&fb,
@@ -1250,15 +1392,15 @@ fn Lowerer_lowerVarDecl(l: *Lowerer, node: *Node) {
 
     // DEBUG: Track local registration (enable with toggle)
     if false {  // Toggle to true for debug
-        io_print("LOWER: Added local '");
+        print("LOWER: Added local '");
         Lowerer_printName(l, node.field1, node.field2);
-        io_print("' idx=");
-        io_print_int(local_idx);
-        io_print(" in func '");
+        print("' idx=");
+        print(local_idx);
+        print(" in func '");
         Lowerer_printName(l, fb.name_start, fb.name_len);
-        io_print("' total=");
-        io_print_int(fb.locals_count);
-        io_print("\n");
+        print("' total=");
+        print(fb.locals_count);
+        print("\n");
     }
 
     // Set slice/string local size to 16 bytes (ptr + len)
@@ -2006,11 +2148,11 @@ fn Lowerer_lowerExpr(l: *Lowerer, node: *Node) i64 {
     }
 
     // DEBUG: Report unhandled expression type
-    io_print("LOWERER ERROR: Unhandled expr kind=");
+    print("LOWERER ERROR: Unhandled expr kind=");
     Lowerer_printNodeKind(node.kind);
-    io_print(" at pos=");
-    io_print_int(node.start);
-    io_print("\n");
+    print(" at pos=");
+    print(node.start);
+    print("\n");
     return NULL_NODE;
 }
 
@@ -2019,44 +2161,44 @@ fn Lowerer_printName(l: *Lowerer, start: i64, len: i64) {
     if start >= 0 and start + len <= l.source_len {
         write(1, l.source + start, len);
     } else {
-        io_print("INVALID pos=");
-        io_print_int(start);
-        io_print(" len=");
-        io_print_int(len);
-        io_print(" src_len=");
-        io_print_int(l.source_len);
+        print("INVALID pos=");
+        print(start);
+        print(" len=");
+        print(len);
+        print(" src_len=");
+        print(l.source_len);
     }
 }
 
 fn Lowerer_printNodeKind(kind: NodeKind) {
-    if kind == NodeKind.IntLit { io_print("IntLit"); }
-    else if kind == NodeKind.StringLit { io_print("StringLit"); }
-    else if kind == NodeKind.Ident { io_print("Ident"); }
-    else if kind == NodeKind.BinaryExpr { io_print("BinaryExpr"); }
-    else if kind == NodeKind.CallExpr { io_print("CallExpr"); }
-    else if kind == NodeKind.UnaryExpr { io_print("UnaryExpr"); }
-    else if kind == NodeKind.AddressOf { io_print("AddressOf"); }
-    else if kind == NodeKind.DerefExpr { io_print("DerefExpr"); }
-    else if kind == NodeKind.AssignExpr { io_print("AssignExpr"); }
-    else if kind == NodeKind.ReturnStmt { io_print("ReturnStmt"); }
-    else if kind == NodeKind.ExprStmt { io_print("ExprStmt"); }
-    else if kind == NodeKind.BlockStmt { io_print("BlockStmt"); }
-    else if kind == NodeKind.IfStmt { io_print("IfStmt"); }
-    else if kind == NodeKind.WhileStmt { io_print("WhileStmt"); }
-    else if kind == NodeKind.ForStmt { io_print("ForStmt"); }
-    else if kind == NodeKind.BreakStmt { io_print("BreakStmt"); }
-    else if kind == NodeKind.ContinueStmt { io_print("ContinueStmt"); }
-    else if kind == NodeKind.DeferStmt { io_print("DeferStmt"); }
-    else if kind == NodeKind.FnDecl { io_print("FnDecl"); }
-    else if kind == NodeKind.FieldAccess { io_print("FieldAccess"); }
-    else if kind == NodeKind.IndexExpr { io_print("IndexExpr"); }
-    else if kind == NodeKind.SliceExpr { io_print("SliceExpr"); }
-    else if kind == NodeKind.StructLit { io_print("StructLit"); }
-    else if kind == NodeKind.FieldInit { io_print("FieldInit"); }
-    else if kind == NodeKind.ArrayLit { io_print("ArrayLit"); }
-    else if kind == NodeKind.BuiltinCall { io_print("BuiltinCall"); }
-    else if kind == NodeKind.SwitchExpr { io_print("SwitchExpr"); }
-    else { io_print("UNKNOWN"); }
+    if kind == NodeKind.IntLit { print("IntLit"); }
+    else if kind == NodeKind.StringLit { print("StringLit"); }
+    else if kind == NodeKind.Ident { print("Ident"); }
+    else if kind == NodeKind.BinaryExpr { print("BinaryExpr"); }
+    else if kind == NodeKind.CallExpr { print("CallExpr"); }
+    else if kind == NodeKind.UnaryExpr { print("UnaryExpr"); }
+    else if kind == NodeKind.AddressOf { print("AddressOf"); }
+    else if kind == NodeKind.DerefExpr { print("DerefExpr"); }
+    else if kind == NodeKind.AssignExpr { print("AssignExpr"); }
+    else if kind == NodeKind.ReturnStmt { print("ReturnStmt"); }
+    else if kind == NodeKind.ExprStmt { print("ExprStmt"); }
+    else if kind == NodeKind.BlockStmt { print("BlockStmt"); }
+    else if kind == NodeKind.IfStmt { print("IfStmt"); }
+    else if kind == NodeKind.WhileStmt { print("WhileStmt"); }
+    else if kind == NodeKind.ForStmt { print("ForStmt"); }
+    else if kind == NodeKind.BreakStmt { print("BreakStmt"); }
+    else if kind == NodeKind.ContinueStmt { print("ContinueStmt"); }
+    else if kind == NodeKind.DeferStmt { print("DeferStmt"); }
+    else if kind == NodeKind.FnDecl { print("FnDecl"); }
+    else if kind == NodeKind.FieldAccess { print("FieldAccess"); }
+    else if kind == NodeKind.IndexExpr { print("IndexExpr"); }
+    else if kind == NodeKind.SliceExpr { print("SliceExpr"); }
+    else if kind == NodeKind.StructLit { print("StructLit"); }
+    else if kind == NodeKind.FieldInit { print("FieldInit"); }
+    else if kind == NodeKind.ArrayLit { print("ArrayLit"); }
+    else if kind == NodeKind.BuiltinCall { print("BuiltinCall"); }
+    else if kind == NodeKind.SwitchExpr { print("SwitchExpr"); }
+    else { print("UNKNOWN"); }
 }
 
 fn Lowerer_lowerIntLit(l: *Lowerer, node: *Node) i64 {
@@ -2717,6 +2859,14 @@ fn Lowerer_lowerBinary(l: *Lowerer, node: *Node) i64 {
     // This matches Zig/C semantics for pointer arithmetic
     if is_ptr_arith and is_add_or_sub {
         let elem_size: i64 = Lowerer_getPtrElemSize(l, left_type);
+        // DEBUG: Print scaling info for struct pointers (elem_size > 8)
+        if elem_size > 8 {
+            print("  PTR_ARITH: left_type=");
+            print(left_type);
+            print(" elem_size=");
+            print(elem_size);
+            print("\n");
+        }
         let size_val: i64 = FuncBuilder_emitConstInt(fb, elem_size);
         right_idx = FuncBuilder_emitBinary(fb, IR_OP_MUL, right_idx, size_val, TYPE_I64);
     }

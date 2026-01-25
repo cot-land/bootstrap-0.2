@@ -1,0 +1,164 @@
+// Decompose Pass - Split 16-byte Values (Strings, Slices)
+// Reference: src/ssa/passes/decompose.zig
+// Reference: cmd/compile/internal/ssa/decompose.go, dec.rules
+//
+// This pass runs AFTER expand_calls and BEFORE register allocation.
+// Goal: ensure NO SSA value is > 8 bytes.
+//
+// Transformations (from Go's dec.rules):
+// 1. string_ptr(string_make(ptr, len)) → copy(ptr)
+// 2. string_len(string_make(ptr, len)) → copy(len)
+// 3. slice_ptr(string_make(ptr, len)) → copy(ptr)
+// 4. slice_len(string_make(ptr, len)) → copy(len)
+
+import "../func.cot"
+import "../value.cot"
+import "../block.cot"
+import "../op.cot"
+import "../../frontend/types.cot"
+
+// Run the decompose pass on a function
+// Reference: decompose.zig:47 decompose
+fn decompose(f: *Func, type_pool: *TypeRegistry) {
+    // Process each block - may need multiple passes
+    var changed: bool = true;
+    var iterations: i64 = 0;
+
+    while changed and iterations < 10 {
+        changed = false;
+        iterations = iterations + 1;
+
+        var b: i64 = 0;
+        while b < f.blocks_count {
+            let block: *Block = Func_getBlock(f, b);
+            if decomposeBlock(f, block, type_pool) {
+                changed = true;
+            }
+            b = b + 1;
+        }
+    }
+}
+
+// Decompose values in a single block
+// Returns true if any changes were made
+// Reference: decompose.zig:95 decomposeBlock
+fn decomposeBlock(f: *Func, block: *Block, type_pool: *TypeRegistry) bool {
+    var changed: bool = false;
+
+    var vi: i64 = 0;
+    while vi < block.values_count {
+        let v: *Value = Func_getValue(f, block.values_start + vi);
+
+        // Rule 1: string_ptr(string_make(ptr, len)) → copy(ptr)
+        // Reference: decompose.zig:146 / dec.rules
+        if v.op == Op.StringPtr and v.args.count >= 1 {
+            let arg_id: i64 = Value_getArg(v, 0);
+            if arg_id >= 0 {
+                let arg: *Value = Func_getValue(f, arg_id);
+                if arg.op == Op.StringMake and arg.args.count >= 2 {
+                    // Get the ptr component (first arg of string_make)
+                    let ptr_id: i64 = Value_getArg(arg, 0);
+
+                    // Decrement use count on old arg
+                    arg.uses = arg.uses - 1;
+
+                    // Transform to copy
+                    v.op = Op.Copy;
+                    Value_setArgById(v, 0, ptr_id);
+                    i64list_clear(&v.args);
+                    i64list_append(&v.args, ptr_id);
+
+                    // Increment use count on new arg
+                    if ptr_id >= 0 {
+                        let ptr_val: *Value = Func_getValue(f, ptr_id);
+                        ptr_val.uses = ptr_val.uses + 1;
+                    }
+
+                    changed = true;
+                }
+            }
+        }
+
+        // Rule 2: string_len(string_make(ptr, len)) → copy(len)
+        // Reference: decompose.zig:162 / dec.rules
+        if v.op == Op.StringLen and v.args.count >= 1 {
+            let arg_id: i64 = Value_getArg(v, 0);
+            if arg_id >= 0 {
+                let arg: *Value = Func_getValue(f, arg_id);
+                if arg.op == Op.StringMake and arg.args.count >= 2 {
+                    // Get the len component (second arg of string_make)
+                    let len_id: i64 = Value_getArg(arg, 1);
+
+                    // Decrement use count on old arg
+                    arg.uses = arg.uses - 1;
+
+                    // Transform to copy
+                    v.op = Op.Copy;
+                    i64list_clear(&v.args);
+                    i64list_append(&v.args, len_id);
+
+                    // Increment use count on new arg
+                    if len_id >= 0 {
+                        let len_val: *Value = Func_getValue(f, len_id);
+                        len_val.uses = len_val.uses + 1;
+                    }
+
+                    changed = true;
+                }
+            }
+        }
+
+        // Rule 3: slice_ptr(string_make(ptr, len)) → copy(ptr)
+        // Same pattern for slices
+        if v.op == Op.SlicePtr and v.args.count >= 1 {
+            let arg_id: i64 = Value_getArg(v, 0);
+            if arg_id >= 0 {
+                let arg: *Value = Func_getValue(f, arg_id);
+                if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args.count >= 2 {
+                    let ptr_id: i64 = Value_getArg(arg, 0);
+
+                    arg.uses = arg.uses - 1;
+
+                    v.op = Op.Copy;
+                    i64list_clear(&v.args);
+                    i64list_append(&v.args, ptr_id);
+
+                    if ptr_id >= 0 {
+                        let ptr_val: *Value = Func_getValue(f, ptr_id);
+                        ptr_val.uses = ptr_val.uses + 1;
+                    }
+
+                    changed = true;
+                }
+            }
+        }
+
+        // Rule 4: slice_len(string_make(ptr, len)) → copy(len)
+        if v.op == Op.SliceLen and v.args.count >= 1 {
+            let arg_id: i64 = Value_getArg(v, 0);
+            if arg_id >= 0 {
+                let arg: *Value = Func_getValue(f, arg_id);
+                if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args.count >= 2 {
+                    let len_id: i64 = Value_getArg(arg, 1);
+
+                    arg.uses = arg.uses - 1;
+
+                    v.op = Op.Copy;
+                    i64list_clear(&v.args);
+                    i64list_append(&v.args, len_id);
+
+                    if len_id >= 0 {
+                        let len_val: *Value = Func_getValue(f, len_id);
+                        len_val.uses = len_val.uses + 1;
+                    }
+
+                    changed = true;
+                }
+            }
+        }
+
+        vi = vi + 1;
+    }
+
+    return changed;
+}

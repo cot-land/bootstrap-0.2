@@ -7,13 +7,12 @@
 // Syscall Wrappers (libc) - MUST come before any imports
 // ============================================================================
 
-// Shared I/O utilities - MUST import first to make available everywhere
-import "lib/io.cot"
+// Standard library - print, println, write
+import "lib/stdlib.cot"
 
 // System calls needed by error handling and main
 extern fn open(path: *u8, flags: i32, mode: i32) i32;
 extern fn read(fd: i32, buf: *u8, count: i64) i64;
-// write is already declared in lib/io.cot
 extern fn close(fd: i32) i32;
 extern fn exit(code: i32);
 
@@ -191,7 +190,7 @@ extern fn malloc_Value(count: i64) *Value;
 extern fn malloc_Local(count: i64) *Local;
 extern fn malloc_Branch(count: i64) *Branch;
 extern fn malloc_CallSite(count: i64) *CallSite;
-extern fn malloc_GlobalReloc(count: i64) *GlobalReloc;
+// malloc_i64 is provided by lib/list.cot (imported via ast.cot, types.cot, etc.)
 extern fn malloc_FuncAddrReloc(count: i64) *FuncAddrReloc;
 extern fn malloc_StringReloc(count: i64) *StringReloc;
 extern fn malloc_Symbol(count: i64) *Symbol;
@@ -199,6 +198,7 @@ extern fn malloc_Reloc(count: i64) *Reloc;
 extern fn malloc_BlockDefs(count: i64) *BlockDefs;
 extern fn malloc_BlockMapping(count: i64) *BlockMapping;
 extern fn malloc_VarDef(count: i64) *VarDef;
+extern fn malloc_TypeAliasEntry(count: i64) *TypeAliasEntry;
 
 // File flags (macOS)
 const O_RDONLY: i32 = 0;
@@ -269,6 +269,11 @@ const INIT_DEFER_STACK: i64 = 256;
 var g_defer_stack: *i64 = null;
 var g_defer_stack_cap: i64 = 0;
 
+// Type alias storage (cot1: for type Name = TargetType)
+const INIT_TYPE_ALIASES: i64 = 256;
+var g_type_aliases: *TypeAliasEntry = null;
+var g_type_aliases_cap: i64 = 0;
+
 // Global variable storage - dynamic growth
 const INIT_IR_GLOBALS: i64 = 512;
 var g_ir_globals: *IRGlobal = null;
@@ -296,13 +301,19 @@ var g_branches: *Branch = null;
 var g_branches_cap: i64 = 0;
 var g_call_sites: *CallSite = null;
 var g_call_sites_cap: i64 = 0;
-var g_global_relocs: *GlobalReloc = null;
+var g_global_reloc_offsets: *i64 = null;
+var g_global_reloc_indices: *i64 = null;
 var g_global_relocs_cap: i64 = 0;
-var g_func_addr_relocs: *FuncAddrReloc = null;
+// Function address relocations (parallel arrays)
+var g_func_addr_reloc_code_offsets: *i64 = null;
+var g_func_addr_reloc_name_starts: *i64 = null;
+var g_func_addr_reloc_name_lens: *i64 = null;
 var g_func_addr_relocs_cap: i64 = 0;
-// String literal relocations
+// String literal relocations (parallel arrays)
 // Following Zig: src/codegen/arm64.zig string_refs pattern
-var g_string_relocs: *StringReloc = null;
+var g_string_reloc_code_offsets: *i64 = null;
+var g_string_reloc_str_starts: *i64 = null;
+var g_string_reloc_str_lens: *i64 = null;
 var g_string_relocs_cap: i64 = 0;
 // Line entries stored as raw bytes (each LineEntry is 32 bytes)
 var g_line_entries: *u8 = null;
@@ -315,21 +326,47 @@ const INIT_RELOCS: i64 = 10000;
 const INIT_DEBUG_LINE: i64 = 65536;
 var g_data: *u8 = null;
 var g_data_cap: i64 = 0;
-var g_symbols: *Symbol = null;
+// Symbols (parallel arrays to avoid struct pointer arithmetic)
+var g_sym_name_offsets: *i64 = null;
+var g_sym_values: *i64 = null;
+var g_sym_sections: *i64 = null;
+var g_sym_is_externals: *i64 = null;
 var g_symbols_cap: i64 = 0;
 var g_strings: *u8 = null;
 var g_strings_cap: i64 = 0;
-var g_relocs: *Reloc = null;
+// Main relocations (parallel arrays)
+var g_reloc_offsets: *i64 = null;
+var g_reloc_target_str_offs: *i64 = null;
+var g_reloc_target_lens: *i64 = null;
+var g_reloc_types: *i64 = null;
+var g_reloc_is_pcrels: *i64 = null;
+var g_reloc_lengths: *i64 = null;
 var g_relocs_cap: i64 = 0;
+
 var g_debug_line: *u8 = null;
 var g_debug_line_cap: i64 = 0;
-var g_debug_line_relocs: *Reloc = null;
+
+// Debug line relocations (parallel arrays)
+var g_dbg_line_reloc_offsets: *i64 = null;
+var g_dbg_line_reloc_target_str_offs: *i64 = null;
+var g_dbg_line_reloc_target_lens: *i64 = null;
+var g_dbg_line_reloc_types: *i64 = null;
+var g_dbg_line_reloc_is_pcrels: *i64 = null;
+var g_dbg_line_reloc_lengths: *i64 = null;
 var g_debug_line_relocs_cap: i64 = 0;
+
 var g_debug_abbrev: *u8 = null;
 var g_debug_abbrev_cap: i64 = 0;
 var g_debug_info: *u8 = null;
 var g_debug_info_cap: i64 = 0;
-var g_debug_info_relocs: *Reloc = null;
+
+// Debug info relocations (parallel arrays)
+var g_dbg_info_reloc_offsets: *i64 = null;
+var g_dbg_info_reloc_target_str_offs: *i64 = null;
+var g_dbg_info_reloc_target_lens: *i64 = null;
+var g_dbg_info_reloc_types: *i64 = null;
+var g_dbg_info_reloc_is_pcrels: *i64 = null;
+var g_dbg_info_reloc_lengths: *i64 = null;
 var g_debug_info_relocs_cap: i64 = 0;
 // g_output is dynamically allocated
 var g_output: *u8 = null;
@@ -415,33 +452,7 @@ fn Driver_setDebugPhases(phases: *u8, phases_len: i64) {
 
 // NOTE: ir_op_to_ssa_op and ir_unary_op_to_ssa_op are now in ssa/builder.cot
 
-// print(s) and println(s) are built-in functions - do not redefine them
-
-fn print_int(n: i64) {
-    var buf: [20]u8;
-    var i: i64 = 19;
-    var val: i64 = n;
-
-    if val == 0 {
-        buf[i] = @intCast(u8, 48);
-        write(1, &buf[i], 1);
-        return;
-    }
-
-    if val < 0 {
-        print("-");
-        val = 0 - val;
-    }
-
-    while val > 0 {
-        let digit: i64 = val - (val / 10) * 10;
-        buf[i] = @intCast(u8, 48 + digit);
-        val = val / 10;
-        i = i - 1;
-    }
-
-    write(1, &buf[i + 1], 19 - i);
-}
+// print(s) and println(s) are built-in functions that handle both strings and integers
 
 // ============================================================================
 // File I/O
@@ -859,7 +870,7 @@ fn parse_import_file_with_dir(import_path: *u8, import_path_len: i64, pool: *Nod
                 print("  Imported: ");
                 write(1, nested_path, nested_path_len);
                 print(" (");
-                print_int(nested_nodes);
+                print(nested_nodes);
                 print(" nodes)\n");
                 total_new_nodes = total_new_nodes + nested_nodes;
             }
@@ -899,7 +910,7 @@ fn Driver_parseFileRecursive(pool: *NodePool, main_file_nodes: i64) {
                 print("  Imported: ");
                 write(1, import_path, path_len);
                 print(" (");
-                print_int(new_nodes);
+                print(new_nodes);
                 print(" nodes)\n");
             }
         }
@@ -923,7 +934,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         tok = Scanner_next(&scanner);
     }
     print("  Tokens: ");
-    print_int(tok_count);
+    print(tok_count);
     print("\n");
 
     // Initialize type registry (needed for parser) - with capacities for dynamic growth
@@ -940,15 +951,15 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
     if Parser_hadError(&parser) {
         print("  FAIL: Parser error at position ");
-        print_int(parser.scanner.pos);
+        print(parser.scanner.pos);
         print("\n");
         return 1;
     }
 
     print("  Nodes: ");
-    print_int(pool.count);
+    print(pool.count);
     print(", Children: ");
-    print_int(pool.children.count);
+    print(pool.children.count);
     print("\n");
 
     // Save main file node count before imports are added
@@ -958,9 +969,9 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print("Phase 2.5: Processing imports...\n");
     Driver_parseFileRecursive(pool, main_file_nodes);
     print("  Total nodes after imports: ");
-    print_int(pool.count);
+    print(pool.count);
     print(", Children: ");
-    print_int(pool.children.count);
+    print(pool.children.count);
     print("\n");
 
     // Sync TypeRegistry globals after potential reallocations during parsing
@@ -988,6 +999,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
                  g_ir_funcs, g_ir_funcs_cap,
                  g_constants, g_constants_cap);
     Lowerer_initDeferStack(&lowerer, g_defer_stack, g_defer_stack_cap);
+    Lowerer_initTypeAliases(&lowerer, g_type_aliases, g_type_aliases_cap);
     Lowerer_setGlobals(&lowerer, g_ir_globals, g_ir_globals_cap);
 
     let ir_count: i64 = Lowerer_lowerAll(&lowerer);
@@ -1005,11 +1017,11 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     g_constants_cap = lowerer.constants_cap;
 
     print("  IR nodes: ");
-    print_int(ir_count);
+    print(ir_count);
     print(", Functions: ");
-    print_int(lowerer.ir_funcs_count);
+    print(lowerer.ir_funcs_count);
     print(", Globals: ");
-    print_int(lowerer.ir_globals_count);
+    print(lowerer.ir_globals_count);
     print("\n");
 
     // Phase 4 & 5: Build SSA and generate code for each function
@@ -1028,11 +1040,15 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
     // Set up globals for codegen (uses lowerer's registered globals)
     GenState_setGlobals(&gs, g_ir_globals, lowerer.ir_globals_count, g_data, g_data_cap,
-                        g_global_relocs, 5000);
+                        g_global_reloc_offsets, g_global_reloc_indices, g_global_relocs_cap);
 
-    // Set up function address relocations for function pointers
-    GenState_setFuncAddrRelocs(&gs, g_func_addr_relocs, g_func_addr_relocs_cap);
-    GenState_setStringRelocs(&gs, g_string_relocs, g_string_relocs_cap);
+    // Set up function address relocations for function pointers (parallel arrays)
+    GenState_setFuncAddrRelocs(&gs, g_func_addr_reloc_code_offsets,
+                               g_func_addr_reloc_name_starts, g_func_addr_reloc_name_lens,
+                               g_func_addr_relocs_cap);
+    GenState_setStringRelocs(&gs, g_string_reloc_code_offsets,
+                             g_string_reloc_str_starts, g_string_reloc_str_lens,
+                             g_string_relocs_cap);
 
     // BUG-054: Set type registry for hidden return detection at call sites
     GenState_setTypeRegistry(&gs, &g_type_pool);
@@ -1119,25 +1135,26 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     }
 
     print("  Total blocks: ");
-    print_int(total_blocks);
+    print(total_blocks);
     print(", Total values: ");
-    print_int(total_values);
+    print(total_values);
     print(", Code bytes: ");
-    print_int(gs.code_count);
+    print(gs.code_count);
     print(", Call sites: ");
-    print_int(gs.call_sites_count);
+    print(gs.call_sites_count);
     print(", Global relocs: ");
-    print_int(gs.global_relocs_count);
+    print(gs.global_relocs_count);
     print("\n");
 
-    // Debug: check GlobalRelocs right after codegen
+    // Debug: check GlobalRelocs right after codegen (using parallel arrays)
     if gs.global_relocs_count > 0 {
         print("  DEBUG after codegen - first GlobalReloc:\n");
-        let dbg_gr: *GlobalReloc = g_global_relocs;
+        let off_ptr: *i64 = g_global_reloc_offsets;
+        let idx_ptr: *i64 = g_global_reloc_indices;
         print("    code_offset=");
-        print_int(dbg_gr.code_offset);
+        print(off_ptr.*);
         print(", global_idx=");
-        print_int(dbg_gr.global_idx);
+        print(idx_ptr.*);
         print("\n");
     }
 
@@ -1208,9 +1225,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     MachOWriter_init(&writer,
                       g_code, gs.code_count,
                       g_data, g_data_cap,
-                      g_symbols, INIT_SYMBOLS,
+                      g_sym_name_offsets, g_sym_values, g_sym_sections, g_sym_is_externals, INIT_SYMBOLS,
                       g_strings, g_strings_cap,
-                      g_relocs, INIT_RELOCS,
+                      g_reloc_offsets, g_reloc_target_str_offs, g_reloc_target_lens,
+                      g_reloc_types, g_reloc_is_pcrels, g_reloc_lengths, g_relocs_cap,
                       g_output, g_output_cap);
 
     // Copy code from genssa output
@@ -1323,8 +1341,9 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
             // Add relocation for the BL instruction
             // Following Zig: pass target as slice (ptr to name in strings buffer)
-            let sym: *Symbol = writer.symbols + sym_idx;
-            let name_ptr: *u8 = writer.strings + sym.name_offset;
+            let no_ptr: *i64 = writer.sym_name_offsets + sym_idx;
+            let sym_name_offset: i64 = no_ptr.*;
+            let name_ptr: *u8 = writer.strings + sym_name_offset;
             MachOWriter_addReloc(&writer, cs2.code_offset, name_ptr, ext_sym_len, ARM64_RELOC_BRANCH26, 1);
         }
 
@@ -1360,9 +1379,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         (snc + 21).* = 114; // 'r'
         // Add undefined external symbol
         let crash_sym_idx: i64 = MachOWriter_addSymbol(&writer, sym_name.items, 22, 0, 0, true);
-        // Add relocation for the BL instruction
-        let crash_sym: *Symbol = writer.symbols + crash_sym_idx;
-        let crash_name_ptr: *u8 = writer.strings + crash_sym.name_offset;
+        // Add relocation for the BL instruction (using parallel arrays)
+        let crash_no_ptr: *i64 = writer.sym_name_offsets + crash_sym_idx;
+        let crash_name_offset: i64 = crash_no_ptr.*;
+        let crash_name_ptr: *u8 = writer.strings + crash_name_offset;
         MachOWriter_addReloc(&writer, gs.crash_handler_offset, crash_name_ptr, 22, ARM64_RELOC_BRANCH26, 1);
     }
 
@@ -1416,45 +1436,51 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
     // Add relocations for global address accesses
     print("  Adding global relocs, count=");
-    print_int(gs.global_relocs_count);
+    print(gs.global_relocs_count);
     print(", writer.relocs before=");
-    print_int(writer.relocs_count);
+    print(writer.relocs_count);
     print("\n");
 
-    // Debug: print first entry directly (no pointer arithmetic loops)
+    // Debug: print first entry using parallel arrays
     print("  DEBUG first GlobalReloc:\n");
-    let first_gr: *GlobalReloc = g_global_relocs;
+    let first_off: *i64 = g_global_reloc_offsets;
+    let first_idx: *i64 = g_global_reloc_indices;
     print("    code_offset=");
-    print_int(first_gr.code_offset);
+    print(first_off.*);
     print(", global_idx=");
-    print_int(first_gr.global_idx);
+    print(first_idx.*);
     print("\n");
-    // Now test pointer arithmetic: g_global_relocs + 1
+    // Now test i64 pointer arithmetic (should work correctly)
     print("  DEBUG second GlobalReloc (via ptr+1):\n");
-    let second_gr: *GlobalReloc = g_global_relocs + 1;
+    let second_off: *i64 = g_global_reloc_offsets + 1;
+    let second_idx: *i64 = g_global_reloc_indices + 1;
     print("    code_offset=");
-    print_int(second_gr.code_offset);
+    print(second_off.*);
     print(", global_idx=");
-    print_int(second_gr.global_idx);
+    print(second_idx.*);
     print("\n");
 
     var reloc_idx: i64 = 0;
     while reloc_idx < gs.global_relocs_count {
-        let gr: *GlobalReloc = g_global_relocs + (reloc_idx);
+        // Use parallel arrays instead of struct pointer arithmetic
+        let off_ptr: *i64 = g_global_reloc_offsets + reloc_idx;
+        let idx_ptr: *i64 = g_global_reloc_indices + reloc_idx;
+        let code_offset: i64 = off_ptr.*;
+        let global_idx: i64 = idx_ptr.*;
 
         // Find the symbol for this global
         // Global symbols start at globals_sym_start (after function + external symbols)
-        let g_sym_idx: i64 = globals_sym_start + gr.global_idx;
+        let g_sym_idx: i64 = globals_sym_start + global_idx;
 
         // Debug: print info to trace crash
         print("    global_reloc[");
-        print_int(reloc_idx);
+        print(reloc_idx);
         print("]: global_idx=");
-        print_int(gr.global_idx);
+        print(global_idx);
         print(", g_sym_idx=");
-        print_int(g_sym_idx);
+        print(g_sym_idx);
         print(", symbols_count=");
-        print_int(writer.symbols_count);
+        print(writer.symbols_count);
         print("\n");
 
         if g_sym_idx >= writer.symbols_count {
@@ -1462,29 +1488,37 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
             return 1;
         }
 
-        let g_sym: *Symbol = writer.symbols + g_sym_idx;
-        let g_name_ptr: *u8 = writer.strings + g_sym.name_offset;
+        // Get symbol name from parallel arrays
+        let g_no_ptr: *i64 = writer.sym_name_offsets + g_sym_idx;
+        let g_sym_name_offset: i64 = g_no_ptr.*;
+        let g_name_ptr: *u8 = writer.strings + g_sym_name_offset;
         // Get name length by finding null terminator
         var g_name_len: i64 = 0;
         while (g_name_ptr + g_name_len).* != 0 { g_name_len = g_name_len + 1; }
 
         // ADRP relocation (PAGE21) - at code_offset
-        MachOWriter_addReloc(&writer, gr.code_offset, g_name_ptr, g_name_len, ARM64_RELOC_PAGE21, 1);
+        MachOWriter_addReloc(&writer, code_offset, g_name_ptr, g_name_len, ARM64_RELOC_PAGE21, 1);
 
         // ADD relocation (PAGEOFF12) - at code_offset + 4
-        MachOWriter_addReloc(&writer, gr.code_offset + 4, g_name_ptr, g_name_len, ARM64_RELOC_PAGEOFF12, 0);
+        MachOWriter_addReloc(&writer, code_offset + 4, g_name_ptr, g_name_len, ARM64_RELOC_PAGEOFF12, 0);
 
         reloc_idx = reloc_idx + 1;
     }
     print("  After global relocs, writer.relocs=");
-    print_int(writer.relocs_count);
+    print(writer.relocs_count);
     print("\n");
 
     // Add relocations for function address accesses (function pointers)
     // Following Zig: func_addr relocations use ADRP/PAGEOFF12 like globals
     var func_addr_idx: i64 = 0;
     while func_addr_idx < gs.func_addr_relocs_count {
-        let far: *FuncAddrReloc = g_func_addr_relocs + (func_addr_idx);
+        // Read from parallel arrays
+        let far_off_ptr: *i64 = g_func_addr_reloc_code_offsets + func_addr_idx;
+        let far_start_ptr: *i64 = g_func_addr_reloc_name_starts + func_addr_idx;
+        let far_len_ptr: *i64 = g_func_addr_reloc_name_lens + func_addr_idx;
+        let far_code_offset: i64 = far_off_ptr.*;
+        let far_func_name_start: i64 = far_start_ptr.*;
+        let far_func_name_len: i64 = far_len_ptr.*;
 
         // Find function by name - first check internal functions
         var found_sym_idx: i64 = -1;
@@ -1493,12 +1527,12 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // Search through internal functions
         while func_search_idx < lowerer.ir_funcs_count {
             let ir_func: *IRFunc = g_ir_funcs + (func_search_idx);
-            if ir_func.name_len == far.func_name_len {
+            if ir_func.name_len == far_func_name_len {
                 var name_match: bool = true;
                 var cmp_idx: i64 = 0;
-                while cmp_idx < far.func_name_len {
+                while cmp_idx < far_func_name_len {
                     let src_char: *u8 = g_source + ir_func.name_start + cmp_idx;
-                    let far_char: *u8 = g_source + far.func_name_start + cmp_idx;
+                    let far_char: *u8 = g_source + far_func_name_start + cmp_idx;
                     if src_char.* != far_char.* {
                         name_match = false;
                     }
@@ -1518,25 +1552,26 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
             let snf: *u8 = sym_name.items;
             snf.* = 95;  // '_'
             var far_name_idx: i64 = 0;
-            while far_name_idx < far.func_name_len and far_name_idx < 126 {
-                let src_ptr: *u8 = g_source + far.func_name_start + far_name_idx;
+            while far_name_idx < far_func_name_len and far_name_idx < 126 {
+                let src_ptr: *u8 = g_source + far_func_name_start + far_name_idx;
                 let destf: *u8 = sym_name.items + 1 + far_name_idx;
                 destf.* = src_ptr.*;
                 far_name_idx = far_name_idx + 1;
             }
-            let far_sym_len: i64 = 1 + far.func_name_len;
+            let far_sym_len: i64 = 1 + far_func_name_len;
             found_sym_idx = MachOWriter_addSymbol(&writer, sym_name.items, far_sym_len, 0, 0, true);
         }
 
-        // Add ADRP relocation (PAGE21) - at code_offset
-        let far_sym: *Symbol = writer.symbols + found_sym_idx;
-        let far_name_ptr: *u8 = writer.strings + far_sym.name_offset;
+        // Add ADRP relocation (PAGE21) - at code_offset (using parallel arrays)
+        let far_no_ptr: *i64 = writer.sym_name_offsets + found_sym_idx;
+        let far_sym_name_offset: i64 = far_no_ptr.*;
+        let far_name_ptr: *u8 = writer.strings + far_sym_name_offset;
         var far_name_len2: i64 = 0;
         while (far_name_ptr + far_name_len2).* != 0 { far_name_len2 = far_name_len2 + 1; }
-        MachOWriter_addReloc(&writer, far.code_offset, far_name_ptr, far_name_len2, ARM64_RELOC_PAGE21, 1);
+        MachOWriter_addReloc(&writer, far_code_offset, far_name_ptr, far_name_len2, ARM64_RELOC_PAGE21, 1);
 
         // ADD relocation (PAGEOFF12) - at code_offset + 4
-        MachOWriter_addReloc(&writer, far.code_offset + 4, far_name_ptr, far_name_len2, ARM64_RELOC_PAGEOFF12, 0);
+        MachOWriter_addReloc(&writer, far_code_offset + 4, far_name_ptr, far_name_len2, ARM64_RELOC_PAGEOFF12, 0);
 
         func_addr_idx = func_addr_idx + 1;
     }
@@ -1547,20 +1582,24 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     let strings_sym_start: i64 = writer.symbols_count;
     var str_idx: i64 = 0;
     while str_idx < gs.string_relocs_count {
-        let sr: *StringReloc = g_string_relocs + (str_idx);
+        // Read from parallel arrays
+        let sr_start_ptr: *i64 = g_string_reloc_str_starts + str_idx;
+        let sr_len_ptr: *i64 = g_string_reloc_str_lens + str_idx;
+        let sr_str_start: i64 = sr_start_ptr.*;
+        let sr_str_len: i64 = sr_len_ptr.*;
 
         // Copy string data from source to data section
         // Process escape sequences: \n, \t, \r, \0, \\, \"
         var str_copy_idx: i64 = 0;
         var actual_len: i64 = 0;
-        while str_copy_idx < sr.str_len {
-            let src_char: *u8 = g_source + sr.str_start + str_copy_idx;
+        while str_copy_idx < sr_str_len {
+            let src_char: *u8 = g_source + sr_str_start + str_copy_idx;
             var char_val: i64 = @intCast(i64, src_char.*);
 
             // Check for escape sequence
-            if char_val == 92 and str_copy_idx + 1 < sr.str_len {  // backslash
+            if char_val == 92 and str_copy_idx + 1 < sr_str_len {  // backslash
                 str_copy_idx = str_copy_idx + 1;
-                let next_char: *u8 = g_source + sr.str_start + str_copy_idx;
+                let next_char: *u8 = g_source + sr_str_start + str_copy_idx;
                 let next_val: i64 = @intCast(i64, next_char.*);
                 if next_val == 110 { char_val = 10; }       // \n -> newline
                 else if next_val == 116 { char_val = 9; }   // \t -> tab
@@ -1577,8 +1616,8 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         }
         // Add null terminator for safety
         MachOWriter_addDataByte(&writer, 0);
-        // Update sr.str_len to actual length after escape processing
-        sr.str_len = actual_len;
+        // Update str_len to actual length after escape processing (write back to array)
+        sr_len_ptr.* = actual_len;
 
         // Align to 8 bytes after each string
         while (writer.data_count - strings_base_offset) % 8 != 0 {
@@ -1592,7 +1631,11 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     var str_data_offset: i64 = strings_base_offset;
     str_idx = 0;
     while str_idx < gs.string_relocs_count {
-        let sr2: *StringReloc = g_string_relocs + (str_idx);
+        // Read from parallel arrays
+        let sr2_off_ptr: *i64 = g_string_reloc_code_offsets + str_idx;
+        let sr2_len_ptr: *i64 = g_string_reloc_str_lens + str_idx;
+        let sr2_code_offset: i64 = sr2_off_ptr.*;
+        let sr2_str_len: i64 = sr2_len_ptr.*;
 
         // Build symbol name: "_str_N" format
         // BUG-055 fix: Handle string indices up to 9999 (was only 0-9)
@@ -1629,16 +1672,17 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
         let str_sym_idx: i64 = MachOWriter_addSymbol(&writer, sym_name.items, sym_name_len, str_data_offset, SECT_DATA, false);
 
-        // Add ADRP relocation (PAGE21) - at code_offset
-        let str_sym: *Symbol = writer.symbols + str_sym_idx;
-        let str_name_ptr: *u8 = writer.strings + str_sym.name_offset;
-        MachOWriter_addReloc(&writer, sr2.code_offset, str_name_ptr, sym_name_len, ARM64_RELOC_PAGE21, 1);
+        // Add ADRP relocation (PAGE21) - at code_offset (using parallel arrays)
+        let str_no_ptr: *i64 = writer.sym_name_offsets + str_sym_idx;
+        let str_sym_name_offset: i64 = str_no_ptr.*;
+        let str_name_ptr: *u8 = writer.strings + str_sym_name_offset;
+        MachOWriter_addReloc(&writer, sr2_code_offset, str_name_ptr, sym_name_len, ARM64_RELOC_PAGE21, 1);
 
         // ADD relocation (PAGEOFF12) - at code_offset + 4
-        MachOWriter_addReloc(&writer, sr2.code_offset + 4, str_name_ptr, sym_name_len, ARM64_RELOC_PAGEOFF12, 0);
+        MachOWriter_addReloc(&writer, sr2_code_offset + 4, str_name_ptr, sym_name_len, ARM64_RELOC_PAGEOFF12, 0);
 
         // Move to next string position (string len + null + alignment)
-        str_data_offset = str_data_offset + sr2.str_len + 1;
+        str_data_offset = str_data_offset + sr2_str_len + 1;
         // Align to 8 bytes
         while str_data_offset % 8 != 0 {
             str_data_offset = str_data_offset + 1;
@@ -1649,7 +1693,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
     // Generate DWARF debug_line section from line entries
     MachOWriter_setDebugLine(&writer, g_debug_line, g_debug_line_cap);
-    MachOWriter_setDebugLineRelocs(&writer, g_debug_line_relocs, 16);
+    MachOWriter_setDebugLineRelocs(&writer,
+        g_dbg_line_reloc_offsets, g_dbg_line_reloc_target_str_offs, g_dbg_line_reloc_target_lens,
+        g_dbg_line_reloc_types, g_dbg_line_reloc_is_pcrels, g_dbg_line_reloc_lengths,
+        g_debug_line_relocs_cap);
 
     // Generate debug_line content (line_entries is already *u8)
     // Uses global g_source_path set from main()
@@ -1659,11 +1706,11 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         g_line_entries, gs.line_entries_count,
         gs.code_count, main_sym_idx);
     print("  Debug line bytes: ");
-    print_int(debug_bytes);
+    print(debug_bytes);
     print(", Line entries: ");
-    print_int(gs.line_entries_count);
+    print(gs.line_entries_count);
     print(", Total relocs: ");
-    print_int(writer.relocs_count);
+    print(writer.relocs_count);
     print("\n");
 
     // Generate DWARF debug_abbrev section
@@ -1671,7 +1718,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     let abbrev_bytes: i64 = DWARF_generateAbbrev(g_debug_abbrev, 64);
     writer.debug_abbrev_count = abbrev_bytes;
     print("  Debug abbrev bytes: ");
-    print_int(abbrev_bytes);
+    print(abbrev_bytes);
     print("\n");
 
     // Generate DWARF debug_info section
@@ -1691,7 +1738,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     }
 
     MachOWriter_setDebugInfo(&writer, g_debug_info, 512);
-    MachOWriter_setDebugInfoRelocs(&writer, g_debug_info_relocs, 4);
+    MachOWriter_setDebugInfoRelocs(&writer,
+        g_dbg_info_reloc_offsets, g_dbg_info_reloc_target_str_offs, g_dbg_info_reloc_target_lens,
+        g_dbg_info_reloc_types, g_dbg_info_reloc_is_pcrels, g_dbg_info_reloc_lengths,
+        g_debug_info_relocs_cap);
 
     let info_bytes: i64 = DWARF_generateInfo(g_debug_info, 512,
         g_source_path, g_source_path_len,
@@ -1706,15 +1756,15 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     MachOWriter_addDebugInfoReloc(&writer, low_pc_offset, main_sym_idx);
 
     print("  Debug info bytes: ");
-    print_int(info_bytes);
+    print(info_bytes);
     print(", low_pc reloc at: ");
-    print_int(low_pc_offset);
+    print(low_pc_offset);
     print("\n");
 
     // Write Mach-O with debug info
     let macho_bytes: i64 = MachOWriter_writeWithDebug(&writer);
     print("  Mach-O bytes: ");
-    print_int(macho_bytes);
+    print(macho_bytes);
     print("\n");
 
     // Phase 7: Write to output file
@@ -1727,7 +1777,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
             return 3;
         }
         print("  Wrote ");
-        print_int(written);
+        print(written);
         print(" bytes\n");
     } else {
         print("  (No output path specified, skipping write)\n");
@@ -1856,6 +1906,10 @@ fn main(argc: i64, argv: **u8) i64 {
     g_ir_globals_cap = INIT_IR_GLOBALS;
     g_ir_globals = malloc_IRGlobal(g_ir_globals_cap);
 
+    // Type alias storage (cot1)
+    g_type_aliases_cap = INIT_TYPE_ALIASES;
+    g_type_aliases = malloc_TypeAliasEntry(g_type_aliases_cap);
+
     // SSA storage
     g_ssa_blocks_cap = INIT_SSA_BLOCKS;
     g_ssa_blocks = malloc_Block(g_ssa_blocks_cap);
@@ -1870,21 +1924,52 @@ fn main(argc: i64, argv: **u8) i64 {
     g_call_sites_cap = INIT_CALL_SITES;
     g_call_sites = malloc_CallSite(g_call_sites_cap);
     g_global_relocs_cap = 5000;
-    g_global_relocs = malloc_GlobalReloc(g_global_relocs_cap);
+    g_global_reloc_offsets = malloc_i64(g_global_relocs_cap);
+    g_global_reloc_indices = malloc_i64(g_global_relocs_cap);
+    // Function address relocs (parallel arrays)
     g_func_addr_relocs_cap = 1000;
-    g_func_addr_relocs = malloc_FuncAddrReloc(g_func_addr_relocs_cap);
+    g_func_addr_reloc_code_offsets = malloc_i64(g_func_addr_relocs_cap);
+    g_func_addr_reloc_name_starts = malloc_i64(g_func_addr_relocs_cap);
+    g_func_addr_reloc_name_lens = malloc_i64(g_func_addr_relocs_cap);
+    // String relocs (parallel arrays)
     g_string_relocs_cap = 1000;
-    g_string_relocs = malloc_StringReloc(g_string_relocs_cap);
+    g_string_reloc_code_offsets = malloc_i64(g_string_relocs_cap);
+    g_string_reloc_str_starts = malloc_i64(g_string_relocs_cap);
+    g_string_reloc_str_lens = malloc_i64(g_string_relocs_cap);
 
-    // Mach-O storage
+    // Mach-O storage - symbols (parallel arrays)
     g_symbols_cap = 2000;
-    g_symbols = malloc_Symbol(g_symbols_cap);
+    g_sym_name_offsets = malloc_i64(g_symbols_cap);
+    g_sym_values = malloc_i64(g_symbols_cap);
+    g_sym_sections = malloc_i64(g_symbols_cap);
+    g_sym_is_externals = malloc_i64(g_symbols_cap);
+
+    // Main relocations (parallel arrays)
     g_relocs_cap = INIT_RELOCS;
-    g_relocs = malloc_Reloc(g_relocs_cap);
+    g_reloc_offsets = malloc_i64(g_relocs_cap);
+    g_reloc_target_str_offs = malloc_i64(g_relocs_cap);
+    g_reloc_target_lens = malloc_i64(g_relocs_cap);
+    g_reloc_types = malloc_i64(g_relocs_cap);
+    g_reloc_is_pcrels = malloc_i64(g_relocs_cap);
+    g_reloc_lengths = malloc_i64(g_relocs_cap);
+
+    // Debug line relocations (parallel arrays)
     g_debug_line_relocs_cap = 16;
-    g_debug_line_relocs = malloc_Reloc(g_debug_line_relocs_cap);
+    g_dbg_line_reloc_offsets = malloc_i64(g_debug_line_relocs_cap);
+    g_dbg_line_reloc_target_str_offs = malloc_i64(g_debug_line_relocs_cap);
+    g_dbg_line_reloc_target_lens = malloc_i64(g_debug_line_relocs_cap);
+    g_dbg_line_reloc_types = malloc_i64(g_debug_line_relocs_cap);
+    g_dbg_line_reloc_is_pcrels = malloc_i64(g_debug_line_relocs_cap);
+    g_dbg_line_reloc_lengths = malloc_i64(g_debug_line_relocs_cap);
+
+    // Debug info relocations (parallel arrays)
     g_debug_info_relocs_cap = 4;
-    g_debug_info_relocs = malloc_Reloc(g_debug_info_relocs_cap);
+    g_dbg_info_reloc_offsets = malloc_i64(g_debug_info_relocs_cap);
+    g_dbg_info_reloc_target_str_offs = malloc_i64(g_debug_info_relocs_cap);
+    g_dbg_info_reloc_target_lens = malloc_i64(g_debug_info_relocs_cap);
+    g_dbg_info_reloc_types = malloc_i64(g_debug_info_relocs_cap);
+    g_dbg_info_reloc_is_pcrels = malloc_i64(g_debug_info_relocs_cap);
+    g_dbg_info_reloc_lengths = malloc_i64(g_debug_info_relocs_cap);
 
     // SSABuilder storage
     g_builder_all_defs_cap = INIT_BLOCK_DEFS;
@@ -1962,7 +2047,7 @@ fn main(argc: i64, argv: **u8) i64 {
     }
 
     print("  Read ");
-    print_int(bytes_read);
+    print(bytes_read);
     print(" bytes\n\n");
 
     // Extract base directory from source path for resolving imports
@@ -1982,7 +2067,7 @@ fn main(argc: i64, argv: **u8) i64 {
         print("\nCompilation successful!\n");
     } else {
         print("\nCompilation failed with code ");
-        print_int(result);
+        print(result);
         print("\n");
     }
 

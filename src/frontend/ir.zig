@@ -121,6 +121,7 @@ pub const UnaryOp = enum(u8) {
     neg, // Arithmetic negation: -x
     not, // Logical not: !x
     bit_not, // Bitwise not: ~x
+    optional_unwrap, // Optional unwrap: x.?
 };
 
 // ============================================================================

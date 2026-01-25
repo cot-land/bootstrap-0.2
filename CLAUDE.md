@@ -99,6 +99,24 @@
 
 ## SHAME LOG - READ THIS FIRST
 
+**2026-01-25** - Claude marked cot1 features (type aliases, optional types) as "COMPLETED" when they were NOT complete. Claude only added PARSING to cot1/frontend/parser.cot, but did NOT implement semantic handling in checker.cot or lower.cot. Then Claude tested using the WRONG COMPILER - the Zig bootstrap (`./zig-out/bin/cot`) which already supports these features, instead of the cot1 self-hosting compiler (`/tmp/cot1-stage1`). When tests passed with the Zig bootstrap, Claude declared victory.
+
+**THE ACTUAL RESULT:** When compiled with the cot1 compiler (which is what matters), 6/9 tests FAILED because cot1 can parse the syntax but generates garbage code.
+
+**WHAT CLAUDE DID WRONG:**
+1. Only implemented parsing, forgot checker/lowerer need updates too
+2. Tested with wrong compiler (Zig bootstrap instead of cot1)
+3. Marked features "completed" without verifying they work in the self-hosting compiler
+4. Wasted user's time with false progress reports
+
+**THE RULE:** A feature is ONLY complete when:
+- Parser parses it ✓
+- Checker validates it ✓
+- Lowerer generates correct code ✓
+- Tests pass when compiled BY THE SELF-HOSTING COMPILER ✓
+
+---
+
 **2026-01-24** - User asked Claude to bring SSA passes (expand_calls.cot, decompose.cot, schedule.cot, lower.cot) up to parity with Zig. Claude initially wrote ~400 lines of garbage code that pattern-matched conditions but said "For bootstrap, codegen handles this" without doing anything.
 
 **CORRECTED:** Rewrote all four passes with actual transformations:

@@ -943,28 +943,59 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
     while param_local_idx < b.func.locals_count {
         let param_local: *Local = Func_getLocal(b.func, param_local_idx);
         if param_local.is_param {
-            // Create Arg value for this parameter
-            // ARM64 ABI: x0-x7 for first 8 args, stack for rest
-            let arg_val: *Value = Func_newValue(b.func, Op.Arg, TYPE_I64);
-            arg_val.aux_int = phys_reg_idx;  // Physical register index, not logical param index
-            if phys_reg_idx < 8 {
-                // Register argument - pre-assign to X0-X7
-                arg_val.reg = X0 + phys_reg_idx;
+            // Check if this is a string parameter (needs 2 registers: ptr, len)
+            let is_string_param: bool = param_local.type_idx == TYPE_STRING;
+
+            if is_string_param {
+                // String param: create TWO Arg ops (ptr in reg N, len in reg N+1)
+                // Then combine them with StringMake
+
+                // Arg for ptr
+                let ptr_arg_val: *Value = Func_newValue(b.func, Op.Arg, TYPE_I64);
+                ptr_arg_val.aux_int = phys_reg_idx;
+                if phys_reg_idx < 8 {
+                    ptr_arg_val.reg = X0 + phys_reg_idx;
+                }
+                phys_reg_idx = phys_reg_idx + 1;
+
+                // Arg for len
+                let len_arg_val: *Value = Func_newValue(b.func, Op.Arg, TYPE_I64);
+                len_arg_val.aux_int = phys_reg_idx;
+                if phys_reg_idx < 8 {
+                    len_arg_val.reg = X0 + phys_reg_idx;
+                }
+                phys_reg_idx = phys_reg_idx + 1;
+
+                // Create StringMake to combine ptr and len
+                let str_make_val: *Value = Func_newValue(b.func, Op.StringMake, TYPE_STRING);
+                Value_addArg(str_make_val, ptr_arg_val);
+                Value_addArg(str_make_val, len_arg_val);
+
+                // Save StringMake result for Phase 3 (not the raw Arg)
+                i64list_append(&arg_value_ids, str_make_val.id);
+                i64list_append(&arg_local_indices, param_local_idx);
+            } else {
+                // Non-string param: create single Arg op
+                // ARM64 ABI: x0-x7 for first 8 args, stack for rest
+                let arg_val: *Value = Func_newValue(b.func, Op.Arg, TYPE_I64);
+                arg_val.aux_int = phys_reg_idx;  // Physical register index, not logical param index
+                if phys_reg_idx < 8 {
+                    // Register argument - pre-assign to X0-X7
+                    arg_val.reg = X0 + phys_reg_idx;
+                }
+                // Stack arguments (phys_reg_idx >= 8) have reg=-1, will be assigned by regalloc
+
+                // Save for Phase 3
+                i64list_append(&arg_value_ids, arg_val.id);
+                i64list_append(&arg_local_indices, param_local_idx);
+
+                phys_reg_idx = phys_reg_idx + 1;
             }
-            // Stack arguments (phys_reg_idx >= 8) have reg=-1, will be assigned by regalloc
-
-            // Save for Phase 3
-            i64list_append(&arg_value_ids, arg_val.id);
-            i64list_append(&arg_local_indices, param_local_idx);
-
-            phys_reg_idx = phys_reg_idx + 1;
-            // Note: For string params (future), increment phys_reg_idx twice
         }
         param_local_idx = param_local_idx + 1;
     }
 
-    // Phase 2: Create slice_make ops for string params
-    // (Not implemented yet - cot0 doesn't have string params)
+    // Phase 2: String params handled above with StringMake
 
     // Phase 3: Store all params to stack slots
     // This happens AFTER all Arg ops are created
@@ -978,28 +1009,48 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
         let addr_val: *Value = Func_newValue(b.func, Op.LocalAddr, TYPE_I64);
         addr_val.aux_int = local_idx;
 
-        // BUG-019 FIX: >16B struct types are passed by reference
-        // Following Zig ssa_builder.zig lines 222-238
-        // param_val is a POINTER to source, use OpMove to copy
-        var is_large_struct: bool = false;
-        var type_size: i64 = 8;
-        if b.type_registry != null {
-            type_size = TypeRegistry_sizeof(b.type_registry, param_local.type_idx);
-            let is_struct: bool = TypeInfo_isStruct(b.type_registry, param_local.type_idx);
-            if is_struct and type_size > 16 {
-                is_large_struct = true;
-            }
-        }
+        // Handle string params specially: store both ptr and len components
+        if arg_val.op == Op.StringMake and arg_val.args.count >= 2 {
+            // String param: store ptr at offset 0, len at offset 8
+            let ptr_val: *Value = Func_getValue(b.func, Value_getArg(arg_val, 0));
+            let len_val: *Value = Func_getValue(b.func, Value_getArg(arg_val, 1));
 
-        if is_large_struct {
-            // OpMove: copy from arg_val (source ptr) to addr_val (dest)
-            let move_val: *Value = Func_newValue(b.func, Op.Move, TYPE_VOID);
-            move_val.aux_int = type_size;
-            Value_addArg2(move_val, addr_val, arg_val);
+            // Store ptr to base address
+            let store_ptr: *Value = Func_newValue(b.func, Op.Store, TYPE_VOID);
+            Value_addArg2(store_ptr, addr_val, ptr_val);
+
+            // Create addr + 8 for len using OffPtr (offset pointer)
+            let addr_plus_8: *Value = Func_newValue(b.func, Op.OffPtr, TYPE_I64);
+            addr_plus_8.aux_int = 8;  // offset
+            Value_addArg(addr_plus_8, addr_val);  // base pointer
+
+            // Store len at offset 8
+            let store_len: *Value = Func_newValue(b.func, Op.Store, TYPE_VOID);
+            Value_addArg2(store_len, addr_plus_8, len_val);
         } else {
-            // Store Arg to stack slot
-            let store_val: *Value = Func_newValue(b.func, Op.Store, TYPE_VOID);
-            Value_addArg2(store_val, addr_val, arg_val);
+            // BUG-019 FIX: >16B struct types are passed by reference
+            // Following Zig ssa_builder.zig lines 222-238
+            // param_val is a POINTER to source, use OpMove to copy
+            var is_large_struct: bool = false;
+            var type_size: i64 = 8;
+            if b.type_registry != null {
+                type_size = TypeRegistry_sizeof(b.type_registry, param_local.type_idx);
+                let is_struct: bool = TypeInfo_isStruct(b.type_registry, param_local.type_idx);
+                if is_struct and type_size > 16 {
+                    is_large_struct = true;
+                }
+            }
+
+            if is_large_struct {
+                // OpMove: copy from arg_val (source ptr) to addr_val (dest)
+                let move_val: *Value = Func_newValue(b.func, Op.Move, TYPE_VOID);
+                move_val.aux_int = type_size;
+                Value_addArg2(move_val, addr_val, arg_val);
+            } else {
+                // Store Arg to stack slot
+                let store_val: *Value = Func_newValue(b.func, Op.Store, TYPE_VOID);
+                Value_addArg2(store_val, addr_val, arg_val);
+            }
         }
 
         i = i + 1;
@@ -1604,21 +1655,21 @@ fn SSABuilder_convertCall(b: *SSABuilder, ir_node: *IRNode) i64 {
         let arg_ir_rel: i64 = i64list_get(&ir_node.call_args, arg_idx);
         // Validate arg index
         if arg_ir_rel < 0 {
-            io_print("SSA ERROR: Invalid arg ir_rel=");
-            io_print_int(arg_ir_rel);
-            io_print(" for call arg ");
-            io_print_int(arg_idx);
-            io_print(" in ");
+            print("SSA ERROR: Invalid arg ir_rel=");
+            print(arg_ir_rel);
+            print(" for call arg ");
+            print(arg_idx);
+            print(" in ");
             // Print current function name
             if b.source != null and b.func.name_start >= 0 and b.func.name_len > 0 {
                 write(1, b.source + b.func.name_start, b.func.name_len);
             }
-            io_print(" calling ");
+            print(" calling ");
             // Print callee name
             if b.source != null and ir_node.func_name_start >= 0 and ir_node.func_name_len > 0 {
                 write(1, b.source + ir_node.func_name_start, ir_node.func_name_len);
             }
-            io_print("\n");
+            print("\n");
             arg_idx = arg_idx + 1;
             continue;
         }

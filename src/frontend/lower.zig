@@ -1483,6 +1483,25 @@ pub const Lowerer = struct {
             ));
         }
 
+        // Special case: x ?? y (null coalesce) for optionals
+        if (bin.op == .coalesce) {
+            // Get the left operand's type (should be optional)
+            const left_type_idx = self.inferExprType(bin.left);
+            const left_type = self.type_reg.get(left_type_idx);
+
+            if (left_type == .optional) {
+                // Generate: if (left != null) then left.? else right
+                // 1. Compare left to null
+                const null_val = try fb.emit(ir.Node.init(.const_null, TypeRegistry.UNTYPED_NULL, bin.span));
+                const condition = try fb.emitBinary(.ne, left, null_val, TypeRegistry.BOOL, bin.span);
+                // 2. Unwrap left (extract value from optional)
+                const inner_type = left_type.optional.elem;
+                const unwrapped = try fb.emitUnary(.optional_unwrap, left, inner_type, bin.span);
+                // 3. Select between unwrapped value and right
+                return try fb.emitSelect(condition, unwrapped, right, result_type, bin.span);
+            }
+        }
+
         const op = tokenToBinaryOp(bin.op);
 
         return try fb.emitBinary(op, left, right, result_type, bin.span);
@@ -1492,8 +1511,17 @@ pub const Lowerer = struct {
         const fb = self.current_func orelse return ir.null_node;
 
         const operand = try self.lowerExprNode(un.operand);
-        const result_type = self.inferExprType(un.operand);
+        const operand_type_idx = self.inferExprType(un.operand);
         const op = tokenToUnaryOp(un.op);
+
+        // For optional unwrap (.?), the result type is the inner type
+        const result_type = if (un.op == .question) blk: {
+            const operand_type = self.type_reg.get(operand_type_idx);
+            if (operand_type == .optional) {
+                break :blk operand_type.optional.elem;
+            }
+            break :blk operand_type_idx;
+        } else operand_type_idx;
 
         return try fb.emitUnary(op, operand, result_type, un.span);
     }
@@ -2102,32 +2130,46 @@ pub const Lowerer = struct {
         ));
     }
 
-    /// Lower builtin print(s) and println(s) functions.
-    /// Transforms to write(1, s.ptr, s.len) syscall.
+    /// Lower builtin print(x) and println(x) functions.
+    /// Handles both strings and integers automatically.
     /// Following Go's pattern of lowering print to runtime calls.
     fn lowerBuiltinPrint(self: *Lowerer, call: ast.Call, is_println: bool) Error!ir.NodeIndex {
         const fb = self.current_func orelse return ir.null_node;
 
         if (call.args.len != 1) return ir.null_node;
 
-        // Lower the string argument
-        const str_val = try self.lowerExprNode(call.args[0]);
-
-        // Extract ptr and len from the string
+        // Infer the type of the argument
+        const arg_type = self.inferExprType(call.args[0]);
         const ptr_type = try self.type_reg.makePointer(TypeRegistry.U8);
-        const ptr_val = try fb.emitSlicePtr(str_val, ptr_type, call.span);
-        const len_val = try fb.emitSliceLen(str_val, call.span);
 
-        // Create fd=1 (stdout) constant
-        const fd_val = try fb.emitConstInt(1, TypeRegistry.I32, call.span);
+        // Check if argument is an integer type
+        const is_integer = arg_type == TypeRegistry.I8 or
+            arg_type == TypeRegistry.I16 or
+            arg_type == TypeRegistry.I32 or
+            arg_type == TypeRegistry.I64 or
+            arg_type == TypeRegistry.INT or
+            arg_type == TypeRegistry.U8 or
+            arg_type == TypeRegistry.U16 or
+            arg_type == TypeRegistry.U32 or
+            arg_type == TypeRegistry.U64;
 
-        // Call write(fd, ptr, len) - returns i64
-        var write_args = [_]ir.NodeIndex{ fd_val, ptr_val, len_val };
-        _ = try fb.emitCall("write", &write_args, false, TypeRegistry.I64, call.span);
+        if (is_integer) {
+            // Integer: call runtime __print_int(n)
+            const int_val = try self.lowerExprNode(call.args[0]);
+            var print_args = [_]ir.NodeIndex{int_val};
+            _ = try fb.emitCall("__print_int", &print_args, false, TypeRegistry.VOID, call.span);
+        } else {
+            // String: extract ptr and len, call write()
+            const str_val = try self.lowerExprNode(call.args[0]);
+            const ptr_val = try fb.emitSlicePtr(str_val, ptr_type, call.span);
+            const len_val = try fb.emitSliceLen(str_val, call.span);
+            const fd_val = try fb.emitConstInt(1, TypeRegistry.I32, call.span);
+            var write_args = [_]ir.NodeIndex{ fd_val, ptr_val, len_val };
+            _ = try fb.emitCall("write", &write_args, false, TypeRegistry.I64, call.span);
+        }
 
         // For println, also write a newline
         if (is_println) {
-            // Create newline string literal
             const nl_idx = try fb.addStringLiteral("\n");
             const nl_str = try fb.emit(ir.Node.init(
                 .{ .const_slice = .{ .string_index = nl_idx } },
@@ -2136,6 +2178,7 @@ pub const Lowerer = struct {
             ));
             const nl_ptr = try fb.emitSlicePtr(nl_str, ptr_type, call.span);
             const nl_len = try fb.emitConstInt(1, TypeRegistry.I64, call.span);
+            const fd_val = try fb.emitConstInt(1, TypeRegistry.I32, call.span);
             var nl_args = [_]ir.NodeIndex{ fd_val, nl_ptr, nl_len };
             _ = try fb.emitCall("write", &nl_args, false, TypeRegistry.I64, call.span);
         }
@@ -2379,6 +2422,10 @@ pub const Lowerer = struct {
                 const inner_type = self.resolveTypeNode(inner);
                 return self.type_reg.makeOptional(inner_type) catch TypeRegistry.VOID;
             },
+            .error_union => |inner| {
+                const inner_type = self.resolveTypeNode(inner);
+                return self.type_reg.makeErrorUnion(inner_type) catch TypeRegistry.VOID;
+            },
             .slice => |inner| {
                 const inner_type = self.resolveTypeNode(inner);
                 return self.type_reg.makeSlice(inner_type) catch TypeRegistry.VOID;
@@ -2466,6 +2513,7 @@ pub const Lowerer = struct {
             .sub => .neg,
             .lnot, .kw_not => .not,
             .not => .bit_not,
+            .question => .optional_unwrap,
             else => .neg,
         };
     }

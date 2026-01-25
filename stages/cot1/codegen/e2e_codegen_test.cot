@@ -16,48 +16,15 @@
 import "genssa.cot"
 import "../frontend/types.cot"
 import "../obj/macho.cot"
+import "../lib/stdlib.cot"
 
 extern fn open(path: *u8, flags: i32, mode: i32) i32;
-extern fn write(fd: i32, buf: *u8, count: i64) i64;
 extern fn close(fd: i32) i32;
 
 const O_WRONLY: i32 = 1;
 const O_CREAT: i32 = 512;
 const O_TRUNC: i32 = 1024;
 const FILE_MODE: i32 = 438;  // 0o666 - BUG-032 fixed: variadic args now on stack
-
-fn print_str(s: string) {
-    write(1, s.ptr, len(s));
-}
-
-fn print_num(n: i64) {
-    var ch: u8 = 48;
-    if n == 0 {
-        write(1, &ch, 1);
-        return;
-    }
-
-    var val: i64 = n;
-    if val < 0 {
-        print_str("-");
-        val = 0 - val;
-    }
-
-    var digits: [20]u8;
-    var count: i64 = 0;
-
-    while val > 0 and count < 20 {
-        let digit: i64 = val - (val / 10) * 10;
-        digits[count] = @intCast(u8, 48 + digit);
-        val = val / 10;
-        count = count + 1;
-    }
-
-    while count > 0 {
-        count = count - 1;
-        write(1, &digits[count], 1);
-    }
-}
 
 // Storage arrays for SSA construction
 var g_ssa_blocks: [10]Block;
@@ -77,11 +44,11 @@ var g_relocs: [10]Reloc;
 var g_output: [65536]u8;
 
 fn main() i64 {
-    print_str("End-to-End Codegen Test\n");
-    print_str("=======================\n\n");
+    print("End-to-End Codegen Test\n");
+    print("=======================\n\n");
 
     // Phase 1: Build SSA function manually
-    print_str("Phase 1: Build SSA function (return 42)\n");
+    print("Phase 1: Build SSA function (return 42)\n");
 
     var f: Func = undefined;
     Func_init(&f, 0, 0, TYPE_I64,
@@ -100,14 +67,14 @@ fn main() i64 {
     let ret_val: *Value = Func_emitReturn(&f, const_val);
     Func_emitReturnBlock(&f);
 
-    print_str("  Created ");
-    print_num(f.blocks_count);
-    print_str(" block(s), ");
-    print_num(f.values_count);
-    print_str(" value(s)\n");
+    print("  Created ");
+    print(f.blocks_count);
+    print(" block(s), ");
+    print(f.values_count);
+    print(" value(s)\n");
 
     // Phase 2: Generate machine code with genssa
-    print_str("Phase 2: Generate machine code (genssa)\n");
+    print("Phase 2: Generate machine code (genssa)\n");
 
     var gs: GenState = undefined;
     GenState_init(&gs, &f,
@@ -118,16 +85,16 @@ fn main() i64 {
     let genssa_result: i64 = GenState_generate(&gs);
 
     if genssa_result != 0 {
-        print_str("  FAIL: genssa returned error\n");
+        print("  FAIL: genssa returned error\n");
         return 1;
     }
 
-    print_str("  Generated ");
-    print_num(gs.code_count);
-    print_str(" bytes of machine code\n");
+    print("  Generated ");
+    print(gs.code_count);
+    print(" bytes of machine code\n");
 
     // Phase 3: Create Mach-O object file
-    print_str("Phase 3: Create Mach-O object file\n");
+    print("Phase 3: Create Mach-O object file\n");
 
     var w: MachOWriter = undefined;
     macho_writer_init(&w,
@@ -153,12 +120,12 @@ fn main() i64 {
     // Write Mach-O to output buffer
     let bytes: i64 = MachOWriter_write(&w);
 
-    print_str("  Created ");
-    print_num(bytes);
-    print_str(" byte Mach-O object file\n");
+    print("  Created ");
+    print(bytes);
+    print(" byte Mach-O object file\n");
 
     // Phase 4: Write object file to disk
-    print_str("Phase 4: Write to /tmp/return42.o\n");
+    print("Phase 4: Write to /tmp/return42.o\n");
 
     var path: [18]u8;
     path[0] = 47;   // '/'
@@ -180,7 +147,7 @@ fn main() i64 {
 
     let fd: i32 = open(&path[0], O_WRONLY | O_CREAT | O_TRUNC, FILE_MODE);
     if fd < 0 {
-        print_str("  FAIL: Could not open output file\n");
+        print("  FAIL: Could not open output file\n");
         return 2;
     }
 
@@ -188,19 +155,19 @@ fn main() i64 {
     close(fd);
 
     if written != bytes {
-        print_str("  FAIL: Write returned wrong byte count\n");
+        print("  FAIL: Write returned wrong byte count\n");
         return 3;
     }
 
-    print_str("  Wrote ");
-    print_num(written);
-    print_str(" bytes to /tmp/return42.o\n");
+    print("  Wrote ");
+    print(written);
+    print(" bytes to /tmp/return42.o\n");
 
-    print_str("\nPhase 5: Link and run (do this manually):\n");
-    print_str("  ld -o /tmp/return42 /tmp/return42.o -lSystem -syslibroot $(xcrun --show-sdk-path) -arch arm64\n");
-    print_str("  /tmp/return42; echo $?\n");
-    print_str("  Expected output: 42\n");
+    print("\nPhase 5: Link and run (do this manually):\n");
+    print("  ld -o /tmp/return42 /tmp/return42.o -lSystem -syslibroot $(xcrun --show-sdk-path) -arch arm64\n");
+    print("  /tmp/return42; echo $?\n");
+    print("  Expected output: 42\n");
 
-    print_str("\nAll phases completed successfully!\n");
+    print("\nAll phases completed successfully!\n");
     return 0;
 }

@@ -1,0 +1,282 @@
+// Expand Calls Pass - Decompose Aggregate Types Before Register Allocation
+// Reference: src/ssa/passes/expand_calls.zig
+// Reference: cmd/compile/internal/ssa/expand_calls.go
+//
+// THE CRITICAL INVARIANT:
+// After this pass completes: NO SSA Value has type > 32 bytes (MAX_SSA_SIZE)
+//
+// Types that fail CanSSA are handled via OpMove (bulk memory copy).
+//
+// NOTE: No imports needed - func.cot, value.cot, block.cot, op.cot, types.cot
+// are already imported through main.cot -> genssa.cot and builder.cot
+
+const MAX_SSA_SIZE: i64 = 32;
+
+// Check if a type can be held in SSA registers
+// Reference: value.zig canSSA
+fn canSSA(pool: *TypeRegistry, type_idx: i64) bool {
+    let size: i64 = TypeRegistry_sizeof(pool, type_idx);
+    if size <= 0 { return true; }
+    if size > MAX_SSA_SIZE { return false; }
+    return true;
+}
+
+// Run the expand_calls pass on a function
+// Reference: expand_calls.zig:53 expandCalls
+fn expandCalls(f: *Func, type_pool: *TypeRegistry) {
+    if type_pool == null { return; }
+
+    // Pass 0: Expand call arguments - handle >16B struct args by reference (BUG-019)
+    // Reference: expand_calls.zig:333-441 expandCallArgs
+    expandCallArgs(f, type_pool);
+
+    // Pass 1: Find and handle wide stores (Store of !canSSA type → Move)
+    var b: i64 = 0;
+    while b < f.blocks_count {
+        let block: *Block = Func_getBlock(f, b);
+
+        var vi: i64 = 0;
+        while vi < block.values_count {
+            let v: *Value = Func_getValue(f, block.values_start + vi);
+
+            // Check for Store of non-SSA type
+            if v.op == Op.Store and v.args.count >= 2 {
+                let stored_id: i64 = Value_getArg(v, 1);
+                if stored_id >= 0 {
+                    let stored_val: *Value = Func_getValue(f, stored_id);
+
+                    // Check if stored value is from a call returning large type
+                    // Note: SelectN not implemented in cot0 yet
+                    if stored_val.op == Op.Call {
+                        let type_size: i64 = TypeRegistry_sizeof(type_pool, stored_val.type_idx);
+
+                        // If type > 16 bytes, it uses hidden return pointer
+                        // Convert Store to Move for bulk memory copy
+                        if type_size > 16 {
+                            v.op = Op.Move;
+                            v.aux_int = type_size;
+                            v.type_idx = TYPE_VOID;
+                        }
+                    }
+                }
+            }
+
+            vi = vi + 1;
+        }
+        b = b + 1;
+    }
+
+    // Pass 2: Apply dec.rules optimizations
+    applyDecRules(f);
+}
+
+// Expand call arguments - decompose strings, handle >16B struct args by reference
+// Reference: expand_calls.zig:333-441 expandCallArgs
+// BUG-019 FIX: For >16B struct args that are Loads, pass the source address
+// instead of the loaded value. ARM64 ABI requires pass-by-reference for these.
+// STRING FIX: Decompose string arguments into ptr/len for proper 2-register passing.
+fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
+    var b: i64 = 0;
+    while b < f.blocks_count {
+        let block: *Block = Func_getBlock(f, b);
+
+        var vi: i64 = 0;
+        while vi < block.values_count {
+            let v: *Value = Func_getValue(f, block.values_start + vi);
+
+            // Only process Call and ClosureCall values
+            if v.op != Op.Call and v.op != Op.ClosureCall {
+                vi = vi + 1;
+                continue;
+            }
+
+            // Determine start index (skip function pointer for ClosureCall)
+            var start_idx: i64 = 0;
+            if v.op == Op.ClosureCall { start_idx = 1; }
+
+            // Build new args list with string decomposition
+            // Reference: expand_calls.zig:383-406 - decompose string args into ptr, len
+            var new_args: I64List = undefined;
+            i64list_init(&new_args);
+            var needs_rewrite: bool = false;
+
+            var arg_idx: i64 = start_idx;
+            while arg_idx < v.args.count {
+                let arg_id: i64 = Value_getArg(v, arg_idx);
+                if arg_id < 0 {
+                    i64list_append(&new_args, arg_id);
+                    arg_idx = arg_idx + 1;
+                    continue;
+                }
+
+                let arg: *Value = Func_getValue(f, arg_id);
+
+                // STRING: Decompose string arguments into ptr and len
+                // Reference: expand_calls.zig:361-406
+                if arg.type_idx == TYPE_STRING {
+                    needs_rewrite = true;
+
+                    // Check if arg is already string_make with available components
+                    if arg.op == Op.StringMake and arg.args.count >= 2 {
+                        // Directly use the ptr and len components
+                        let ptr_id: i64 = Value_getArg(arg, 0);
+                        let len_id: i64 = Value_getArg(arg, 1);
+                        i64list_append(&new_args, ptr_id);
+                        i64list_append(&new_args, len_id);
+
+                        // Update use counts
+                        arg.uses = arg.uses - 1;
+                        let ptr_val: *Value = Func_getValue(f, ptr_id);
+                        let len_val: *Value = Func_getValue(f, len_id);
+                        ptr_val.uses = ptr_val.uses + 1;
+                        len_val.uses = len_val.uses + 1;
+                    } else {
+                        // Create StringPtr and StringLen to extract components
+                        // Set current_block temporarily for Func_newValue
+                        let saved_block: i64 = f.current_block;
+                        f.current_block = block.id;
+
+                        let ptr_val: *Value = Func_newValue(f, Op.StringPtr, TYPE_I64);
+                        Value_addArg(ptr_val, arg);  // arg is the string value
+                        let ptr_val_id: i64 = ptr_val.id;
+
+                        let len_val: *Value = Func_newValue(f, Op.StringLen, TYPE_I64);
+                        Value_addArg(len_val, arg);  // arg is the string value
+                        let len_val_id: i64 = len_val.id;
+
+                        f.current_block = saved_block;
+
+                        // arg.uses already incremented by Value_addArg (twice)
+                        // We need to decrement once for removing the call's direct use
+                        arg.uses = arg.uses - 1;
+
+                        i64list_append(&new_args, ptr_val_id);
+                        i64list_append(&new_args, len_val_id);
+                    }
+
+                    arg_idx = arg_idx + 1;
+                    continue;
+                }
+
+                // BUG-019: Check for >16B struct types that need pass-by-reference
+                // Only applies to struct types loaded from memory
+                let is_struct: bool = TypeInfo_isStruct(type_pool, arg.type_idx);
+                if is_struct {
+                    let arg_size: i64 = TypeRegistry_sizeof(type_pool, arg.type_idx);
+                    if arg_size > 16 and arg.op == Op.Load and arg.args.count >= 1 {
+                        needs_rewrite = true;
+                        // Pass the source address instead of the loaded value
+                        // Go reference: expand_calls.go line 379 - use arg.Args[0]
+                        let source_addr_id: i64 = Value_getArg(arg, 0);
+
+                        // Update use counts
+                        arg.uses = arg.uses - 1;
+                        let source_addr: *Value = Func_getValue(f, source_addr_id);
+                        source_addr.uses = source_addr.uses + 1;
+
+                        i64list_append(&new_args, source_addr_id);
+                        arg_idx = arg_idx + 1;
+                        continue;
+                    }
+                }
+
+                // Regular argument - keep as is
+                i64list_append(&new_args, arg_id);
+                arg_idx = arg_idx + 1;
+            }
+
+            // Replace call args if we rewrote anything
+            if needs_rewrite {
+                // Clear old args (don't adjust use counts - we did that above)
+                v.args.count = 0;
+                // Add new args by looking up each value
+                var i: i64 = 0;
+                while i < new_args.count {
+                    let new_arg_id: i64 = i64list_get(&new_args, i);
+                    let new_arg: *Value = Func_getValue(f, new_arg_id);
+                    // Don't increment use count - already handled above
+                    i64list_append(&v.args, new_arg_id);
+                    i = i + 1;
+                }
+            }
+
+            i64list_deinit(&new_args);
+
+            vi = vi + 1;
+        }
+        b = b + 1;
+    }
+}
+
+// Apply dec.rules optimizations
+// Reference: expand_calls.zig applyDecRules lines 608-638
+fn applyDecRules(f: *Func) {
+    var b: i64 = 0;
+    while b < f.blocks_count {
+        let block: *Block = Func_getBlock(f, b);
+
+        var vi: i64 = 0;
+        while vi < block.values_count {
+            let v: *Value = Func_getValue(f, block.values_start + vi);
+
+            // string_ptr(string_make(ptr, len)) → copy(ptr)
+            // slice_ptr(slice_make(ptr, len)) → copy(ptr)
+            if v.op == Op.StringPtr or v.op == Op.SlicePtr {
+                if v.args.count >= 1 {
+                    let arg_id: i64 = Value_getArg(v, 0);
+                    if arg_id >= 0 {
+                        let arg: *Value = Func_getValue(f, arg_id);
+                        if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args.count >= 1 {
+                            let ptr_id: i64 = Value_getArg(arg, 0);
+
+                            // Decrement old arg's use count
+                            arg.uses = arg.uses - 1;
+
+                            // Transform to copy
+                            v.op = Op.Copy;
+                            Value_setArgById(v, 0, ptr_id);
+                            Value_truncateArgs(v, 1);
+
+                            // Increment new arg's use count
+                            if ptr_id >= 0 {
+                                let ptr_val: *Value = Func_getValue(f, ptr_id);
+                                ptr_val.uses = ptr_val.uses + 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // string_len(string_make(ptr, len)) → copy(len)
+            // slice_len(slice_make(ptr, len)) → copy(len)
+            if v.op == Op.StringLen or v.op == Op.SliceLen {
+                if v.args.count >= 1 {
+                    let arg_id: i64 = Value_getArg(v, 0);
+                    if arg_id >= 0 {
+                        let arg: *Value = Func_getValue(f, arg_id);
+                        if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args.count >= 2 {
+                            let len_id: i64 = Value_getArg(arg, 1);
+
+                            // Decrement old arg's use count
+                            arg.uses = arg.uses - 1;
+
+                            // Transform to copy
+                            v.op = Op.Copy;
+                            Value_setArgById(v, 0, len_id);
+                            Value_truncateArgs(v, 1);
+
+                            // Increment new arg's use count
+                            if len_id >= 0 {
+                                let len_val: *Value = Func_getValue(f, len_id);
+                                len_val.uses = len_val.uses + 1;
+                            }
+                        }
+                    }
+                }
+            }
+
+            vi = vi + 1;
+        }
+        b = b + 1;
+    }
+}

@@ -1,11 +1,15 @@
 // cot1 Feature Test Suite
 // ========================
 //
-// This file tests all cot1 language features.
+// This file tests cot1-specific language features (beyond cot0/e2e tests).
 // Each feature must have 3-5 tests that pass before the feature is complete.
 //
-// Run with:
-//   ./zig-out/bin/cot test/cot1/all_cot1_tests.cot -o /tmp/cot1_tests && /tmp/cot1_tests
+// Run with cot1 compiler (NOT the Zig bootstrap):
+//   ./zig-out/bin/cot cot1/main.cot -o /tmp/cot1-stage1
+//   /tmp/cot1-stage1 test/cot1/cot1_features.cot -o /tmp/cot1_features && /tmp/cot1_features
+//
+// Also run the base tests to prove cot1 parity:
+//   /tmp/cot1-stage1 test/cot1/all_tests.cot -o /tmp/cot1_base && /tmp/cot1_base
 //
 // Expected output: "All N tests passed!" where N grows as features are added.
 

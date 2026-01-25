@@ -157,6 +157,11 @@ pub const OptionalType = struct {
     elem: TypeIndex,
 };
 
+/// Error union type: !T (can be T or error)
+pub const ErrorUnionType = struct {
+    elem: TypeIndex, // The payload type
+};
+
 /// Slice type: []T
 pub const SliceType = struct {
     elem: TypeIndex,
@@ -257,6 +262,7 @@ pub const Type = union(enum) {
     basic: BasicKind,
     pointer: PointerType,
     optional: OptionalType,
+    error_union: ErrorUnionType,
     slice: SliceType,
     array: ArrayType,
     map: MapType,
@@ -473,6 +479,11 @@ pub const TypeRegistry = struct {
         return try self.add(.{ .optional = .{ .elem = elem } });
     }
 
+    /// Create an error union type.
+    pub fn makeErrorUnion(self: *TypeRegistry, elem: TypeIndex) !TypeIndex {
+        return try self.add(.{ .error_union = .{ .elem = elem } });
+    }
+
     /// Create a slice type.
     pub fn makeSlice(self: *TypeRegistry, elem: TypeIndex) !TypeIndex {
         return try self.add(.{ .slice = .{ .elem = elem } });
@@ -551,6 +562,7 @@ pub const TypeRegistry = struct {
             .basic => |k| k.size(),
             .pointer => 8, // Assuming 64-bit
             .optional => 16, // ptr + tag (simplified)
+            .error_union => 16, // value + error tag (simplified)
             .slice => 16, // ptr + len
             .array => |a| @intCast(self.sizeOf(a.elem) * a.length),
             .map => 8, // pointer to runtime map
@@ -568,7 +580,7 @@ pub const TypeRegistry = struct {
         return switch (t) {
             .basic => |k| if (k.size() == 0) 1 else k.size(),
             .pointer, .func => 8,
-            .optional, .slice => 8,
+            .optional, .error_union, .slice => 8,
             .array => |a| self.alignmentOf(a.elem),
             .map, .list => 8,
             .struct_type => |s| s.alignment,
@@ -597,6 +609,7 @@ pub const TypeRegistry = struct {
             .basic => |ka| tb.basic == ka,
             .pointer => |pa| self.equal(pa.elem, tb.pointer.elem),
             .optional => |oa| self.equal(oa.elem, tb.optional.elem),
+            .error_union => |ea| self.equal(ea.elem, tb.error_union.elem),
             .slice => |sa| self.equal(sa.elem, tb.slice.elem),
             .array => |aa| aa.length == tb.array.length and self.equal(aa.elem, tb.array.elem),
             .map => |ma| self.equal(ma.key, tb.map.key) and self.equal(ma.value, tb.map.value),

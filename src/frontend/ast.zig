@@ -338,6 +338,7 @@ pub const TypeKind = union(enum) {
     named: []const u8,
     pointer: NodeIndex,
     optional: NodeIndex,
+    error_union: NodeIndex, // !T - can be T or error
     slice: NodeIndex,
     array: struct { size: NodeIndex, elem: NodeIndex },
     map: struct { key: NodeIndex, value: NodeIndex },

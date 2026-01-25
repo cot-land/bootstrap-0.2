@@ -217,6 +217,15 @@ fn Parser_parseType(p: *Parser) i64 {
         return Node_typeExprOptional(p.pool, inner, type_start, p.current.start);
     }
 
+    // cot1: Error union type: !T
+    // Reference: Zig's error_union_type in Type.zig
+    // Syntax: !T means "anyerror!T" (can return error or T)
+    if kind == TokenType.Bang {
+        Parser_advance(p);  // consume '!'
+        let payload: i64 = Parser_parseType(p);
+        return Node_typeExprErrorUnion(p.pool, payload, type_start, p.current.start);
+    }
+
     // Built-in types - create TypeExprNamed node with type name
     // The checker will resolve "i64" -> TYPE_I64, etc.
     if kind == TokenType.I64 {

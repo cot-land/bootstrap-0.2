@@ -3,41 +3,7 @@
 
 import "genssa.cot"
 import "../frontend/types.cot"
-
-extern fn write(fd: i32, buf: *u8, count: i64) i64;
-
-fn print_str(s: string) {
-    write(1, s.ptr, len(s));
-}
-
-fn print_num(n: i64) {
-    var ch: u8 = 48;
-    if n == 0 {
-        write(1, &ch, 1);
-        return;
-    }
-
-    var val: i64 = n;
-    if val < 0 {
-        print_str("-");
-        val = 0 - val;
-    }
-
-    var digits: [20]u8;
-    var count: i64 = 0;
-
-    while val > 0 and count < 20 {
-        let digit: i64 = val - (val / 10) * 10;
-        digits[count] = @intCast(u8, 48 + digit);
-        val = val / 10;
-        count = count + 1;
-    }
-
-    while count > 0 {
-        count = count - 1;
-        write(1, &digits[count], 1);
-    }
-}
+import "../lib/stdlib.cot"
 
 // Storage arrays
 var g_ssa_blocks: [100]Block;
@@ -48,8 +14,8 @@ var g_bstart: [100]i64;
 var g_branches: [100]Branch;
 
 fn main() i64 {
-    print_str("genssa Test\n");
-    print_str("===========\n\n");
+    print("genssa Test\n");
+    print("===========\n\n");
 
     let r1: i64 = test_GenState_init();
     if r1 != 0 { return r1; }
@@ -60,12 +26,12 @@ fn main() i64 {
     let r3: i64 = test_genssa_basic();
     if r3 != 0 { return r3; }
 
-    print_str("\nAll genssa tests passed!\n");
+    print("\nAll genssa tests passed!\n");
     return 0;
 }
 
 fn test_GenState_init() i64 {
-    print_str("Test: GenState_init - ");
+    print("Test: GenState_init - ");
 
     var f: Func = undefined;
     Func_init(&f, 0, 4, TYPE_I64,
@@ -79,16 +45,16 @@ fn test_GenState_init() i64 {
                   &g_bstart[0], 100,
                   &g_branches[0], 100);
 
-    if gs.code_count != 0 { print_str("FAIL (code_count)\n"); return 1; }
-    if gs.branches_count != 0 { print_str("FAIL (branches_count)\n"); return 2; }
-    if gs.current_block != INVALID_BLOCK { print_str("FAIL (current_block)\n"); return 3; }
+    if gs.code_count != 0 { print("FAIL (code_count)\n"); return 1; }
+    if gs.branches_count != 0 { print("FAIL (branches_count)\n"); return 2; }
+    if gs.current_block != INVALID_BLOCK { print("FAIL (current_block)\n"); return 3; }
 
-    print_str("PASS\n");
+    print("PASS\n");
     return 0;
 }
 
 fn test_GenState_emitInst() i64 {
-    print_str("Test: GenState_emitInst - ");
+    print("Test: GenState_emitInst - ");
 
     var f: Func = undefined;
     Func_init(&f, 0, 4, TYPE_I64,
@@ -105,7 +71,7 @@ fn test_GenState_emitInst() i64 {
     // Emit a NOP instruction (0xd503201f)
     GenState_emitInst(&gs, encode_nop());
 
-    if gs.code_count != 4 { print_str("FAIL (code_count)\n"); return 10; }
+    if gs.code_count != 4 { print("FAIL (code_count)\n"); return 10; }
 
     // Check the encoded instruction (little-endian)
     // NOP = 0xd503201f
@@ -115,17 +81,17 @@ fn test_GenState_emitInst() i64 {
     let byte2: i64 = @intCast(i64, g_code[2]);
     let byte3: i64 = @intCast(i64, g_code[3]);
 
-    if byte0 != 31 { print_str("FAIL (byte0)\n"); return 11; }     // 0x1f
-    if byte1 != 32 { print_str("FAIL (byte1)\n"); return 12; }     // 0x20
-    if byte2 != 3 { print_str("FAIL (byte2)\n"); return 13; }      // 0x03
-    if byte3 != 213 { print_str("FAIL (byte3)\n"); return 14; }    // 0xd5
+    if byte0 != 31 { print("FAIL (byte0)\n"); return 11; }     // 0x1f
+    if byte1 != 32 { print("FAIL (byte1)\n"); return 12; }     // 0x20
+    if byte2 != 3 { print("FAIL (byte2)\n"); return 13; }      // 0x03
+    if byte3 != 213 { print("FAIL (byte3)\n"); return 14; }    // 0xd5
 
-    print_str("PASS\n");
+    print("PASS\n");
     return 0;
 }
 
 fn test_genssa_basic() i64 {
-    print_str("Test: genssa basic - ");
+    print("Test: genssa basic - ");
 
     // Create a simple function that returns 42
     var f: Func = undefined;
@@ -151,11 +117,11 @@ fn test_genssa_basic() i64 {
 
     let result: i64 = GenState_generate(&gs);
 
-    if result != 0 { print_str("FAIL (genssa error)\n"); return 20; }
-    if gs.code_count == 0 { print_str("FAIL (no code emitted)\n"); return 21; }
+    if result != 0 { print("FAIL (genssa error)\n"); return 20; }
+    if gs.code_count == 0 { print("FAIL (no code emitted)\n"); return 21; }
 
-    print_str("PASS (");
-    print_num(gs.code_count);
-    print_str(" bytes emitted)\n");
+    print("PASS (");
+    print(gs.code_count);
+    print(" bytes emitted)\n");
     return 0;
 }

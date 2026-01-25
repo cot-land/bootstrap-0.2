@@ -881,6 +881,32 @@ export fn __cot_str_concat(ptr1: [*]const u8, len1: i64, ptr2: [*]const u8, len2
     return CotString{ .ptr = result.ptr, .len = len1 + len2 };
 }
 
+/// Print an integer to stdout - called by print() and println() for integer arguments
+export fn __print_int(n: i64) void {
+    var buf: [20]u8 = undefined;
+    var i: usize = 19;
+    var val: i64 = n;
+
+    if (val == 0) {
+        buf[i] = '0';
+        _ = std.posix.write(std.posix.STDOUT_FILENO, buf[i..20]) catch {};
+        return;
+    }
+
+    if (val < 0) {
+        _ = std.posix.write(std.posix.STDOUT_FILENO, "-") catch {};
+        val = -val;
+    }
+
+    while (val > 0) : (i -= 1) {
+        const digit: u8 = @intCast(@mod(val, 10));
+        buf[i] = '0' + digit;
+        val = @divTrunc(val, 10);
+    }
+
+    _ = std.posix.write(std.posix.STDOUT_FILENO, buf[i + 1 .. 20]) catch {};
+}
+
 /// Memory allocation wrappers for Cot
 /// These provide typed versions of malloc/realloc/free for use in Cot code
 
@@ -978,6 +1004,7 @@ export fn malloc_Reloc(count: i64) ?*anyopaque { return malloc_struct(count, 48)
 export fn malloc_BlockDefs(count: i64) ?*anyopaque { return malloc_struct(count, 24); }
 export fn malloc_BlockMapping(count: i64) ?*anyopaque { return malloc_struct(count, 16); }
 export fn malloc_VarDef(count: i64) ?*anyopaque { return malloc_struct(count, 24); }
+export fn malloc_TypeAliasEntry(count: i64) ?*anyopaque { return malloc_struct(count, 24); }  // TypeAliasEntry: 3 * 8 = 24
 
 // Liveness and RegAlloc types
 export fn malloc_ValState(count: i64) ?*anyopaque { return malloc_struct(count, 24); }  // ValState: regs(8) + spill(8) + 3 bools(8 padded) = 24

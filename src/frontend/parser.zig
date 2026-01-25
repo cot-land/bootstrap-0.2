@@ -502,6 +502,8 @@ pub const Parser = struct {
 
         const target = try self.parseType() orelse return null;
 
+        _ = self.match(.semicolon);
+
         return try self.tree.addDecl(.{ .type_alias = .{
             .name = name,
             .target = target,
@@ -547,6 +549,15 @@ pub const Parser = struct {
             const inner = try self.parseType() orelse return null;
             return try self.tree.addExpr(.{ .type_expr = .{
                 .kind = .{ .optional = inner },
+                .span = Span.init(start, self.pos()),
+            } });
+        }
+
+        if (self.match(.lnot)) {
+            // Error union type: !T
+            const inner = try self.parseType() orelse return null;
+            return try self.tree.addExpr(.{ .type_expr = .{
+                .kind = .{ .error_union = inner },
                 .span = Span.init(start, self.pos()),
             } });
         }

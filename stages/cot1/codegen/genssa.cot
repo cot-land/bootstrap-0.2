@@ -155,19 +155,24 @@ struct GenState {
     data_count: i64,
     data_cap: i64,
 
-    // Global address relocations
-    global_relocs: *GlobalReloc,
+    // Global address relocations (parallel arrays to avoid struct pointer arithmetic)
+    global_reloc_offsets: *i64,  // code_offset for each relocation
+    global_reloc_indices: *i64,  // global_idx for each relocation
     global_relocs_count: i64,
     global_relocs_cap: i64,
 
-    // Function address relocations (for function pointers)
-    func_addr_relocs: *FuncAddrReloc,
+    // Function address relocations (parallel arrays to avoid struct pointer arithmetic)
+    func_addr_reloc_code_offsets: *i64,
+    func_addr_reloc_name_starts: *i64,
+    func_addr_reloc_name_lens: *i64,
     func_addr_relocs_count: i64,
     func_addr_relocs_cap: i64,
 
-    // String literal relocations
+    // String literal relocations (parallel arrays to avoid struct pointer arithmetic)
     // Following Zig: src/codegen/arm64.zig string_refs
-    string_relocs: *StringReloc,
+    string_reloc_code_offsets: *i64,
+    string_reloc_str_starts: *i64,
+    string_reloc_str_lens: *i64,
     string_relocs_count: i64,
     string_relocs_cap: i64,
 
@@ -228,13 +233,18 @@ fn GenState_init(gs: *GenState, f: *Func,
     gs.data = null;
     gs.data_count = 0;
     gs.data_cap = 0;
-    gs.global_relocs = null;
+    gs.global_reloc_offsets = null;
+    gs.global_reloc_indices = null;
     gs.global_relocs_count = 0;
     gs.global_relocs_cap = 0;
-    gs.func_addr_relocs = null;
+    gs.func_addr_reloc_code_offsets = null;
+    gs.func_addr_reloc_name_starts = null;
+    gs.func_addr_reloc_name_lens = null;
     gs.func_addr_relocs_count = 0;
     gs.func_addr_relocs_cap = 0;
-    gs.string_relocs = null;
+    gs.string_reloc_code_offsets = null;
+    gs.string_reloc_str_starts = null;
+    gs.string_reloc_str_lens = null;
     gs.string_relocs_count = 0;
     gs.string_relocs_cap = 0;
     gs.crash_handler_offset = -1;
@@ -252,17 +262,25 @@ fn GenState_setTypeRegistry(gs: *GenState, type_reg: *TypeRegistry) {
     gs.type_registry = type_reg;
 }
 
-// Set up function address relocations tracking
-fn GenState_setFuncAddrRelocs(gs: *GenState, relocs: *FuncAddrReloc, cap: i64) {
-    gs.func_addr_relocs = relocs;
+// Set up function address relocations tracking (parallel arrays)
+fn GenState_setFuncAddrRelocs(gs: *GenState,
+                               code_offsets: *i64, name_starts: *i64, name_lens: *i64,
+                               cap: i64) {
+    gs.func_addr_reloc_code_offsets = code_offsets;
+    gs.func_addr_reloc_name_starts = name_starts;
+    gs.func_addr_reloc_name_lens = name_lens;
     gs.func_addr_relocs_count = 0;
     gs.func_addr_relocs_cap = cap;
 }
 
-// Set up string literal relocations tracking
+// Set up string literal relocations tracking (parallel arrays)
 // Following Zig: src/codegen/arm64.zig string_refs pattern
-fn GenState_setStringRelocs(gs: *GenState, relocs: *StringReloc, cap: i64) {
-    gs.string_relocs = relocs;
+fn GenState_setStringRelocs(gs: *GenState,
+                             code_offsets: *i64, str_starts: *i64, str_lens: *i64,
+                             cap: i64) {
+    gs.string_reloc_code_offsets = code_offsets;
+    gs.string_reloc_str_starts = str_starts;
+    gs.string_reloc_str_lens = str_lens;
     gs.string_relocs_count = 0;
     gs.string_relocs_cap = cap;
 }
@@ -270,13 +288,14 @@ fn GenState_setStringRelocs(gs: *GenState, relocs: *StringReloc, cap: i64) {
 // Set up globals tracking for global variable access
 fn GenState_setGlobals(gs: *GenState, globals: *IRGlobal, globals_count: i64,
                        data: *u8, data_cap: i64,
-                       global_relocs: *GlobalReloc, global_relocs_cap: i64) {
+                       global_reloc_offsets: *i64, global_reloc_indices: *i64, global_relocs_cap: i64) {
     gs.globals = globals;
     gs.globals_count = globals_count;
     gs.data = data;
     gs.data_count = 0;
     gs.data_cap = data_cap;
-    gs.global_relocs = global_relocs;
+    gs.global_reloc_offsets = global_reloc_offsets;
+    gs.global_reloc_indices = global_reloc_indices;
     gs.global_relocs_count = 0;
     gs.global_relocs_cap = global_relocs_cap;
 }
@@ -714,6 +733,12 @@ fn GenState_value(gs: *GenState, v: *Value) {
         GenState_slicePtr(gs, v);
     } else if v.op == Op.SliceLen {
         GenState_sliceLen(gs, v);
+    } else if v.op == Op.StringPtr {
+        // StringPtr has same layout as SlicePtr
+        GenState_slicePtr(gs, v);
+    } else if v.op == Op.StringLen {
+        // StringLen has same layout as SliceLen
+        GenState_sliceLen(gs, v);
     } else if v.op == Op.Add64 {
         GenState_add(gs, v);
     } else if v.op == Op.Sub64 {
@@ -865,11 +890,13 @@ fn GenState_constString(gs: *GenState, v: *Value) {
 
     // Record string relocation for later processing
     // Following Zig: arm64.zig:1165-1169 (string_refs.append)
-    if gs.string_relocs != null and gs.string_relocs_count < gs.string_relocs_cap {
-        let r: *StringReloc = gs.string_relocs + gs.string_relocs_count;
-        r.code_offset = reloc_offset;
-        r.str_start = str_start;
-        r.str_len = str_len;
+    if gs.string_reloc_code_offsets != null and gs.string_relocs_count < gs.string_relocs_cap {
+        let off_ptr: *i64 = gs.string_reloc_code_offsets + gs.string_relocs_count;
+        let start_ptr: *i64 = gs.string_reloc_str_starts + gs.string_relocs_count;
+        let len_ptr: *i64 = gs.string_reloc_str_lens + gs.string_relocs_count;
+        off_ptr.* = reloc_offset;
+        start_ptr.* = str_start;
+        len_ptr.* = str_len;
         gs.string_relocs_count = gs.string_relocs_count + 1;
     }
 }
@@ -935,11 +962,26 @@ fn GenState_slicePtr(gs: *GenState, v: *Value) {
         }
     } else if slice_val.op == Op.ConstString {
         // ConstString: aux_int=str_start (offset in source), aux_ptr=str_len
-        // TODO: Need proper string data section support
-        // For now, the ConstString value should have its address computed
-        // Copy from the ConstString's register (if it has one)
-        if slice_val.reg >= 0 and slice_val.reg != rd {
-            GenState_emitInst(gs, ARM64_encodeMovReg(rd, slice_val.reg));
+        // Emit ADRP+ADD to load the string address, same as GenState_constString
+        let str_start: i64 = slice_val.aux_int;
+        let str_len: i64 = slice_val.aux_ptr;
+
+        // Record the code offset for relocation
+        let reloc_offset: i64 = gs.code_count;
+
+        // Emit ADRP + ADD pair
+        GenState_emitInst(gs, encode_adrp(rd, 0));
+        GenState_emitInst(gs, encode_add_imm(rd, rd, 0));
+
+        // Record string relocation
+        if gs.string_reloc_code_offsets != null and gs.string_relocs_count < gs.string_relocs_cap {
+            let off_ptr: *i64 = gs.string_reloc_code_offsets + gs.string_relocs_count;
+            let start_ptr: *i64 = gs.string_reloc_str_starts + gs.string_relocs_count;
+            let len_ptr: *i64 = gs.string_reloc_str_lens + gs.string_relocs_count;
+            off_ptr.* = reloc_offset;
+            start_ptr.* = str_start;
+            len_ptr.* = str_len;
+            gs.string_relocs_count = gs.string_relocs_count + 1;
         }
     } else {
         // Other cases: just copy the register (assume ptr is there)
@@ -977,6 +1019,43 @@ fn GenState_sliceLen(gs: *GenState, v: *Value) {
         // The length is stored in aux_ptr
         let str_len: i64 = slice_val.aux_ptr;
         GenState_emitInst(gs, ARM64_encodeMovImm(rd, str_len));
+    } else if slice_val.op == Op.Load and slice_val.args.count >= 1 {
+        // Load of a string/slice local: len is at offset 8 from base
+        // Check if type is TYPE_STRING or TYPE_SLICE (16-byte composite)
+        print("DEBUG: SliceLen Load type_idx=");
+        print(slice_val.type_idx);
+        print(" TYPE_STRING=");
+        print(TYPE_STRING);
+        print("\n");
+        if slice_val.type_idx == TYPE_STRING or slice_val.type_idx == TYPE_SLICE {
+            let addr_val: *Value = Func_getValue(f, Value_getArg(slice_val, 0));
+            print("DEBUG: SliceLen addr_val.op=");
+            print(addr_val.op);
+            print(" LocalAddr=");
+            print(Op.LocalAddr);
+            print("\n");
+            if addr_val.op == Op.LocalAddr {
+                // Direct SP-relative load from offset + 8
+                let local_idx: i64 = addr_val.aux_int;
+                let local: *Local = Func_getLocal(f, local_idx);
+                let len_offset: i64 = local.offset + 8;
+                print("DEBUG: SliceLen emitting LDR from offset+8=");
+                print(len_offset);
+                print("\n");
+                GenState_emitInst(gs, encode_ldr(rd, SP, len_offset));
+            } else {
+                // Generic case: load from addr + 8
+                // addr_val.reg should contain the base address
+                if addr_val.reg >= 0 {
+                    GenState_emitInst(gs, encode_ldr(rd, addr_val.reg, 8));
+                }
+            }
+        } else {
+            // Non-string load: fallback to register copy
+            if slice_val.reg >= 0 and slice_val.reg != rd {
+                GenState_emitInst(gs, ARM64_encodeMovReg(rd, slice_val.reg));
+            }
+        }
     } else {
         // Other cases: fallback (shouldn't normally happen)
         if slice_val.reg >= 0 and slice_val.reg != rd {
@@ -1340,11 +1419,12 @@ fn GenState_move(gs: *GenState, v: *Value) {
             // Global address - emit ADRP + ADD sequence into X17
             let global_idx: i64 = base_v.aux_int;
             let reloc_offset: i64 = gs.code_count;
-            // Record relocation for linker
-            if gs.global_relocs != null and gs.global_relocs_count < gs.global_relocs_cap {
-                let r: *GlobalReloc = gs.global_relocs + gs.global_relocs_count;
-                r.code_offset = reloc_offset;
-                r.global_idx = global_idx;
+            // Record relocation for linker (using parallel arrays to avoid struct pointer arithmetic)
+            if gs.global_reloc_offsets != null and gs.global_relocs_count < gs.global_relocs_cap {
+                let off_ptr: *i64 = gs.global_reloc_offsets + gs.global_relocs_count;
+                let idx_ptr: *i64 = gs.global_reloc_indices + gs.global_relocs_count;
+                off_ptr.* = reloc_offset;
+                idx_ptr.* = global_idx;
                 gs.global_relocs_count = gs.global_relocs_count + 1;
             }
             GenState_emitInst(gs, encode_adrp(X17, 0));
@@ -1413,11 +1493,13 @@ fn GenState_funcAddr(gs: *GenState, v: *Value) {
 
     // Record relocation for linker to resolve
     // v.aux_int = func_name_start, v.aux_ptr = func_name_len
-    if gs.func_addr_relocs != null and gs.func_addr_relocs_count < gs.func_addr_relocs_cap {
-        let r: *FuncAddrReloc = gs.func_addr_relocs + gs.func_addr_relocs_count;
-        r.code_offset = reloc_offset;
-        r.func_name_start = v.aux_int;
-        r.func_name_len = v.aux_ptr;
+    if gs.func_addr_reloc_code_offsets != null and gs.func_addr_relocs_count < gs.func_addr_relocs_cap {
+        let off_ptr: *i64 = gs.func_addr_reloc_code_offsets + gs.func_addr_relocs_count;
+        let start_ptr: *i64 = gs.func_addr_reloc_name_starts + gs.func_addr_relocs_count;
+        let len_ptr: *i64 = gs.func_addr_reloc_name_lens + gs.func_addr_relocs_count;
+        off_ptr.* = reloc_offset;
+        start_ptr.* = v.aux_int;
+        len_ptr.* = v.aux_ptr;
         gs.func_addr_relocs_count = gs.func_addr_relocs_count + 1;
     }
 }
@@ -1446,11 +1528,12 @@ fn GenState_globalAddr(gs: *GenState, v: *Value) {
     // ADD Rd, Rd, symbol@PAGEOFF
     GenState_emitInst(gs, encode_add_imm(rd, rd, 0));  // Placeholder, linker fills in
 
-    // Record relocation for linker to resolve
-    if gs.global_relocs != null and gs.global_relocs_count < gs.global_relocs_cap {
-        let r: *GlobalReloc = gs.global_relocs + gs.global_relocs_count;
-        r.code_offset = reloc_offset;
-        r.global_idx = global_idx;
+    // Record relocation for linker to resolve (using parallel arrays)
+    if gs.global_reloc_offsets != null and gs.global_relocs_count < gs.global_relocs_cap {
+        let off_ptr: *i64 = gs.global_reloc_offsets + gs.global_relocs_count;
+        let idx_ptr: *i64 = gs.global_reloc_indices + gs.global_relocs_count;
+        off_ptr.* = reloc_offset;
+        idx_ptr.* = global_idx;
         gs.global_relocs_count = gs.global_relocs_count + 1;
     }
 }
@@ -1483,11 +1566,12 @@ fn GenState_globalLoad(gs: *GenState, v: *Value) {
     // LDR rd, [addr_reg]
     GenState_emitInst(gs, encode_ldr(rd, addr_reg, 0));
 
-    // Record relocation for linker to resolve
-    if gs.global_relocs != null and gs.global_relocs_count < gs.global_relocs_cap {
-        let r: *GlobalReloc = gs.global_relocs + gs.global_relocs_count;
-        r.code_offset = reloc_offset;
-        r.global_idx = global_idx;
+    // Record relocation for linker to resolve (using parallel arrays)
+    if gs.global_reloc_offsets != null and gs.global_relocs_count < gs.global_relocs_cap {
+        let off_ptr: *i64 = gs.global_reloc_offsets + gs.global_relocs_count;
+        let idx_ptr: *i64 = gs.global_reloc_indices + gs.global_relocs_count;
+        off_ptr.* = reloc_offset;
+        idx_ptr.* = global_idx;
         gs.global_relocs_count = gs.global_relocs_count + 1;
     }
 }
@@ -1527,11 +1611,12 @@ fn GenState_globalStore(gs: *GenState, v: *Value) {
     // STR src_reg, [addr_reg]
     GenState_emitInst(gs, encode_str(src_reg, addr_reg, 0));
 
-    // Record relocation for linker to resolve
-    if gs.global_relocs != null and gs.global_relocs_count < gs.global_relocs_cap {
-        let r: *GlobalReloc = gs.global_relocs + gs.global_relocs_count;
-        r.code_offset = reloc_offset;
-        r.global_idx = global_idx;
+    // Record relocation for linker to resolve (using parallel arrays)
+    if gs.global_reloc_offsets != null and gs.global_relocs_count < gs.global_relocs_cap {
+        let off_ptr: *i64 = gs.global_reloc_offsets + gs.global_relocs_count;
+        let idx_ptr: *i64 = gs.global_reloc_indices + gs.global_relocs_count;
+        off_ptr.* = reloc_offset;
+        idx_ptr.* = global_idx;
         gs.global_relocs_count = gs.global_relocs_count + 1;
     }
 }
@@ -1762,11 +1847,13 @@ fn GenState_call(gs: *GenState, v: *Value) {
                             GenState_emitInst(gs, encode_adrp(mi_dest, 0));
                             GenState_emitInst(gs, encode_add_imm(mi_dest, mi_dest, 0));
                             // Record string relocation
-                            if gs.string_relocs != null and gs.string_relocs_count < gs.string_relocs_cap {
-                                let r: *StringReloc = gs.string_relocs + gs.string_relocs_count;
-                                r.code_offset = reloc_offset;
-                                r.str_start = str_start;
-                                r.str_len = str_len;
+                            if gs.string_reloc_code_offsets != null and gs.string_relocs_count < gs.string_relocs_cap {
+                                let off_ptr: *i64 = gs.string_reloc_code_offsets + gs.string_relocs_count;
+                                let start_ptr: *i64 = gs.string_reloc_str_starts + gs.string_relocs_count;
+                                let len_ptr: *i64 = gs.string_reloc_str_lens + gs.string_relocs_count;
+                                off_ptr.* = reloc_offset;
+                                start_ptr.* = str_start;
+                                len_ptr.* = str_len;
                                 gs.string_relocs_count = gs.string_relocs_count + 1;
                             }
                         } else if mi_val.op == Op.LocalAddr {
@@ -1775,6 +1862,59 @@ fn GenState_call(gs: *GenState, v: *Value) {
                             let local_idx: i64 = mi_val.aux_int;
                             let local: *Local = Func_getLocal(f, local_idx);
                             GenState_emitInst(gs, encode_add_imm(mi_dest, SP, local.offset));
+                        } else if mi_val.op == Op.StringPtr or mi_val.op == Op.SlicePtr {
+                            // StringPtr/SlicePtr as call arg: need to materialize the ptr
+                            // Get the string/slice value and extract ptr
+                            if mi_val.args.count >= 1 {
+                                let slice_arg_id: i64 = Value_getArg(mi_val, 0);
+                                let slice_arg: *Value = Func_getValue(f, slice_arg_id);
+                                if slice_arg.op == Op.ConstString {
+                                    // ConstString: emit ADRP+ADD to load ptr
+                                    let str_start: i64 = slice_arg.aux_int;
+                                    let str_len: i64 = slice_arg.aux_ptr;
+                                    let reloc_offset: i64 = gs.code_count;
+                                    GenState_emitInst(gs, encode_adrp(mi_dest, 0));
+                                    GenState_emitInst(gs, encode_add_imm(mi_dest, mi_dest, 0));
+                                    // Record string relocation
+                                    if gs.string_reloc_code_offsets != null and gs.string_relocs_count < gs.string_relocs_cap {
+                                        let off_ptr: *i64 = gs.string_reloc_code_offsets + gs.string_relocs_count;
+                                        let start_ptr: *i64 = gs.string_reloc_str_starts + gs.string_relocs_count;
+                                        let len_ptr: *i64 = gs.string_reloc_str_lens + gs.string_relocs_count;
+                                        off_ptr.* = reloc_offset;
+                                        start_ptr.* = str_start;
+                                        len_ptr.* = str_len;
+                                        gs.string_relocs_count = gs.string_relocs_count + 1;
+                                    }
+                                } else if slice_arg.reg >= 0 {
+                                    // Ptr is in a register
+                                    GenState_emitInst(gs, ARM64_encodeMovReg(mi_dest, slice_arg.reg));
+                                }
+                            }
+                        } else if mi_val.op == Op.StringLen or mi_val.op == Op.SliceLen {
+                            // StringLen/SliceLen as call arg: need to materialize the len
+                            if mi_val.args.count >= 1 {
+                                let slice_arg_id: i64 = Value_getArg(mi_val, 0);
+                                let slice_arg: *Value = Func_getValue(f, slice_arg_id);
+                                if slice_arg.op == Op.ConstString {
+                                    // ConstString: len is stored in aux_ptr
+                                    let str_len: i64 = slice_arg.aux_ptr;
+                                    GenState_emitInst(gs, ARM64_encodeMovImm(mi_dest, str_len));
+                                } else if slice_arg.op == Op.Load and slice_arg.args.count >= 1 {
+                                    // Load of a string local: len is at offset 8 from base
+                                    let addr_val: *Value = Func_getValue(f, Value_getArg(slice_arg, 0));
+                                    if addr_val.op == Op.LocalAddr {
+                                        let local_idx: i64 = addr_val.aux_int;
+                                        let local: *Local = Func_getLocal(f, local_idx);
+                                        let len_offset: i64 = local.offset + 8;
+                                        GenState_emitInst(gs, encode_ldr(mi_dest, SP, len_offset));
+                                    } else if addr_val.reg >= 0 {
+                                        GenState_emitInst(gs, encode_ldr(mi_dest, addr_val.reg, 8));
+                                    }
+                                } else if slice_arg.reg >= 0 {
+                                    // Fallback: assume len is in the register
+                                    GenState_emitInst(gs, ARM64_encodeMovReg(mi_dest, slice_arg.reg));
+                                }
+                            }
                         } else if mi_src >= 0 {
                             // Non-constant with source register: emit MOV dest, src
                             GenState_emitInst(gs, ARM64_encodeMovReg(mi_dest, mi_src));
@@ -2036,11 +2176,13 @@ fn GenState_materializeArgToReg(gs: *GenState, arg_val: *Value, target_reg: i64)
         GenState_emitInst(gs, encode_adrp(target_reg, 0));
         GenState_emitInst(gs, encode_add_imm(target_reg, target_reg, 0));
         // Record string relocation
-        if gs.string_relocs != null and gs.string_relocs_count < gs.string_relocs_cap {
-            let r: *StringReloc = gs.string_relocs + gs.string_relocs_count;
-            r.code_offset = reloc_offset;
-            r.str_start = str_start;
-            r.str_len = str_len;
+        if gs.string_reloc_code_offsets != null and gs.string_relocs_count < gs.string_relocs_cap {
+            let off_ptr: *i64 = gs.string_reloc_code_offsets + gs.string_relocs_count;
+            let start_ptr: *i64 = gs.string_reloc_str_starts + gs.string_relocs_count;
+            let len_ptr: *i64 = gs.string_reloc_str_lens + gs.string_relocs_count;
+            off_ptr.* = reloc_offset;
+            start_ptr.* = str_start;
+            len_ptr.* = str_len;
             gs.string_relocs_count = gs.string_relocs_count + 1;
         }
     } else if arg_val.op == Op.ConstInt {

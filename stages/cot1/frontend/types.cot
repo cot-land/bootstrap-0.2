@@ -407,6 +407,37 @@ fn TypeRegistry_findByName(pool: *TypeRegistry, name_start: i64, name_len: i64) 
     return INVALID_TYPE;
 }
 
+// cot1: Look up a type by name from source (supports struct and enum types)
+// source: source buffer to read name from
+// name_start, name_len: position of name in source
+fn TypeRegistry_lookupByName(pool: *TypeRegistry, source: *u8, name_start: i64, name_len: i64) i64 {
+    var i: i64 = 0;
+    while i < pool.count {
+        let t: *Type = pool.types + i;
+        // Check struct or enum types
+        if t.kind == TypeKind.Struct or t.kind == TypeKind.Enum {
+            if t.name_len == name_len {
+                var match: bool = true;
+                var j: i64 = 0;
+                while j < name_len {
+                    let c1: u8 = (pool.source + t.name_start + j).*;
+                    let c2: u8 = (source + name_start + j).*;
+                    if c1 != c2 {
+                        match = false;
+                        break;
+                    }
+                    j = j + 1;
+                }
+                if match {
+                    return i;
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return INVALID_TYPE;
+}
+
 // ============================================================================
 // Type Creation
 // ============================================================================
