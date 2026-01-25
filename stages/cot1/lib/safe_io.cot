@@ -9,10 +9,13 @@
 //
 // =============================================================================
 
-import "error.cot"
+// Syscall externs
+extern fn open(path: *u8, flags: i32, mode: i32) i32;
+extern fn read(fd: i32, buf: *u8, count: i64) i64;
+extern fn close(fd: i32) i32;
+extern fn lseek(fd: i32, offset: i64, whence: i32) i64;
 
-// NOTE: This file expects externs.cot to be imported first!
-// Required externs: open, read, write, close, lseek
+import "error.cot"
 
 // File open flags (POSIX)
 const O_RDONLY: i32 = 0;
@@ -50,10 +53,10 @@ fn safe_open_read(path: *u8, context: *u8) i32 {
         stderr_str("================================================================================\n");
         stderr_str("FILE ERROR: null path in safe_open_read\n");
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -63,10 +66,10 @@ fn safe_open_read(path: *u8, context: *u8) i32 {
         stderr_str("================================================================================\n");
         stderr_str("FILE ERROR: empty path in safe_open_read\n");
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -78,16 +81,16 @@ fn safe_open_read(path: *u8, context: *u8) i32 {
         stderr_str("================================================================================\n");
         stderr_str("FILE ERROR: cannot open file for reading\n");
         stderr_str("  Path: ");
-        stderr_str(path);
+        stderr_ptr(path);
         stderr_newline();
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  Error code: ");
         stderr_int(@intCast(i64, fd));
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -99,7 +102,7 @@ fn safe_open_read(path: *u8, context: *u8) i32 {
 
     if g_debug_verbose {
         stderr_str("[FILE] Opened for read: ");
-        stderr_str(path);
+        stderr_ptr(path);
         stderr_str(" (fd=");
         stderr_int(@intCast(i64, fd));
         stderr_str(")\n");
@@ -115,10 +118,10 @@ fn safe_open_write(path: *u8, context: *u8) i32 {
         stderr_str("================================================================================\n");
         stderr_str("FILE ERROR: null path in safe_open_write\n");
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -128,10 +131,10 @@ fn safe_open_write(path: *u8, context: *u8) i32 {
         stderr_str("================================================================================\n");
         stderr_str("FILE ERROR: empty path in safe_open_write\n");
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -145,16 +148,16 @@ fn safe_open_write(path: *u8, context: *u8) i32 {
         stderr_str("================================================================================\n");
         stderr_str("FILE ERROR: cannot open file for writing\n");
         stderr_str("  Path: ");
-        stderr_str(path);
+        stderr_ptr(path);
         stderr_newline();
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  Error code: ");
         stderr_int(@intCast(i64, fd));
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -166,7 +169,7 @@ fn safe_open_write(path: *u8, context: *u8) i32 {
 
     if g_debug_verbose {
         stderr_str("[FILE] Opened for write: ");
-        stderr_str(path);
+        stderr_ptr(path);
         stderr_str(" (fd=");
         stderr_int(@intCast(i64, fd));
         stderr_str(")\n");
@@ -182,10 +185,10 @@ fn safe_open(path: *u8, flags: i32, mode: i32, context: *u8) i32 {
         stderr_str("================================================================================\n");
         stderr_str("FILE ERROR: null path in safe_open\n");
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -196,16 +199,16 @@ fn safe_open(path: *u8, flags: i32, mode: i32, context: *u8) i32 {
         stderr_str("================================================================================\n");
         stderr_str("FILE ERROR: cannot open file\n");
         stderr_str("  Path: ");
-        stderr_str(path);
+        stderr_ptr(path);
         stderr_newline();
         stderr_str("  Flags: ");
         stderr_int(@intCast(i64, flags));
         stderr_newline();
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -231,10 +234,10 @@ fn safe_read(fd: i32, buf: *u8, count: i64, context: *u8) i64 {
         stderr_int(@intCast(i64, fd));
         stderr_newline();
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -244,10 +247,10 @@ fn safe_read(fd: i32, buf: *u8, count: i64, context: *u8) i64 {
         stderr_str("================================================================================\n");
         stderr_str("READ ERROR: null buffer\n");
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -260,10 +263,10 @@ fn safe_read(fd: i32, buf: *u8, count: i64, context: *u8) i64 {
         stderr_int(count);
         stderr_newline();
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -288,10 +291,10 @@ fn safe_read(fd: i32, buf: *u8, count: i64, context: *u8) i64 {
         stderr_int(result);
         stderr_newline();
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -313,10 +316,10 @@ fn safe_read_all(fd: i32, buf: *u8, buf_cap: i64, context: *u8) i64 {
         stderr_str("================================================================================\n");
         stderr_str("READ ERROR: null buffer in safe_read_all\n");
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -337,10 +340,10 @@ fn safe_read_all(fd: i32, buf: *u8, buf_cap: i64, context: *u8) i64 {
             stderr_int(total);
             stderr_str(" bytes\n");
             stderr_str("  Context: ");
-            stderr_str(context);
+            stderr_ptr(context);
             stderr_newline();
             stderr_str("================================================================================\n");
-            print_error_context_stack();
+            print_error_context();
             exit(1);
         }
         chunk = read(fd, buf + total, buf_cap - total);
@@ -357,10 +360,10 @@ fn safe_read_all(fd: i32, buf: *u8, buf_cap: i64, context: *u8) i64 {
         stderr_int(total);
         stderr_str(" bytes\n");
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -381,10 +384,10 @@ fn safe_write(fd: i32, buf: *u8, count: i64, context: *u8) i64 {
         stderr_int(@intCast(i64, fd));
         stderr_newline();
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -394,10 +397,10 @@ fn safe_write(fd: i32, buf: *u8, count: i64, context: *u8) i64 {
         stderr_str("================================================================================\n");
         stderr_str("WRITE ERROR: null buffer\n");
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -410,10 +413,10 @@ fn safe_write(fd: i32, buf: *u8, count: i64, context: *u8) i64 {
         stderr_int(count);
         stderr_newline();
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -438,10 +441,10 @@ fn safe_write(fd: i32, buf: *u8, count: i64, context: *u8) i64 {
         stderr_int(result);
         stderr_newline();
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -459,10 +462,10 @@ fn safe_write(fd: i32, buf: *u8, count: i64, context: *u8) i64 {
         stderr_int(result);
         stderr_str(" bytes\n");
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -486,10 +489,10 @@ fn safe_write_all(fd: i32, buf: *u8, count: i64, context: *u8) {
         stderr_str("================================================================================\n");
         stderr_str("WRITE ERROR: null buffer in safe_write_all\n");
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -514,10 +517,10 @@ fn safe_write_all(fd: i32, buf: *u8, count: i64, context: *u8) {
             stderr_int(chunk);
             stderr_newline();
             stderr_str("  Context: ");
-            stderr_str(context);
+            stderr_ptr(context);
             stderr_newline();
             stderr_str("================================================================================\n");
-            print_error_context_stack();
+            print_error_context();
             exit(1);
         }
 
@@ -539,10 +542,10 @@ fn safe_close(fd: i32, context: *u8) {
         stderr_int(@intCast(i64, fd));
         stderr_newline();
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -558,10 +561,10 @@ fn safe_close(fd: i32, context: *u8) {
         if fd == 2 { stderr_str(" (stderr)"); }
         stderr_newline();
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -578,10 +581,10 @@ fn safe_close(fd: i32, context: *u8) {
         stderr_int(@intCast(i64, result));
         stderr_newline();
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -607,10 +610,10 @@ fn safe_lseek(fd: i32, offset: i64, whence: i32, context: *u8) i64 {
         stderr_int(@intCast(i64, fd));
         stderr_newline();
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -622,10 +625,10 @@ fn safe_lseek(fd: i32, offset: i64, whence: i32, context: *u8) i64 {
         stderr_int(@intCast(i64, whence));
         stderr_str(" (valid: 0=SEEK_SET, 1=SEEK_CUR, 2=SEEK_END)\n");
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -648,10 +651,10 @@ fn safe_lseek(fd: i32, offset: i64, whence: i32, context: *u8) i64 {
         stderr_int(result);
         stderr_newline();
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -667,10 +670,10 @@ fn safe_get_file_size(fd: i32, context: *u8) i64 {
         stderr_str("================================================================================\n");
         stderr_str("FILE SIZE ERROR: cannot get current position\n");
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -681,10 +684,10 @@ fn safe_get_file_size(fd: i32, context: *u8) i64 {
         stderr_str("================================================================================\n");
         stderr_str("FILE SIZE ERROR: cannot seek to end\n");
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -695,10 +698,10 @@ fn safe_get_file_size(fd: i32, context: *u8) i64 {
         stderr_str("================================================================================\n");
         stderr_str("FILE SIZE ERROR: cannot restore position\n");
         stderr_str("  Context: ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 

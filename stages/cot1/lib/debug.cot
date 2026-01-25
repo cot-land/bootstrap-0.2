@@ -81,10 +81,10 @@ fn debug_disable_all() {
 fn debug_str(msg: *u8, value: *u8) {
     if not g_debug_verbose { return; }
     stderr_str("[DEBUG] ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_str(": \"");
     if value != null {
-        stderr_str(value);
+        stderr_ptr(value);
     } else {
         stderr_str("(null)");
     }
@@ -95,7 +95,7 @@ fn debug_str(msg: *u8, value: *u8) {
 fn debug_ptr(msg: *u8, ptr: *u8) {
     if not g_debug_verbose { return; }
     stderr_str("[DEBUG] ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_str(": ");
     if ptr == null {
         stderr_str("null");
@@ -109,13 +109,13 @@ fn debug_ptr(msg: *u8, ptr: *u8) {
 fn debug_int2(msg: *u8, label1: *u8, val1: i64, label2: *u8, val2: i64) {
     if not g_debug_verbose { return; }
     stderr_str("[DEBUG] ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_str(": ");
-    stderr_str(label1);
+    stderr_ptr(label1);
     stderr_str("=");
     stderr_int(val1);
     stderr_str(", ");
-    stderr_str(label2);
+    stderr_ptr(label2);
     stderr_str("=");
     stderr_int(val2);
     stderr_newline();
@@ -125,17 +125,17 @@ fn debug_int2(msg: *u8, label1: *u8, val1: i64, label2: *u8, val2: i64) {
 fn debug_int3(msg: *u8, l1: *u8, v1: i64, l2: *u8, v2: i64, l3: *u8, v3: i64) {
     if not g_debug_verbose { return; }
     stderr_str("[DEBUG] ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_str(": ");
-    stderr_str(l1);
+    stderr_ptr(l1);
     stderr_str("=");
     stderr_int(v1);
     stderr_str(", ");
-    stderr_str(l2);
+    stderr_ptr(l2);
     stderr_str("=");
     stderr_int(v2);
     stderr_str(", ");
-    stderr_str(l3);
+    stderr_ptr(l3);
     stderr_str("=");
     stderr_int(v3);
     stderr_newline();
@@ -145,7 +145,7 @@ fn debug_int3(msg: *u8, l1: *u8, v1: i64, l2: *u8, v2: i64, l3: *u8, v3: i64) {
 fn debug_bool(msg: *u8, value: bool) {
     if not g_debug_verbose { return; }
     stderr_str("[DEBUG] ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_str(": ");
     if value {
         stderr_str("true");
@@ -171,9 +171,9 @@ fn trace_enter_int(func_name: *u8, arg_name: *u8, arg_val: i64) {
         i = i + 1;
     }
     stderr_str("-> ");
-    stderr_str(func_name);
+    stderr_ptr(func_name);
     stderr_str("(");
-    stderr_str(arg_name);
+    stderr_ptr(arg_name);
     stderr_str("=");
     stderr_int(arg_val);
     stderr_str(")\n");
@@ -196,13 +196,13 @@ fn trace_enter_int2(func_name: *u8, n1: *u8, v1: i64, n2: *u8, v2: i64) {
         i = i + 1;
     }
     stderr_str("-> ");
-    stderr_str(func_name);
+    stderr_ptr(func_name);
     stderr_str("(");
-    stderr_str(n1);
+    stderr_ptr(n1);
     stderr_str("=");
     stderr_int(v1);
     stderr_str(", ");
-    stderr_str(n2);
+    stderr_ptr(n2);
     stderr_str("=");
     stderr_int(v2);
     stderr_str(")\n");
@@ -225,12 +225,12 @@ fn trace_enter_str(func_name: *u8, arg_name: *u8, arg_val: *u8) {
         i = i + 1;
     }
     stderr_str("-> ");
-    stderr_str(func_name);
+    stderr_ptr(func_name);
     stderr_str("(");
-    stderr_str(arg_name);
+    stderr_ptr(arg_name);
     stderr_str("=\"");
     if arg_val != null {
-        stderr_str(arg_val);
+        stderr_ptr(arg_val);
     } else {
         stderr_str("(null)");
     }
@@ -255,7 +255,7 @@ fn trace_exit_int(func_name: *u8, ret_val: i64) {
         i = i + 1;
     }
     stderr_str("<- ");
-    stderr_str(func_name);
+    stderr_ptr(func_name);
     stderr_str(" = ");
     stderr_int(ret_val);
     stderr_newline();
@@ -274,7 +274,7 @@ fn trace_exit_bool(func_name: *u8, ret_val: bool) {
         i = i + 1;
     }
     stderr_str("<- ");
-    stderr_str(func_name);
+    stderr_ptr(func_name);
     stderr_str(" = ");
     if ret_val {
         stderr_str("true");
@@ -301,7 +301,7 @@ fn phase_start(name: *u8) {
         stderr_str("PHASE ");
         stderr_int(g_phase_count);
         stderr_str(": ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str("\n");
         stderr_str("================================================================================\n");
     }
@@ -310,7 +310,7 @@ fn phase_start(name: *u8) {
 fn phase_end(name: *u8) {
     if g_debug_phase {
         stderr_str("  Completed: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_newline();
     }
 }
@@ -318,7 +318,7 @@ fn phase_end(name: *u8) {
 fn phase_progress(msg: *u8) {
     if g_debug_phase {
         stderr_str("  ... ");
-        stderr_str(msg);
+        stderr_ptr(msg);
         stderr_newline();
     }
 }
@@ -326,7 +326,7 @@ fn phase_progress(msg: *u8) {
 fn phase_progress_int(msg: *u8, value: i64) {
     if g_debug_phase {
         stderr_str("  ... ");
-        stderr_str(msg);
+        stderr_ptr(msg);
         stderr_str(": ");
         stderr_int(value);
         stderr_newline();
@@ -340,14 +340,14 @@ fn phase_progress_int(msg: *u8, value: i64) {
 fn debug_ir(msg: *u8) {
     if not g_debug_ir and not g_debug_all { return; }
     stderr_str("[IR] ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_newline();
 }
 
 fn debug_ir_int(msg: *u8, value: i64) {
     if not g_debug_ir and not g_debug_all { return; }
     stderr_str("[IR] ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_str(": ");
     stderr_int(value);
     stderr_newline();
@@ -356,14 +356,14 @@ fn debug_ir_int(msg: *u8, value: i64) {
 fn debug_ssa(msg: *u8) {
     if not g_debug_ssa and not g_debug_all { return; }
     stderr_str("[SSA] ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_newline();
 }
 
 fn debug_ssa_int(msg: *u8, value: i64) {
     if not g_debug_ssa and not g_debug_all { return; }
     stderr_str("[SSA] ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_str(": ");
     stderr_int(value);
     stderr_newline();
@@ -372,14 +372,14 @@ fn debug_ssa_int(msg: *u8, value: i64) {
 fn debug_codegen(msg: *u8) {
     if not g_debug_codegen and not g_debug_all { return; }
     stderr_str("[CODEGEN] ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_newline();
 }
 
 fn debug_codegen_int(msg: *u8, value: i64) {
     if not g_debug_codegen and not g_debug_all { return; }
     stderr_str("[CODEGEN] ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_str(": ");
     stderr_int(value);
     stderr_newline();
@@ -388,14 +388,14 @@ fn debug_codegen_int(msg: *u8, value: i64) {
 fn debug_memory(msg: *u8) {
     if not g_debug_memory and not g_debug_all { return; }
     stderr_str("[MEM] ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_newline();
 }
 
 fn debug_memory_int(msg: *u8, value: i64) {
     if not g_debug_memory and not g_debug_all { return; }
     stderr_str("[MEM] ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_str(": ");
     stderr_int(value);
     stderr_newline();
@@ -410,7 +410,7 @@ fn debug_hexdump(label: *u8, ptr: *u8, len: i64) {
     if not g_debug_verbose { return; }
 
     stderr_str("[HEXDUMP] ");
-    stderr_str(label);
+    stderr_ptr(label);
     stderr_str(" at ");
     stderr_hex(@ptrToInt(ptr));
     stderr_str(", ");
@@ -446,14 +446,14 @@ fn debug_hexdump(label: *u8, ptr: *u8, len: i64) {
         let hi: u8 = b / 16;
         let lo: u8 = b % 16;
         if hi < 10 {
-            stderr_char(48 + hi);  // '0' + hi
+            stderr_char(@intCast(u8, 48 + hi));  // '0' + hi
         } else {
-            stderr_char(87 + hi);  // 'a' - 10 + hi
+            stderr_char(@intCast(u8, 87 + hi));  // 'a' - 10 + hi
         }
         if lo < 10 {
-            stderr_char(48 + lo);
+            stderr_char(@intCast(u8, 48 + lo));
         } else {
-            stderr_char(87 + lo);
+            stderr_char(@intCast(u8, 87 + lo));
         }
         stderr_str(" ");
 
@@ -482,7 +482,7 @@ fn debug_dump_i64_array(label: *u8, arr: *i64, count: i64) {
     if not g_debug_verbose { return; }
 
     stderr_str("[DUMP] ");
-    stderr_str(label);
+    stderr_ptr(label);
     stderr_str(" (");
     stderr_int(count);
     stderr_str(" elements):\n");
@@ -535,7 +535,7 @@ fn print_trace_stats() {
     stderr_newline();
     if g_current_phase != null {
         stderr_str("  Last phase: ");
-        stderr_str(g_current_phase);
+        stderr_ptr(g_current_phase);
         stderr_newline();
     }
     stderr_str("================================================================================\n");
@@ -554,7 +554,7 @@ fn checkpoint(label: *u8) {
         stderr_str("[CHECKPOINT ");
         stderr_int(g_checkpoint_count);
         stderr_str("] ");
-        stderr_str(label);
+        stderr_ptr(label);
         stderr_newline();
     }
 }
@@ -566,7 +566,7 @@ fn checkpoint_int(label: *u8, value: i64) {
         stderr_str("[CHECKPOINT ");
         stderr_int(g_checkpoint_count);
         stderr_str("] ");
-        stderr_str(label);
+        stderr_ptr(label);
         stderr_str(": ");
         stderr_int(value);
         stderr_newline();
@@ -576,13 +576,13 @@ fn checkpoint_int(label: *u8, value: i64) {
 // Mark that we reached a specific point (unconditional output)
 fn reached(label: *u8) {
     stderr_str("[REACHED] ");
-    stderr_str(label);
+    stderr_ptr(label);
     stderr_newline();
 }
 
 fn reached_int(label: *u8, value: i64) {
     stderr_str("[REACHED] ");
-    stderr_str(label);
+    stderr_ptr(label);
     stderr_str(": ");
     stderr_int(value);
     stderr_newline();

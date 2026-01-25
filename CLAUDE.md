@@ -1,6 +1,173 @@
 # Claude Development Guidelines
 
-## ⛔⛔⛔ THE ONE RULE - COPY FROM GO/ZIG, NEVER INVENT ⛔⛔⛔
+## DEAD CODE INTEGRATION PATTERN - FOLLOW THIS EXACTLY
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   CRITICAL: Functions must be USED, not just imported.                        ║
+║   An import without usage is STILL DEAD CODE.                                 ║
+║                                                                               ║
+║   WHEN INTEGRATING DEAD CODE FILES, FOLLOW THIS PATTERN:                      ║
+║                                                                               ║
+║   1. ADD THE IMPORT to main.cot                                               ║
+║      import "lib/whatever.cot"                                                ║
+║                                                                               ║
+║   2. TRY TO COMPILE                                                           ║
+║      ./zig-out/bin/cot stages/cot1/main.cot -o /tmp/cot1-stage1               ║
+║                                                                               ║
+║   3. IF IT FAILS - DO NOT COMMENT OUT AND MOVE ON                             ║
+║      Instead:                                                                 ║
+║      a) Investigate the ROOT CAUSE of the failure                             ║
+║      b) Check how Go handles it: ~/learning/go/src/cmd/compile/               ║
+║      c) Fix the Zig compiler (src/*.zig) to match Go's approach               ║
+║      d) Rebuild: zig build                                                    ║
+║      e) Test the fix compiles cot1                                            ║
+║      f) Run tests: ./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/t && /tmp/t║
+║                                                                               ║
+║   4. WIRE UP THE FUNCTIONS - Find where each function should be called        ║
+║      - Check the equivalent in Zig compiler (src/*.zig)                       ║
+║      - Replace raw calls with the safe/wrapper versions                       ║
+║      - Example: Replace open() with safe_open_read(), etc.                    ║
+║                                                                               ║
+║   5. VERIFY COT1-STAGE1 WORKS                                                 ║
+║      /tmp/cot1-stage1 test/stages/cot1/all_tests.cot -o /tmp/t.o              ║
+║      zig cc /tmp/t.o runtime/cot_runtime.o -o /tmp/t -lSystem && /tmp/t       ║
+║                                                                               ║
+║   6. UPDATE TRACKING - mark functions as USED in INTEGRATE_DEAD_CODE.md       ║
+║                                                                               ║
+║   EXAMPLE: safe_io.cot integration                                            ║
+║   - Import caused panic: "index out of bounds: index 4294967295"              ║
+║   - Root cause: cross-file globals not visible (each file had own IR Builder) ║
+║   - Go pattern: all files share single ir.Package (typecheck.Target)          ║
+║   - Fix: modified driver.zig to use shared IR Builder across all files        ║
+║   - Wired up: read_file() now calls safe_open_read, safe_read_all, safe_close ║
+║   - Wired up: write_file() now calls safe_open_write, safe_write_all, safe_close║
+║   - Result: safe_io.cot functions now USED, all 166 tests pass                ║
+║                                                                               ║
+║   NEVER comment out imports and move on. Fix the compiler.                    ║
+║   NEVER just import - ensure functions are actually CALLED.                   ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+```
+
+---
+
+## THOUSANDS OF DOLLARS WASTED ON DEAD CODE
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   WEEKS OF WORK. THOUSANDS OF DOLLARS IN CLAUDE TOKENS. ALL WASTED.           ║
+║                                                                               ║
+║   Claude spent WEEKS writing, debugging, and "improving" code that is         ║
+║   NEVER EXECUTED. Files like checker.cot, validate.cot, invariants.cot,       ║
+║   regalloc.cot, liveness.cot - none of them are imported by main.cot.         ║
+║                                                                               ║
+║   The user paid for:                                                          ║
+║   - Writing 11,008 lines of dead code                                         ║
+║   - Debugging code that never runs                                            ║
+║   - "Fixing" bugs in unused functions                                         ║
+║   - Creating test files for dead modules                                      ║
+║   - 7+ hours on BUG-063 alone, based on assumptions about checker.cot        ║
+║                                                                               ║
+║   EXPOSED BY ONE COMMAND:                                                     ║
+║   $ grep "Checker" main.cot                                                   ║
+║   (no results - checker.cot is never used)                                    ║
+║                                                                               ║
+║   THIS IS INEXCUSABLE. Before working on ANY file, Claude MUST verify         ║
+║   it is actually imported and used. 10 seconds of verification would          ║
+║   have saved weeks of wasted work.                                            ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+```
+
+---
+
+## WARNING: 62% OF COT1 IS DEAD CODE
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   BEFORE WORKING ON ANY COT1 FILE, VERIFY IT IS ACTUALLY USED                 ║
+║                                                                               ║
+║   Total .cot files in cot1:     69                                            ║
+║   Reachable from main.cot:      26                                            ║
+║   DEAD FILES:                   43 (62%)                                      ║
+║                                                                               ║
+║   Total lines in cot1:          35,198                                        ║
+║   DEAD LINES:                   11,008 (31%)                                  ║
+║                                                                               ║
+║   BIGGEST DEAD FILES:                                                         ║
+║   - checker.cot      883 lines  <- Claude spent 7+ hours on this             ║
+║   - validate.cot     745 lines                                                ║
+║   - safe_io.cot      725 lines                                                ║
+║   - invariants.cot   687 lines                                                ║
+║   - regalloc.cot     623 lines                                                ║
+║   - liveness.cot     612 lines                                                ║
+║   - error.cot        637 lines                                                ║
+║   - debug.cot        590 lines                                                ║
+║                                                                               ║
+║   HOW TO CHECK IF A FILE IS USED:                                             ║
+║   1. grep 'import.*filename' main.cot                                         ║
+║   2. If not found, trace imports from main.cot transitively                   ║
+║   3. If file is not reachable, IT IS DEAD CODE                                ║
+║                                                                               ║
+║   REACHABLE FILES (the only ones that matter):                                ║
+║   main.cot, lib/stdlib.cot, lib/list.cot, lib/strmap.cot,                    ║
+║   frontend/token.cot, frontend/scanner.cot, frontend/types.cot,              ║
+║   frontend/ast.cot, frontend/parser.cot, frontend/ir.cot,                    ║
+║   frontend/lower.cot, codegen/genssa.cot, codegen/arm64.cot,                 ║
+║   arm64/asm.cot, arm64/regs.cot, ssa/builder.cot,                            ║
+║   ssa/passes/expand_calls.cot, ssa/func.cot, ssa/block.cot,                  ║
+║   ssa/value.cot, ssa/op.cot, ssa/dom.cot, ssa/abi.cot,                       ║
+║   ssa/stackalloc.cot, obj/macho.cot, obj/dwarf.cot                           ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+```
+
+---
+
+## BUG-063: 7+ HOURS WASTED ON DEAD CODE
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   2026-01-25: COMPLETE FAILURE                                                ║
+║                                                                               ║
+║   6+ Claude instances spent 7+ HOURS "fixing" BUG-063 based on the           ║
+║   assumption that "the checker computes correct offsets in TypeRegistry."    ║
+║                                                                               ║
+║   THE CHECKER IS NEVER CALLED. IT IS 883 LINES OF DEAD CODE.                 ║
+║                                                                               ║
+║   - checker.cot: 883 lines, 13 functions                                     ║
+║   - Only imported by: checker_test.cot (a test file)                         ║
+║   - main.cot: zero references to "Checker"                                   ║
+║   - grep "Checker" main.cot returns: NOTHING                                 ║
+║                                                                               ║
+║   WHAT CLAUDE DID:                                                           ║
+║   - Created 4 "rewrite" documents based on checker assumptions               ║
+║   - Deleted 175 lines from lower.cot                                         ║
+║   - Rewrote 17 call sites (~200 lines changed)                               ║
+║   - Added back 70 lines after breaking everything                            ║
+║   - Result: ZERO EFFECT ON BUG                                               ║
+║                                                                               ║
+║   WHAT CLAUDE SHOULD HAVE DONE:                                              ║
+║   - Run: grep "Checker" main.cot                                             ║
+║   - See: no results                                                          ║
+║   - Conclude: checker is dead code, assumption is wrong                      ║
+║   - Time required: 10 seconds                                                ║
+║                                                                               ║
+║   THE BUG IS IN genssa.cot (codegen), NOT lower.cot OR checker.cot           ║
+║                                                                               ║
+║   See BUG063_MASTER_FIX.md for the complete failure analysis.                ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+```
+
+---
+
+## THE ONE RULE - COPY FROM GO/ZIG, NEVER INVENT
 
 ```
 ╔═══════════════════════════════════════════════════════════════════════════════╗
@@ -34,85 +201,12 @@
 
 ---
 
-## ⛔ MANDATORY: TEST-DRIVEN FEATURE DEVELOPMENT ⛔
+## NEVER USE FIXED-SIZE ARRAYS IN COT CODE
 
 ```
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
-║   WHEN ADDING NEW LANGUAGE FEATURES (cot1, cot2, etc.):                       ║
-║                                                                               ║
-║   1. Write 3-5 tests FIRST for the feature                                    ║
-║   2. Tests go in test/cot1/, test/cot2/, etc.                                 ║
-║   3. ALL existing tests must continue to pass                                 ║
-║   4. New feature tests must pass before moving on                             ║
-║                                                                               ║
-║   Test naming: test_<feature>_<case>.cot                                      ║
-║   Example: test_error_union_basic.cot                                         ║
-║            test_error_union_catch.cot                                         ║
-║            test_error_union_try.cot                                           ║
-║                                                                               ║
-║   Run ALL tests after each change:                                            ║
-║   ./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/t && /tmp/t                ║
-║                                                                               ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
-```
-
----
-
-## ⛔ MANDATORY: DOGFOOD NEW FEATURES ⛔
-
-```
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║                                                                               ║
-║   WHEN A FEATURE IS IMPLEMENTED, IT MUST BE USED IN THE COMPILER:             ║
-║                                                                               ║
-║   A feature is NOT complete until the compiler itself uses it.                ║
-║                                                                               ║
-║   Example: When implementing type aliases for cot1:                           ║
-║   1. ✅ Parser parses `type Name = T`                                         ║
-║   2. ✅ Checker validates type aliases                                        ║
-║   3. ✅ Lowerer generates correct code                                        ║
-║   4. ✅ Test suite has 3+ tests passing                                       ║
-║   5. ⚠️ MUST ALSO: Update cot1/*.cot to USE type aliases                      ║
-║                                                                               ║
-║   Why: This ensures:                                                          ║
-║   - Features actually work in real-world code (not just tests)                ║
-║   - Self-hosting exercises all features                                       ║
-║   - The compiler becomes production-quality, not minimal                      ║
-║   - Each stage N+1 is written using stage N features                          ║
-║                                                                               ║
-║   Examples of dogfooding:                                                     ║
-║   - Type aliases: `type NodeIndex = i64` in ast.cot                           ║
-║   - Optional types: `?*Node` for nullable pointers in parser.cot              ║
-║   - Error unions: `!TypeId` for fallible type resolution                      ║
-║                                                                               ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
-```
-
----
-
-## ⛔ STAGE1 TESTING - ALWAYS USE ALL_TESTS ⛔
-
-```
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║                                                                               ║
-║   When testing stage1 hasn't regressed, ALWAYS run e2e/all_tests:             ║
-║                                                                               ║
-║   /tmp/cot0-stage1 test/e2e/all_tests.cot -o /tmp/all_tests && /tmp/all_tests ║
-║                                                                               ║
-║   Verify ALL 166 TESTS PASS. Never use trivial "return 42" tests.             ║
-║                                                                               ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
-```
-
----
-
-## ⛔⛔⛔ NEVER USE FIXED-SIZE ARRAYS IN COT0 ⛔⛔⛔
-
-```
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║                                                                               ║
-║   NEVER EVER EVER EVER EVER USE FIXED-SIZE ARRAYS IN COT0                     ║
+║   NEVER EVER EVER EVER EVER USE FIXED-SIZE ARRAYS IN COT0/COT1                ║
 ║                                                                               ║
 ║   ❌ var arr: [64]*Value = undefined;      <- NEVER DO THIS                   ║
 ║   ❌ const MAX_ITEMS: i64 = 500000;        <- NEVER DO THIS                   ║
@@ -122,67 +216,68 @@
 ║   ✓ Use realloc() to grow arrays                                              ║
 ║   ✓ Copy Zig's ArrayList/ArrayListUnmanaged patterns                          ║
 ║                                                                               ║
-║   The user has requested this HUNDREDS OF TIMES. STOP ADDING FIXED ARRAYS.    ║
-║                                                                               ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 ```
 
 ---
 
-## SHAME LOG - READ THIS FIRST
+## MANDATORY: TEST-DRIVEN FEATURE DEVELOPMENT
 
-**2026-01-25** - Claude marked cot1 features (type aliases, optional types) as "COMPLETED" when they were NOT complete. Claude only added PARSING to cot1/frontend/parser.cot, but did NOT implement semantic handling in checker.cot or lower.cot. Then Claude tested using the WRONG COMPILER - the Zig bootstrap (`./zig-out/bin/cot`) which already supports these features, instead of the cot1 self-hosting compiler (`/tmp/cot1-stage1`). When tests passed with the Zig bootstrap, Claude declared victory.
+When adding new language features (cot1, cot2, etc.):
 
-**THE ACTUAL RESULT:** When compiled with the cot1 compiler (which is what matters), 6/9 tests FAILED because cot1 can parse the syntax but generates garbage code.
+1. Write 3-5 tests FIRST for the feature
+2. Tests go in test/cot1/, test/cot2/, etc.
+3. ALL existing tests must continue to pass
+4. New feature tests must pass before moving on
 
-**WHAT CLAUDE DID WRONG:**
-1. Only implemented parsing, forgot checker/lowerer need updates too
-2. Tested with wrong compiler (Zig bootstrap instead of cot1)
-3. Marked features "completed" without verifying they work in the self-hosting compiler
-4. Wasted user's time with false progress reports
+Test naming: `test_<feature>_<case>.cot`
 
-**THE RULE:** A feature is ONLY complete when:
-- Parser parses it ✓
-- Checker validates it ✓
-- Lowerer generates correct code ✓
-- Tests pass when compiled BY THE SELF-HOSTING COMPILER ✓
+Run ALL tests after each change:
+```bash
+./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/t && /tmp/t
+```
 
 ---
 
-**2026-01-24** - User asked Claude to bring SSA passes (expand_calls.cot, decompose.cot, schedule.cot, lower.cot) up to parity with Zig. Claude initially wrote ~400 lines of garbage code that pattern-matched conditions but said "For bootstrap, codegen handles this" without doing anything.
+## MANDATORY: DOGFOOD NEW FEATURES
 
-**CORRECTED:** Rewrote all four passes with actual transformations:
-- decompose.cot: string_ptr/string_len(string_make) → copy, with proper use count updates
-- expand_calls.cot: Store of >16B type → Move, plus dec.rules optimizations
-- schedule.cot: Actual value reordering using swapValues() with reference updates
-- lower.cot: Mul by 2^n → Shl, identity optimizations (add 0, mul 1, etc.)
+A feature is NOT complete until the compiler itself uses it.
 
----
-
-**2026-01-23 ~10:30 AM** - Claude invented `PTYPE_PENDING_ARRAY_BASE = 200000000` garbage hack instead of implementing proper type resolution like Zig. User asked for parser type resolution fix. Instead of:
-- Reading how Zig stores type expressions as AST nodes
-- Reading how Zig's checker resolves types after all declarations are registered
-- Implementing the same pattern in cot0
-
-Claude invented a magic number encoding scheme that doesn't exist anywhere in Zig. This is EXACTLY what CLAUDE.md says NOT to do. The user has asked for proper dynamic memory and AST node storage like Zig multiple times. Claude keeps avoiding "larger changes" and adding hacks instead.
-
-**WHAT CLAUDE SHOULD HAVE DONE:** Read src/frontend/parser.zig and src/frontend/checker.zig, understand how Zig stores TypeExpr AST nodes and resolves them in resolveTypeExpr(), then implement the same pattern in cot0.
+Example: When implementing type aliases for cot1:
+1. Parser parses `type Name = T`
+2. Checker validates type aliases
+3. Lowerer generates correct code
+4. Test suite has 3+ tests passing
+5. **MUST ALSO:** Update cot1/*.cot to USE type aliases
 
 ---
 
-> **Continue working without pausing for summaries. The user will stop you when done.**
+## STAGE1 TESTING - ALWAYS USE ALL_TESTS
 
-## Current Priority: cot1 Language Evolution
+When testing stage1 hasn't regressed, ALWAYS run e2e/all_tests:
 
-**Make all 166 e2e tests pass when compiled with cot0-stage1.**
+```bash
+/tmp/cot0-stage1 test/e2e/all_tests.cot -o /tmp/all_tests && /tmp/all_tests
+```
 
-See [cot0/STAGE1_TEST_PLAN.md](cot0/STAGE1_TEST_PLAN.md) for the detailed execution plan.
+Verify ALL tests pass. Never use trivial "return 42" tests.
 
-**Known Issues (in priority order):**
-1. **Function Pointers** - Link error, generates `_f` symbol instead of indirect call
-2. **Global Variables** - Returns 0 instead of correct value
-3. **String Literals** - `s.len` returns 0 instead of string length
-4. **For Loops** - Parser doesn't recognize `for i in 0..7` syntax
+---
+
+## Current Priority: Field Offset Rewrite
+
+**READ THIS FIRST:** [REWRITE_FIELD_OFFSETS.md](REWRITE_FIELD_OFFSETS.md)
+
+The cot1 struct field offset handling is architecturally broken. It computes offsets in THREE different places using THREE different methods. The rewrite document explains:
+
+1. Why debugging cannot fix this (architecture is wrong)
+2. How Zig does it correctly (single source of truth)
+3. Exactly what to delete and what to add
+4. All 17 call sites that need fixing
+
+**Do NOT attempt to debug the old code. Follow the rewrite plan.**
+
+---
 
 ## Long-term Goal
 
@@ -190,6 +285,8 @@ Make every function in [cot0/COMPARISON.md](cot0/COMPARISON.md) show "Same":
 - Same name (adapted to Cot naming: `Scanner_init` not `scanner_init`)
 - Same logic (identical algorithm, different syntax)
 - Same behavior (identical outputs for identical inputs)
+
+---
 
 ## Workflow
 
@@ -211,6 +308,8 @@ Make every function in [cot0/COMPARISON.md](cot0/COMPARISON.md) show "Same":
    ./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/t && /tmp/t
 ```
 
+---
+
 ## Bug Handling
 
 ```
@@ -221,9 +320,14 @@ Invent a fix                         Find the Zig/Go code
 Add a null check                     Copy that code to cot0
 Try a different approach             If missing infrastructure, note
                                      it and move on
+Add debug prints endlessly           Make a code change and test
+Create test files to "investigate"   Use existing test suite
+Read code for 30+ minutes            Make a fix attempt within 5 min
 ```
 
 **Bugs = missing Go/Zig patterns, not puzzles to solve creatively.**
+
+---
 
 ## Memory Management
 
@@ -233,6 +337,8 @@ Try a different approach             If missing infrastructure, note
 | Temporary bootstrap scaffolding | Will replace globals later |
 
 **Do NOT add Zig-style allocators. ARC comes after self-hosting.**
+
+---
 
 ## Commands
 
@@ -248,16 +354,28 @@ zig build
 echo 'fn main() i64 { return 42 }' > /tmp/test.cot
 /tmp/cot0-stage1 /tmp/test.cot -o /tmp/test.o
 zig cc /tmp/test.o -o /tmp/test && /tmp/test; echo "Exit: $?"
+
+# Build cot1-stage1
+./zig-out/bin/cot stages/cot1/main.cot -o /tmp/cot1-stage1
+
+# Build cot1-stage2 (currently blocked by field offset bug)
+/tmp/cot1-stage1 stages/cot1/main.cot -o /tmp/cot1-stage2.o
+zig cc /tmp/cot1-stage2.o runtime/cot_runtime.o -o /tmp/cot1-stage2 -lSystem
 ```
+
+---
 
 ## Key Documents
 
 | Document | Purpose |
 |----------|---------|
+| [REWRITE_FIELD_OFFSETS.md](REWRITE_FIELD_OFFSETS.md) | **CURRENT PRIORITY** - Complete rewrite plan for field offsets |
 | [cot0/COMPARISON.md](cot0/COMPARISON.md) | Master checklist - work through top to bottom |
 | [SELF_HOSTING.md](SELF_HOSTING.md) | Path to self-hosting with milestones |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Compiler design and key decisions |
 | [REFERENCE.md](REFERENCE.md) | Technical reference (data structures, algorithms) |
+
+---
 
 ## The Anti-Pattern to Avoid
 
@@ -272,9 +390,13 @@ zig cc /tmp/test.o -o /tmp/test && /tmp/test; echo "Exit: $?"
 THIS IS WRONG. The task is TRANSLATION, not ENGINEERING.
 ```
 
+---
+
 ## When Stuck
 
 1. Check if the function is "Same" in COMPARISON.md
 2. Read the Zig code in `src/*.zig`
 3. Read the Go code if Zig is unclear
 4. Ask rather than guess
+
+> **Continue working without pausing for summaries. The user will stop you when done.**

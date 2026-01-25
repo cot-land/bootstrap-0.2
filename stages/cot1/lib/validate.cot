@@ -25,56 +25,56 @@ import "error.cot"
 // Note: These must match the NodeKind enum in ast.cot
 fn NodeKind_name(kind: i64) *u8 {
     // Expressions
-    if kind == 0 { return "IntLit"; }
-    if kind == 1 { return "StringLit"; }
-    if kind == 2 { return "Ident"; }
-    if kind == 3 { return "BinaryExpr"; }
-    if kind == 4 { return "CallExpr"; }
-    if kind == 5 { return "UnaryExpr"; }
-    if kind == 6 { return "AddressOf"; }
-    if kind == 7 { return "DerefExpr"; }
-    if kind == 8 { return "AssignExpr"; }
+    if kind == 0 { return "IntLit".ptr; }
+    if kind == 1 { return "StringLit".ptr; }
+    if kind == 2 { return "Ident".ptr; }
+    if kind == 3 { return "BinaryExpr".ptr; }
+    if kind == 4 { return "CallExpr".ptr; }
+    if kind == 5 { return "UnaryExpr".ptr; }
+    if kind == 6 { return "AddressOf".ptr; }
+    if kind == 7 { return "DerefExpr".ptr; }
+    if kind == 8 { return "AssignExpr".ptr; }
 
     // Statements
-    if kind == 9 { return "ReturnStmt"; }
-    if kind == 10 { return "ExprStmt"; }
-    if kind == 11 { return "BlockStmt"; }
-    if kind == 12 { return "IfStmt"; }
-    if kind == 13 { return "WhileStmt"; }
-    if kind == 14 { return "ForStmt"; }
-    if kind == 15 { return "BreakStmt"; }
-    if kind == 16 { return "ContinueStmt"; }
+    if kind == 9 { return "ReturnStmt".ptr; }
+    if kind == 10 { return "ExprStmt".ptr; }
+    if kind == 11 { return "BlockStmt".ptr; }
+    if kind == 12 { return "IfStmt".ptr; }
+    if kind == 13 { return "WhileStmt".ptr; }
+    if kind == 14 { return "ForStmt".ptr; }
+    if kind == 15 { return "BreakStmt".ptr; }
+    if kind == 16 { return "ContinueStmt".ptr; }
 
     // Declarations
-    if kind == 17 { return "FnDecl"; }
-    if kind == 18 { return "ExternFnDecl"; }
-    if kind == 19 { return "ParamDecl"; }
-    if kind == 20 { return "VarDecl"; }
-    if kind == 21 { return "GlobalVarDecl"; }
-    if kind == 22 { return "ConstDecl"; }
-    if kind == 23 { return "StructDecl"; }
-    if kind == 24 { return "EnumDecl"; }
-    if kind == 25 { return "FieldDecl"; }
-    if kind == 26 { return "ImportDecl"; }
+    if kind == 17 { return "FnDecl".ptr; }
+    if kind == 18 { return "ExternFnDecl".ptr; }
+    if kind == 19 { return "ParamDecl".ptr; }
+    if kind == 20 { return "VarDecl".ptr; }
+    if kind == 21 { return "GlobalVarDecl".ptr; }
+    if kind == 22 { return "ConstDecl".ptr; }
+    if kind == 23 { return "StructDecl".ptr; }
+    if kind == 24 { return "EnumDecl".ptr; }
+    if kind == 25 { return "FieldDecl".ptr; }
+    if kind == 26 { return "ImportDecl".ptr; }
 
     // Member access
-    if kind == 27 { return "FieldAccess"; }
-    if kind == 28 { return "IndexExpr"; }
-    if kind == 29 { return "SliceExpr"; }
+    if kind == 27 { return "FieldAccess".ptr; }
+    if kind == 28 { return "IndexExpr".ptr; }
+    if kind == 29 { return "SliceExpr".ptr; }
 
     // Composite literals
-    if kind == 30 { return "StructLit"; }
-    if kind == 31 { return "FieldInit"; }
-    if kind == 32 { return "ArrayLit"; }
+    if kind == 30 { return "StructLit".ptr; }
+    if kind == 31 { return "FieldInit".ptr; }
+    if kind == 32 { return "ArrayLit".ptr; }
 
     // Builtins
-    if kind == 33 { return "BuiltinCall"; }
+    if kind == 33 { return "BuiltinCall".ptr; }
 
     // Switch
-    if kind == 34 { return "SwitchExpr"; }
-    if kind == 35 { return "SwitchCase"; }
+    if kind == 34 { return "SwitchExpr".ptr; }
+    if kind == 35 { return "SwitchCase".ptr; }
 
-    return "Unknown";
+    return "Unknown".ptr;
 }
 
 // =============================================================================
@@ -84,57 +84,57 @@ fn NodeKind_name(kind: i64) *u8 {
 // Note: These must match the IRNodeKind enum in ir.cot
 fn IRNodeKind_name(kind: i64) *u8 {
     // Constants
-    if kind == 0 { return "ConstInt"; }
-    if kind == 1 { return "ConstBool"; }
-    if kind == 2 { return "ConstNull"; }
-    if kind == 3 { return "ConstString"; }
+    if kind == 0 { return "ConstInt".ptr; }
+    if kind == 1 { return "ConstBool".ptr; }
+    if kind == 2 { return "ConstNull".ptr; }
+    if kind == 3 { return "ConstString".ptr; }
 
     // Builtins
-    if kind == 4 { return "MakeString"; }
-    if kind == 5 { return "MakeSlice"; }
-    if kind == 6 { return "SlicePtr"; }
-    if kind == 7 { return "SliceLen"; }
+    if kind == 4 { return "MakeString".ptr; }
+    if kind == 5 { return "MakeSlice".ptr; }
+    if kind == 6 { return "SlicePtr".ptr; }
+    if kind == 7 { return "SliceLen".ptr; }
 
     // Local variable access
-    if kind == 8 { return "LoadLocal"; }
-    if kind == 9 { return "StoreLocal"; }
-    if kind == 10 { return "AddrLocal"; }
+    if kind == 8 { return "LoadLocal".ptr; }
+    if kind == 9 { return "StoreLocal".ptr; }
+    if kind == 10 { return "AddrLocal".ptr; }
 
     // Global variable access
-    if kind == 11 { return "LoadGlobal"; }
-    if kind == 12 { return "StoreGlobal"; }
-    if kind == 13 { return "AddrGlobal"; }
+    if kind == 11 { return "LoadGlobal".ptr; }
+    if kind == 12 { return "StoreGlobal".ptr; }
+    if kind == 13 { return "AddrGlobal".ptr; }
 
     // Pointer operations
-    if kind == 14 { return "Load"; }
-    if kind == 15 { return "Store"; }
+    if kind == 14 { return "Load".ptr; }
+    if kind == 15 { return "Store".ptr; }
 
     // Field access
-    if kind == 16 { return "FieldLocal"; }
-    if kind == 17 { return "FieldValue"; }
-    if kind == 18 { return "StoreFieldLocal"; }
-    if kind == 19 { return "StoreField"; }
+    if kind == 16 { return "FieldLocal".ptr; }
+    if kind == 17 { return "FieldValue".ptr; }
+    if kind == 18 { return "StoreFieldLocal".ptr; }
+    if kind == 19 { return "StoreField".ptr; }
 
     // Array indexing
-    if kind == 20 { return "IndexLocal"; }
-    if kind == 21 { return "IndexValue"; }
-    if kind == 22 { return "StoreIndexLocal"; }
-    if kind == 23 { return "StoreIndexValue"; }
+    if kind == 20 { return "IndexLocal".ptr; }
+    if kind == 21 { return "IndexValue".ptr; }
+    if kind == 22 { return "StoreIndexLocal".ptr; }
+    if kind == 23 { return "StoreIndexValue".ptr; }
 
     // Operations
-    if kind == 24 { return "Binary"; }
-    if kind == 25 { return "Unary"; }
+    if kind == 24 { return "Binary".ptr; }
+    if kind == 25 { return "Unary".ptr; }
 
     // Control flow
-    if kind == 26 { return "Call"; }
-    if kind == 27 { return "Return"; }
-    if kind == 28 { return "Jump"; }
-    if kind == 29 { return "Branch"; }
+    if kind == 26 { return "Call".ptr; }
+    if kind == 27 { return "Return".ptr; }
+    if kind == 28 { return "Jump".ptr; }
+    if kind == 29 { return "Branch".ptr; }
 
     // Phi
-    if kind == 30 { return "Phi"; }
+    if kind == 30 { return "Phi".ptr; }
 
-    return "Unknown";
+    return "Unknown".ptr;
 }
 
 // =============================================================================
@@ -143,83 +143,83 @@ fn IRNodeKind_name(kind: i64) *u8 {
 
 // Note: These must match the Op enum in ssa/op.cot
 fn Op_name(op: i64) *u8 {
-    if op == 0 { return "Invalid"; }
-    if op == 1 { return "InitMem"; }
+    if op == 0 { return "Invalid".ptr; }
+    if op == 1 { return "InitMem".ptr; }
 
     // Constants
-    if op == 2 { return "ConstBool"; }
-    if op == 3 { return "ConstInt"; }
-    if op == 4 { return "ConstNil"; }
-    if op == 5 { return "ConstString"; }
-    if op == 6 { return "ConstPtr"; }
+    if op == 2 { return "ConstBool".ptr; }
+    if op == 3 { return "ConstInt".ptr; }
+    if op == 4 { return "ConstNil".ptr; }
+    if op == 5 { return "ConstString".ptr; }
+    if op == 6 { return "ConstPtr".ptr; }
 
     // Integer Arithmetic
-    if op == 7 { return "Add64"; }
-    if op == 8 { return "Sub64"; }
-    if op == 9 { return "Mul64"; }
-    if op == 10 { return "Div64"; }
-    if op == 11 { return "Mod64"; }
-    if op == 12 { return "Neg64"; }
+    if op == 7 { return "Add64".ptr; }
+    if op == 8 { return "Sub64".ptr; }
+    if op == 9 { return "Mul64".ptr; }
+    if op == 10 { return "Div64".ptr; }
+    if op == 11 { return "Mod64".ptr; }
+    if op == 12 { return "Neg64".ptr; }
 
     // Bitwise Operations
-    if op == 13 { return "And64"; }
-    if op == 14 { return "Or64"; }
-    if op == 15 { return "Xor64"; }
-    if op == 16 { return "Shl64"; }
-    if op == 17 { return "Shr64"; }
-    if op == 18 { return "Sar64"; }
-    if op == 19 { return "Not64"; }
+    if op == 13 { return "And64".ptr; }
+    if op == 14 { return "Or64".ptr; }
+    if op == 15 { return "Xor64".ptr; }
+    if op == 16 { return "Shl64".ptr; }
+    if op == 17 { return "Shr64".ptr; }
+    if op == 18 { return "Sar64".ptr; }
+    if op == 19 { return "Not64".ptr; }
 
     // Comparisons
-    if op == 20 { return "Eq64"; }
-    if op == 21 { return "Ne64"; }
-    if op == 22 { return "Lt64"; }
-    if op == 23 { return "Le64"; }
-    if op == 24 { return "Gt64"; }
-    if op == 25 { return "Ge64"; }
-    if op == 26 { return "Ltu64"; }
-    if op == 27 { return "Leu64"; }
+    if op == 20 { return "Eq64".ptr; }
+    if op == 21 { return "Ne64".ptr; }
+    if op == 22 { return "Lt64".ptr; }
+    if op == 23 { return "Le64".ptr; }
+    if op == 24 { return "Gt64".ptr; }
+    if op == 25 { return "Ge64".ptr; }
+    if op == 26 { return "Ltu64".ptr; }
+    if op == 27 { return "Leu64".ptr; }
 
     // Type Conversions
-    if op == 28 { return "SignExt8to64"; }
-    if op == 29 { return "SignExt16to64"; }
-    if op == 30 { return "SignExt32to64"; }
-    if op == 31 { return "ZeroExt8to64"; }
-    if op == 32 { return "ZeroExt16to64"; }
-    if op == 33 { return "ZeroExt32to64"; }
-    if op == 34 { return "Trunc64to8"; }
-    if op == 35 { return "Trunc64to16"; }
-    if op == 36 { return "Trunc64to32"; }
+    if op == 28 { return "SignExt8to64".ptr; }
+    if op == 29 { return "SignExt16to64".ptr; }
+    if op == 30 { return "SignExt32to64".ptr; }
+    if op == 31 { return "ZeroExt8to64".ptr; }
+    if op == 32 { return "ZeroExt16to64".ptr; }
+    if op == 33 { return "ZeroExt32to64".ptr; }
+    if op == 34 { return "Trunc64to8".ptr; }
+    if op == 35 { return "Trunc64to16".ptr; }
+    if op == 36 { return "Trunc64to32".ptr; }
 
     // Memory Operations
-    if op == 37 { return "Load"; }
-    if op == 38 { return "Store"; }
-    if op == 39 { return "Move"; }
-    if op == 40 { return "Zero"; }
+    if op == 37 { return "Load".ptr; }
+    if op == 38 { return "Store".ptr; }
+    if op == 39 { return "Move".ptr; }
+    if op == 40 { return "Zero".ptr; }
 
     // Address Operations
-    if op == 41 { return "Addr"; }
-    if op == 42 { return "LocalAddr"; }
-    if op == 43 { return "GlobalAddr"; }
-    if op == 44 { return "GlobalLoad"; }
-    if op == 45 { return "GlobalStore"; }
-    if op == 46 { return "OffPtr"; }
-    if op == 47 { return "AddPtr"; }
+    if op == 41 { return "Addr".ptr; }
+    if op == 42 { return "LocalAddr".ptr; }
+    if op == 43 { return "GlobalAddr".ptr; }
+    if op == 44 { return "GlobalLoad".ptr; }
+    if op == 45 { return "GlobalStore".ptr; }
+    if op == 46 { return "OffPtr".ptr; }
+    if op == 47 { return "AddPtr".ptr; }
 
     // Control Flow
-    if op == 48 { return "Phi"; }
-    if op == 49 { return "Copy"; }
-    if op == 50 { return "Arg"; }
+    if op == 48 { return "Phi".ptr; }
+    if op == 49 { return "Copy".ptr; }
+    if op == 50 { return "Arg".ptr; }
 
     // Function Calls
-    if op == 51 { return "Call"; }
-    if op == 52 { return "TailCall"; }
-    if op == 53 { return "ClosureCall"; }
+    if op == 51 { return "Call".ptr; }
+    if op == 52 { return "TailCall".ptr; }
+    if op == 53 { return "ClosureCall".ptr; }
 
     // Return
-    if op == 54 { return "Return"; }
+    if op == 54 { return "Return".ptr; }
 
-    return "Unknown";
+    return "Unknown".ptr;
 }
 
 // =============================================================================
@@ -232,20 +232,20 @@ fn assert_node_kind(kind: i64, expected: i64, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("NODE KIND ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  Expected: ");
-        stderr_str(NodeKind_name(expected));
+        stderr_ptr(NodeKind_name(expected));
         stderr_str(" (");
         stderr_int(expected);
         stderr_str(")\n");
         stderr_str("  Got:      ");
-        stderr_str(NodeKind_name(kind));
+        stderr_ptr(NodeKind_name(kind));
         stderr_str(" (");
         stderr_int(kind);
         stderr_str(")\n");
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 }
@@ -264,10 +264,10 @@ fn assert_node_kind_in(kind: i64, kinds: *i64, count: i64, context: *u8) {
     stderr_str("\n");
     stderr_str("================================================================================\n");
     stderr_str("NODE KIND ERROR in ");
-    stderr_str(context);
+    stderr_ptr(context);
     stderr_newline();
     stderr_str("  Got: ");
-    stderr_str(NodeKind_name(kind));
+    stderr_ptr(NodeKind_name(kind));
     stderr_str(" (");
     stderr_int(kind);
     stderr_str(")\n");
@@ -276,12 +276,12 @@ fn assert_node_kind_in(kind: i64, kinds: *i64, count: i64, context: *u8) {
     i = 0;
     while i < count {
         stderr_str("    - ");
-        stderr_str(NodeKind_name((kinds + i).*));
+        stderr_ptr(NodeKind_name((kinds + i).*));
         stderr_newline();
         i = i + 1;
     }
     stderr_str("================================================================================\n");
-    print_error_context_stack();
+    print_error_context();
     exit(1);
 }
 
@@ -299,16 +299,16 @@ fn assert_is_expression(kind: i64, context: *u8) {
     stderr_str("\n");
     stderr_str("================================================================================\n");
     stderr_str("NODE KIND ERROR in ");
-    stderr_str(context);
+    stderr_ptr(context);
     stderr_newline();
     stderr_str("  Expected: an expression\n");
     stderr_str("  Got: ");
-    stderr_str(NodeKind_name(kind));
+    stderr_ptr(NodeKind_name(kind));
     stderr_str(" (");
     stderr_int(kind);
     stderr_str(") which is not an expression\n");
     stderr_str("================================================================================\n");
-    print_error_context_stack();
+    print_error_context();
     exit(1);
 }
 
@@ -320,16 +320,16 @@ fn assert_is_statement(kind: i64, context: *u8) {
     stderr_str("\n");
     stderr_str("================================================================================\n");
     stderr_str("NODE KIND ERROR in ");
-    stderr_str(context);
+    stderr_ptr(context);
     stderr_newline();
     stderr_str("  Expected: a statement\n");
     stderr_str("  Got: ");
-    stderr_str(NodeKind_name(kind));
+    stderr_ptr(NodeKind_name(kind));
     stderr_str(" (");
     stderr_int(kind);
     stderr_str(") which is not a statement\n");
     stderr_str("================================================================================\n");
-    print_error_context_stack();
+    print_error_context();
     exit(1);
 }
 
@@ -341,16 +341,16 @@ fn assert_is_declaration(kind: i64, context: *u8) {
     stderr_str("\n");
     stderr_str("================================================================================\n");
     stderr_str("NODE KIND ERROR in ");
-    stderr_str(context);
+    stderr_ptr(context);
     stderr_newline();
     stderr_str("  Expected: a declaration\n");
     stderr_str("  Got: ");
-    stderr_str(NodeKind_name(kind));
+    stderr_ptr(NodeKind_name(kind));
     stderr_str(" (");
     stderr_int(kind);
     stderr_str(") which is not a declaration\n");
     stderr_str("================================================================================\n");
-    print_error_context_stack();
+    print_error_context();
     exit(1);
 }
 
@@ -364,20 +364,20 @@ fn assert_ir_kind(kind: i64, expected: i64, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("IR NODE KIND ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  Expected: ");
-        stderr_str(IRNodeKind_name(expected));
+        stderr_ptr(IRNodeKind_name(expected));
         stderr_str(" (");
         stderr_int(expected);
         stderr_str(")\n");
         stderr_str("  Got:      ");
-        stderr_str(IRNodeKind_name(kind));
+        stderr_ptr(IRNodeKind_name(kind));
         stderr_str(" (");
         stderr_int(kind);
         stderr_str(")\n");
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 }
@@ -390,16 +390,16 @@ fn assert_ir_is_constant(kind: i64, context: *u8) {
     stderr_str("\n");
     stderr_str("================================================================================\n");
     stderr_str("IR NODE KIND ERROR in ");
-    stderr_str(context);
+    stderr_ptr(context);
     stderr_newline();
     stderr_str("  Expected: a constant IR node\n");
     stderr_str("  Got: ");
-    stderr_str(IRNodeKind_name(kind));
+    stderr_ptr(IRNodeKind_name(kind));
     stderr_str(" (");
     stderr_int(kind);
     stderr_str(")\n");
     stderr_str("================================================================================\n");
-    print_error_context_stack();
+    print_error_context();
     exit(1);
 }
 
@@ -413,20 +413,20 @@ fn assert_op(op: i64, expected: i64, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("SSA OP ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  Expected: ");
-        stderr_str(Op_name(expected));
+        stderr_ptr(Op_name(expected));
         stderr_str(" (");
         stderr_int(expected);
         stderr_str(")\n");
         stderr_str("  Got:      ");
-        stderr_str(Op_name(op));
+        stderr_ptr(Op_name(op));
         stderr_str(" (");
         stderr_int(op);
         stderr_str(")\n");
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 }
@@ -437,11 +437,11 @@ fn assert_op_valid(op: i64, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("SSA OP ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  Got Invalid op (uninitialized value?)\n");
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 }
@@ -454,16 +454,16 @@ fn assert_op_is_constant(op: i64, context: *u8) {
     stderr_str("\n");
     stderr_str("================================================================================\n");
     stderr_str("SSA OP ERROR in ");
-    stderr_str(context);
+    stderr_ptr(context);
     stderr_newline();
     stderr_str("  Expected: a constant op\n");
     stderr_str("  Got: ");
-    stderr_str(Op_name(op));
+    stderr_ptr(Op_name(op));
     stderr_str(" (");
     stderr_int(op);
     stderr_str(")\n");
     stderr_str("================================================================================\n");
-    print_error_context_stack();
+    print_error_context();
     exit(1);
 }
 
@@ -475,16 +475,16 @@ fn assert_op_is_arithmetic(op: i64, context: *u8) {
     stderr_str("\n");
     stderr_str("================================================================================\n");
     stderr_str("SSA OP ERROR in ");
-    stderr_str(context);
+    stderr_ptr(context);
     stderr_newline();
     stderr_str("  Expected: an arithmetic op\n");
     stderr_str("  Got: ");
-    stderr_str(Op_name(op));
+    stderr_ptr(Op_name(op));
     stderr_str(" (");
     stderr_int(op);
     stderr_str(")\n");
     stderr_str("================================================================================\n");
-    print_error_context_stack();
+    print_error_context();
     exit(1);
 }
 
@@ -496,16 +496,16 @@ fn assert_op_is_comparison(op: i64, context: *u8) {
     stderr_str("\n");
     stderr_str("================================================================================\n");
     stderr_str("SSA OP ERROR in ");
-    stderr_str(context);
+    stderr_ptr(context);
     stderr_newline();
     stderr_str("  Expected: a comparison op\n");
     stderr_str("  Got: ");
-    stderr_str(Op_name(op));
+    stderr_ptr(Op_name(op));
     stderr_str(" (");
     stderr_int(op);
     stderr_str(")\n");
     stderr_str("================================================================================\n");
-    print_error_context_stack();
+    print_error_context();
     exit(1);
 }
 
@@ -519,13 +519,13 @@ fn assert_block_index(index: i64, count: i64, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("BLOCK INDEX ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  Block index is negative: ");
         stderr_int(index);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -533,7 +533,7 @@ fn assert_block_index(index: i64, count: i64, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("BLOCK INDEX ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  Block index out of range: ");
         stderr_int(index);
@@ -541,7 +541,7 @@ fn assert_block_index(index: i64, count: i64, context: *u8) {
         stderr_int(count);
         stderr_str(" (block count)\n");
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 }
@@ -552,13 +552,13 @@ fn assert_value_index(index: i64, count: i64, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("VALUE INDEX ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  Value index is negative: ");
         stderr_int(index);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -566,7 +566,7 @@ fn assert_value_index(index: i64, count: i64, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("VALUE INDEX ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  Value index out of range: ");
         stderr_int(index);
@@ -574,7 +574,7 @@ fn assert_value_index(index: i64, count: i64, context: *u8) {
         stderr_int(count);
         stderr_str(" (value count)\n");
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 }
@@ -585,13 +585,13 @@ fn assert_local_index(index: i64, count: i64, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("LOCAL INDEX ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  Local index is negative: ");
         stderr_int(index);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -599,7 +599,7 @@ fn assert_local_index(index: i64, count: i64, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("LOCAL INDEX ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  Local index out of range: ");
         stderr_int(index);
@@ -607,7 +607,7 @@ fn assert_local_index(index: i64, count: i64, context: *u8) {
         stderr_int(count);
         stderr_str(" (local count)\n");
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 }
@@ -618,13 +618,13 @@ fn assert_ir_node_index(index: i64, count: i64, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("IR NODE INDEX ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  IR node index is negative: ");
         stderr_int(index);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -632,7 +632,7 @@ fn assert_ir_node_index(index: i64, count: i64, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("IR NODE INDEX ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  IR node index out of range: ");
         stderr_int(index);
@@ -640,7 +640,7 @@ fn assert_ir_node_index(index: i64, count: i64, context: *u8) {
         stderr_int(count);
         stderr_str(" (IR node count)\n");
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 }
@@ -651,13 +651,13 @@ fn assert_ast_node_index(index: i64, count: i64, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("AST NODE INDEX ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  AST node index is negative: ");
         stderr_int(index);
         stderr_newline();
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 
@@ -665,7 +665,7 @@ fn assert_ast_node_index(index: i64, count: i64, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("AST NODE INDEX ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  AST node index out of range: ");
         stderr_int(index);
@@ -673,7 +673,7 @@ fn assert_ast_node_index(index: i64, count: i64, context: *u8) {
         stderr_int(count);
         stderr_str(" (AST node count)\n");
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 }
@@ -688,10 +688,10 @@ fn assert_in_range(value: i64, min: i64, max: i64, name: *u8, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("RANGE ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" = ");
         stderr_int(value);
         stderr_str(" is outside valid range [");
@@ -700,7 +700,7 @@ fn assert_in_range(value: i64, min: i64, max: i64, name: *u8, context: *u8) {
         stderr_int(max);
         stderr_str("]\n");
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 }
@@ -711,15 +711,15 @@ fn assert_positive(value: i64, name: *u8, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("VALUE ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" = ");
         stderr_int(value);
         stderr_str(" (expected positive)\n");
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 }
@@ -730,15 +730,15 @@ fn assert_non_negative(value: i64, name: *u8, context: *u8) {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("VALUE ERROR in ");
-        stderr_str(context);
+        stderr_ptr(context);
         stderr_newline();
         stderr_str("  ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" = ");
         stderr_int(value);
         stderr_str(" (expected non-negative)\n");
         stderr_str("================================================================================\n");
-        print_error_context_stack();
+        print_error_context();
         exit(1);
     }
 }

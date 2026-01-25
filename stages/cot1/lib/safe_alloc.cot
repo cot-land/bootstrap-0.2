@@ -12,8 +12,12 @@
 
 import "error.cot"
 
-// Note: malloc_u8, malloc_i64, free_u8, free_i64, realloc_u8 must be declared
-// by the importing file (typically in main.cot or via list.cot)
+// Memory allocation externs (from runtime)
+extern fn malloc_u8(size: i64) *u8;
+extern fn malloc_i64(count: i64) *i64;
+extern fn free_u8(ptr: *u8);
+extern fn free_i64(ptr: *i64);
+extern fn realloc_u8(ptr: *u8, size: i64) *u8;
 
 // =============================================================================
 // Safe Allocation - u8 (bytes)
@@ -25,7 +29,7 @@ fn safe_malloc_u8(size: i64, name: *u8) *u8 {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("ALLOC ERROR: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" requested invalid size ");
         stderr_int(size);
         stderr_newline();
@@ -41,7 +45,7 @@ fn safe_malloc_u8(size: i64, name: *u8) *u8 {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("ALLOC FAILED: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" could not allocate ");
         stderr_int(size);
         stderr_str(" bytes\n");
@@ -62,11 +66,11 @@ fn safe_malloc_u8(size: i64, name: *u8) *u8 {
     // Debug output if enabled
     if g_debug_verbose {
         stderr_str("[ALLOC] ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(": ");
         stderr_int(size);
         stderr_str(" bytes at ");
-        stderr_hex(@intCast(i64, ptr));
+        stderr_hex(@ptrToInt(ptr));
         stderr_newline();
     }
 
@@ -83,7 +87,7 @@ fn safe_malloc_i64(count: i64, name: *u8) *i64 {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("ALLOC ERROR: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" requested invalid count ");
         stderr_int(count);
         stderr_newline();
@@ -102,7 +106,7 @@ fn safe_malloc_i64(count: i64, name: *u8) *i64 {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("ALLOC FAILED: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" could not allocate ");
         stderr_int(count);
         stderr_str(" i64 elements (");
@@ -125,13 +129,13 @@ fn safe_malloc_i64(count: i64, name: *u8) *i64 {
     // Debug output if enabled
     if g_debug_verbose {
         stderr_str("[ALLOC] ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(": ");
         stderr_int(count);
         stderr_str(" i64 (");
         stderr_int(size);
         stderr_str(" bytes) at ");
-        stderr_hex(@intCast(i64, ptr));
+        stderr_hex(@ptrToInt(ptr));
         stderr_newline();
     }
 
@@ -148,7 +152,7 @@ fn safe_realloc_u8(ptr: *u8, old_size: i64, new_size: i64, name: *u8) *u8 {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("REALLOC ERROR: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" requested invalid new size ");
         stderr_int(new_size);
         stderr_newline();
@@ -161,15 +165,15 @@ fn safe_realloc_u8(ptr: *u8, old_size: i64, new_size: i64, name: *u8) *u8 {
         return safe_malloc_u8(new_size, name);
     }
 
-    // Attempt reallocation
-    let new_ptr: *u8 = realloc_u8(ptr, old_size, new_size);
+    // Attempt reallocation (old_size is not needed by realloc, but kept for debug output)
+    let new_ptr: *u8 = realloc_u8(ptr, new_size);
 
     // Check for failure
     if new_ptr == null {
         stderr_str("\n");
         stderr_str("================================================================================\n");
         stderr_str("REALLOC FAILED: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" could not grow from ");
         stderr_int(old_size);
         stderr_str(" to ");
@@ -187,15 +191,15 @@ fn safe_realloc_u8(ptr: *u8, old_size: i64, new_size: i64, name: *u8) *u8 {
     // Debug output if enabled
     if g_debug_verbose {
         stderr_str("[REALLOC] ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(": ");
         stderr_int(old_size);
         stderr_str(" -> ");
         stderr_int(new_size);
         stderr_str(" bytes, ");
-        stderr_hex(@intCast(i64, ptr));
+        stderr_hex(@ptrToInt(ptr));
         stderr_str(" -> ");
-        stderr_hex(@intCast(i64, new_ptr));
+        stderr_hex(@ptrToInt(new_ptr));
         stderr_newline();
     }
 
@@ -214,9 +218,9 @@ fn safe_free_u8(ptr: *u8, name: *u8) {
 
     if g_debug_verbose {
         stderr_str("[FREE] ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" at ");
-        stderr_hex(@intCast(i64, ptr));
+        stderr_hex(@ptrToInt(ptr));
         stderr_newline();
     }
 
@@ -231,9 +235,9 @@ fn safe_free_i64(ptr: *i64, name: *u8) {
 
     if g_debug_verbose {
         stderr_str("[FREE] ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" at ");
-        stderr_hex(@intCast(i64, ptr));
+        stderr_hex(@ptrToInt(ptr));
         stderr_newline();
     }
 

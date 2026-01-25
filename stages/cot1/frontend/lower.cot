@@ -42,6 +42,14 @@ extern fn realloc_IRFunc(ptr: *IRFunc, old_count: i64, new_count: i64) *IRFunc;
 extern fn realloc_IRGlobal(ptr: *IRGlobal, old_count: i64, new_count: i64) *IRGlobal;
 extern fn realloc_ConstEntry(ptr: *ConstEntry, old_count: i64, new_count: i64) *ConstEntry;
 
+// Malloc externs for self-allocation (Lowerer allocates its own internal storage)
+extern fn malloc_TypeAliasEntry(count: i64) *TypeAliasEntry;
+
+// Initial capacities for Lowerer-owned storage
+const LW_INIT_DEFER_STACK: i64 = 256;
+const LW_INIT_TYPE_ALIASES: i64 = 256;
+const LW_INIT_LABEL_STACK: i64 = 64;
+
 // print() and println() are built-in functions that handle strings and integers
 
 // Struct field info for name-based lookup
@@ -393,39 +401,29 @@ fn Lowerer_init(l: *Lowerer,
     l.constants = constants;
     l.constants_count = 0;
     l.constants_cap = constants_cap;
-    l.type_aliases = null;
-    l.type_aliases_count = 0;
-    l.type_aliases_cap = 0;
     l.loop_continue_block = 0 - 1;  // -1 means not in a loop
     l.loop_break_block = 0 - 1;
     l.loop_defer_depth = 0;
-    l.defer_stack = null;
-    l.defer_stack_count = 0;
-    l.defer_stack_cap = 0;
-    // cot1: Initialize label stack
-    l.label_names_start = null;
-    l.label_names_len = null;
-    l.label_break_blocks = null;
-    l.label_continue_blocks = null;
-    l.label_defer_depths = null;
-    l.label_count = 0;
-    l.label_cap = 0;
-    // call_args removed - args stored in IRNode.call_args
-}
 
-// Set defer stack storage (separate function due to ARM64 ABI argument limit)
-// Reference: Zig lower.zig:59 defer_stack
-fn Lowerer_initDeferStack(l: *Lowerer, defer_stack: *i64, defer_stack_cap: i64) {
-    l.defer_stack = defer_stack;
+    // Lowerer owns its internal storage (matches bootstrap Zig pattern)
+    // Allocate defer stack
+    l.defer_stack_cap = LW_INIT_DEFER_STACK;
+    l.defer_stack = malloc_i64(l.defer_stack_cap);
     l.defer_stack_count = 0;
-    l.defer_stack_cap = defer_stack_cap;
-}
 
-// cot1: Set type aliases storage
-fn Lowerer_initTypeAliases(l: *Lowerer, type_aliases: *TypeAliasEntry, type_aliases_cap: i64) {
-    l.type_aliases = type_aliases;
+    // Allocate type aliases
+    l.type_aliases_cap = LW_INIT_TYPE_ALIASES;
+    l.type_aliases = malloc_TypeAliasEntry(l.type_aliases_cap);
     l.type_aliases_count = 0;
-    l.type_aliases_cap = type_aliases_cap;
+
+    // Allocate label stack (5 parallel arrays for labeled break/continue)
+    l.label_cap = LW_INIT_LABEL_STACK;
+    l.label_names_start = malloc_i64(l.label_cap);
+    l.label_names_len = malloc_i64(l.label_cap);
+    l.label_break_blocks = malloc_i64(l.label_cap);
+    l.label_continue_blocks = malloc_i64(l.label_cap);
+    l.label_defer_depths = malloc_i64(l.label_cap);
+    l.label_count = 0;
 }
 
 // cot1: Register a type alias
@@ -467,20 +465,6 @@ fn Lowerer_lookupTypeAlias(l: *Lowerer, name_start: i64, name_len: i64) i64 {
         i = i + 1;
     }
     return -1;  // Not found
-}
-
-// cot1: Set label stack storage (for labeled break/continue)
-// Reference: Zig lower.zig label handling
-fn Lowerer_initLabelStack(l: *Lowerer, names_start: *i64, names_len: *i64,
-                          break_blocks: *i64, continue_blocks: *i64,
-                          defer_depths: *i64, cap: i64) {
-    l.label_names_start = names_start;
-    l.label_names_len = names_len;
-    l.label_break_blocks = break_blocks;
-    l.label_continue_blocks = continue_blocks;
-    l.label_defer_depths = defer_depths;
-    l.label_count = 0;
-    l.label_cap = cap;
 }
 
 // cot1: Push a labeled loop onto the stack
@@ -989,29 +973,27 @@ fn Lowerer_registerGlobalVar(l: *Lowerer, node: *Node) {
 }
 
 // Register a struct type in TypeRegistry (called before lowering)
-// This mirrors Checker_checkStructDecl from checker.cot
+// Uses TypeRegistry as the single source of truth for field offsets
 fn Lowerer_registerStructType(l: *Lowerer, node: *Node, node_idx: i64) {
     if node.kind != NodeKind.StructDecl { return; }
 
     let name_start: i64 = node.field0;
     let name_len: i64 = node.field1;
-    let ast_fields_start: i64 = node.field2;  // Index into AST children array
+    let ast_fields_start: i64 = node.field2;
     let fields_count: i64 = node.field3;
 
     // Record start of fields in TypeRegistry's fields array
     let type_fields_start: i64 = l.type_pool.fields_count;
 
-    // Process each field and compute offsets
+    // Process each field and compute offsets with proper alignment
     var offset: i64 = 0;
     var max_align: i64 = 1;
     var i: i64 = 0;
     while i < fields_count {
-        // Get FieldDecl node from AST children
         let child_ptr: *i64 = l.children + ast_fields_start + i;
         let field_node_idx: i64 = child_ptr.*;
         let field_node: *Node = l.nodes + field_node_idx;
 
-        // FieldDecl: field0=name_start, field1=name_len, field2=type_start, field3=type_expr
         let fname_start: i64 = field_node.field0;
         let fname_len: i64 = field_node.field1;
         let type_expr_idx: i64 = field_node.field3;
@@ -1019,7 +1001,7 @@ fn Lowerer_registerStructType(l: *Lowerer, node: *Node, node_idx: i64) {
         // Resolve field type using TypeExpr AST node
         var field_type: i64 = resolve_type_expr(l, type_expr_idx);
         if field_type < 0 {
-            field_type = TYPE_I64;  // Fallback
+            field_type = TYPE_I64;
         }
 
         // Get size and alignment from resolved type
@@ -1046,10 +1028,10 @@ fn Lowerer_registerStructType(l: *Lowerer, node: *Node, node_idx: i64) {
         i = i + 1;
     }
 
-    // Align final size to struct alignment (round up to max_align)
+    // Align final size to struct alignment
     let struct_size: i64 = (offset + max_align - 1) / max_align * max_align;
 
-    // Create struct type with TypeRegistry fields_start
+    // Create struct type in TypeRegistry
     let struct_type: i64 = TypeRegistry_makeStruct(l.type_pool, name_start, name_len,
                                              type_fields_start, fields_count,
                                              struct_size, max_align);
@@ -1768,12 +1750,15 @@ fn Lowerer_lowerStructLitToLocal(l: *Lowerer, node: *Node, local_idx: i64) {
         // Lower the value expression
         let value_ir: i64 = Lowerer_lowerExpr(l, value_node);
 
-        // Look up field offset from struct declaration
-        var field_offset: i64 = lookup_struct_field_offset(l, struct_name_start, struct_name_len,
-                                                            fname_start, fname_len);
-        // Fallback to index-based offset if lookup fails
-        if field_offset < 0 {
-            field_offset = i * 8;
+        // Look up field offset from TypeRegistry (single source of truth)
+        var field_offset: i64 = i * 8;  // Fallback
+        let struct_type_idx: i64 = TypeRegistry_lookupByName(l.type_pool, l.source, struct_name_start, struct_name_len);
+        if struct_type_idx > 0 {
+            let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, struct_type_idx,
+                                                                   l.source + fname_start, fname_len);
+            if field_info != null {
+                field_offset = field_info.offset;
+            }
         }
 
         // Emit store to local's field using StoreFieldLocal
@@ -2588,180 +2573,6 @@ fn find_write_in_source(source: *u8, source_len: i64) i64 {
     return -1;  // Not found
 }
 
-// Get size of a type by name from AST
-// Returns 8 for primitives (i64, bool, etc), or struct size for struct types
-fn get_TypeInfo_size_from_ast(l: *Lowerer, type_start: i64, type_len: i64) i64 {
-    // Check for primitive types
-    // i64, i32, u64, u32, bool, *T (pointers)
-    if type_len <= 0 { return 8; }
-
-    let c0: u8 = (l.source + type_start).*;
-
-    // Check for pointer type (starts with *)
-    if c0 == 42 { return 8; }  // '*'
-
-    // Check for i64, i32 (start with 'i')
-    if c0 == 105 { return 8; }  // 'i'
-
-    // Check for u64, u32 (start with 'u')
-    if c0 == 117 { return 8; }  // 'u'
-
-    // Check for bool (starts with 'b')
-    if c0 == 98 { return 8; }  // 'b' - treat bool as 8 bytes for alignment
-
-    // Otherwise, look up struct by name and compute its size
-    var n: i64 = 0;
-    while n < l.nodes_count {
-        let node: *Node = l.nodes + n;
-        if node.kind == NodeKind.StructDecl {
-            if names_equal(l.source, node.field0, node.field1, type_start, type_len) {
-                // Found the struct - compute its size by summing field sizes
-                let fields_start: i64 = node.field2;
-                let fields_count: i64 = node.field3;
-                var size: i64 = 0;
-
-                var f: i64 = 0;
-                while f < fields_count {
-                    let child_ptr: *i64 = l.children + fields_start + f;
-                    let field_idx: i64 = child_ptr.*;
-                    let field_node: *Node = l.nodes + field_idx;
-
-                    if field_node.kind == NodeKind.FieldDecl {
-                        // Get field type and its size
-                        let ftype_start: i64 = field_node.field2;
-                        // Scan for type name length
-                        var pos: i64 = ftype_start;
-                        while pos < l.source_len {
-                            let c: u8 = (l.source + pos).*;
-                            let is_ident: bool = (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or
-                                                 (c >= 48 and c <= 57) or c == 95;
-                            if not is_ident { break; }
-                            pos = pos + 1;
-                        }
-                        let ftype_len: i64 = pos - ftype_start;
-                        size = size + get_TypeInfo_size_from_ast(l, ftype_start, ftype_len);
-                    }
-                    f = f + 1;
-                }
-                return size;
-            }
-        }
-        n = n + 1;
-    }
-
-    // Unknown type, assume 8 bytes
-    return 8;
-}
-
-// FieldLookupResult stores both offset and type info for a field lookup
-struct FieldLookupResult {
-    offset: i64,           // Field offset in bytes (-1 if not found)
-    type_start: i64,       // Start of field's type name in source (-1 if not found)
-    type_len: i64,         // Length of field's type name
-    type_idx: i64,         // Resolved TypeRegistry index (-1 if not found)
-    found: bool,           // Whether the field was found
-}
-
-// Look up field info by searching struct declarations in the AST
-// Returns FieldLookupResult with offset and type info
-// Computes proper offset by summing sizes of preceding fields (following Zig pattern)
-fn lookup_struct_field_info(l: *Lowerer, struct_name_start: i64, struct_name_len: i64,
-                             field_name_start: i64, field_name_len: i64) FieldLookupResult {
-    var result: FieldLookupResult = undefined;
-    result.offset = -1;
-    result.type_start = -1;
-    result.type_len = 0;
-    result.type_idx = TYPE_I64;  // Default to i64
-    result.found = false;
-
-    // Search through all AST nodes for StructDecl with matching name
-    var n: i64 = 0;
-    while n < l.nodes_count {
-        let node: *Node = l.nodes + n;
-        if node.kind == NodeKind.StructDecl {
-            // StructDecl: field0=name_start, field1=name_len, field2=fields_start, field3=fields_count
-            if names_equal(l.source, node.field0, node.field1, struct_name_start, struct_name_len) {
-                // Found the struct, now search for the field
-                let fields_start: i64 = node.field2;
-                let fields_count: i64 = node.field3;
-
-                // Compute offset by summing sizes of preceding fields
-                var offset: i64 = 0;
-                var f: i64 = 0;
-                while f < fields_count {
-                    let child_ptr: *i64 = l.children + fields_start + f;
-                    let field_idx: i64 = child_ptr.*;
-                    let field_node: *Node = l.nodes + field_idx;
-
-                    // FieldDecl: field0=name_start, field1=name_len, field2=type_start, field3=type_node_idx
-                    if field_node.kind == NodeKind.FieldDecl {
-                        // Get this field's type info from AST
-                        // BUG FIX: field3 is a type NODE INDEX, not the type length!
-                        let ftype_start: i64 = field_node.field2;
-                        let ftype_node_idx: i64 = field_node.field3;
-                        let ftype_len: i64 = get_type_len_from_node(l.nodes, ftype_node_idx);
-
-                        if names_equal(l.source, field_node.field0, field_node.field1,
-                                       field_name_start, field_name_len) {
-                            // Found the field - use accumulated offset
-                            result.offset = offset;
-                            result.type_start = ftype_start;
-                            result.type_len = ftype_len;
-                            result.found = true;
-                            // Resolve type from source - handles pointer types like *GlobalReloc
-                            result.type_idx = resolve_type_from_source(l.type_pool, l.source, ftype_start, ftype_len);
-                            return result;
-                        }
-
-                        // Accumulate size for next field's offset
-                        let field_size: i64 = get_TypeInfo_size_from_ast(l, ftype_start, ftype_len);
-                        offset = offset + field_size;
-                    }
-                    f = f + 1;
-                }
-                // Struct found but field not found
-                return result;
-            }
-        }
-        n = n + 1;
-    }
-    // Struct not found
-    return result;
-}
-
-// Look up field offset by searching struct declarations in the AST
-// Returns field offset by summing sizes of preceding fields, or -1 if not found
-fn lookup_struct_field_offset(l: *Lowerer, struct_name_start: i64, struct_name_len: i64,
-                               field_name_start: i64, field_name_len: i64) i64 {
-    // Use lookup_struct_field_info which computes proper offsets
-    let info: FieldLookupResult = lookup_struct_field_info(l, struct_name_start, struct_name_len,
-                                                            field_name_start, field_name_len);
-    return info.offset;
-}
-
-// Look up field type by struct type index
-// Reference: Zig checker.zig lookupField
-fn Lowerer_lookupFieldType(l: *Lowerer, struct_type_idx: i64, field_name_start: i64, field_name_len: i64) FieldLookupResult {
-    var result: FieldLookupResult = undefined;
-    result.offset = -1;
-    result.type_start = -1;
-    result.type_len = 0;
-    result.type_idx = TYPE_I64;
-    result.found = false;
-
-    // Get struct type info from TypeRegistry
-    let struct_type: *Type = TypeRegistry_get(l.type_pool, struct_type_idx);
-    if struct_type == null { return result; }
-    if struct_type.kind != TypeKind.Struct { return result; }
-
-    // Get struct name from type's name_start/name_len
-    let struct_name_start: i64 = struct_type.name_start;
-    let struct_name_len: i64 = struct_type.name_len;
-
-    // Delegate to lookup_struct_field_info
-    return lookup_struct_field_info(l, struct_name_start, struct_name_len, field_name_start, field_name_len);
-}
-
 fn Lowerer_lowerIdent(l: *Lowerer, node: *Node) i64 {
     // Ident fields:
     // field0 = name_start
@@ -2937,9 +2748,10 @@ fn Lowerer_inferExprType(l: *Lowerer, node: *Node) i64 {
             struct_type_idx = TypeInfo_getPointee(l.type_pool, base_type);
         }
 
-        // Look up field type
-        let field_info: FieldLookupResult = Lowerer_lookupFieldType(l, struct_type_idx, field_name_start, field_name_len);
-        if field_info.found {
+        // Look up field type from TypeRegistry
+        let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, struct_type_idx,
+                                                               l.source + field_name_start, field_name_len);
+        if field_info != null {
             return field_info.type_idx;
         }
         return TYPE_I64;
@@ -3633,15 +3445,19 @@ fn Lowerer_lowerAddressOf(l: *Lowerer, node: *Node) i64 {
                 // Fallback: use struct type info from the local variable if available
                 let local: *IRLocal = fb.locals + local_idx;
                 if local.struct_type_start >= 0 {
-                    let field_offset: i64 = lookup_struct_field_offset(l, local.struct_type_start, local.struct_type_len,
-                                                                        field_name_start, field_name_len);
-                    if field_offset >= 0 {
-                        let base_addr: i64 = FuncBuilder_emitAddrLocal(fb, local_idx, TYPE_I64);
-                        if field_offset == 0 {
-                            return base_addr;
+                    let struct_type_idx: i64 = TypeRegistry_lookupByName(l.type_pool, l.source,
+                                                                          local.struct_type_start, local.struct_type_len);
+                    if struct_type_idx > 0 {
+                        let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, struct_type_idx,
+                                                                               l.source + field_name_start, field_name_len);
+                        if field_info != null {
+                            let base_addr: i64 = FuncBuilder_emitAddrLocal(fb, local_idx, TYPE_I64);
+                            if field_info.offset == 0 {
+                                return base_addr;
+                            }
+                            let offset_val: i64 = FuncBuilder_emitConstInt(fb, field_info.offset);
+                            return FuncBuilder_emitBinary(fb, IR_OP_ADD, base_addr, offset_val, TYPE_I64);
                         }
-                        let offset_val: i64 = FuncBuilder_emitConstInt(fb, field_offset);
-                        return FuncBuilder_emitBinary(fb, IR_OP_ADD, base_addr, offset_val, TYPE_I64);
                     }
                 }
 
@@ -3821,23 +3637,20 @@ fn Lowerer_lowerFieldAccess(l: *Lowerer, node: *Node) i64 {
                 return FuncBuilder_emitFieldValue(fb, ptr_val, field_info.offset, field_info.type_idx);
             }
 
-            // Fallback: use AST-based lookup when TypeRegistry lookup fails
-            // This is needed for pointer-to-struct parameters where the struct fields
-            // may not be in TypeRegistry yet
+            // Fallback: use TypeRegistry with local's struct type info
             let local: *IRLocal = fb.locals + local_idx;
             if local.struct_type_start >= 0 {
-                let field_info_ast: FieldLookupResult = lookup_struct_field_info(l,
-                    local.struct_type_start, local.struct_type_len,
-                    field_name_start, field_name_len);
-                if field_info_ast.offset >= 0 {
-                    var field_type: i64 = field_info_ast.type_idx;
-                    if field_type < 0 {
-                        field_type = TYPE_I64;
+                let local_struct_type: i64 = TypeRegistry_lookupByName(l.type_pool, l.source,
+                                                                        local.struct_type_start, local.struct_type_len);
+                if local_struct_type > 0 {
+                    let local_field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, local_struct_type,
+                                                                                 l.source + field_name_start, field_name_len);
+                    if local_field_info != null {
+                        // Load the pointer value
+                        let ptr_val: i64 = FuncBuilder_emitLoadLocal(fb, local_idx);
+                        // Access field through the pointer
+                        return FuncBuilder_emitFieldValue(fb, ptr_val, local_field_info.offset, local_field_info.type_idx);
                     }
-                    // Load the pointer value
-                    let ptr_val: i64 = FuncBuilder_emitLoadLocal(fb, local_idx);
-                    // Access field through the pointer
-                    return FuncBuilder_emitFieldValue(fb, ptr_val, field_info_ast.offset, field_type);
                 }
             }
 
@@ -3852,21 +3665,17 @@ fn Lowerer_lowerFieldAccess(l: *Lowerer, node: *Node) i64 {
             return FuncBuilder_emitFieldLocal(fb, local_idx, field_info.offset, field_info.type_idx);
         }
 
-        // Fallback: use struct type info from the local variable if available
-        // Following Zig pattern: use lookup_struct_field_info to get offset AND type
+        // Fallback: use TypeRegistry with local's struct type info
         let local: *IRLocal = fb.locals + local_idx;
         if local.struct_type_start >= 0 {
-            // Look up field info from struct declaration (includes offset and type)
-            let field_info_ast: FieldLookupResult = lookup_struct_field_info(l,
-                local.struct_type_start, local.struct_type_len,
-                field_name_start, field_name_len);
-            if field_info_ast.offset >= 0 {
-                // Use the resolved type_idx from AST lookup, falling back to TYPE_I64
-                var field_type: i64 = field_info_ast.type_idx;
-                if field_type < 0 {
-                    field_type = TYPE_I64;
+            let local_struct_type: i64 = TypeRegistry_lookupByName(l.type_pool, l.source,
+                                                                    local.struct_type_start, local.struct_type_len);
+            if local_struct_type > 0 {
+                let local_field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, local_struct_type,
+                                                                             l.source + field_name_start, field_name_len);
+                if local_field_info != null {
+                    return FuncBuilder_emitFieldLocal(fb, local_idx, local_field_info.offset, local_field_info.type_idx);
                 }
-                return FuncBuilder_emitFieldLocal(fb, local_idx, field_info_ast.offset, field_type);
             }
         }
         // Last resort fallback: offset 0 (should rarely happen now)
@@ -3892,12 +3701,15 @@ fn Lowerer_lowerFieldAccess(l: *Lowerer, node: *Node) i64 {
                               ptr_operand.field0, ptr_operand.field1) {
                     // Found the pointer local - check if it has struct type info
                     if local.struct_type_start >= 0 {
-                        // Use AST-based lookup to find field offset
-                        let info: FieldLookupResult = lookup_struct_field_info(l,
-                            local.struct_type_start, local.struct_type_len,
-                            field_name_start, field_name_len);
-                        if info.offset >= 0 {
-                            field_offset = info.offset;
+                        // Use TypeRegistry to find field offset
+                        let local_struct_type: i64 = TypeRegistry_lookupByName(l.type_pool, l.source,
+                                                                                local.struct_type_start, local.struct_type_len);
+                        if local_struct_type > 0 {
+                            let info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, local_struct_type,
+                                                                             l.source + field_name_start, field_name_len);
+                            if info != null {
+                                field_offset = info.offset;
+                            }
                         }
                     }
                     break;
@@ -3933,28 +3745,30 @@ fn Lowerer_lowerFieldAccess(l: *Lowerer, node: *Node) i64 {
                               walk_node.field0, walk_node.field1) {
                     root_local_idx = i;
 
-                    // Use AST-based lookup with struct_type_start/len
+                    // Use TypeRegistry lookup with struct_type_start/len
                     if local.struct_type_start >= 0 {
-                        // Get base field info (e.g., "inner" in o.inner)
-                        let base_field_name_start: i64 = base_node.field1;
-                        let base_field_name_len: i64 = base_node.field2;
+                        let root_struct_type: i64 = TypeRegistry_lookupByName(l.type_pool, l.source,
+                                                                               local.struct_type_start, local.struct_type_len);
+                        if root_struct_type > 0 {
+                            // Get base field info (e.g., "inner" in o.inner)
+                            let base_field_name_start: i64 = base_node.field1;
+                            let base_field_name_len: i64 = base_node.field2;
 
-                        // Look up base field in root's struct type (AST-based)
-                        let base_info: FieldLookupResult = lookup_struct_field_info(l,
-                            local.struct_type_start, local.struct_type_len,
-                            base_field_name_start, base_field_name_len);
+                            // Look up base field in root's struct type
+                            let base_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, root_struct_type,
+                                                                                  l.source + base_field_name_start, base_field_name_len);
 
-                        if base_info.offset >= 0 and base_info.type_start >= 0 {
-                            total_offset = base_info.offset;
+                            if base_info != null and base_info.type_idx > 0 {
+                                total_offset = base_info.offset;
 
-                            // Look up final field in nested struct type (AST-based)
-                            let final_info: FieldLookupResult = lookup_struct_field_info(l,
-                                base_info.type_start, base_info.type_len,
-                                field_name_start, field_name_len);
+                                // Look up final field in nested struct type
+                                let final_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, base_info.type_idx,
+                                                                                       l.source + field_name_start, field_name_len);
 
-                            if final_info.offset >= 0 {
-                                total_offset = total_offset + final_info.offset;
-                                return FuncBuilder_emitFieldLocal(fb, root_local_idx, total_offset, TYPE_I64);
+                                if final_info != null {
+                                    total_offset = total_offset + final_info.offset;
+                                    return FuncBuilder_emitFieldLocal(fb, root_local_idx, total_offset, TYPE_I64);
+                                }
                             }
                         }
                     }
@@ -3963,37 +3777,34 @@ fn Lowerer_lowerFieldAccess(l: *Lowerer, node: *Node) i64 {
             }
         }
 
-        // Fallback: Zig-style approach - lower base and look up field in base's type
-        // First, try to infer the base's struct type from AST
-        var base_struct_type_start: i64 = -1;
-        var base_struct_type_len: i64 = 0;
+        // Fallback: Use TypeRegistry to look up field in base's type
+        var base_struct_type_idx: i64 = -1;
 
         // Walk the base field access to find its type
-        // base_node is FieldAccess, so field1/field2 is the field name being accessed
-        // We need to find what type that field has
         if walk_node.kind == NodeKind.Ident and root_local_idx >= 0 {
             let local: *IRLocal = fb.locals + root_local_idx;
             if local.struct_type_start >= 0 {
-                // Look up the base field (e.g., "inner" in outer.inner)
-                let base_field_name_start: i64 = base_node.field1;
-                let base_field_name_len: i64 = base_node.field2;
-                let base_info: FieldLookupResult = lookup_struct_field_info(l,
-                    local.struct_type_start, local.struct_type_len,
-                    base_field_name_start, base_field_name_len);
-                if base_info.type_start >= 0 {
-                    base_struct_type_start = base_info.type_start;
-                    base_struct_type_len = base_info.type_len;
+                let root_struct_type: i64 = TypeRegistry_lookupByName(l.type_pool, l.source,
+                                                                       local.struct_type_start, local.struct_type_len);
+                if root_struct_type > 0 {
+                    // Look up the base field (e.g., "inner" in outer.inner)
+                    let base_field_name_start: i64 = base_node.field1;
+                    let base_field_name_len: i64 = base_node.field2;
+                    let base_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, root_struct_type,
+                                                                          l.source + base_field_name_start, base_field_name_len);
+                    if base_info != null {
+                        base_struct_type_idx = base_info.type_idx;
+                    }
                 }
             }
         }
 
         // Now look up the final field in the base's struct type
         var final_offset: i64 = 0;
-        if base_struct_type_start >= 0 {
-            let final_info: FieldLookupResult = lookup_struct_field_info(l,
-                base_struct_type_start, base_struct_type_len,
-                field_name_start, field_name_len);
-            if final_info.offset >= 0 {
+        if base_struct_type_idx > 0 {
+            let final_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, base_struct_type_idx,
+                                                                   l.source + field_name_start, field_name_len);
+            if final_info != null {
                 final_offset = final_info.offset;
             }
         }
@@ -4375,32 +4186,36 @@ fn Lowerer_lowerFieldAssign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
         // Fallback: check if local has struct_type_start set (for struct literals)
         let local: *IRLocal = fb.locals + local_idx;
         if local.struct_type_start >= 0 {
-            let field_offset: i64 = lookup_struct_field_offset(l, local.struct_type_start, local.struct_type_len,
-                                                                field_name_start, field_name_len);
-            if field_offset >= 0 {
-                return FuncBuilder_emitStoreFieldLocal(fb, local_idx, field_offset, value_idx);
+            let local_struct_type: i64 = TypeRegistry_lookupByName(l.type_pool, l.source,
+                                                                    local.struct_type_start, local.struct_type_len);
+            if local_struct_type > 0 {
+                let local_field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, local_struct_type,
+                                                                             l.source + field_name_start, field_name_len);
+                if local_field_info != null {
+                    return FuncBuilder_emitStoreFieldLocal(fb, local_idx, local_field_info.offset, value_idx);
+                }
             }
         }
 
         // If local is a parameter, assume it might be a pointer to struct
         // Load the pointer value and store through it
         if local.is_param {
-            // Try to find struct by looking through all StructDecl nodes
-            var field_offset: i64 = -1;
-            var n: i64 = 0;
-            while n < l.nodes_count and field_offset < 0 {
-                let snode: *Node = l.nodes + n;
-                if snode.kind == NodeKind.StructDecl {
-                    let found_offset: i64 = lookup_struct_field_offset(l, snode.field0, snode.field1,
-                                                                        field_name_start, field_name_len);
-                    if found_offset >= 0 {
-                        field_offset = found_offset;
+            // Try to find field in any struct type in TypeRegistry
+            var field_offset: i64 = 0;  // Default to offset 0 if not found
+            // Use the local's type_idx if available
+            if local.type_idx > 0 {
+                var search_type_idx: i64 = local.type_idx;
+                // Dereference pointer types
+                if TypeInfo_isPointer(l.type_pool, search_type_idx) {
+                    search_type_idx = TypeInfo_getPointee(l.type_pool, search_type_idx);
+                }
+                if search_type_idx > 0 {
+                    let param_field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, search_type_idx,
+                                                                                 l.source + field_name_start, field_name_len);
+                    if param_field_info != null {
+                        field_offset = param_field_info.offset;
                     }
                 }
-                n = n + 1;
-            }
-            if field_offset < 0 {
-                field_offset = 0;  // Default to offset 0 if not found
             }
             let ptr_val: i64 = FuncBuilder_emitLoadLocal(fb, local_idx);
             return FuncBuilder_emitStoreField(fb, ptr_val, field_offset, value_idx);
@@ -4428,12 +4243,15 @@ fn Lowerer_lowerFieldAssign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
                               ptr_operand.field0, ptr_operand.field1) {
                     // Found the pointer local - check if it has struct type info
                     if local.struct_type_start >= 0 {
-                        // Use AST-based lookup to find field offset
-                        let info: FieldLookupResult = lookup_struct_field_info(l,
-                            local.struct_type_start, local.struct_type_len,
-                            field_name_start, field_name_len);
-                        if info.offset >= 0 {
-                            field_offset = info.offset;
+                        // Use TypeRegistry to find field offset
+                        let local_struct_type: i64 = TypeRegistry_lookupByName(l.type_pool, l.source,
+                                                                                local.struct_type_start, local.struct_type_len);
+                        if local_struct_type > 0 {
+                            let info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, local_struct_type,
+                                                                             l.source + field_name_start, field_name_len);
+                            if info != null {
+                                field_offset = info.offset;
+                            }
                         }
                     }
                     break;
@@ -4493,24 +4311,26 @@ fn Lowerer_lowerFieldAssign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
                         }
                     }
 
-                    // FALLBACK: Use AST-based lookup with struct_type_start/len
+                    // FALLBACK: Use TypeRegistry lookup with struct_type_start/len
                     if local.struct_type_start >= 0 {
-                        // Look up base field in root's struct type (AST-based)
-                        let base_info: FieldLookupResult = lookup_struct_field_info(l,
-                            local.struct_type_start, local.struct_type_len,
-                            base_field_name_start, base_field_name_len);
+                        let local_struct_type: i64 = TypeRegistry_lookupByName(l.type_pool, l.source,
+                                                                                local.struct_type_start, local.struct_type_len);
+                        if local_struct_type > 0 {
+                            // Look up base field in root's struct type
+                            let base_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, local_struct_type,
+                                                                                  l.source + base_field_name_start, base_field_name_len);
 
-                        if base_info.offset >= 0 and base_info.type_start >= 0 {
-                            total_offset = base_info.offset;
+                            if base_info != null and base_info.type_idx > 0 {
+                                total_offset = base_info.offset;
 
-                            // Look up final field in nested struct type (AST-based)
-                            let final_info: FieldLookupResult = lookup_struct_field_info(l,
-                                base_info.type_start, base_info.type_len,
-                                field_name_start, field_name_len);
+                                // Look up final field in nested struct type
+                                let final_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, base_info.type_idx,
+                                                                                       l.source + field_name_start, field_name_len);
 
-                            if final_info.offset >= 0 {
-                                total_offset = total_offset + final_info.offset;
-                                return FuncBuilder_emitStoreFieldLocal(fb, root_local_idx, total_offset, value_idx);
+                                if final_info != null {
+                                    total_offset = total_offset + final_info.offset;
+                                    return FuncBuilder_emitStoreFieldLocal(fb, root_local_idx, total_offset, value_idx);
+                                }
                             }
                         }
                     }
@@ -4528,24 +4348,26 @@ fn Lowerer_lowerFieldAssign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
         // We need to find what type that field has, then look up field_name in it
         var final_field_offset: i64 = 0;
 
-        // Try to find the base field's type using AST-based lookup
+        // Try to find the base field's type using TypeRegistry lookup
         if walk_node.kind == NodeKind.Ident and root_local_idx >= 0 {
             let local: *IRLocal = fb.locals + root_local_idx;
             if local.struct_type_start >= 0 {
-                // Look up the intermediate field (e.g., "inner")
-                let base_field_name_start: i64 = base_node.field1;
-                let base_field_name_len: i64 = base_node.field2;
-                let base_info: FieldLookupResult = lookup_struct_field_info(l,
-                    local.struct_type_start, local.struct_type_len,
-                    base_field_name_start, base_field_name_len);
+                let local_struct_type: i64 = TypeRegistry_lookupByName(l.type_pool, l.source,
+                                                                        local.struct_type_start, local.struct_type_len);
+                if local_struct_type > 0 {
+                    // Look up the intermediate field (e.g., "inner")
+                    let base_field_name_start: i64 = base_node.field1;
+                    let base_field_name_len: i64 = base_node.field2;
+                    let base_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, local_struct_type,
+                                                                          l.source + base_field_name_start, base_field_name_len);
 
-                if base_info.type_start >= 0 {
-                    // Now look up the final field in the base's type
-                    let final_info: FieldLookupResult = lookup_struct_field_info(l,
-                        base_info.type_start, base_info.type_len,
-                        field_name_start, field_name_len);
-                    if final_info.offset >= 0 {
-                        final_field_offset = final_info.offset;
+                    if base_info != null and base_info.type_idx > 0 {
+                        // Now look up the final field in the base's type
+                        let final_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, base_info.type_idx,
+                                                                               l.source + field_name_start, field_name_len);
+                        if final_info != null {
+                            final_field_offset = final_info.offset;
+                        }
                     }
                 }
             }

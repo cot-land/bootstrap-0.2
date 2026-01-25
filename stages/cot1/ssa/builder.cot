@@ -10,13 +10,9 @@
 // Reference: ~/learning/go/src/cmd/compile/internal/ssagen/ssa.go
 // Reference: bootstrap-0.2/src/frontend/ssa_builder.zig
 
-// NOTE: This file depends on types from func.cot and ir.cot
-// These are imported by main.cot via genssa.cot and lower.cot
-// We don't import them here to avoid duplicate definitions
-// This means builder.cot must be imported LAST in main.cot
-
-// NOTE: Register constants (X0, etc.) are imported via genssa.cot -> arm64.cot -> ../arm64/regs.cot
-// No imports needed here - all dependencies come from main.cot's earlier imports
+// Import func.cot for Block, Value, Local types
+// The Zig compiler deduplicates imports, so this won't cause duplicate definitions
+import "func.cot"
 
 // ============================================================================
 // Constants
@@ -24,6 +20,59 @@
 
 const MAX_VAR_DEFS: i64 = 1024;    // Max variable definitions per block
 const MAX_BLOCK_DEFS: i64 = 500;   // Max blocks with definitions
+
+// Initial capacities for SSABuilder-owned storage (matches bootstrap Zig pattern)
+const SB_INIT_BLOCK_DEFS: i64 = 500;
+const SB_INIT_VAR_DEFS: i64 = 50000;
+const SB_INIT_BLOCK_MAP: i64 = 500;
+const SB_INIT_VAR_STORAGE: i64 = 100000;
+const SB_INIT_FWD_VARS: i64 = 1000;
+
+// Malloc externs for self-allocation
+extern fn malloc_BlockDefs(count: i64) *BlockDefs;
+extern fn malloc_BlockMapping(count: i64) *BlockMapping;
+extern fn malloc_VarDef(count: i64) *VarDef;
+
+// ============================================================================
+// Module-Level Storage (self-allocated)
+// Following Zig pattern: modules own their storage, allocated on first use
+// ============================================================================
+
+var sb_all_defs: *BlockDefs = null;
+var sb_all_defs_cap: i64 = 0;
+var sb_block_map: *BlockMapping = null;
+var sb_block_map_cap: i64 = 0;
+var sb_node_values: *VarDef = null;
+var sb_node_values_cap: i64 = 0;
+var sb_var_storage: *VarDef = null;
+var sb_var_storage_cap: i64 = 0;
+var sb_fwd_vars: *VarDef = null;
+var sb_fwd_vars_cap: i64 = 0;
+var sb_storage_initialized: bool = false;
+
+// Allocate module storage if not already allocated
+fn SSABuilder_allocateStorage() {
+    if sb_storage_initialized {
+        return;
+    }
+
+    sb_all_defs_cap = SB_INIT_BLOCK_DEFS;
+    sb_all_defs = malloc_BlockDefs(sb_all_defs_cap);
+
+    sb_block_map_cap = SB_INIT_BLOCK_MAP;
+    sb_block_map = malloc_BlockMapping(sb_block_map_cap);
+
+    sb_node_values_cap = SB_INIT_VAR_DEFS;
+    sb_node_values = malloc_VarDef(sb_node_values_cap);
+
+    sb_var_storage_cap = SB_INIT_VAR_STORAGE;
+    sb_var_storage = malloc_VarDef(sb_var_storage_cap);
+
+    sb_fwd_vars_cap = SB_INIT_FWD_VARS;
+    sb_fwd_vars = malloc_VarDef(sb_fwd_vars_cap);
+
+    sb_storage_initialized = true;
+}
 
 // IR node indices (from lower.cot/ir.cot)
 const IR_NULL_NODE: i64 = -1;
@@ -200,36 +249,37 @@ struct SSABuilder {
 // Builder Initialization
 // ============================================================================
 
-// Split into two functions to avoid >8 arguments (ARM64 ABI limitation)
-fn SSABuilder_init(b: *SSABuilder, f: *Func,
-                all_defs: *BlockDefs, all_defs_cap: i64,
-                block_map: *BlockMapping, block_map_cap: i64,
-                node_values: *VarDef, node_values_cap: i64) {
+// SSABuilder owns its storage (matches bootstrap Zig pattern)
+// Allocates all arrays directly into struct fields via module storage
+fn SSABuilder_init(b: *SSABuilder, f: *Func) {
+    // Allocate module storage on first use
+    SSABuilder_allocateStorage();
+
     b.func = f;
     b.current_block = INVALID_BLOCK;
     b.current_defs = null;
 
-    b.all_defs = all_defs;
+    // Use module-allocated storage
+    b.all_defs = sb_all_defs;
     b.all_defs_count = 0;
-    b.all_defs_cap = all_defs_cap;
+    b.all_defs_cap = sb_all_defs_cap;
 
-    b.block_map = block_map;
+    b.block_map = sb_block_map;
     b.block_map_count = 0;
-    b.block_map_cap = block_map_cap;
+    b.block_map_cap = sb_block_map_cap;
 
-    b.node_values = node_values;
+    b.node_values = sb_node_values;
     b.node_values_count = 0;
-    b.node_values_cap = node_values_cap;
+    b.node_values_cap = sb_node_values_cap;
 
-    // Initialize remaining fields to defaults
-    b.var_storage = null;
+    b.var_storage = sb_var_storage;
     b.var_storage_used = 0;
-    b.var_storage_cap = 0;
+    b.var_storage_cap = sb_var_storage_cap;
 
-    // FwdRef pattern state - initialized later via SSABuilder_initFwdVars
-    b.fwd_vars = null;
+    // FwdRef pattern state
+    b.fwd_vars = sb_fwd_vars;
     b.fwd_vars_count = 0;
-    b.fwd_vars_cap = 0;
+    b.fwd_vars_cap = sb_fwd_vars_cap;
 
     // IR references (set later via SSABuilder_setIRNodes/Locals/Source)
     b.ir_nodes = null;
@@ -245,13 +295,6 @@ fn SSABuilder_init(b: *SSABuilder, f: *Func,
     // Register allocation - simple round-robin matching original main.cot
     b.next_reg = X1;          // Start at X1 (X0 is reserved for return value)
     b.max_reg = 28;           // Max is X28 (29=FP, 30=LR, 31=SP/XZR)
-}
-
-// Second part of init - set var_storage (split for ARM64 ABI)
-fn SSABuilder_initStorage(b: *SSABuilder, var_storage: *VarDef, var_storage_cap: i64) {
-    b.var_storage = var_storage;
-    b.var_storage_used = 0;
-    b.var_storage_cap = var_storage_cap;
 }
 
 // Set type registry for struct type checks

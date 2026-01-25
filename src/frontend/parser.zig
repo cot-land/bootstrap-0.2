@@ -1109,6 +1109,21 @@ pub const Parser = struct {
                         .args = .{ value_arg, null_node },
                         .span = Span.init(start, self.pos()),
                     } });
+                } else if (std.mem.eql(u8, builtin_name, "ptrToInt")) {
+                    // @ptrToInt(ptr) - single expression argument
+                    const ptr_arg = try self.parseExpr() orelse {
+                        self.err.errorWithCode(self.pos(), .e202, "expected pointer argument");
+                        return null;
+                    };
+
+                    if (!self.expect(.rparen)) return null;
+
+                    return try self.tree.addExpr(.{ .builtin_call = .{
+                        .name = builtin_name,
+                        .type_arg = null_node,
+                        .args = .{ ptr_arg, null_node },
+                        .span = Span.init(start, self.pos()),
+                    } });
                 } else {
                     // @sizeOf(Type), @alignOf(Type) - type argument
                     const type_arg = try self.parseType() orelse {

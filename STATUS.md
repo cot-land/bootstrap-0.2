@@ -1,6 +1,6 @@
 # Project Status
 
-**Last Updated: 2026-01-25**
+**Last Updated: 2026-01-26**
 
 ## Quick Status
 
@@ -11,7 +11,24 @@
 | cot1 self-hosting | ✅ **Compiles successfully!** (459KB output) |
 | Dogfooding | ✅ Started - type aliases in use |
 
-## Recent Progress (2026-01-25)
+## Recent Progress (2026-01-26)
+
+### main.cot Code Reduction ✅
+- **48% reduction**: main.cot reduced from 1751 to ~900 lines
+- **GenState_finalize**: Moved ~570 lines of finalization/linking code to genssa.cot
+- **lib/import.cot integrated**: Path tracking, resolution, and cycle detection now modular
+- **Checker wired in**: Type checking phase (2.6) added to compilation pipeline
+- All 166 tests continue to pass
+
+### Architecture Alignment
+| Component | Before | After | Reduction |
+|-----------|--------|-------|-----------|
+| main.cot | 1751 lines | ~900 lines | 48% |
+| Finalization code | In main.cot | In genssa.cot | Modular |
+| Import handling | Duplicated | lib/import.cot | Unified |
+| Type checking | Not wired | Checker phase 2.6 | Integrated |
+
+## Previous Progress (2026-01-25)
 
 ### cot1 Self-Hosting Success! ✅
 - **BUG-062 FIXED**: Parser 16+ args limitation fixed with dynamic I64List

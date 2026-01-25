@@ -47,46 +47,27 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
-### BUG-063: Self-hosted cot1-stage2 crashes on startup (SIGBUS)
+### BUG-063: cot1 struct field offset architecture is broken
 
-**Status:** OPEN
+**Status:** REQUIRES REWRITE (not debuggable)
 **Priority:** HIGH (blocks cot1 self-hosting chain)
 **Discovered:** 2026-01-25
 
-**Symptoms:**
-- cot1-stage1 (built by Zig) successfully compiles cot1 source to produce cot1-stage2
-- cot1-stage2 links successfully with zig cc
-- cot1-stage2 crashes immediately on startup with SIGBUS
+**Root Cause:** Architectural flaw - offsets computed in THREE places with different logic.
 
-**Error Output:**
-```
-Cot0 Self-Hosting Compiler v0.2
- ================================
+**Solution:** Complete rewrite following Zig's single-source-of-truth pattern.
 
-========================================================================
-                           CRASH DETECTED
-========================================================================
+**See:** [REWRITE_FIELD_OFFSETS.md](REWRITE_FIELD_OFFSETS.md) for the complete rewrite plan.
 
-Signal:  SIGBUS (10)
-Reason:  Bus error (misaligned access or bad address)
-```
+**Summary of the problem:**
+1. Checker computes offsets correctly and stores in TypeRegistry
+2. Lowerer IGNORES TypeRegistry and recomputes from AST using broken logic
+3. For pointer types, AST-based calculation returns wrong values
+4. Field accesses use wrong offsets, causing memory corruption
 
-**Related Warnings During Compilation:**
-During cot1-stage1's compilation of cot1 source, the lowerer reports warnings that may be related:
-- `PTR_ARITH: left_type=172 elem_size=64` (multiple occurrences)
-- Various pointer arithmetic type warnings
+**Why debugging failed:** Six Claude instances spent 6+ hours attempting to debug this. Each found "a bug" and "fixed it" but the architecture has THREE offset computation paths that all need to agree. Patching one doesn't fix the others.
 
-**Possible Causes:**
-1. Pointer arithmetic codegen producing misaligned addresses
-2. Incorrect struct field offset calculations
-3. Stack frame layout issues in generated code
-4. Global variable address calculations
-
-**Investigation Steps:**
-1. Run cot1-stage2 under lldb to get crash location
-2. Disassemble the crashing instruction
-3. Compare generated code with cot1-stage1's code for same function
-4. Check pointer arithmetic lowering in `stages/cot1/frontend/lower.cot`
+**The fix:** Delete all AST-based offset computation from lower.cot and use ONLY TypeRegistry's pre-computed offsets. See the rewrite document for exact functions to delete and call sites to modify.
 
 **Reproduction:**
 ```bash
@@ -94,14 +75,10 @@ During cot1-stage1's compilation of cot1 source, the lowerer reports warnings th
 ./zig-out/bin/cot stages/cot1/main.cot -o /tmp/cot1-stage1
 
 # Build cot1-stage2
-/tmp/cot1-stage1 stages/cot1/main.cot -o /tmp/cot1-stage2
+/tmp/cot1-stage1 stages/cot1/main.cot -o /tmp/cot1-stage2.o
 
-# Link cot1-stage2
-cp /tmp/cot1-stage2 /tmp/cot1-stage2.o
-zig cc /tmp/cot1-stage2.o runtime/cot_runtime.o -o /tmp/cot1-stage2-linked
-
-# Run (crashes)
-/tmp/cot1-stage2-linked
+# Link cot1-stage2 (currently fails)
+zig cc /tmp/cot1-stage2.o runtime/cot_runtime.o -o /tmp/cot1-stage2 -lSystem
 ```
 
 ---

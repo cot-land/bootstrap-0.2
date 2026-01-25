@@ -78,12 +78,25 @@ pub const Lowerer = struct {
         err: *ErrorReporter,
         chk: *const checker.Checker,
     ) Lowerer {
+        return initWithBuilder(allocator, tree, type_reg, err, chk, ir.Builder.init(allocator, type_reg));
+    }
+
+    /// Initialize with a shared IR Builder (for cross-file global visibility).
+    /// Following Go's pattern: all files in a package share a single ir.Package (Builder).
+    pub fn initWithBuilder(
+        allocator: Allocator,
+        tree: *const Ast,
+        type_reg: *TypeRegistry,
+        err: *ErrorReporter,
+        chk: *const checker.Checker,
+        builder: ir.Builder,
+    ) Lowerer {
         return .{
             .allocator = allocator,
             .tree = tree,
             .type_reg = type_reg,
             .err = err,
-            .builder = ir.Builder.init(allocator, type_reg),
+            .builder = builder,
             .chk = chk,
             .loop_stack = .{},
             .defer_stack = .{},
@@ -98,15 +111,28 @@ pub const Lowerer = struct {
         self.builder.deinit();
     }
 
-    /// Lower entire AST to IR.
+    /// Deinit without freeing the builder (when using shared builder).
+    pub fn deinitWithoutBuilder(self: *Lowerer) void {
+        self.loop_stack.deinit(self.allocator);
+        self.defer_stack.deinit(self.allocator);
+        self.const_values.deinit();
+        // Don't deinit builder - it's shared
+    }
+
+    /// Lower entire AST to IR (transfers ownership of builder data).
     pub fn lower(self: *Lowerer) !ir.IR {
+        try self.lowerToBuilder();
+        return try self.builder.getIR();
+    }
+
+    /// Lower entire AST, adding to builder without transferring ownership.
+    /// Use this when sharing a builder across multiple files.
+    pub fn lowerToBuilder(self: *Lowerer) !void {
         // Process root declarations
         const root_nodes = self.tree.getRootDecls();
         for (root_nodes) |decl_idx| {
             try self.lowerDecl(decl_idx);
         }
-
-        return try self.builder.getIR();
     }
 
     // ========================================================================
@@ -2414,6 +2440,12 @@ pub const Lowerer = struct {
             const from_type = self.inferExprType(bc.args[0]);
             debug.log(.lower, "@intCast({d}, expr) from_type={d} to_type={d}", .{ target_type, from_type, target_type });
             return try fb.emitConvert(operand, from_type, target_type, bc.span);
+        } else if (std.mem.eql(u8, bc.name, "ptrToInt")) {
+            // @ptrToInt(ptr) - convert pointer to i64
+            const operand = try self.lowerExprNode(bc.args[0]);
+            const from_type = self.inferExprType(bc.args[0]);
+            debug.log(.lower, "@ptrToInt(expr) from_type={d} to i64", .{from_type});
+            return try fb.emitConvert(operand, from_type, TypeRegistry.I64, bc.span);
         }
 
         return ir.null_node;

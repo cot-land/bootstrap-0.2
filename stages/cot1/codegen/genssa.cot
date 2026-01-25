@@ -16,6 +16,8 @@ import "../ssa/dom.cot"
 import "../ssa/abi.cot"
 import "../ssa/stackalloc.cot"
 import "arm64.cot"
+import "../obj/macho.cot"
+import "../obj/dwarf.cot"
 
 // NOTE: print() and print_int() are defined in main.cot and available to all imported files
 
@@ -24,6 +26,55 @@ import "arm64.cot"
 
 // NOTE: IRGlobal is defined in frontend/ir.cot which is imported via lower.cot
 // before genssa.cot in main.cot - no forward declaration needed
+
+// ============================================================================
+// Module-Level Storage (self-allocated by GenState_init)
+// Following Zig pattern: modules own their storage, allocated on first use
+// ============================================================================
+
+// Extern malloc declarations (provided by runtime)
+// NOTE: malloc_Branch and malloc_CallSite are declared after struct definitions below
+extern fn malloc_u8(count: i64) *u8;
+extern fn malloc_i64(count: i64) *i64;
+
+// Storage capacity constants
+const GS_CODE_CAP: i64 = 1048576;        // 1MB code buffer
+const GS_BSTART_CAP: i64 = 5000;         // Block start offsets
+const GS_BRANCHES_CAP: i64 = 5000;       // Pending branches
+const GS_CALL_SITES_CAP: i64 = 5000;     // Call sites for linking
+const GS_GLOBAL_RELOCS_CAP: i64 = 5000;  // Global variable relocations
+const GS_FUNC_ADDR_RELOCS_CAP: i64 = 1000; // Function address relocations
+const GS_STRING_RELOCS_CAP: i64 = 1000;  // String literal relocations
+const GS_LINE_ENTRIES_CAP: i64 = 50000;  // DWARF line entries
+const GS_DATA_CAP: i64 = 1048576;        // 1MB data section
+
+// Module storage (allocated once, reused across compilations)
+var gs_code: *u8 = null;
+var gs_code_cap: i64 = 0;
+var gs_bstart: *i64 = null;
+var gs_bstart_cap: i64 = 0;
+var gs_branches: *Branch = null;
+var gs_branches_cap: i64 = 0;
+var gs_call_sites: *CallSite = null;
+var gs_call_sites_cap: i64 = 0;
+var gs_global_reloc_offsets: *i64 = null;
+var gs_global_reloc_indices: *i64 = null;
+var gs_global_relocs_cap: i64 = 0;
+var gs_func_addr_reloc_code_offsets: *i64 = null;
+var gs_func_addr_reloc_name_starts: *i64 = null;
+var gs_func_addr_reloc_name_lens: *i64 = null;
+var gs_func_addr_relocs_cap: i64 = 0;
+var gs_string_reloc_code_offsets: *i64 = null;
+var gs_string_reloc_str_starts: *i64 = null;
+var gs_string_reloc_str_lens: *i64 = null;
+var gs_string_relocs_cap: i64 = 0;
+var gs_line_entries: *u8 = null;
+var gs_line_entries_cap: i64 = 0;
+var gs_data: *u8 = null;
+var gs_data_cap: i64 = 0;
+
+// Flag to track if storage has been allocated
+var gs_storage_initialized: bool = false;
 
 // ============================================================================
 // Constants
@@ -104,6 +155,10 @@ struct StringReloc {
     str_len: i64,          // Length of string content
     // The ADD instruction is at code_offset + 4
 }
+
+// Extern malloc declarations for struct types (must come after struct definitions)
+extern fn malloc_Branch(count: i64) *Branch;
+extern fn malloc_CallSite(count: i64) *CallSite;
 
 // ============================================================================
 // Codegen State
@@ -202,55 +257,117 @@ struct GenState {
 // State Initialization
 // ============================================================================
 
-fn GenState_init(gs: *GenState, f: *Func,
-                 code: *u8, code_cap: i64,
-                 bstart: *i64, bstart_cap: i64,
-                 branches: *Branch, branches_cap: i64,
-                 call_sites: *CallSite, call_sites_cap: i64) {
-    gs.func = f;
-    gs.code = code;
+// Allocate module storage if not already allocated
+// Called once on first use, storage is reused across compilations
+fn GenState_allocateStorage() {
+    if gs_storage_initialized {
+        return;
+    }
+
+    // Code buffer
+    gs_code_cap = GS_CODE_CAP;
+    gs_code = malloc_u8(gs_code_cap);
+
+    // Block start offsets
+    gs_bstart_cap = GS_BSTART_CAP;
+    gs_bstart = malloc_i64(gs_bstart_cap);
+
+    // Branches
+    gs_branches_cap = GS_BRANCHES_CAP;
+    gs_branches = malloc_Branch(gs_branches_cap);
+
+    // Call sites
+    gs_call_sites_cap = GS_CALL_SITES_CAP;
+    gs_call_sites = malloc_CallSite(gs_call_sites_cap);
+
+    // Global relocations (parallel arrays)
+    gs_global_relocs_cap = GS_GLOBAL_RELOCS_CAP;
+    gs_global_reloc_offsets = malloc_i64(gs_global_relocs_cap);
+    gs_global_reloc_indices = malloc_i64(gs_global_relocs_cap);
+
+    // Function address relocations (parallel arrays)
+    gs_func_addr_relocs_cap = GS_FUNC_ADDR_RELOCS_CAP;
+    gs_func_addr_reloc_code_offsets = malloc_i64(gs_func_addr_relocs_cap);
+    gs_func_addr_reloc_name_starts = malloc_i64(gs_func_addr_relocs_cap);
+    gs_func_addr_reloc_name_lens = malloc_i64(gs_func_addr_relocs_cap);
+
+    // String relocations (parallel arrays)
+    gs_string_relocs_cap = GS_STRING_RELOCS_CAP;
+    gs_string_reloc_code_offsets = malloc_i64(gs_string_relocs_cap);
+    gs_string_reloc_str_starts = malloc_i64(gs_string_relocs_cap);
+    gs_string_reloc_str_lens = malloc_i64(gs_string_relocs_cap);
+
+    // Line entries (32 bytes per entry = 4 i64 fields)
+    gs_line_entries_cap = GS_LINE_ENTRIES_CAP;
+    gs_line_entries = malloc_u8(gs_line_entries_cap * 32);
+
+    // Data section
+    gs_data_cap = GS_DATA_CAP;
+    gs_data = malloc_u8(gs_data_cap);
+
+    gs_storage_initialized = true;
+}
+
+// Initialize GenState with self-allocated module storage
+// Following Zig pattern: GenState owns its storage, no external arrays needed
+fn GenState_init(gs: *GenState) {
+    // Allocate module storage on first use
+    GenState_allocateStorage();
+
+    // Wire up GenState to use module storage
+    gs.func = null;
+    gs.code = gs_code;
     gs.code_count = 0;
-    gs.code_cap = code_cap;
-    gs.bstart = bstart;
-    gs.bstart_cap = bstart_cap;
-    gs.branches = branches;
+    gs.code_cap = gs_code_cap;
+    gs.bstart = gs_bstart;
+    gs.bstart_cap = gs_bstart_cap;
+    gs.branches = gs_branches;
     gs.branches_count = 0;
-    gs.branches_cap = branches_cap;
-    gs.call_sites = call_sites;
+    gs.branches_cap = gs_branches_cap;
+    gs.call_sites = gs_call_sites;
     gs.call_sites_count = 0;
-    gs.call_sites_cap = call_sites_cap;
+    gs.call_sites_cap = gs_call_sites_cap;
     gs.current_block = INVALID_BLOCK;
-    // Line tracking (must be set up via GenState_setLineTracking)
-    gs.line_entries = null;
+
+    // Line tracking - uses module storage
+    gs.line_entries = gs_line_entries;
     gs.line_entries_count = 0;
-    gs.line_entries_cap = 0;
+    gs.line_entries_cap = gs_line_entries_cap;
     gs.last_line = 0;
     gs.source = null;
     gs.source_len = 0;
-    // Globals (must be set up via GenState_setGlobals)
+
+    // Data section - uses module storage
+    gs.data = gs_data;
+    gs.data_count = 0;
+    gs.data_cap = gs_data_cap;
+
+    // Global relocations - uses module storage
     gs.globals = null;
     gs.globals_count = 0;
-    gs.data = null;
-    gs.data_count = 0;
-    gs.data_cap = 0;
-    gs.global_reloc_offsets = null;
-    gs.global_reloc_indices = null;
+    gs.global_reloc_offsets = gs_global_reloc_offsets;
+    gs.global_reloc_indices = gs_global_reloc_indices;
     gs.global_relocs_count = 0;
-    gs.global_relocs_cap = 0;
-    gs.func_addr_reloc_code_offsets = null;
-    gs.func_addr_reloc_name_starts = null;
-    gs.func_addr_reloc_name_lens = null;
+    gs.global_relocs_cap = gs_global_relocs_cap;
+
+    // Function address relocations - uses module storage
+    gs.func_addr_reloc_code_offsets = gs_func_addr_reloc_code_offsets;
+    gs.func_addr_reloc_name_starts = gs_func_addr_reloc_name_starts;
+    gs.func_addr_reloc_name_lens = gs_func_addr_reloc_name_lens;
     gs.func_addr_relocs_count = 0;
-    gs.func_addr_relocs_cap = 0;
-    gs.string_reloc_code_offsets = null;
-    gs.string_reloc_str_starts = null;
-    gs.string_reloc_str_lens = null;
+    gs.func_addr_relocs_cap = gs_func_addr_relocs_cap;
+
+    // String relocations - uses module storage
+    gs.string_reloc_code_offsets = gs_string_reloc_code_offsets;
+    gs.string_reloc_str_starts = gs_string_reloc_str_starts;
+    gs.string_reloc_str_lens = gs_string_reloc_str_lens;
     gs.string_relocs_count = 0;
-    gs.string_relocs_cap = 0;
+    gs.string_relocs_cap = gs_string_relocs_cap;
+
+    // Other state
     gs.crash_handler_offset = -1;
     gs.is_main = false;
     gs.crash_handler_emitted = false;
-    // BUG-054: Hidden return tracking
     gs.has_hidden_return = false;
     gs.hidden_ret_ptr_offset = 0;
     gs.frame_size = 0;
@@ -262,53 +379,16 @@ fn GenState_setTypeRegistry(gs: *GenState, type_reg: *TypeRegistry) {
     gs.type_registry = type_reg;
 }
 
-// Set up function address relocations tracking (parallel arrays)
-fn GenState_setFuncAddrRelocs(gs: *GenState,
-                               code_offsets: *i64, name_starts: *i64, name_lens: *i64,
-                               cap: i64) {
-    gs.func_addr_reloc_code_offsets = code_offsets;
-    gs.func_addr_reloc_name_starts = name_starts;
-    gs.func_addr_reloc_name_lens = name_lens;
-    gs.func_addr_relocs_count = 0;
-    gs.func_addr_relocs_cap = cap;
-}
-
-// Set up string literal relocations tracking (parallel arrays)
-// Following Zig: src/codegen/arm64.zig string_refs pattern
-fn GenState_setStringRelocs(gs: *GenState,
-                             code_offsets: *i64, str_starts: *i64, str_lens: *i64,
-                             cap: i64) {
-    gs.string_reloc_code_offsets = code_offsets;
-    gs.string_reloc_str_starts = str_starts;
-    gs.string_reloc_str_lens = str_lens;
-    gs.string_relocs_count = 0;
-    gs.string_relocs_cap = cap;
-}
-
 // Set up globals tracking for global variable access
-fn GenState_setGlobals(gs: *GenState, globals: *IRGlobal, globals_count: i64,
-                       data: *u8, data_cap: i64,
-                       global_reloc_offsets: *i64, global_reloc_indices: *i64, global_relocs_cap: i64) {
+// Storage arrays are now module-owned, only need the IRGlobal reference
+fn GenState_setGlobals(gs: *GenState, globals: *IRGlobal, globals_count: i64) {
     gs.globals = globals;
     gs.globals_count = globals_count;
-    gs.data = data;
-    gs.data_count = 0;
-    gs.data_cap = data_cap;
-    gs.global_reloc_offsets = global_reloc_offsets;
-    gs.global_reloc_indices = global_reloc_indices;
-    gs.global_relocs_count = 0;
-    gs.global_relocs_cap = global_relocs_cap;
 }
 
-// Set up line tracking for DWARF debug info
-// line_entries is raw bytes, each entry is 32 bytes (4 i64 fields)
-fn GenState_setLineTracking(gs: *GenState,
-                            line_entries: *u8, line_entries_cap: i64,
-                            source: *u8, source_len: i64) {
-    gs.line_entries = line_entries;
-    gs.line_entries_count = 0;
-    gs.line_entries_cap = line_entries_cap;
-    gs.last_line = 0;
+// Set up source tracking for DWARF debug info
+// Storage arrays are now module-owned, only need source reference
+fn GenState_setSource(gs: *GenState, source: *u8, source_len: i64) {
     gs.source = source;
     gs.source_len = source_len;
 }
@@ -2615,4 +2695,446 @@ fn GenState_patchCbz(gs: *GenState, offset: i64, rel_offset: i64, reg: i64, is_n
     p2.* = @intCast(u8, (inst >> 16) & 255);
     let p3: *u8 = p + 3;
     p3.* = @intCast(u8, (inst >> 24) & 255);
+}
+
+// ============================================================================
+// Finalization - Create Mach-O Object
+// Following Zig: src/codegen/arm64.zig finalize()
+//
+// This function handles all post-codegen finalization:
+// 1. Resolve internal call sites (patch BL instructions)
+// 2. Create MachOWriter and add function symbols
+// 3. Add external call relocations
+// 4. Add crash handler relocation
+// 5. Add global variable symbols and data
+// 6. Add global address relocations
+// 7. Add function address relocations
+// 8. Add string literal data and relocations
+// 9. Generate DWARF debug info
+// 10. Return the MachOWriter (caller handles file write)
+// ============================================================================
+
+fn GenState_finalize(
+    gs: *GenState,
+    source: *u8,
+    source_len: i64,
+    ir_funcs: *IRFunc,
+    ir_funcs_count: i64,
+    ir_globals: *IRGlobal,
+    ir_globals_count: i64,
+    source_path: *u8,
+    source_path_len: i64,
+    writer: *MachOWriter
+) i64 {
+    // Phase 1: Resolve internal call sites - patch BL instructions with correct offsets
+    var call_idx: i64 = 0;
+    while call_idx < gs.call_sites_count {
+        let cs: *CallSite = gs.call_sites + call_idx;
+
+        // Skip runtime functions (func_name_start == -1 means __cot_str_concat)
+        if cs.func_name_start < 0 {
+            call_idx = call_idx + 1;
+            continue;
+        }
+
+        // Find target function by name
+        var target_offset: i64 = -1;
+        var target_idx: i64 = 0;
+        while target_idx < ir_funcs_count {
+            let ir_func: *IRFunc = ir_funcs + target_idx;
+            if ir_func.name_len == cs.func_name_len {
+                var match: bool = true;
+                var name_i: i64 = 0;
+                while name_i < cs.func_name_len {
+                    let src_char: *u8 = source + ir_func.name_start + name_i;
+                    let call_char: *u8 = source + cs.func_name_start + name_i;
+                    if src_char.* != call_char.* {
+                        match = false;
+                    }
+                    name_i = name_i + 1;
+                }
+                if match {
+                    target_offset = ir_func.code_offset;
+                }
+            }
+            target_idx = target_idx + 1;
+        }
+
+        // Patch BL instruction if target found
+        if target_offset >= 0 {
+            let call_addr: i64 = cs.code_offset;
+            let offset: i64 = (target_offset - call_addr) / 4;
+            let bl_inst: i64 = encode_bl(offset);
+            let code_ptr: *u8 = gs.code + call_addr;
+            code_ptr.* = @intCast(u8, bl_inst & 255);
+            (code_ptr + 1).* = @intCast(u8, (bl_inst >> 8) & 255);
+            (code_ptr + 2).* = @intCast(u8, (bl_inst >> 16) & 255);
+            (code_ptr + 3).* = @intCast(u8, (bl_inst >> 24) & 255);
+        }
+
+        call_idx = call_idx + 1;
+    }
+
+    // Phase 2: Initialize MachOWriter (already done by caller, passed in)
+    // MachOWriter_init already called by caller
+
+    // Temporary buffer for symbol names
+    var sym_name: U8List = undefined;
+    u8list_init_cap(&sym_name, 128);
+    var main_sym_idx: i64 = -1;
+
+    // Phase 3: Add function symbols
+    var func_idx: i64 = 0;
+    while func_idx < ir_funcs_count {
+        let ir_func: *IRFunc = ir_funcs + func_idx;
+
+        // Build symbol name: "_" + function name
+        let sn: *u8 = sym_name.items;
+        sn.* = 95;  // '_'
+        var name_idx: i64 = 0;
+        while name_idx < ir_func.name_len and name_idx < 126 {
+            (sn + 1 + name_idx).* = (source + ir_func.name_start + name_idx).*;
+            name_idx = name_idx + 1;
+        }
+        let sym_len: i64 = 1 + ir_func.name_len;
+
+        let sym_idx: i64 = MachOWriter_addSymbol(writer, sym_name.items, sym_len, ir_func.code_offset, SECT_TEXT, true);
+
+        if main_sym_idx < 0 {
+            main_sym_idx = sym_idx;
+        }
+
+        func_idx = func_idx + 1;
+    }
+
+    // Phase 4: Add external call relocations
+    call_idx = 0;
+    while call_idx < gs.call_sites_count {
+        let cs2: *CallSite = gs.call_sites + call_idx;
+
+        // Check if internal function
+        var is_internal: bool = false;
+        if cs2.func_name_start >= 0 {
+            var target_idx2: i64 = 0;
+            while target_idx2 < ir_funcs_count {
+                let ir_func2: *IRFunc = ir_funcs + target_idx2;
+                if ir_func2.name_len == cs2.func_name_len {
+                    var match2: bool = true;
+                    var name_i3: i64 = 0;
+                    while name_i3 < cs2.func_name_len {
+                        if (source + ir_func2.name_start + name_i3).* != (source + cs2.func_name_start + name_i3).* {
+                            match2 = false;
+                        }
+                        name_i3 = name_i3 + 1;
+                    }
+                    if match2 {
+                        is_internal = true;
+                    }
+                }
+                target_idx2 = target_idx2 + 1;
+            }
+        }
+
+        // If not internal, add external symbol and relocation
+        if not is_internal {
+            var ext_sym_len: i64 = 0;
+            let sn2: *u8 = sym_name.items;
+
+            if cs2.func_name_start == -1 {
+                // Hardcoded: "___cot_str_concat"
+                (sn2 + 0).* = 95; (sn2 + 1).* = 95; (sn2 + 2).* = 95;
+                (sn2 + 3).* = 99; (sn2 + 4).* = 111; (sn2 + 5).* = 116;
+                (sn2 + 6).* = 95; (sn2 + 7).* = 115; (sn2 + 8).* = 116;
+                (sn2 + 9).* = 114; (sn2 + 10).* = 95; (sn2 + 11).* = 99;
+                (sn2 + 12).* = 111; (sn2 + 13).* = 110; (sn2 + 14).* = 99;
+                (sn2 + 15).* = 97; (sn2 + 16).* = 116;
+                ext_sym_len = 17;
+            } else {
+                sn2.* = 95;
+                var ext_name_idx: i64 = 0;
+                while ext_name_idx < cs2.func_name_len and ext_name_idx < 126 {
+                    (sn2 + 1 + ext_name_idx).* = (source + cs2.func_name_start + ext_name_idx).*;
+                    ext_name_idx = ext_name_idx + 1;
+                }
+                ext_sym_len = 1 + cs2.func_name_len;
+            }
+
+            let sym_idx: i64 = MachOWriter_addSymbol(writer, sym_name.items, ext_sym_len, 0, 0, true);
+            let no_ptr: *i64 = writer.sym_name_offsets + sym_idx;
+            let name_ptr: *u8 = writer.strings + no_ptr.*;
+            MachOWriter_addReloc(writer, cs2.code_offset, name_ptr, ext_sym_len, ARM64_RELOC_BRANCH26, 1);
+        }
+
+        call_idx = call_idx + 1;
+    }
+
+    // Phase 5: Add crash handler call relocation
+    if gs.crash_handler_offset >= 0 {
+        let snc: *u8 = sym_name.items;
+        // "_install_crash_handler"
+        (snc + 0).* = 95; (snc + 1).* = 105; (snc + 2).* = 110;
+        (snc + 3).* = 115; (snc + 4).* = 116; (snc + 5).* = 97;
+        (snc + 6).* = 108; (snc + 7).* = 108; (snc + 8).* = 95;
+        (snc + 9).* = 99; (snc + 10).* = 114; (snc + 11).* = 97;
+        (snc + 12).* = 115; (snc + 13).* = 104; (snc + 14).* = 95;
+        (snc + 15).* = 104; (snc + 16).* = 97; (snc + 17).* = 110;
+        (snc + 18).* = 100; (snc + 19).* = 108; (snc + 20).* = 101;
+        (snc + 21).* = 114;
+        let crash_sym_idx: i64 = MachOWriter_addSymbol(writer, sym_name.items, 22, 0, 0, true);
+        let crash_no_ptr: *i64 = writer.sym_name_offsets + crash_sym_idx;
+        let crash_name_ptr: *u8 = writer.strings + crash_no_ptr.*;
+        MachOWriter_addReloc(writer, gs.crash_handler_offset, crash_name_ptr, 22, ARM64_RELOC_BRANCH26, 1);
+    }
+
+    // Phase 6: Add global variable symbols and data
+    let globals_base_offset: i64 = writer.data_count;
+    let globals_sym_start: i64 = writer.symbols_count;
+
+    var global_idx: i64 = 0;
+    while global_idx < ir_globals_count {
+        let g: *IRGlobal = ir_globals + global_idx;
+
+        let sng: *u8 = sym_name.items;
+        sng.* = 95;
+        var g_name_idx: i64 = 0;
+        while g_name_idx < g.name_len and g_name_idx < 126 {
+            (sng + 1 + g_name_idx).* = (source + g.name_start + g_name_idx).*;
+            g_name_idx = g_name_idx + 1;
+        }
+        let g_sym_len: i64 = 1 + g.name_len;
+
+        let g_data_offset: i64 = globals_base_offset + g.data_offset;
+        MachOWriter_addSymbol(writer, sym_name.items, g_sym_len, g_data_offset, SECT_DATA, true);
+
+        global_idx = global_idx + 1;
+    }
+
+    // Write initial values for globals
+    global_idx = 0;
+    while global_idx < ir_globals_count {
+        let g: *IRGlobal = ir_globals + global_idx;
+        if g.is_array {
+            MachOWriter_addDataZeros(writer, g.size);
+        } else if g.has_init {
+            MachOWriter_addDataI64(writer, g.init_value);
+        } else {
+            MachOWriter_addDataZeros(writer, 8);
+        }
+        global_idx = global_idx + 1;
+    }
+
+    // Phase 7: Add global address relocations
+    var reloc_idx: i64 = 0;
+    while reloc_idx < gs.global_relocs_count {
+        let off_ptr: *i64 = gs.global_reloc_offsets + reloc_idx;
+        let idx_ptr: *i64 = gs.global_reloc_indices + reloc_idx;
+        let code_offset: i64 = off_ptr.*;
+        let g_idx: i64 = idx_ptr.*;
+
+        let g_sym_idx: i64 = globals_sym_start + g_idx;
+
+        if g_sym_idx >= writer.symbols_count {
+            print("ERROR: g_sym_idx out of bounds!\n");
+            u8list_deinit(&sym_name);
+            return 1;
+        }
+
+        let g_no_ptr: *i64 = writer.sym_name_offsets + g_sym_idx;
+        let g_name_ptr: *u8 = writer.strings + g_no_ptr.*;
+        var g_name_len: i64 = 0;
+        while (g_name_ptr + g_name_len).* != 0 { g_name_len = g_name_len + 1; }
+
+        MachOWriter_addReloc(writer, code_offset, g_name_ptr, g_name_len, ARM64_RELOC_PAGE21, 1);
+        MachOWriter_addReloc(writer, code_offset + 4, g_name_ptr, g_name_len, ARM64_RELOC_PAGEOFF12, 0);
+
+        reloc_idx = reloc_idx + 1;
+    }
+
+    // Phase 8: Add function address relocations
+    var func_addr_idx: i64 = 0;
+    while func_addr_idx < gs.func_addr_relocs_count {
+        let far_off_ptr: *i64 = gs.func_addr_reloc_code_offsets + func_addr_idx;
+        let far_start_ptr: *i64 = gs.func_addr_reloc_name_starts + func_addr_idx;
+        let far_len_ptr: *i64 = gs.func_addr_reloc_name_lens + func_addr_idx;
+        let far_code_offset: i64 = far_off_ptr.*;
+        let far_func_name_start: i64 = far_start_ptr.*;
+        let far_func_name_len: i64 = far_len_ptr.*;
+
+        var found_sym_idx: i64 = -1;
+        var func_search_idx: i64 = 0;
+
+        while func_search_idx < ir_funcs_count {
+            let ir_func: *IRFunc = ir_funcs + func_search_idx;
+            if ir_func.name_len == far_func_name_len {
+                var name_match: bool = true;
+                var cmp_idx: i64 = 0;
+                while cmp_idx < far_func_name_len {
+                    if (source + ir_func.name_start + cmp_idx).* != (source + far_func_name_start + cmp_idx).* {
+                        name_match = false;
+                    }
+                    cmp_idx = cmp_idx + 1;
+                }
+                if name_match {
+                    found_sym_idx = func_search_idx;
+                }
+            }
+            func_search_idx = func_search_idx + 1;
+        }
+
+        if found_sym_idx < 0 {
+            let snf: *u8 = sym_name.items;
+            snf.* = 95;
+            var far_name_idx: i64 = 0;
+            while far_name_idx < far_func_name_len and far_name_idx < 126 {
+                (snf + 1 + far_name_idx).* = (source + far_func_name_start + far_name_idx).*;
+                far_name_idx = far_name_idx + 1;
+            }
+            let far_sym_len: i64 = 1 + far_func_name_len;
+            found_sym_idx = MachOWriter_addSymbol(writer, sym_name.items, far_sym_len, 0, 0, true);
+        }
+
+        let far_no_ptr: *i64 = writer.sym_name_offsets + found_sym_idx;
+        let far_name_ptr: *u8 = writer.strings + far_no_ptr.*;
+        var far_name_len2: i64 = 0;
+        while (far_name_ptr + far_name_len2).* != 0 { far_name_len2 = far_name_len2 + 1; }
+        MachOWriter_addReloc(writer, far_code_offset, far_name_ptr, far_name_len2, ARM64_RELOC_PAGE21, 1);
+        MachOWriter_addReloc(writer, far_code_offset + 4, far_name_ptr, far_name_len2, ARM64_RELOC_PAGEOFF12, 0);
+
+        func_addr_idx = func_addr_idx + 1;
+    }
+
+    // Phase 9: Add string literal data and relocations
+    let strings_base_offset: i64 = writer.data_count;
+    var str_idx: i64 = 0;
+    while str_idx < gs.string_relocs_count {
+        let sr_start_ptr: *i64 = gs.string_reloc_str_starts + str_idx;
+        let sr_len_ptr: *i64 = gs.string_reloc_str_lens + str_idx;
+        let sr_str_start: i64 = sr_start_ptr.*;
+        let sr_str_len: i64 = sr_len_ptr.*;
+
+        // Copy string data with escape sequence processing
+        var str_copy_idx: i64 = 0;
+        var actual_len: i64 = 0;
+        while str_copy_idx < sr_str_len {
+            let src_char: *u8 = source + sr_str_start + str_copy_idx;
+            var char_val: i64 = @intCast(i64, src_char.*);
+
+            if char_val == 92 and str_copy_idx + 1 < sr_str_len {
+                str_copy_idx = str_copy_idx + 1;
+                let next_char: *u8 = source + sr_str_start + str_copy_idx;
+                let next_val: i64 = @intCast(i64, next_char.*);
+                if next_val == 110 { char_val = 10; }
+                else if next_val == 116 { char_val = 9; }
+                else if next_val == 114 { char_val = 13; }
+                else if next_val == 48 { char_val = 0; }
+                else if next_val == 92 { char_val = 92; }
+                else if next_val == 34 { char_val = 34; }
+                else { char_val = next_val; }
+            }
+
+            MachOWriter_addDataByte(writer, char_val);
+            actual_len = actual_len + 1;
+            str_copy_idx = str_copy_idx + 1;
+        }
+        MachOWriter_addDataByte(writer, 0);
+        sr_len_ptr.* = actual_len;
+
+        while (writer.data_count - strings_base_offset) % 8 != 0 {
+            MachOWriter_addDataByte(writer, 0);
+        }
+
+        str_idx = str_idx + 1;
+    }
+
+    // Add string symbol and relocations
+    var str_data_offset: i64 = strings_base_offset;
+    str_idx = 0;
+    while str_idx < gs.string_relocs_count {
+        let sr2_off_ptr: *i64 = gs.string_reloc_code_offsets + str_idx;
+        let sr2_len_ptr: *i64 = gs.string_reloc_str_lens + str_idx;
+        let sr2_code_offset: i64 = sr2_off_ptr.*;
+        let sr2_str_len: i64 = sr2_len_ptr.*;
+
+        // Build "_str_N" symbol name
+        let sns: *u8 = sym_name.items;
+        (sns + 0).* = 95; (sns + 1).* = 115; (sns + 2).* = 116;
+        (sns + 3).* = 114; (sns + 4).* = 95;
+
+        var sym_name_len: i64 = 5;
+        var temp_idx: i64 = str_idx;
+        if temp_idx < 10 {
+            (sns + 5).* = @intCast(u8, 48 + temp_idx);
+            sym_name_len = 6;
+        } else if temp_idx < 100 {
+            (sns + 5).* = @intCast(u8, 48 + temp_idx / 10);
+            (sns + 6).* = @intCast(u8, 48 + temp_idx % 10);
+            sym_name_len = 7;
+        } else if temp_idx < 1000 {
+            (sns + 5).* = @intCast(u8, 48 + temp_idx / 100);
+            (sns + 6).* = @intCast(u8, 48 + (temp_idx / 10) % 10);
+            (sns + 7).* = @intCast(u8, 48 + temp_idx % 10);
+            sym_name_len = 8;
+        } else {
+            (sns + 5).* = @intCast(u8, 48 + temp_idx / 1000);
+            (sns + 6).* = @intCast(u8, 48 + (temp_idx / 100) % 10);
+            (sns + 7).* = @intCast(u8, 48 + (temp_idx / 10) % 10);
+            (sns + 8).* = @intCast(u8, 48 + temp_idx % 10);
+            sym_name_len = 9;
+        }
+        (sns + sym_name_len).* = 0;
+
+        let str_sym_idx: i64 = MachOWriter_addSymbol(writer, sym_name.items, sym_name_len, str_data_offset, SECT_DATA, false);
+
+        let str_no_ptr: *i64 = writer.sym_name_offsets + str_sym_idx;
+        let str_name_ptr: *u8 = writer.strings + str_no_ptr.*;
+        MachOWriter_addReloc(writer, sr2_code_offset, str_name_ptr, sym_name_len, ARM64_RELOC_PAGE21, 1);
+        MachOWriter_addReloc(writer, sr2_code_offset + 4, str_name_ptr, sym_name_len, ARM64_RELOC_PAGEOFF12, 0);
+
+        str_data_offset = str_data_offset + sr2_str_len + 1;
+        while str_data_offset % 8 != 0 {
+            str_data_offset = str_data_offset + 1;
+        }
+
+        str_idx = str_idx + 1;
+    }
+
+    // Phase 10: Generate DWARF debug info
+    let debug_bytes: i64 = MachOWriter_generateDebugLine(writer,
+        source_path, source_path_len,
+        gs.line_entries, gs.line_entries_count,
+        gs.code_count, main_sym_idx);
+
+    // Generate debug_abbrev
+    let abbrev_bytes: i64 = DWARF_generateAbbrev(writer.debug_abbrev, writer.debug_abbrev_cap);
+    writer.debug_abbrev_count = abbrev_bytes;
+
+    // Extract comp_dir from source path
+    var comp_dir_len: i64 = 0;
+    var i: i64 = source_path_len - 1;
+    while i >= 0 {
+        let c: *u8 = source_path + i;
+        if c.* == 47 {
+            comp_dir_len = i;
+            i = -1;
+        }
+        i = i - 1;
+    }
+    if comp_dir_len == 0 {
+        comp_dir_len = 1;
+    }
+
+    // Generate debug_info
+    let info_bytes: i64 = DWARF_generateInfo(writer.debug_info, writer.debug_info_cap,
+        source_path, source_path_len,
+        source_path, comp_dir_len,
+        0, gs.code_count,
+        0);
+    writer.debug_info_count = info_bytes;
+
+    // Add relocation for low_pc in debug_info
+    let low_pc_offset: i64 = 11 + 1 + (source_path_len + 1) + (comp_dir_len + 1) + 4;
+    MachOWriter_addDebugInfoReloc(writer, low_pc_offset, main_sym_idx);
+
+    u8list_deinit(&sym_name);
+    return 0;
 }

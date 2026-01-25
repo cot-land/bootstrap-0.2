@@ -10,8 +10,10 @@
 //
 // =============================================================================
 
-// NOTE: This file expects externs.cot to be imported first!
+// NOTE: This file expects stdlib.cot to be imported first!
 // Required externs: write, exit
+
+extern fn exit(code: i32);
 
 // =============================================================================
 // Global Debug State
@@ -31,7 +33,13 @@ var g_free_count: i64 = 0;
 // stderr Helpers (write to fd 2)
 // =============================================================================
 
-fn stderr_str(s: *u8) {
+// For string literals (has ptr and len)
+fn stderr_str(s: string) {
+    write(2, s.ptr, s.len);
+}
+
+// For raw pointers (calculates length from null terminator)
+fn stderr_ptr(s: *u8) {
     if s == null { return; }
     var len: i64 = 0;
     while (s + len).* != 0 {
@@ -103,7 +111,7 @@ fn stderr_hex(n: i64) {
 }
 
 fn stderr_newline() {
-    write(2, "\n", 1);
+    stderr_str("\n");
 }
 
 // =============================================================================
@@ -112,53 +120,43 @@ fn stderr_newline() {
 
 // Basic panic - print message and exit
 fn panic(msg: *u8) {
-    stderr_str("\n");
-    stderr_str("================================================================================\n");
+    stderr_str("\n================================================================================\n");
     stderr_str("PANIC: ");
-    stderr_str(msg);
-    stderr_str("\n");
-    stderr_str("================================================================================\n");
+    stderr_ptr(msg);
+    stderr_str("\n================================================================================\n");
     exit(1);
 }
 
 // Panic with numeric context
 fn panic_int(msg: *u8, value: i64) {
-    stderr_str("\n");
-    stderr_str("================================================================================\n");
+    stderr_str("\n================================================================================\n");
     stderr_str("PANIC: ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_str(": ");
     stderr_int(value);
-    stderr_str("\n");
-    stderr_str("================================================================================\n");
+    stderr_str("\n================================================================================\n");
     exit(1);
 }
 
 // Panic with two values for context
 fn panic_int2(msg: *u8, val1: i64, val2: i64) {
-    stderr_str("\n");
-    stderr_str("================================================================================\n");
+    stderr_str("\n================================================================================\n");
     stderr_str("PANIC: ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_str(": ");
     stderr_int(val1);
     stderr_str(", ");
     stderr_int(val2);
-    stderr_str("\n");
-    stderr_str("================================================================================\n");
+    stderr_str("\n================================================================================\n");
     exit(1);
 }
 
 // Panic with pointer context
 fn panic_ptr(msg: *u8, ptr: *u8) {
-    stderr_str("\n");
-    stderr_str("================================================================================\n");
+    stderr_str("\n================================================================================\n");
     stderr_str("PANIC: ");
-    stderr_str(msg);
-    stderr_str(" at address ");
-    stderr_hex(@intCast(i64, ptr));
-    stderr_str("\n");
-    stderr_str("================================================================================\n");
+    stderr_ptr(msg);
+    stderr_str(" (pointer)\n================================================================================\n");
     exit(1);
 }
 
@@ -190,16 +188,14 @@ fn assert_int2(condition: bool, msg: *u8, val1: i64, val2: i64) {
 // Assert equal
 fn assert_eq(actual: i64, expected: i64, name: *u8) {
     if actual != expected {
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         stderr_str("ASSERT FAILED: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str("\n  expected: ");
         stderr_int(expected);
         stderr_str("\n  actual:   ");
         stderr_int(actual);
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         exit(1);
     }
 }
@@ -207,14 +203,12 @@ fn assert_eq(actual: i64, expected: i64, name: *u8) {
 // Assert not equal
 fn assert_ne(actual: i64, unexpected: i64, name: *u8) {
     if actual == unexpected {
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         stderr_str("ASSERT FAILED: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" should not equal ");
         stderr_int(unexpected);
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         exit(1);
     }
 }
@@ -222,16 +216,14 @@ fn assert_ne(actual: i64, unexpected: i64, name: *u8) {
 // Assert less than
 fn assert_lt(value: i64, limit: i64, name: *u8) {
     if value >= limit {
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         stderr_str("ASSERT FAILED: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" = ");
         stderr_int(value);
         stderr_str(" should be < ");
         stderr_int(limit);
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         exit(1);
     }
 }
@@ -239,16 +231,14 @@ fn assert_lt(value: i64, limit: i64, name: *u8) {
 // Assert less than or equal
 fn assert_le(value: i64, limit: i64, name: *u8) {
     if value > limit {
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         stderr_str("ASSERT FAILED: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" = ");
         stderr_int(value);
         stderr_str(" should be <= ");
         stderr_int(limit);
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         exit(1);
     }
 }
@@ -256,16 +246,14 @@ fn assert_le(value: i64, limit: i64, name: *u8) {
 // Assert greater than or equal
 fn assert_ge(value: i64, limit: i64, name: *u8) {
     if value < limit {
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         stderr_str("ASSERT FAILED: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" = ");
         stderr_int(value);
         stderr_str(" should be >= ");
         stderr_int(limit);
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         exit(1);
     }
 }
@@ -276,24 +264,20 @@ fn assert_ge(value: i64, limit: i64, name: *u8) {
 
 fn assert_not_null(ptr: *u8, name: *u8) {
     if ptr == null {
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         stderr_str("NULL POINTER: ");
-        stderr_str(name);
-        stderr_str(" is null\n");
-        stderr_str("================================================================================\n");
+        stderr_ptr(name);
+        stderr_str(" is null\n================================================================================\n");
         exit(1);
     }
 }
 
 fn assert_not_null_i64(ptr: *i64, name: *u8) {
     if ptr == null {
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         stderr_str("NULL POINTER: ");
-        stderr_str(name);
-        stderr_str(" (*i64) is null\n");
-        stderr_str("================================================================================\n");
+        stderr_ptr(name);
+        stderr_str(" (*i64) is null\n================================================================================\n");
         exit(1);
     }
 }
@@ -315,27 +299,23 @@ fn check_ptr_i64(ptr: *i64, name: *u8) *i64 {
 
 fn assert_bounds(index: i64, length: i64, name: *u8) {
     if index < 0 {
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         stderr_str("BOUNDS ERROR: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str("[");
         stderr_int(index);
-        stderr_str("] - negative index\n");
-        stderr_str("================================================================================\n");
+        stderr_str("] - negative index\n================================================================================\n");
         exit(1);
     }
     if index >= length {
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         stderr_str("BOUNDS ERROR: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str("[");
         stderr_int(index);
         stderr_str("] out of bounds (length=");
         stderr_int(length);
-        stderr_str(")\n");
-        stderr_str("================================================================================\n");
+        stderr_str(")\n================================================================================\n");
         exit(1);
     }
 }
@@ -349,40 +329,34 @@ fn check_bounds(index: i64, length: i64, name: *u8) i64 {
 // Check index range [start, end) is valid
 fn assert_range(start: i64, end: i64, length: i64, name: *u8) {
     if start < 0 {
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         stderr_str("RANGE ERROR: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" start=");
         stderr_int(start);
-        stderr_str(" is negative\n");
-        stderr_str("================================================================================\n");
+        stderr_str(" is negative\n================================================================================\n");
         exit(1);
     }
     if end > length {
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         stderr_str("RANGE ERROR: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" end=");
         stderr_int(end);
         stderr_str(" exceeds length=");
         stderr_int(length);
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         exit(1);
     }
     if start > end {
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         stderr_str("RANGE ERROR: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" start=");
         stderr_int(start);
         stderr_str(" > end=");
         stderr_int(end);
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         exit(1);
     }
 }
@@ -393,26 +367,23 @@ fn assert_range(start: i64, end: i64, length: i64, name: *u8) {
 
 fn assert_capacity(count: i64, capacity: i64, name: *u8) {
     if count > capacity {
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         stderr_str("CAPACITY OVERFLOW: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" count=");
         stderr_int(count);
         stderr_str(" exceeds capacity=");
         stderr_int(capacity);
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         exit(1);
     }
 }
 
 fn assert_space(count: i64, capacity: i64, needed: i64, name: *u8) {
     if count + needed > capacity {
-        stderr_str("\n");
-        stderr_str("================================================================================\n");
+        stderr_str("\n================================================================================\n");
         stderr_str("SPACE ERROR: ");
-        stderr_str(name);
+        stderr_ptr(name);
         stderr_str(" needs ");
         stderr_int(needed);
         stderr_str(" more slots, but only ");
@@ -421,8 +392,7 @@ fn assert_space(count: i64, capacity: i64, needed: i64, name: *u8) {
         stderr_int(count);
         stderr_str(", cap=");
         stderr_int(capacity);
-        stderr_str(")\n");
-        stderr_str("================================================================================\n");
+        stderr_str(")\n================================================================================\n");
         exit(1);
     }
 }
@@ -432,26 +402,20 @@ fn assert_space(count: i64, capacity: i64, needed: i64, name: *u8) {
 // =============================================================================
 
 fn unreachable(msg: *u8) {
-    stderr_str("\n");
-    stderr_str("================================================================================\n");
+    stderr_str("\n================================================================================\n");
     stderr_str("UNREACHABLE CODE: ");
-    stderr_str(msg);
-    stderr_str("\n");
-    stderr_str("This indicates a bug in the compiler itself.\n");
-    stderr_str("================================================================================\n");
+    stderr_ptr(msg);
+    stderr_str("\nThis indicates a bug in the compiler itself.\n================================================================================\n");
     exit(1);
 }
 
 fn unreachable_int(msg: *u8, value: i64) {
-    stderr_str("\n");
-    stderr_str("================================================================================\n");
+    stderr_str("\n================================================================================\n");
     stderr_str("UNREACHABLE CODE: ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_str(": ");
     stderr_int(value);
-    stderr_str("\n");
-    stderr_str("This indicates a bug in the compiler itself.\n");
-    stderr_str("================================================================================\n");
+    stderr_str("\nThis indicates a bug in the compiler itself.\n================================================================================\n");
     exit(1);
 }
 
@@ -468,7 +432,7 @@ fn trace_enter(func_name: *u8) {
         i = i + 1;
     }
     stderr_str("-> ");
-    stderr_str(func_name);
+    stderr_ptr(func_name);
     stderr_newline();
     g_trace_depth = g_trace_depth + 1;
 }
@@ -483,7 +447,7 @@ fn trace_exit(func_name: *u8) {
         i = i + 1;
     }
     stderr_str("<- ");
-    stderr_str(func_name);
+    stderr_ptr(func_name);
     stderr_newline();
 }
 
@@ -496,7 +460,7 @@ fn trace_value(name: *u8, value: i64) {
         i = i + 1;
     }
     stderr_str("   ");
-    stderr_str(name);
+    stderr_ptr(name);
     stderr_str(" = ");
     stderr_int(value);
     stderr_newline();
@@ -509,38 +473,20 @@ fn trace_value(name: *u8, value: i64) {
 fn debug(msg: *u8) {
     if not g_debug_verbose { return; }
     stderr_str("[DEBUG] ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_newline();
 }
 
 fn debug_int(msg: *u8, value: i64) {
     if not g_debug_verbose { return; }
     stderr_str("[DEBUG] ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_str(": ");
     stderr_int(value);
     stderr_newline();
 }
 
-fn debug_int2(msg: *u8, val1: i64, val2: i64) {
-    if not g_debug_verbose { return; }
-    stderr_str("[DEBUG] ");
-    stderr_str(msg);
-    stderr_str(": ");
-    stderr_int(val1);
-    stderr_str(", ");
-    stderr_int(val2);
-    stderr_newline();
-}
-
-fn debug_ptr(msg: *u8, ptr: *u8) {
-    if not g_debug_verbose { return; }
-    stderr_str("[DEBUG] ");
-    stderr_str(msg);
-    stderr_str(": ");
-    stderr_hex(@intCast(i64, ptr));
-    stderr_newline();
-}
+// Note: debug_int2 and debug_ptr are defined in lib/debug.cot with more features
 
 // =============================================================================
 // Allocation Tracking
@@ -598,7 +544,7 @@ fn print_error_context() {
         stderr_str("  ");
         stderr_int(g_error_context_depth - i);
         stderr_str(". ");
-        stderr_str(g_error_context[i]);
+        stderr_ptr(g_error_context[i]);
         stderr_newline();
         i = i - 1;
     }
@@ -606,10 +552,9 @@ fn print_error_context() {
 
 // Panic with context
 fn panic_with_context(msg: *u8) {
-    stderr_str("\n");
-    stderr_str("================================================================================\n");
+    stderr_str("\n================================================================================\n");
     stderr_str("PANIC: ");
-    stderr_str(msg);
+    stderr_ptr(msg);
     stderr_str("\n\n");
     print_error_context();
     stderr_str("================================================================================\n");

@@ -27,6 +27,78 @@
 import "dwarf.cot"
 
 // ============================================================================
+// Module-Level Storage (self-allocated by MachOWriter_init)
+// Following Zig pattern: modules own their storage, allocated on first use
+// ============================================================================
+
+// Extern malloc declarations
+extern fn malloc_u8(count: i64) *u8;
+extern fn malloc_i64(count: i64) *i64;
+
+// Storage capacity constants
+const MW_SYMBOLS_CAP: i64 = 2000;
+const MW_STRINGS_CAP: i64 = 32768;
+const MW_RELOCS_CAP: i64 = 10000;
+const MW_DEBUG_LINE_CAP: i64 = 65536;
+const MW_DEBUG_LINE_RELOCS_CAP: i64 = 16;
+const MW_DEBUG_ABBREV_CAP: i64 = 64;
+const MW_DEBUG_INFO_CAP: i64 = 512;
+const MW_DEBUG_INFO_RELOCS_CAP: i64 = 4;
+const MW_OUTPUT_CAP: i64 = 1048576;  // 1MB output buffer
+
+// Module storage (allocated once, reused across compilations)
+// Symbol arrays (parallel arrays)
+var mw_sym_name_offsets: *i64 = null;
+var mw_sym_values: *i64 = null;
+var mw_sym_sections: *i64 = null;
+var mw_sym_is_externals: *i64 = null;
+var mw_symbols_cap: i64 = 0;
+
+// Strings buffer
+var mw_strings: *u8 = null;
+var mw_strings_cap: i64 = 0;
+
+// Relocation arrays (parallel arrays)
+var mw_reloc_offsets: *i64 = null;
+var mw_reloc_target_str_offs: *i64 = null;
+var mw_reloc_target_lens: *i64 = null;
+var mw_reloc_types: *i64 = null;
+var mw_reloc_is_pcrels: *i64 = null;
+var mw_reloc_lengths: *i64 = null;
+var mw_relocs_cap: i64 = 0;
+
+// Debug line buffer and relocations
+var mw_debug_line: *u8 = null;
+var mw_debug_line_cap: i64 = 0;
+var mw_dbg_line_reloc_offsets: *i64 = null;
+var mw_dbg_line_reloc_target_str_offs: *i64 = null;
+var mw_dbg_line_reloc_target_lens: *i64 = null;
+var mw_dbg_line_reloc_types: *i64 = null;
+var mw_dbg_line_reloc_is_pcrels: *i64 = null;
+var mw_dbg_line_reloc_lengths: *i64 = null;
+var mw_debug_line_relocs_cap: i64 = 0;
+
+// Debug abbrev and debug info
+var mw_debug_abbrev: *u8 = null;
+var mw_debug_abbrev_cap: i64 = 0;
+var mw_debug_info: *u8 = null;
+var mw_debug_info_cap: i64 = 0;
+var mw_dbg_info_reloc_offsets: *i64 = null;
+var mw_dbg_info_reloc_target_str_offs: *i64 = null;
+var mw_dbg_info_reloc_target_lens: *i64 = null;
+var mw_dbg_info_reloc_types: *i64 = null;
+var mw_dbg_info_reloc_is_pcrels: *i64 = null;
+var mw_dbg_info_reloc_lengths: *i64 = null;
+var mw_debug_info_relocs_cap: i64 = 0;
+
+// Output buffer
+var mw_output: *u8 = null;
+var mw_output_cap: i64 = 0;
+
+// Flag to track if storage has been allocated
+var mw_storage_initialized: bool = false;
+
+// ============================================================================
 // Magic Numbers
 // ============================================================================
 
@@ -323,87 +395,142 @@ struct MachOWriter {
 // Writer Initialization
 // ============================================================================
 
-fn MachOWriter_init(w: *MachOWriter,
-                     code: *u8, code_cap: i64,
-                     data: *u8, data_cap: i64,
-                     sym_name_offsets: *i64, sym_values: *i64, sym_sections: *i64, sym_is_externals: *i64, symbols_cap: i64,
-                     strings: *u8, strings_cap: i64,
-                     reloc_offsets: *i64, reloc_target_ptrs: *i64, reloc_target_lens: *i64,
-                     reloc_types: *i64, reloc_is_pcrels: *i64, reloc_lengths: *i64,
-                     relocs_cap: i64,
-                     output: *u8, output_cap: i64) {
-    w.code = code;
-    w.code_count = 0;
-    w.code_cap = code_cap;
+// Allocate module storage if not already allocated
+fn MachOWriter_allocateStorage() {
+    if mw_storage_initialized {
+        return;
+    }
 
+    // Symbol arrays (parallel arrays)
+    mw_symbols_cap = MW_SYMBOLS_CAP;
+    mw_sym_name_offsets = malloc_i64(mw_symbols_cap);
+    mw_sym_values = malloc_i64(mw_symbols_cap);
+    mw_sym_sections = malloc_i64(mw_symbols_cap);
+    mw_sym_is_externals = malloc_i64(mw_symbols_cap);
+
+    // Strings buffer
+    mw_strings_cap = MW_STRINGS_CAP;
+    mw_strings = malloc_u8(mw_strings_cap);
+
+    // Relocation arrays (parallel arrays)
+    mw_relocs_cap = MW_RELOCS_CAP;
+    mw_reloc_offsets = malloc_i64(mw_relocs_cap);
+    mw_reloc_target_str_offs = malloc_i64(mw_relocs_cap);
+    mw_reloc_target_lens = malloc_i64(mw_relocs_cap);
+    mw_reloc_types = malloc_i64(mw_relocs_cap);
+    mw_reloc_is_pcrels = malloc_i64(mw_relocs_cap);
+    mw_reloc_lengths = malloc_i64(mw_relocs_cap);
+
+    // Debug line buffer and relocations
+    mw_debug_line_cap = MW_DEBUG_LINE_CAP;
+    mw_debug_line = malloc_u8(mw_debug_line_cap);
+    mw_debug_line_relocs_cap = MW_DEBUG_LINE_RELOCS_CAP;
+    mw_dbg_line_reloc_offsets = malloc_i64(mw_debug_line_relocs_cap);
+    mw_dbg_line_reloc_target_str_offs = malloc_i64(mw_debug_line_relocs_cap);
+    mw_dbg_line_reloc_target_lens = malloc_i64(mw_debug_line_relocs_cap);
+    mw_dbg_line_reloc_types = malloc_i64(mw_debug_line_relocs_cap);
+    mw_dbg_line_reloc_is_pcrels = malloc_i64(mw_debug_line_relocs_cap);
+    mw_dbg_line_reloc_lengths = malloc_i64(mw_debug_line_relocs_cap);
+
+    // Debug abbrev and debug info
+    mw_debug_abbrev_cap = MW_DEBUG_ABBREV_CAP;
+    mw_debug_abbrev = malloc_u8(mw_debug_abbrev_cap);
+    mw_debug_info_cap = MW_DEBUG_INFO_CAP;
+    mw_debug_info = malloc_u8(mw_debug_info_cap);
+    mw_debug_info_relocs_cap = MW_DEBUG_INFO_RELOCS_CAP;
+    mw_dbg_info_reloc_offsets = malloc_i64(mw_debug_info_relocs_cap);
+    mw_dbg_info_reloc_target_str_offs = malloc_i64(mw_debug_info_relocs_cap);
+    mw_dbg_info_reloc_target_lens = malloc_i64(mw_debug_info_relocs_cap);
+    mw_dbg_info_reloc_types = malloc_i64(mw_debug_info_relocs_cap);
+    mw_dbg_info_reloc_is_pcrels = malloc_i64(mw_debug_info_relocs_cap);
+    mw_dbg_info_reloc_lengths = malloc_i64(mw_debug_info_relocs_cap);
+
+    // Output buffer
+    mw_output_cap = MW_OUTPUT_CAP;
+    mw_output = malloc_u8(mw_output_cap);
+
+    mw_storage_initialized = true;
+}
+
+// Initialize MachOWriter with self-allocated module storage
+// Only requires code and data from GenState, all other storage is module-owned
+fn MachOWriter_init(w: *MachOWriter, code: *u8, code_count: i64, data: *u8, data_cap: i64) {
+    // Allocate module storage on first use
+    MachOWriter_allocateStorage();
+
+    // Code from GenState (external)
+    w.code = code;
+    w.code_count = code_count;
+    w.code_cap = code_count;  // Already populated
+
+    // Data from GenState (external, but we may add to it)
     w.data = data;
     w.data_count = 0;
     w.data_cap = data_cap;
 
-    // Symbol table (parallel arrays)
-    w.sym_name_offsets = sym_name_offsets;
-    w.sym_values = sym_values;
-    w.sym_sections = sym_sections;
-    w.sym_is_externals = sym_is_externals;
+    // Symbol table - uses module storage
+    w.sym_name_offsets = mw_sym_name_offsets;
+    w.sym_values = mw_sym_values;
+    w.sym_sections = mw_sym_sections;
+    w.sym_is_externals = mw_sym_is_externals;
     w.symbols_count = 0;
-    w.symbols_cap = symbols_cap;
+    w.symbols_cap = mw_symbols_cap;
 
-    // String table starts with null byte
-    w.strings = strings;
+    // String table starts with null byte - uses module storage
+    w.strings = mw_strings;
     w.strings_count = 1;  // Reserve byte 0 as null
-    w.strings_cap = strings_cap;
-    if strings_cap > 0 {
-        strings.* = 0;
-    }
+    w.strings_cap = mw_strings_cap;
+    mw_strings.* = 0;
 
-    // Main relocations (parallel arrays)
-    w.reloc_offsets = reloc_offsets;
-    w.reloc_target_str_offs = reloc_target_ptrs;  // Renamed but same type
-    w.reloc_target_lens = reloc_target_lens;
-    w.reloc_types = reloc_types;
-    w.reloc_is_pcrels = reloc_is_pcrels;
-    w.reloc_lengths = reloc_lengths;
+    // Main relocations - uses module storage
+    w.reloc_offsets = mw_reloc_offsets;
+    w.reloc_target_str_offs = mw_reloc_target_str_offs;
+    w.reloc_target_lens = mw_reloc_target_lens;
+    w.reloc_types = mw_reloc_types;
+    w.reloc_is_pcrels = mw_reloc_is_pcrels;
+    w.reloc_lengths = mw_reloc_lengths;
     w.relocs_count = 0;
-    w.relocs_cap = relocs_cap;
+    w.relocs_cap = mw_relocs_cap;
 
-    // Debug line section (set via MachOWriter_setDebugLine)
-    w.debug_line = null;
+    // Debug line section - uses module storage
+    w.debug_line = mw_debug_line;
     w.debug_line_count = 0;
-    w.debug_line_cap = 0;
+    w.debug_line_cap = mw_debug_line_cap;
 
-    // Debug line relocations (set via MachOWriter_setDebugLineRelocs)
-    w.dbg_line_reloc_offsets = null;
-    w.dbg_line_reloc_target_str_offs = null;
-    w.dbg_line_reloc_target_lens = null;
-    w.dbg_line_reloc_types = null;
-    w.dbg_line_reloc_is_pcrels = null;
-    w.dbg_line_reloc_lengths = null;
+    // Debug line relocations - uses module storage
+    w.dbg_line_reloc_offsets = mw_dbg_line_reloc_offsets;
+    w.dbg_line_reloc_target_str_offs = mw_dbg_line_reloc_target_str_offs;
+    w.dbg_line_reloc_target_lens = mw_dbg_line_reloc_target_lens;
+    w.dbg_line_reloc_types = mw_dbg_line_reloc_types;
+    w.dbg_line_reloc_is_pcrels = mw_dbg_line_reloc_is_pcrels;
+    w.dbg_line_reloc_lengths = mw_dbg_line_reloc_lengths;
     w.debug_line_relocs_count = 0;
-    w.debug_line_relocs_cap = 0;
+    w.debug_line_relocs_cap = mw_debug_line_relocs_cap;
 
-    // Debug abbrev section (set via MachOWriter_setDebugAbbrev)
-    w.debug_abbrev = null;
+    // Debug abbrev section - uses module storage
+    w.debug_abbrev = mw_debug_abbrev;
     w.debug_abbrev_count = 0;
-    w.debug_abbrev_cap = 0;
+    w.debug_abbrev_cap = mw_debug_abbrev_cap;
 
-    // Debug info section (set via MachOWriter_setDebugInfo)
-    w.debug_info = null;
+    // Debug info section - uses module storage
+    w.debug_info = mw_debug_info;
     w.debug_info_count = 0;
-    w.debug_info_cap = 0;
+    w.debug_info_cap = mw_debug_info_cap;
 
-    // Debug info relocations (parallel arrays)
-    w.dbg_info_reloc_offsets = null;
-    w.dbg_info_reloc_target_str_offs = null;
-    w.dbg_info_reloc_target_lens = null;
-    w.dbg_info_reloc_types = null;
-    w.dbg_info_reloc_is_pcrels = null;
-    w.dbg_info_reloc_lengths = null;
+    // Debug info relocations - uses module storage
+    w.dbg_info_reloc_offsets = mw_dbg_info_reloc_offsets;
+    w.dbg_info_reloc_target_str_offs = mw_dbg_info_reloc_target_str_offs;
+    w.dbg_info_reloc_target_lens = mw_dbg_info_reloc_target_lens;
+    w.dbg_info_reloc_types = mw_dbg_info_reloc_types;
+    w.dbg_info_reloc_is_pcrels = mw_dbg_info_reloc_is_pcrels;
+    w.dbg_info_reloc_lengths = mw_dbg_info_reloc_lengths;
     w.debug_info_relocs_count = 0;
-    w.debug_info_relocs_cap = 0;
+    w.debug_info_relocs_cap = mw_debug_info_relocs_cap;
 
-    w.output = output;
+    // Output buffer - uses module storage
+    w.output = mw_output;
     w.output_count = 0;
-    w.output_cap = output_cap;
+    w.output_cap = mw_output_cap;
 }
 
 // Set up debug line buffer

@@ -110,6 +110,48 @@ struct FieldInfo {
 extern fn realloc_Type(ptr: *Type, old_count: i64, new_count: i64) *Type;
 extern fn realloc_FieldInfo(ptr: *FieldInfo, old_count: i64, new_count: i64) *FieldInfo;
 
+// Malloc externs for self-allocation
+extern fn malloc_Type(count: i64) *Type;
+extern fn malloc_FieldInfo(count: i64) *FieldInfo;
+
+// ============================================================================
+// Module Storage (allocated once, reused across compilations)
+// Following Zig pattern: modules self-allocate rather than requiring
+// external storage passed in from main.
+// ============================================================================
+
+// Initial capacities
+const TR_INIT_TYPES: i64 = 1024;
+const TR_INIT_PARAMS: i64 = 5000;
+const TR_INIT_FIELDS: i64 = 5000;
+
+// Module-level storage
+var tr_types: *Type = null;
+var tr_types_cap: i64 = 0;
+var tr_params: *i64 = null;
+var tr_params_cap: i64 = 0;
+var tr_fields: *FieldInfo = null;
+var tr_fields_cap: i64 = 0;
+var tr_storage_initialized: bool = false;
+
+// Allocate module storage (called once on first use)
+fn TypeRegistry_allocateStorage() {
+    if tr_storage_initialized {
+        return;
+    }
+
+    tr_types_cap = TR_INIT_TYPES;
+    tr_types = malloc_Type(tr_types_cap);
+
+    tr_params_cap = TR_INIT_PARAMS;
+    tr_params = malloc_i64(tr_params_cap);
+
+    tr_fields_cap = TR_INIT_FIELDS;
+    tr_fields = malloc_FieldInfo(tr_fields_cap);
+
+    tr_storage_initialized = true;
+}
+
 struct TypeRegistry {
     types: *Type,        // Pointer to array of types
     count: i64,          // Current type count
@@ -246,6 +288,11 @@ fn TypeRegistry_ensureTypesCapacity(pool: *TypeRegistry, additional: i64) {
     }
     pool.types = realloc_Type(pool.types, pool.types_cap, new_cap);
     pool.types_cap = new_cap;
+    // Update module storage if using self-allocation
+    if tr_storage_initialized {
+        tr_types = pool.types;
+        tr_types_cap = pool.types_cap;
+    }
 }
 
 fn TypeRegistry_ensureParamsCapacity(pool: *TypeRegistry, additional: i64) {
@@ -259,6 +306,11 @@ fn TypeRegistry_ensureParamsCapacity(pool: *TypeRegistry, additional: i64) {
     }
     pool.params = realloc_i64(pool.params, pool.params_cap, new_cap);
     pool.params_cap = new_cap;
+    // Update module storage if using self-allocation
+    if tr_storage_initialized {
+        tr_params = pool.params;
+        tr_params_cap = pool.params_cap;
+    }
 }
 
 fn TypeRegistry_ensureFieldsCapacity(pool: *TypeRegistry, additional: i64) {
@@ -272,6 +324,11 @@ fn TypeRegistry_ensureFieldsCapacity(pool: *TypeRegistry, additional: i64) {
     }
     pool.fields = realloc_FieldInfo(pool.fields, pool.fields_cap, new_cap);
     pool.fields_cap = new_cap;
+    // Update module storage if using self-allocation
+    if tr_storage_initialized {
+        tr_fields = pool.fields;
+        tr_fields_cap = pool.fields_cap;
+    }
 }
 
 // ============================================================================
@@ -315,8 +372,19 @@ fn TypeRegistry_initWithStorage(pool: *TypeRegistry, types: *Type, types_cap: i6
     // User types start at index 15 (FIRST_USER_TYPE)
 }
 
-// Initialize type pool (legacy - requires pool.types/params/fields to be set first)
+// Initialize type pool with self-allocation (preferred - Zig pattern)
+// Module allocates its own storage rather than requiring external arrays
 fn TypeRegistry_init(pool: *TypeRegistry) {
+    // Allocate module storage if not already done
+    TypeRegistry_allocateStorage();
+
+    // Wire up pool to use module storage
+    pool.types = tr_types;
+    pool.types_cap = tr_types_cap;
+    pool.params = tr_params;
+    pool.params_cap = tr_params_cap;
+    pool.fields = tr_fields;
+    pool.fields_cap = tr_fields_cap;
     pool.count = 0;
     pool.params_count = 0;
     pool.fields_count = 0;

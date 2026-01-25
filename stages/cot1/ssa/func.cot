@@ -14,6 +14,16 @@ import "block.cot"
 const FUNC_MAX_PARAMS: i64 = 32;
 const FUNC_MAX_LOCALS: i64 = 1024;
 
+// Initial capacities for Func-owned storage (matches bootstrap Zig pattern)
+const FN_INIT_BLOCKS: i64 = 5000;
+const FN_INIT_VALUES: i64 = 50000;
+const FN_INIT_LOCALS: i64 = 2000;
+
+// Malloc externs for self-allocation
+extern fn malloc_Block(count: i64) *Block;
+extern fn malloc_Value(count: i64) *Value;
+extern fn malloc_Local(count: i64) *Local;
+
 // ============================================================================
 // Local Variable
 // ============================================================================
@@ -125,27 +135,29 @@ struct Func {
 // Function Initialization
 // ============================================================================
 
-fn Func_init(f: *Func, name_start: i64, name_len: i64, return_type: i64,
-             blocks: *Block, blocks_cap: i64,
-             values: *Value, values_cap: i64,
-             locals: *Local, locals_cap: i64) {
+// Func owns its storage (matches bootstrap Zig pattern)
+// Allocates blocks, values, locals arrays directly into struct fields
+fn Func_init(f: *Func, name_start: i64, name_len: i64, return_type: i64) {
     f.name_start = name_start;
     f.name_len = name_len;
     f.return_type = return_type;
     f.return_type_size = 8;  // Default to 8 bytes (i64), set larger for structs
 
-    f.blocks = blocks;
+    // Allocate blocks array
+    f.blocks_cap = FN_INIT_BLOCKS;
+    f.blocks = malloc_Block(f.blocks_cap);
     f.blocks_count = 0;
-    f.blocks_cap = blocks_cap;
     f.entry_block = INVALID_BLOCK;
 
-    f.values = values;
+    // Allocate values array
+    f.values_cap = FN_INIT_VALUES;
+    f.values = malloc_Value(f.values_cap);
     f.values_count = 0;
-    f.values_cap = values_cap;
 
-    f.locals = locals;
+    // Allocate locals array
+    f.locals_cap = FN_INIT_LOCALS;
+    f.locals = malloc_Local(f.locals_cap);
     f.locals_count = 0;
-    f.locals_cap = locals_cap;
 
     f.frame_size = 0;
     f.spill_slots = 0;

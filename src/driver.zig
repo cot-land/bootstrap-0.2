@@ -216,27 +216,10 @@ pub const Driver = struct {
         // =====================================================================
         // Phase 3: Lower all files to IR
         // =====================================================================
-        var lowerers = std.ArrayListUnmanaged(lower_mod.Lowerer){};
-        defer {
-            for (lowerers.items) |*low| {
-                low.deinit();
-            }
-            lowerers.deinit(self.allocator);
-        }
-
-        var all_irs = std.ArrayListUnmanaged(ir_mod.IR){};
-        defer {
-            for (all_irs.items) |*ir| {
-                ir.deinit();
-            }
-            all_irs.deinit(self.allocator);
-        }
-
-        var all_funcs = std.ArrayListUnmanaged(ir_mod.Func){};
-        defer all_funcs.deinit(self.allocator);
-
-        var all_globals = std.ArrayListUnmanaged(ir_mod.Global){};
-        defer all_globals.deinit(self.allocator);
+        // Following Go's pattern: all files share a single IR Builder (like ir.Package).
+        // This allows cross-file global variable references to resolve correctly.
+        var shared_builder = ir_mod.Builder.init(self.allocator, &type_reg);
+        defer shared_builder.deinit();
 
         for (parsed_files.items, 0..) |*pf, i| {
             debug.log(.lower, "Lowering: {s}", .{pf.path});
@@ -244,38 +227,45 @@ pub const Driver = struct {
             // Use the actual source for this file so errors show correct file:line:col
             var lower_err_reporter = errors_mod.ErrorReporter.init(&pf.source, null);
 
-            var lowerer = lower_mod.Lowerer.init(self.allocator, &pf.tree, &type_reg, &lower_err_reporter, &checkers.items[i]);
+            // Create lowerer with shared builder - globals from previous files are visible
+            var lowerer = lower_mod.Lowerer.initWithBuilder(
+                self.allocator,
+                &pf.tree,
+                &type_reg,
+                &lower_err_reporter,
+                &checkers.items[i],
+                shared_builder,
+            );
 
-            var ir = lowerer.lower() catch |e| {
-                lowerer.deinit();
+            // Lower this file - adds functions and globals to shared builder
+            lowerer.lowerToBuilder() catch |e| {
+                lowerer.deinitWithoutBuilder(); // Don't free shared builder
                 return e;
             };
 
             if (lower_err_reporter.hasErrors()) {
                 debug.log(.lower, "Lower failed for {s}", .{pf.path});
-                lowerer.deinit();
-                ir.deinit();
+                lowerer.deinitWithoutBuilder();
                 return error.LowerError;
             }
 
-            debug.log(.lower, "Lowered {} functions from {s}", .{ ir.funcs.len, pf.path });
+            // Update shared_builder from lowerer (it may have been modified)
+            shared_builder = lowerer.builder;
 
-            // Collect all functions
-            for (ir.funcs) |func| {
-                try all_funcs.append(self.allocator, func);
-            }
+            debug.log(.lower, "Lowered file {s}, builder now has {} functions, {} globals", .{
+                pf.path,
+                shared_builder.funcs.items.len,
+                shared_builder.globals.items.len,
+            });
 
-            // Collect all globals
-            for (ir.globals) |global| {
-                try all_globals.append(self.allocator, global);
-            }
-
-            try lowerers.append(self.allocator, lowerer);
-            try all_irs.append(self.allocator, ir);
-            self.debug.afterLower(&ir);
+            lowerer.deinitWithoutBuilder();
         }
 
-        debug.log(.lower, "Total: {} functions, {} globals across all files", .{ all_funcs.items.len, all_globals.items.len });
+        // Get final IR from shared builder
+        var final_ir = try shared_builder.getIR();
+        defer final_ir.deinit();
+
+        debug.log(.lower, "Total: {} functions, {} globals across all files", .{ final_ir.funcs.len, final_ir.globals.len });
 
         // =====================================================================
         // Phase 4: Generate code
@@ -287,39 +277,54 @@ pub const Driver = struct {
             .source = undefined,
             .tree = undefined,
         };
-        return try self.generateCode(all_funcs.items, all_globals.items, &type_reg, main_file.path, main_file.source_text);
+        return try self.generateCode(final_ir.funcs, final_ir.globals, &type_reg, main_file.path, main_file.source_text);
+    }
+
+    /// Normalize a path to canonical form (resolves "../" and symlinks).
+    /// Following Go's objabi.AbsFile pattern.
+    fn normalizePath(self: *Driver, path: []const u8) ![]const u8 {
+        return std.fs.cwd().realpathAlloc(self.allocator, path) catch {
+            // If realpath fails, return a copy of the original
+            return try self.allocator.dupe(u8, path);
+        };
     }
 
     /// Recursively parse a file and all its imports.
     /// Files are added in dependency order (imports before the importing file).
+    /// Following Go's LoadPackage pattern with absolute path deduplication.
     fn parseFileRecursive(
         self: *Driver,
         path: []const u8,
         parsed_files: *std.ArrayListUnmanaged(ParsedFile),
         seen_files: *std.StringHashMap(void),
-    ) !void {
-        // Check if already parsed
-        if (seen_files.contains(path)) {
-            debug.log(.parse, "Skipping already parsed: {s}", .{path});
+    ) anyerror!void {
+        // Normalize path to canonical form (like Go's objabi.AbsFile)
+        // This ensures "codegen/../ssa/func.cot" and "ssa/func.cot" are recognized as same file
+        const canonical_path = try self.normalizePath(path);
+        defer self.allocator.free(canonical_path);
+
+        // Check if already parsed (using canonical path)
+        if (seen_files.contains(canonical_path)) {
+            debug.log(.parse, "Skipping already parsed: {s}", .{canonical_path});
             return;
         }
 
         // Mark as seen to prevent cycles
-        const path_copy = try self.allocator.dupe(u8, path);
+        const path_copy = try self.allocator.dupe(u8, canonical_path);
         errdefer self.allocator.free(path_copy);
         try seen_files.put(path_copy, {});
 
-        debug.log(.parse, "Parsing: {s}", .{path});
+        debug.log(.parse, "Parsing: {s}", .{canonical_path});
 
         // Read source file
-        const source_text = std.fs.cwd().readFileAlloc(self.allocator, path, 1024 * 1024) catch |e| {
-            std.debug.print("Failed to read file: {s}: {any}\n", .{ path, e });
+        const source_text = std.fs.cwd().readFileAlloc(self.allocator, canonical_path, 1024 * 1024) catch |e| {
+            std.debug.print("Failed to read file: {s}: {any}\n", .{ canonical_path, e });
             return e;
         };
         errdefer self.allocator.free(source_text);
 
         // Create source wrapper
-        var src = source_mod.Source.init(self.allocator, path, source_text);
+        var src = source_mod.Source.init(self.allocator, canonical_path, source_text);
         errdefer src.deinit();
 
         // Create a simple error reporter
@@ -336,18 +341,19 @@ pub const Driver = struct {
         };
 
         if (err_reporter.hasErrors()) {
-            debug.log(.parse, "Parse failed for {s}", .{path});
+            debug.log(.parse, "Parse failed for {s}", .{canonical_path});
             return error.ParseError;
         }
 
-        debug.log(.parse, "Parsed {} nodes from {s}", .{ tree.nodes.items.len, path });
+        debug.log(.parse, "Parsed {} nodes from {s}", .{ tree.nodes.items.len, canonical_path });
 
         // Get imports and recursively parse them BEFORE adding this file
         // This ensures dependencies are processed first
         const imports = try tree.getImports(self.allocator);
         defer self.allocator.free(imports);
 
-        const file_dir = std.fs.path.dirname(path) orelse ".";
+        // Use canonical path's directory for resolving relative imports
+        const file_dir = std.fs.path.dirname(canonical_path) orelse ".";
         for (imports) |import_path| {
             const import_full_path = try std.fs.path.join(self.allocator, &.{ file_dir, import_path });
             defer self.allocator.free(import_full_path);

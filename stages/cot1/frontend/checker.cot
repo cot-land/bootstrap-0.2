@@ -22,7 +22,7 @@ type SymbolIndex = i64
 // Symbol Kinds
 // ============================================================================
 
-enum SymbolKind {
+enum CheckerSymbolKind {
     Variable,
     Constant,
     Function,
@@ -34,10 +34,10 @@ enum SymbolKind {
 // Symbol (Go's Object)
 // ============================================================================
 
-struct Symbol {
+struct CheckerSymbol {
     name_start: i64,     // Name offset in source
     name_len: i64,       // Name length
-    kind: SymbolKind,    // What kind of symbol
+    kind: CheckerSymbolKind,    // What kind of symbol
     type_idx: i64,       // Type index from TypeRegistry
     node_idx: i64,       // AST node where defined
     mutable: bool,       // var vs let/const
@@ -45,8 +45,8 @@ struct Symbol {
     const_value: i64,    // Value for constants (-1 if not const)
 }
 
-fn Symbol_new(name_start: i64, name_len: i64, kind: SymbolKind, type_idx: i64, node_idx: i64, mutable: bool) Symbol {
-    return Symbol{
+fn CheckerSymbol_new(name_start: i64, name_len: i64, kind: CheckerSymbolKind, type_idx: i64, node_idx: i64, mutable: bool) CheckerSymbol {
+    return CheckerSymbol{
         .name_start = name_start,
         .name_len = name_len,
         .kind = kind,
@@ -58,11 +58,11 @@ fn Symbol_new(name_start: i64, name_len: i64, kind: SymbolKind, type_idx: i64, n
     };
 }
 
-fn Symbol_newConst(name_start: i64, name_len: i64, type_idx: i64, node_idx: i64, value: i64) Symbol {
-    return Symbol{
+fn CheckerSymbol_newConst(name_start: i64, name_len: i64, type_idx: i64, node_idx: i64, value: i64) CheckerSymbol {
+    return CheckerSymbol{
         .name_start = name_start,
         .name_len = name_len,
-        .kind = SymbolKind.Constant,
+        .kind = CheckerSymbolKind.Constant,
         .type_idx = type_idx,
         .node_idx = node_idx,
         .mutable = false,
@@ -71,8 +71,8 @@ fn Symbol_newConst(name_start: i64, name_len: i64, type_idx: i64, node_idx: i64,
     };
 }
 
-fn Symbol_newExtern(name_start: i64, name_len: i64, kind: SymbolKind, type_idx: i64, node_idx: i64) Symbol {
-    return Symbol{
+fn CheckerSymbol_newExtern(name_start: i64, name_len: i64, kind: CheckerSymbolKind, type_idx: i64, node_idx: i64) CheckerSymbol {
+    return CheckerSymbol{
         .name_start = name_start,
         .name_len = name_len,
         .kind = kind,
@@ -91,7 +91,7 @@ fn Symbol_newExtern(name_start: i64, name_len: i64, kind: SymbolKind, type_idx: 
 // MAX_SYMBOLS removed - not used (ScopePool uses external arrays)
 
 struct Scope {
-    symbols: *Symbol,       // Array of symbols
+    symbols: *CheckerSymbol,       // Array of symbols
     count: i64,             // Number of symbols in this scope
     parent_idx: i64,        // Parent scope index (-1 for none)
 }
@@ -105,7 +105,7 @@ struct Scope {
 struct ScopePool {
     scopes: *Scope,         // Array of scopes
     count: i64,             // Number of scopes
-    symbols: *Symbol,       // Global symbol storage
+    symbols: *CheckerSymbol,       // Global symbol storage
     symbols_count: i64,     // Total symbols allocated
 }
 
@@ -126,9 +126,9 @@ fn ScopePool_new(pool: *ScopePool, parent_idx: i64) i64 {
     return idx;
 }
 
-fn ScopePool_define(pool: *ScopePool, scope_idx: i64, sym: Symbol) {
+fn ScopePool_define(pool: *ScopePool, scope_idx: i64, sym: CheckerSymbol) {
     let s: *Scope = pool.scopes + scope_idx;
-    let sym_ptr: *Symbol = s.symbols + s.count;
+    let sym_ptr: *CheckerSymbol = s.symbols + s.count;
     sym_ptr.* = sym;
     s.count = s.count + 1;
     pool.symbols_count = pool.symbols_count + 1;
@@ -145,8 +145,8 @@ fn ScopePool_lookupType(pool: *ScopePool, scope_idx: i64, source: *u8, name_star
         // Search symbols in this scope
         var i: i64 = 0;
         while i < s.count {
-            let sym: *Symbol = s.symbols + i;
-            if names_equal(source, sym.name_start, sym.name_len, source, name_start, name_len) {
+            let sym: *CheckerSymbol = s.symbols + i;
+            if Checker_names_equal(source, sym.name_start, sym.name_len, source, name_start, name_len) {
                 return sym.type_idx;
             }
             i = i + 1;
@@ -164,8 +164,8 @@ fn ScopePool_isDefined(pool: *ScopePool, scope_idx: i64, source: *u8, name_start
     let s: *Scope = pool.scopes + scope_idx;
     var i: i64 = 0;
     while i < s.count {
-        let sym: *Symbol = s.symbols + i;
-        if names_equal(source, sym.name_start, sym.name_len, source, name_start, name_len) {
+        let sym: *CheckerSymbol = s.symbols + i;
+        if Checker_names_equal(source, sym.name_start, sym.name_len, source, name_start, name_len) {
             return true;
         }
         i = i + 1;
@@ -174,7 +174,7 @@ fn ScopePool_isDefined(pool: *ScopePool, scope_idx: i64, source: *u8, name_start
 }
 
 // Check if two names are equal
-fn names_equal(src1: *u8, start1: i64, len1: i64, src2: *u8, start2: i64, len2: i64) bool {
+fn Checker_names_equal(src1: *u8, start1: i64, len1: i64, src2: *u8, start2: i64, len2: i64) bool {
     if len1 != len2 { return false; }
 
     var i: i64 = 0;
@@ -223,7 +223,7 @@ fn Checker_init(chk: *Checker, type_pool: *TypeRegistry, scope_pool: *ScopePool,
 fn Checker_checkExpr(chk: *Checker, node_idx: i64) i64 {
     if node_idx < 0 { return TYPE_INVALID; }
 
-    let node: *Node = node_get(chk.ast_pool, node_idx);
+    let node: *Node = Node_get(chk.ast_pool, node_idx);
 
     // IntLit -> i64
     if node.kind == NodeKind.IntLit {
@@ -433,7 +433,7 @@ fn Checker_checkExpr(chk: *Checker, node_idx: i64) i64 {
 fn Checker_checkStmt(chk: *Checker, node_idx: i64) bool {
     if node_idx < 0 { return false; }
 
-    let node: *Node = node_get(chk.ast_pool, node_idx);
+    let node: *Node = Node_get(chk.ast_pool, node_idx);
 
     // ReturnStmt -> check value matches return type
     if node.kind == NodeKind.ReturnStmt {
@@ -469,7 +469,7 @@ fn Checker_checkStmt(chk: *Checker, node_idx: i64) bool {
         var i: i64 = 0;
         var has_return: bool = false;
         while i < stmts_count {
-            let stmt_idx: i64 = node_child(chk.ast_pool, stmts_start, i);
+            let stmt_idx: i64 = Node_child(chk.ast_pool, stmts_start, i);
             if Checker_checkStmt(chk, stmt_idx) {
                 has_return = true;
             }
@@ -540,7 +540,7 @@ fn Checker_checkStmt(chk: *Checker, node_idx: i64) bool {
 fn Checker_checkVarDecl(chk: *Checker, node_idx: i64) {
     if node_idx < 0 { return; }
 
-    let node: *Node = node_get(chk.ast_pool, node_idx);
+    let node: *Node = Node_get(chk.ast_pool, node_idx);
     if node.kind != NodeKind.VarDecl { return; }
 
     let is_let: i64 = node.field0;      // 1 = let (immutable), 0 = var (mutable)
@@ -556,7 +556,7 @@ fn Checker_checkVarDecl(chk: *Checker, node_idx: i64) {
 
     // Create symbol and add to current scope
     let mutable: bool = is_let == 0;
-    let sym: Symbol = Symbol_new(name_start, name_len, SymbolKind.Variable,
+    let sym: CheckerSymbol = CheckerSymbol_new(name_start, name_len, CheckerSymbolKind.Variable,
                                   var_type, node_idx, mutable);
     ScopePool_define(chk.scope_pool, chk.current_scope, sym);
 }
@@ -617,7 +617,7 @@ fn Checker_resolveTypeNode(chk: *Checker, type_node_idx: i64) i64 {
         return TYPE_INVALID;
     }
 
-    let node: *Node = node_get(chk.ast_pool, type_node_idx);
+    let node: *Node = Node_get(chk.ast_pool, type_node_idx);
 
     // TypeExprNamed: look up type by name (handles built-in types and user types)
     if node.kind == NodeKind.TypeExprNamed {
@@ -678,7 +678,7 @@ fn Checker_resolveTypeNode(chk: *Checker, type_node_idx: i64) i64 {
         let elem_node_idx: i64 = node.field1;
         var array_size: i64 = 0;
         if size_node_idx >= 0 {
-            let size_node: *Node = node_get(chk.ast_pool, size_node_idx);
+            let size_node: *Node = Node_get(chk.ast_pool, size_node_idx);
             if size_node.kind == NodeKind.IntLit {
                 array_size = size_node.field0;
             }
@@ -711,7 +711,7 @@ fn Checker_resolveTypeNode(chk: *Checker, type_node_idx: i64) i64 {
 fn Checker_checkStructDecl(chk: *Checker, node_idx: i64) {
     if node_idx < 0 { return; }
 
-    let node: *Node = node_get(chk.ast_pool, node_idx);
+    let node: *Node = Node_get(chk.ast_pool, node_idx);
     if node.kind != NodeKind.StructDecl { return; }
 
     let name_start: i64 = node.field0;
@@ -729,8 +729,8 @@ fn Checker_checkStructDecl(chk: *Checker, node_idx: i64) {
     var i: i64 = 0;
     while i < fields_count {
         // Get FieldDecl node from AST children
-        let field_node_idx: i64 = node_child(chk.ast_pool, ast_fields_start, i);
-        let field_node: *Node = node_get(chk.ast_pool, field_node_idx);
+        let field_node_idx: i64 = Node_child(chk.ast_pool, ast_fields_start, i);
+        let field_node: *Node = Node_get(chk.ast_pool, field_node_idx);
 
         // FieldDecl: field0=name_start, field1=name_len, field2=type_start, field3=type_handle
         let fname_start: i64 = field_node.field0;
@@ -770,7 +770,7 @@ fn Checker_checkStructDecl(chk: *Checker, node_idx: i64) {
                                              struct_size, max_align);
 
     // Register as type name in scope
-    let sym: Symbol = Symbol_new(name_start, name_len, SymbolKind.TypeName,
+    let sym: CheckerSymbol = CheckerSymbol_new(name_start, name_len, CheckerSymbolKind.TypeName,
                                   struct_type, node_idx, false);
     ScopePool_define(chk.scope_pool, chk.current_scope, sym);
 }
@@ -779,7 +779,7 @@ fn Checker_checkStructDecl(chk: *Checker, node_idx: i64) {
 fn Checker_checkEnumDecl(chk: *Checker, node_idx: i64) {
     if node_idx < 0 { return; }
 
-    let node: *Node = node_get(chk.ast_pool, node_idx);
+    let node: *Node = Node_get(chk.ast_pool, node_idx);
     if node.kind != NodeKind.EnumDecl { return; }
 
     let name_start: i64 = node.field0;
@@ -791,7 +791,7 @@ fn Checker_checkEnumDecl(chk: *Checker, node_idx: i64) {
     let enum_type: i64 = TypeRegistry_makeEnum(chk.type_pool, name_start, name_len, variants_count);
 
     // Register as type name in scope
-    let sym: Symbol = Symbol_new(name_start, name_len, SymbolKind.TypeName,
+    let sym: CheckerSymbol = CheckerSymbol_new(name_start, name_len, CheckerSymbolKind.TypeName,
                                   enum_type, node_idx, false);
     ScopePool_define(chk.scope_pool, chk.current_scope, sym);
 }
@@ -802,7 +802,7 @@ fn Checker_checkEnumDecl(chk: *Checker, node_idx: i64) {
 
 // Check a function declaration
 fn Checker_checkFnDecl(chk: *Checker, node_idx: i64) {
-    let node: *Node = node_get(chk.ast_pool, node_idx);
+    let node: *Node = Node_get(chk.ast_pool, node_idx);
     if node.kind != NodeKind.FnDecl { return; }
 
     let name_start: i64 = node.field0;
@@ -847,7 +847,7 @@ fn Checker_errors(chk: *Checker) i64 {
 fn Checker_checkTypeAliasDecl(chk: *Checker, node_idx: i64) {
     if node_idx < 0 { return; }
 
-    let node: *Node = node_get(chk.ast_pool, node_idx);
+    let node: *Node = Node_get(chk.ast_pool, node_idx);
     if node.kind != NodeKind.TypeAliasDecl { return; }
 
     let name_start: i64 = node.field0;
@@ -858,7 +858,7 @@ fn Checker_checkTypeAliasDecl(chk: *Checker, node_idx: i64) {
     let target_type: i64 = Checker_resolveTypeNode(chk, type_node_idx);
 
     // Register alias name as a TypeName symbol pointing to the target type
-    let sym: Symbol = Symbol_new(name_start, name_len, SymbolKind.TypeName,
+    let sym: CheckerSymbol = CheckerSymbol_new(name_start, name_len, CheckerSymbolKind.TypeName,
                                   target_type, node_idx, false);
     ScopePool_define(chk.scope_pool, chk.current_scope, sym);
 }
@@ -870,7 +870,7 @@ fn Checker_checkFile(chk: *Checker) {
     // This registers types with correct field offsets in the type pool
     var i: i64 = 0;
     while i < chk.ast_pool.count {
-        let node: *Node = node_get(chk.ast_pool, i);
+        let node: *Node = Node_get(chk.ast_pool, i);
         if node.kind == NodeKind.StructDecl {
             Checker_checkStructDecl(chk, i);
         } else if node.kind == NodeKind.EnumDecl {

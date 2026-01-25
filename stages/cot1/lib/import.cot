@@ -1,0 +1,388 @@
+// Import Processing Module
+// Handles recursive file import parsing, path resolution, and cycle detection.
+//
+// Reference: src/driver.zig parseFileRecursive()
+// Reference: Go's cmd/compile/internal/noder LoadPackage pattern
+//
+// This module manages:
+// - Tracking which files have been imported (cycle detection)
+// - Resolving relative import paths (including ".." handling)
+// - Parsing imported files recursively
+// - Adjusting node source positions after import
+
+import "stdlib.cot"
+
+// Import AST types (NodePool, Node, NodeKind)
+import "../frontend/ast.cot"
+
+// ============================================================================
+// External Dependencies
+// ============================================================================
+
+extern fn malloc_u8(count: i64) *u8;
+extern fn malloc_i64(count: i64) *i64;
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+const IMPORT_MAX_PATHS: i64 = 100;
+const IMPORT_MAX_PATH_LEN: i64 = 256;
+
+// O_RDONLY is provided by safe_io.cot which is imported before this module
+
+// ============================================================================
+// Module Storage (self-allocated)
+// ============================================================================
+
+var im_paths: *u8 = null;           // Flat buffer for all paths
+var im_paths_cap: i64 = 0;
+var im_path_lens: *i64 = null;      // Length of each path
+var im_path_lens_cap: i64 = 0;
+var im_count: i64 = 0;              // Number of imported paths
+
+var im_base_dir: *u8 = null;        // Base directory for relative imports
+var im_base_dir_cap: i64 = 0;
+var im_base_dir_len: i64 = 0;
+
+var im_path_buf: *u8 = null;        // Temp buffer for building paths
+var im_path_buf_cap: i64 = 0;
+
+var im_importing_dir: *u8 = null;   // Directory of currently importing file
+var im_importing_dir_cap: i64 = 0;
+var im_importing_dir_len: i64 = 0;
+
+var im_storage_initialized: bool = false;
+
+// ============================================================================
+// Storage Allocation
+// ============================================================================
+
+fn Import_allocateStorage() {
+    if im_storage_initialized {
+        return;
+    }
+
+    im_paths_cap = IMPORT_MAX_PATHS * IMPORT_MAX_PATH_LEN;
+    im_paths = malloc_u8(im_paths_cap);
+
+    im_path_lens_cap = IMPORT_MAX_PATHS;
+    im_path_lens = malloc_i64(im_path_lens_cap);
+
+    im_base_dir_cap = IMPORT_MAX_PATH_LEN;
+    im_base_dir = malloc_u8(im_base_dir_cap);
+
+    im_path_buf_cap = IMPORT_MAX_PATH_LEN;
+    im_path_buf = malloc_u8(im_path_buf_cap);
+
+    im_importing_dir_cap = IMPORT_MAX_PATH_LEN;
+    im_importing_dir = malloc_u8(im_importing_dir_cap);
+
+    im_storage_initialized = true;
+}
+
+// Initialize import tracking for a new compilation
+fn Import_init() {
+    Import_allocateStorage();
+    im_count = 0;
+    im_base_dir_len = 0;
+    im_importing_dir_len = 0;
+}
+
+// ============================================================================
+// Path Tracking (Cycle Detection)
+// ============================================================================
+
+// Check if a path has already been imported
+fn Import_isPathImported(path: *u8, path_len: i64) bool {
+    var i: i64 = 0;
+    while i < im_count {
+        let stored_len_ptr: *i64 = im_path_lens + i;
+        let stored_len: i64 = stored_len_ptr.*;
+        if stored_len == path_len {
+            // Compare paths
+            let stored_path: *u8 = im_paths + (i * IMPORT_MAX_PATH_LEN);
+            var match: bool = true;
+            var j: i64 = 0;
+            while j < path_len {
+                let c1: *u8 = stored_path + j;
+                let c2: *u8 = path + j;
+                if c1.* != c2.* {
+                    match = false;
+                }
+                j = j + 1;
+            }
+            if match {
+                return true;
+            }
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// Add a path to the imported list
+fn Import_addPath(path: *u8, path_len: i64) {
+    if im_count >= IMPORT_MAX_PATHS {
+        return;
+    }
+    let dest: *u8 = im_paths + (im_count * IMPORT_MAX_PATH_LEN);
+    var i: i64 = 0;
+    while i < path_len and i < IMPORT_MAX_PATH_LEN {
+        let src_c: *u8 = path + i;
+        let dst_c: *u8 = dest + i;
+        dst_c.* = src_c.*;
+        i = i + 1;
+    }
+    let len_ptr: *i64 = im_path_lens + im_count;
+    len_ptr.* = path_len;
+    im_count = im_count + 1;
+}
+
+// ============================================================================
+// Path Resolution
+// ============================================================================
+
+// Extract directory from a file path (everything before last '/')
+fn Import_extractBaseDir(path: *u8, path_len: i64) {
+    // Find last '/' in path
+    var last_slash: i64 = -1;
+    var i: i64 = 0;
+    while i < path_len {
+        let c: *u8 = path + i;
+        if c.* == 47 {  // '/'
+            last_slash = i;
+        }
+        i = i + 1;
+    }
+
+    if last_slash < 0 {
+        // No directory component
+        im_base_dir_len = 0;
+        return;
+    }
+
+    // Copy directory part including the slash
+    i = 0;
+    while i <= last_slash and i < im_base_dir_cap {
+        let src: *u8 = path + i;
+        (im_base_dir + i).* = src.*;
+        i = i + 1;
+    }
+    im_base_dir_len = last_slash + 1;
+}
+
+// Get the base directory pointer and length
+fn Import_getBaseDir() *u8 {
+    return im_base_dir;
+}
+
+fn Import_getBaseDirLen() i64 {
+    return im_base_dir_len;
+}
+
+// Build full path: base_dir + import_path (simple concatenation)
+// Result stored in im_path_buf
+fn Import_buildPath(import_path: *u8, import_path_len: i64) i64 {
+    var result_len: i64 = 0;
+
+    // Copy base directory
+    var i: i64 = 0;
+    while i < im_base_dir_len and result_len < IMPORT_MAX_PATH_LEN {
+        (im_path_buf + result_len).* = (im_base_dir + i).*;
+        result_len = result_len + 1;
+        i = i + 1;
+    }
+
+    // Copy import path
+    i = 0;
+    while i < import_path_len and result_len < IMPORT_MAX_PATH_LEN {
+        let c: *u8 = import_path + i;
+        (im_path_buf + result_len).* = c.*;
+        result_len = result_len + 1;
+        i = i + 1;
+    }
+
+    // Null terminate
+    (im_path_buf + result_len).* = 0;
+    return result_len;
+}
+
+// Resolve an import path relative to a base directory, handling ".." components
+// Result stored in im_path_buf, returns length
+fn Import_resolvePath(base_dir: *u8, base_len: i64, rel_path: *u8, rel_len: i64) i64 {
+    // Copy base_dir to result buffer first
+    var result_len: i64 = 0;
+    var i: i64 = 0;
+    while i < base_len and result_len < IMPORT_MAX_PATH_LEN {
+        let c: *u8 = base_dir + i;
+        (im_path_buf + result_len).* = c.*;
+        result_len = result_len + 1;
+        i = i + 1;
+    }
+
+    // Process rel_path, handling ".." by removing last directory component
+    i = 0;
+    while i < rel_len {
+        // Check for "../" at current position
+        if i + 2 < rel_len {
+            let c0: *u8 = rel_path + i;
+            let c1: *u8 = rel_path + i + 1;
+            let c2: *u8 = rel_path + i + 2;
+            if c0.* == 46 and c1.* == 46 and c2.* == 47 {  // "../"
+                // Go up one directory: remove trailing slash first
+                if result_len > 0 {
+                    result_len = result_len - 1;
+                }
+                // Remove chars back to previous '/'
+                while result_len > 0 {
+                    let rc: *u8 = im_path_buf + (result_len - 1);
+                    if rc.* == 47 {  // '/'
+                        break;
+                    }
+                    result_len = result_len - 1;
+                }
+                i = i + 3;  // Skip "../"
+                continue;
+            }
+        }
+        // Check for ".." at end (no trailing slash)
+        if i + 1 == rel_len - 1 {
+            let c0: *u8 = rel_path + i;
+            let c1: *u8 = rel_path + i + 1;
+            if c0.* == 46 and c1.* == 46 {  // ".."
+                if result_len > 0 {
+                    result_len = result_len - 1;
+                }
+                while result_len > 0 {
+                    let rc: *u8 = im_path_buf + (result_len - 1);
+                    if rc.* == 47 {
+                        break;
+                    }
+                    result_len = result_len - 1;
+                }
+                i = i + 2;
+                continue;
+            }
+        }
+        // Regular character, copy it
+        if result_len < IMPORT_MAX_PATH_LEN {
+            let c: *u8 = rel_path + i;
+            (im_path_buf + result_len).* = c.*;
+            result_len = result_len + 1;
+        }
+        i = i + 1;
+    }
+
+    (im_path_buf + result_len).* = 0;
+    return result_len;
+}
+
+// Get the resolved path buffer
+fn Import_getPathBuf() *u8 {
+    return im_path_buf;
+}
+
+// Extract directory from a full path (everything up to and including last '/')
+// Returns the length of the directory portion
+fn Import_getDirFromPath(path: *u8, path_len: i64, out_dir: *u8, max_len: i64) i64 {
+    var last_slash: i64 = -1;
+    var i: i64 = 0;
+    while i < path_len {
+        let c: *u8 = path + i;
+        if c.* == 47 {  // '/'
+            last_slash = i;
+        }
+        i = i + 1;
+    }
+
+    if last_slash < 0 {
+        return 0;
+    }
+
+    // Copy up to and including the slash
+    i = 0;
+    while i <= last_slash and i < max_len {
+        let c: *u8 = path + i;
+        let d: *u8 = out_dir + i;
+        d.* = c.*;
+        i = i + 1;
+    }
+    return last_slash + 1;
+}
+
+// ============================================================================
+// Node Position Adjustment
+// ============================================================================
+
+// Adjust source positions in newly parsed nodes to be absolute in combined source
+// This is needed because the parser reports positions relative to the string slice
+// it was given, but we need absolute positions for the combined source buffer.
+fn Import_adjustNodePositions(pool: *NodePool, start_idx: i64, end_idx: i64, offset: i64) {
+    var i: i64 = start_idx;
+    while i < end_idx {
+        let node: *Node = pool.nodes + i;
+
+        // Adjust source span (all nodes have these)
+        node.start = node.start + offset;
+        node.end = node.end + offset;
+
+        // Adjust kind-specific position fields
+        // These are fields that contain source positions (not indices or values)
+        if node.kind == NodeKind.Ident {
+            // field0 = name_start (source position)
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.FnDecl {
+            // field0 = name_start
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.ExternFnDecl {
+            // field0 = name_start
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.VarDecl {
+            // field0 = is_let, field1 = name_start, field2 = name_len
+            node.field1 = node.field1 + offset;
+        } else if node.kind == NodeKind.ConstDecl {
+            // field0 = name_start
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.ImportDecl {
+            // field0 = path_start
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.StructDecl {
+            // field0 = name_start
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.EnumDecl {
+            // field0 = name_start
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.FieldDecl {
+            // field0 = name_start
+            // Note: field2 is type_handle (not a source position)
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.StringLit {
+            // field0 = content_start (source position of string content)
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.ParamDecl {
+            // field0 = name_start (source position)
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.GlobalVarDecl {
+            // field0 = is_mutable, field1 = name_start, field2 = name_len
+            node.field1 = node.field1 + offset;
+        } else if node.kind == NodeKind.FieldInit {
+            // field0 = field_name_start (source position)
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.StructLit {
+            // field0 = type_name_start (source position)
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.FieldAccess {
+            // field1 = field_name_start (source position)
+            node.field1 = node.field1 + offset;
+        } else if node.kind == NodeKind.TypeExprNamed {
+            // field0 = name_start (source position), field1 = name_len (not adjusted)
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.BuiltinCall {
+            // field0 = name_start (source position after @)
+            node.field0 = node.field0 + offset;
+        }
+
+        i = i + 1;
+    }
+}

@@ -238,20 +238,57 @@ pub const Checker = struct {
     // ========================================================================
 
     /// Type check an entire file.
-    /// Two-phase approach like Go's Checker:
-    /// 1. Collect all declarations (add to scope)
-    /// 2. Check all declarations (type-check bodies)
+    /// Three-phase approach like Go's Checker:
+    /// 1. Collect all type declarations (struct, enum, union, type_alias)
+    /// 2. Collect all function/variable declarations (can reference types from step 1)
+    /// 3. Check all declarations (type-check bodies)
+    ///
+    /// Reference: Go's cmd/compile/internal/types2/resolver.go
+    /// This ordering allows forward references: extern fn foo() *SomeStruct; struct SomeStruct { ... }
     pub fn checkFile(self: *Checker) CheckError!void {
         const file = self.tree.file orelse return;
 
-        // Phase 1: Collect all top-level declarations
+        // Phase 1a: Collect all type declarations first
+        // This enables forward references to types in function signatures
         for (file.decls) |decl_idx| {
-            try self.collectDecl(decl_idx);
+            try self.collectTypeDecl(decl_idx);
+        }
+
+        // Phase 1b: Collect all function/variable declarations
+        // Types are now available for function signatures
+        for (file.decls) |decl_idx| {
+            try self.collectNonTypeDecl(decl_idx);
         }
 
         // Phase 2: Check all declarations
         for (file.decls) |decl_idx| {
             try self.checkDecl(decl_idx);
+        }
+    }
+
+    /// Collect type declarations only (struct, enum, union, type_alias).
+    fn collectTypeDecl(self: *Checker, idx: NodeIndex) CheckError!void {
+        const node = self.tree.getNode(idx) orelse return;
+        const decl = node.asDecl() orelse return;
+
+        switch (decl) {
+            .struct_decl, .enum_decl, .union_decl, .type_alias => {
+                try self.collectDecl(idx);
+            },
+            else => {},
+        }
+    }
+
+    /// Collect non-type declarations (fn, var).
+    fn collectNonTypeDecl(self: *Checker, idx: NodeIndex) CheckError!void {
+        const node = self.tree.getNode(idx) orelse return;
+        const decl = node.asDecl() orelse return;
+
+        switch (decl) {
+            .fn_decl, .var_decl => {
+                try self.collectDecl(idx);
+            },
+            else => {},
         }
     }
 
@@ -263,6 +300,15 @@ pub const Checker = struct {
         switch (decl) {
             .fn_decl => |f| {
                 if (self.scope.isDefined(f.name)) {
+                    // Allow duplicate extern declarations (needed for modular imports)
+                    if (f.is_extern) {
+                        if (self.scope.lookup(f.name)) |existing| {
+                            if (existing.is_extern) {
+                                // Both are extern - allow duplicate
+                                return;
+                            }
+                        }
+                    }
                     self.errRedefined(f.span.start, f.name);
                     return;
                 }
@@ -1015,6 +1061,18 @@ pub const Checker = struct {
             }
 
             return target_type;
+        } else if (std.mem.eql(u8, bc.name, "ptrToInt")) {
+            // @ptrToInt(ptr) - converts pointer to i64
+            const source_type = try self.checkExpr(bc.args[0]);
+            const source_info = self.types.get(source_type);
+
+            // Source must be a pointer type
+            if (source_info != .pointer) {
+                self.err.errorWithCode(bc.span.start, .e300, "@ptrToInt requires a pointer argument");
+                return invalid_type;
+            }
+
+            return TypeRegistry.I64;
         } else {
             self.err.errorWithCode(bc.span.start, .e300, "unknown builtin");
             return invalid_type;

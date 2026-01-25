@@ -17,6 +17,9 @@
 
 const NUM_REGS: i64 = 32;
 
+// Initial capacity for per-value state (matches bootstrap Zig pattern)
+const RA_INIT_VAL_STATES: i64 = 10000;
+
 // Register numbers
 const REG_X0: i64 = 0;
 const REG_X1: i64 = 1;
@@ -118,6 +121,10 @@ fn RegState_clear(rs: *RegState) {
     rs.dirty = false;
 }
 
+// Malloc externs for self-allocation
+extern fn malloc_ValState(count: i64) *ValState;
+extern fn malloc_RegState(count: i64) *RegState;
+
 // ============================================================================
 // Register Allocator State
 // ============================================================================
@@ -143,23 +150,25 @@ struct RegAllocState {
     liveness: *LivenessResult,
 }
 
-fn RegAlloc_init(ra: *RegAllocState, f: *Func,
-                  val_states: *ValState, val_states_cap: i64,
-                  reg_states: *RegState,
-                  lr: *LivenessResult) {
+// RegAllocState owns its storage (matches bootstrap Zig pattern)
+fn RegAlloc_init(ra: *RegAllocState, f: *Func, lr: *LivenessResult) {
     ra.func = f;
-    ra.val_states = val_states;
-    ra.val_states_count = 0;
-    ra.val_states_cap = val_states_cap;
-    ra.reg_states = reg_states;
+    ra.liveness = lr;
     ra.used = 0;
     ra.num_spills = 0;
-    ra.liveness = lr;
+
+    // Allocate val_states array
+    ra.val_states_cap = RA_INIT_VAL_STATES;
+    ra.val_states = malloc_ValState(ra.val_states_cap);
+    ra.val_states_count = 0;
+
+    // Allocate reg_states array (fixed size: NUM_REGS)
+    ra.reg_states = malloc_RegState(NUM_REGS);
 
     // Initialize register states
     var i: i64 = 0;
     while i < NUM_REGS {
-        let rs: *RegState = reg_states + i;
+        let rs: *RegState = ra.reg_states + i;
         rs.* = RegState_new();
         i = i + 1;
     }
