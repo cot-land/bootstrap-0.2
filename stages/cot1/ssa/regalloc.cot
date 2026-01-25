@@ -9,8 +9,7 @@
 // Reference: ~/learning/go/src/cmd/compile/internal/ssa/regalloc.go
 // Reference: bootstrap-0.2/src/ssa/regalloc.zig
 
-// Only import liveness.cot - it transitively imports func.cot → block.cot → value.cot → op.cot
-import "liveness.cot"
+// Imports removed - liveness.cot (and func.cot etc.) already imported via main.cot
 
 // ============================================================================
 // ARM64 Register Definitions

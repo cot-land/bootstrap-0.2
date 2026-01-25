@@ -4,154 +4,48 @@
 // Usage: cot0 <source.cot> -o <output>
 
 // ============================================================================
-// Syscall Wrappers (libc) - MUST come before any imports
+// Syscall Externs - MUST come before any imports that use them
 // ============================================================================
 
-// Standard library - print, println, write
-import "lib/stdlib.cot"
-
-// System calls needed by error handling and main
+// System calls
 extern fn open(path: *u8, flags: i32, mode: i32) i32;
 extern fn read(fd: i32, buf: *u8, count: i64) i64;
 extern fn close(fd: i32) i32;
-extern fn exit(code: i32);
+extern fn lseek(fd: i32, offset: i64, whence: i32) i64;
 
 // Crash handler from cot_runtime
 extern fn install_crash_handler();
 
 // ============================================================================
-// Inline Error Infrastructure (copied from lib/error.cot)
+// Library Imports
 // ============================================================================
 
-// stderr helpers
-fn stderr_str(s: string) {
-    write(2, s.ptr, s.len);
-}
+// Standard library - print, println, write
+import "lib/stdlib.cot"
 
-fn stderr_ptr(s: *u8) {
-    if s == null { return; }
-    var len: i64 = 0;
-    while (s + len).* != 0 {
-        len = len + 1;
-    }
-    write(2, s, len);
-}
+// Error infrastructure - panic, assert, bounds checks
+import "lib/error.cot"
 
-fn stderr_int(n: i64) {
-    var buf: [32]u8;
-    var i: i64 = 31;
-    var is_neg: bool = n < 0;
-    var val: i64 = n;
-    if is_neg { val = 0 - n; }
-    if val == 0 {
-        buf[i] = 48;
-        i = i - 1;
-    } else {
-        while val > 0 {
-            buf[i] = @intCast(u8, 48 + (val % 10));
-            val = val / 10;
-            i = i - 1;
-        }
-    }
-    if is_neg {
-        buf[i] = 45;
-        i = i - 1;
-    }
-    write(2, &buf[i + 1], 31 - i);
-}
+// Safe file I/O wrappers - validates parameters, tracks file descriptors
+import "lib/safe_io.cot"
 
-fn stderr_hex(n: i64) {
-    var buf: [18]u8;
-    buf[0] = 48;  // '0'
-    buf[1] = 120; // 'x'
-    var i: i64 = 17;
-    var val: i64 = n;
-    if val == 0 {
-        buf[i] = 48;
-        i = i - 1;
-    } else {
-        while val > 0 and i > 1 {
-            let digit: i64 = val % 16;
-            if digit < 10 {
-                buf[i] = @intCast(u8, 48 + digit);
-            } else {
-                buf[i] = @intCast(u8, 97 + digit - 10);
-            }
-            val = val / 16;
-            i = i - 1;
-        }
-    }
-    write(2, &buf[0], 2);
-    write(2, &buf[i + 1], 17 - i);
-}
+// Safe array access - bounds checking, null checks
+import "lib/safe_array.cot"
 
-// Core panic/assert
-fn panic(msg: *u8) {
-    stderr_str("\n================================================================================\n");
-    stderr_str("PANIC: ");
-    stderr_ptr(msg);
-    stderr_str("\n================================================================================\n");
-    exit(1);
-}
+// Type/Kind validation helpers - NodeKind_name, IRNodeKind_name, assert_* functions
+import "lib/validate.cot"
 
-fn panic_int(msg: *u8, value: i64) {
-    stderr_str("\n================================================================================\n");
-    stderr_str("PANIC: ");
-    stderr_ptr(msg);
-    stderr_str(": ");
-    stderr_int(value);
-    stderr_str("\n================================================================================\n");
-    exit(1);
-}
+// Compiler invariant checks - Scanner, Parser, Lowerer, SSA invariants
+import "lib/invariants.cot"
 
-fn assert(condition: bool, msg: *u8) {
-    if not condition {
-        panic(msg);
-    }
-}
+// Debug tracing infrastructure - phase tracking, checkpoints, hexdump
+import "lib/debug.cot"
 
-fn assert_not_null(ptr: *u8, name: *u8) {
-    if ptr == null {
-        stderr_str("\n================================================================================\n");
-        stderr_str("NULL POINTER: ");
-        stderr_ptr(name);
-        stderr_str(" is null\n================================================================================\n");
-        exit(1);
-    }
-}
+// Safe memory allocation - checked malloc/realloc/free with tracking
+import "lib/safe_alloc.cot"
 
-fn assert_not_null_i64(ptr: *i64, name: *u8) {
-    if ptr == null {
-        stderr_str("\n================================================================================\n");
-        stderr_str("NULL POINTER: ");
-        stderr_ptr(name);
-        stderr_str(" (*i64) is null\n================================================================================\n");
-        exit(1);
-    }
-}
-
-fn assert_bounds(index: i64, length: i64, name: *u8) {
-    if index < 0 {
-        stderr_str("\n================================================================================\n");
-        stderr_str("BOUNDS ERROR: ");
-        stderr_ptr(name);
-        stderr_str("[");
-        stderr_int(index);
-        stderr_str("] - negative index\n================================================================================\n");
-        exit(1);
-    }
-    if index >= length {
-        stderr_str("\n================================================================================\n");
-        stderr_str("BOUNDS ERROR: ");
-        stderr_ptr(name);
-        stderr_str("[");
-        stderr_int(index);
-        stderr_str("] out of bounds (length=");
-        stderr_int(length);
-        stderr_str(")\n================================================================================\n");
-        exit(1);
-    }
-}
+// Debug initialization - command-line parsing and startup/shutdown
+import "lib/debug_init.cot"
 
 // ============================================================================
 // Compiler Module Imports
@@ -172,6 +66,11 @@ import "codegen/genssa.cot"
 // Must be imported AFTER genssa.cot to avoid duplicate func.cot imports
 import "ssa/builder.cot"
 import "ssa/passes/expand_calls.cot"
+import "ssa/passes/lower.cot"
+import "ssa/passes/decompose.cot"
+import "ssa/passes/schedule.cot"
+import "ssa/liveness.cot"
+import "ssa/regalloc.cot"
 
 // Object file writer
 import "obj/macho.cot"
@@ -200,11 +99,8 @@ extern fn malloc_BlockMapping(count: i64) *BlockMapping;
 extern fn malloc_VarDef(count: i64) *VarDef;
 extern fn malloc_TypeAliasEntry(count: i64) *TypeAliasEntry;
 
-// File flags (macOS)
-const O_RDONLY: i32 = 0;
-const O_WRONLY: i32 = 1;
-const O_CREAT: i32 = 512;
-const O_TRUNC: i32 = 1024;
+// File flags now provided by lib/safe_io.cot
+// O_RDONLY, O_WRONLY, O_CREAT, O_TRUNC defined there
 const FILE_MODE: i32 = 420;  // 0o644
 
 // ============================================================================
@@ -468,19 +364,10 @@ fn Driver_setDebugPhases(phases: *u8, phases_len: i64) {
 // ============================================================================
 
 fn read_file(path: *u8) i64 {
-    let fd: i32 = open(path, O_RDONLY, 0);
-    if fd < 0 {
-        print("Error: Cannot open file\n");
-        return -1;
-    }
-
-    g_source_len = read(fd, g_source, g_source_cap - 1);
-    close(fd);
-
-    if g_source_len < 0 {
-        print("Error: Cannot read file\n");
-        return -1;
-    }
+    // Use safe_io wrappers - validates parameters and provides clear errors
+    let fd: i32 = safe_open_read(path, "read_file".ptr);
+    g_source_len = safe_read_all(fd, g_source, g_source_cap - 1, "read_file".ptr);
+    safe_close(fd, "read_file".ptr);
 
     let src_end: *u8 = g_source + g_source_len;
     src_end.* = 0;
@@ -488,21 +375,11 @@ fn read_file(path: *u8) i64 {
 }
 
 fn write_file(path: *u8, data: *u8, data_len: i64) i64 {
-    let fd: i32 = open(path, O_WRONLY | O_CREAT | O_TRUNC, FILE_MODE);
-    if fd < 0 {
-        print("Error: Cannot open output file\n");
-        return -1;
-    }
-
-    let written: i64 = write(fd, data, data_len);
-    close(fd);
-
-    if written != data_len {
-        print("Error: Failed to write output\n");
-        return -1;
-    }
-
-    return written;
+    // Use safe_io wrappers - validates parameters and provides clear errors
+    let fd: i32 = safe_open_write(path, "write_file".ptr);
+    safe_write_all(fd, data, data_len, "write_file".ptr);
+    safe_close(fd, "write_file".ptr);
+    return data_len;
 }
 
 // ============================================================================
@@ -1804,15 +1681,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
 // Command Line Parsing
 // ============================================================================
 
-// Get string length (null-terminated)
+// Get string length (null-terminated) - uses safe_strlen with max limit
 fn strlen(s: *u8) i64 {
-    var len: i64 = 0;
-    var ptr: *u8 = s;
-    while ptr.* != 0 {
-        len = len + 1;
-        ptr = ptr + 1;
-    }
-    return len;
+    // Use safe_strlen with 64KB max to prevent infinite loops on bad strings
+    return safe_strlen(s, 65536, "strlen".ptr);
 }
 
 // Compare two strings for equality
@@ -1862,8 +1734,8 @@ fn main(argc: i64, argv: **u8) i64 {
     print("Cot0 Self-Hosting Compiler v0.2\n");
     print("================================\n\n");
 
-    // TODO: Initialize debug infrastructure once import integration is fixed
-    // debug_startup(argc, argv);
+    // Initialize debug infrastructure - parses -d, -v, -t, --debug-* flags
+    debug_startup(argc, argv);
 
     // Allocate ALL dynamic buffers - NO STATIC ARRAYS
 
@@ -2091,8 +1963,8 @@ fn main(argc: i64, argv: **u8) i64 {
         print("\n");
     }
 
-    // TODO: Print debug summary once import integration is fixed
-    // debug_shutdown();
+    // Print debug summary if verbose mode was enabled
+    debug_shutdown();
 
     return result;
 }

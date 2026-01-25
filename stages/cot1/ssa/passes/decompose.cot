@@ -11,11 +11,7 @@
 // 3. slice_ptr(string_make(ptr, len)) → copy(ptr)
 // 4. slice_len(string_make(ptr, len)) → copy(len)
 
-import "../func.cot"
-import "../value.cot"
-import "../block.cot"
-import "../op.cot"
-import "../../frontend/types.cot"
+// Imports removed - func.cot, value.cot, block.cot, op.cot, types.cot already imported via genssa.cot and frontend/
 
 // Run the decompose pass on a function
 // Reference: decompose.zig:47 decompose

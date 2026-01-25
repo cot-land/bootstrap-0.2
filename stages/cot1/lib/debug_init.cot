@@ -57,55 +57,55 @@ fn parse_debug_flag(arg: *u8) bool {
     if arg == null { return false; }
 
     // -d or --debug
-    if streq_flag(arg, "-d") or streq_flag(arg, "--debug") {
+    if streq_flag(arg, "-d".ptr) or streq_flag(arg, "--debug".ptr) {
         g_debug_verbose = true;
         return true;
     }
 
     // -v or --verbose
-    if streq_flag(arg, "-v") or streq_flag(arg, "--verbose") {
+    if streq_flag(arg, "-v".ptr) or streq_flag(arg, "--verbose".ptr) {
         g_debug_verbose = true;
         return true;
     }
 
     // -t or --trace
-    if streq_flag(arg, "-t") or streq_flag(arg, "--trace") {
+    if streq_flag(arg, "-t".ptr) or streq_flag(arg, "--trace".ptr) {
         g_debug_trace = true;
         return true;
     }
 
     // --debug-all
-    if streq_flag(arg, "--debug-all") {
+    if streq_flag(arg, "--debug-all".ptr) {
         debug_enable_all();
         return true;
     }
 
     // --debug-ir
-    if streq_flag(arg, "--debug-ir") {
+    if streq_flag(arg, "--debug-ir".ptr) {
         g_debug_ir = true;
         return true;
     }
 
     // --debug-ssa
-    if streq_flag(arg, "--debug-ssa") {
+    if streq_flag(arg, "--debug-ssa".ptr) {
         g_debug_ssa = true;
         return true;
     }
 
     // --debug-codegen
-    if streq_flag(arg, "--debug-codegen") {
+    if streq_flag(arg, "--debug-codegen".ptr) {
         g_debug_codegen = true;
         return true;
     }
 
     // --debug-memory
-    if streq_flag(arg, "--debug-memory") {
+    if streq_flag(arg, "--debug-memory".ptr) {
         g_debug_memory = true;
         return true;
     }
 
     // --debug-phase
-    if streq_flag(arg, "--debug-phase") {
+    if streq_flag(arg, "--debug-phase".ptr) {
         g_debug_phase = true;
         return true;
     }
@@ -141,7 +141,7 @@ fn debug_init() {
     // Initialize error tracking
     g_alloc_count = 0;
     g_alloc_bytes = 0;
-    g_error_context_count = 0;
+    g_error_context_depth = 0;
 
     // Initialize tracing
     g_trace_depth = 0;
@@ -230,7 +230,7 @@ fn debug_print_summary() {
     stderr_newline();
     if g_current_phase != null {
         stderr_str("  Last phase: ");
-        stderr_str(g_current_phase);
+        stderr_ptr(g_current_phase);
         stderr_newline();
     }
 
@@ -270,34 +270,34 @@ fn debug_shutdown() {
 // =============================================================================
 
 fn compiler_phase_read() {
-    phase_start("Reading source file");
+    phase_start("Reading source file".ptr);
 }
 
 fn compiler_phase_parse() {
-    phase_start("Parsing");
+    phase_start("Parsing".ptr);
 }
 
 fn compiler_phase_lower() {
-    phase_start("Lowering to IR");
+    phase_start("Lowering to IR".ptr);
 }
 
 fn compiler_phase_ssa() {
-    phase_start("Building SSA");
+    phase_start("Building SSA".ptr);
 }
 
 fn compiler_phase_regalloc() {
-    phase_start("Register allocation");
+    phase_start("Register allocation".ptr);
 }
 
 fn compiler_phase_codegen() {
-    phase_start("Code generation");
+    phase_start("Code generation".ptr);
 }
 
 fn compiler_phase_link() {
-    phase_start("Linking");
+    phase_start("Linking".ptr);
 }
 
 fn compiler_phase_write() {
-    phase_start("Writing output");
+    phase_start("Writing output".ptr);
 }
 

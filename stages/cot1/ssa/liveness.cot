@@ -7,8 +7,7 @@
 // Reference: ~/learning/go/src/cmd/compile/internal/ssa/regalloc.go
 // Reference: bootstrap-0.2/src/ssa/liveness.zig
 
-// Only import func.cot - it transitively imports block.cot → value.cot → op.cot
-import "func.cot"
+// Imports removed - func.cot already imported via genssa.cot
 
 // ============================================================================
 // Distance Constants (Go ref: regalloc.go:141-143)

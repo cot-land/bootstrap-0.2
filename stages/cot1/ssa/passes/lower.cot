@@ -8,10 +8,7 @@
 // - Add/Sub with small constant → mark for immediate encoding
 // - Div by power of 2 (unsigned) → Shr (shift right)
 
-import "../func.cot"
-import "../value.cot"
-import "../block.cot"
-import "../op.cot"
+// Imports removed - func.cot, value.cot, block.cot, op.cot already imported via genssa.cot
 
 // Check if value is a power of 2
 fn isPowerOf2(n: i64) bool {

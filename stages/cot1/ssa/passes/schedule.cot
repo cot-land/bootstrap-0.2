@@ -11,10 +11,7 @@
 // 3. Verify ordering satisfies dependencies
 // 4. Reorder if necessary using swaps
 
-import "../func.cot"
-import "../value.cot"
-import "../block.cot"
-import "../op.cot"
+// Imports removed - func.cot, value.cot, block.cot, op.cot already imported via genssa.cot
 
 // Priority scores - lower numbers scheduled earlier (Go's pattern)
 // Reference: schedule.zig Score enum
@@ -159,16 +156,12 @@ fn updateValueReferences(f: *Func, old_id: i64, new_id: i64) {
         i = i + 1;
     }
 
-    // Also update block controls
+    // Also update block controls (single control value per block)
     var b: i64 = 0;
     while b < f.blocks_count {
         let block: *Block = Func_getBlock(f, b);
-        var c: i64 = 0;
-        while c < block.control_count {
-            if block.controls[c] == old_id {
-                block.controls[c] = new_id;
-            }
-            c = c + 1;
+        if block.control == old_id {
+            block.control = new_id;
         }
         b = b + 1;
     }
