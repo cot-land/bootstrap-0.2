@@ -6,7 +6,19 @@
 
 Dead code analysis complete: **cot1 has zero dead code** in its compilation path.
 
-However, cot1 is missing significant functionality compared to the Zig bootstrap compiler:
+### Recent Progress
+
+| Module | Status | Notes |
+|--------|--------|-------|
+| ssa/compile.cot | **NEW** | Pass infrastructure (Pass, Config, PassStats, Phase) |
+| ssa/debug.cot | **NEW** | SSA dump (Text/DOT) and verify() function |
+| ssa/op.cot | **UPDATED** | Added Op_toString for debug output |
+| lib/source.cot | **NEW** | Position tracking (Pos, Span, Source, Position) |
+| lib/reporter.cot | **NEW** | ErrorReporter with error codes, accumulates errors |
+| @ptrCast builtin | **NEW** | Two-argument pointer type conversion |
+| eprint/eprintln | **NEW** | Polymorphic stderr printing (strings + integers) |
+
+### Remaining Gaps
 
 | Category | Zig Lines | Cot1 Lines | Gap |
 |----------|-----------|------------|-----|
@@ -14,22 +26,24 @@ However, cot1 is missing significant functionality compared to the Zig bootstrap
 | SSA | 8,538 | 6,564 | 23% smaller |
 | Codegen | 162,000+ | 3,832 | 97% smaller |
 
-## Reachable Files (41 files, 100% function usage)
+## Reachable Files (45 files, 100% function usage)
 
 ```
 main.cot
-├── lib/ (12 files)
+├── lib/ (14 files)
 │   ├── stdlib.cot, list.cot, strmap.cot
 │   ├── error.cot, debug.cot, debug_init.cot
 │   ├── safe_io.cot, safe_array.cot, safe_alloc.cot
 │   ├── validate.cot, invariants.cot, import.cot
+│   ├── source.cot, reporter.cot
 ├── frontend/ (8 files)
 │   ├── token.cot, scanner.cot, ast.cot, types.cot
 │   ├── parser.cot, checker.cot, ir.cot, lower.cot
-├── ssa/ (13 files)
+├── ssa/ (15 files)
 │   ├── value.cot, block.cot, func.cot, op.cot
 │   ├── builder.cot, dom.cot, abi.cot
 │   ├── stackalloc.cot, liveness.cot, regalloc.cot
+│   ├── compile.cot, debug.cot
 │   └── passes/ (4 files)
 │       ├── expand_calls.cot, lower.cot
 │       ├── decompose.cot, schedule.cot
@@ -43,51 +57,59 @@ main.cot
 
 ## Critical Missing Modules
 
-### 1. src/ssa/compile.zig - Pass Infrastructure (MISSING)
+### 1. src/ssa/compile.zig - Pass Infrastructure (DONE)
 
 **Purpose**: Orchestrates compiler passes over SSA
-**Impact**: No systematic pass management; passes hardcoded in main.cot
-**Lines in Zig**: 547
+**Status**: Implemented in ssa/compile.cot
+**Lines**: Zig 547 | Cot1 ~250
 
-Key missing:
-- `Pass` struct with dependencies and analysis invalidation
+Implemented:
+- `Pass` struct with name, required/disabled flags
+- `PassId` enum for pass identification
 - `Config` struct for optimization flags
-- `compile()` function for running pass sequence
-- `runPass()` function for individual passes
+- `PassStats` struct for timing/metrics
+- `Phase` enum for compilation phases
+- `VerifyResult` struct for verification feedback
 
-### 2. src/ssa/debug.zig - SSA Verification (MISSING)
+### 2. src/ssa/debug.zig - SSA Verification (DONE)
 
 **Purpose**: HTML/DOT visualization and invariant verification
-**Impact**: Cannot visualize SSA or verify correctness
-**Lines in Zig**: 645
+**Status**: Implemented in ssa/debug.cot
+**Lines**: Zig 645 | Cot1 ~350
 
-Key missing:
-- `dump()` function for text/DOT/HTML output
-- `verify()` function for SSA invariants
-- `ValueSnapshot`, `BlockSnapshot` for tracking changes
+Implemented:
+- `DumpFormat` enum (Text, Dot)
+- `Func_dumpText()` - human-readable dump
+- `Func_dumpDot()` - Graphviz DOT format
+- `Func_verify()` - SSA invariant verification
+- `BlockKind_name()` helper
+- Edge bidirectional invariant checks
 
-### 3. src/frontend/source.zig - Position Tracking (MISSING)
+### 3. src/frontend/source.zig - Position Tracking (DONE)
 
 **Purpose**: Compact position representation and line/column computation
-**Impact**: Position tracking scattered across modules
-**Lines in Zig**: 336
+**Status**: Implemented in lib/source.cot
+**Lines**: Zig 336 | Cot1 303
 
-Key missing:
-- `Pos` struct (compact byte-offset)
-- `Position` struct (line/column)
+Implemented:
+- `Pos` functions (byte-offset tracking)
+- `Position` struct (line/column for display)
 - `Span` struct (position ranges)
-- Line/column computation from byte offset
+- `Source` struct with lazy line offset computation
+- `Source_printErrorContext()` for caret indicators
 
-### 4. src/frontend/errors.zig - Error Collection (PARTIAL)
+### 4. src/frontend/errors.zig - Error Collection (DONE)
 
 **Purpose**: Structured error handling without immediate panic
-**Impact**: All errors are panics; cannot collect multiple errors
-**Lines in Zig**: 346 | **Cot1**: ~200 (lib/error.cot)
+**Status**: Implemented in lib/reporter.cot
+**Lines**: Zig 346 | Cot1 348
 
-Key missing:
-- `ErrorReporter` struct (accumulates errors)
-- `ErrorCode` enum (40+ structured codes)
-- `hasErrors()`, `getErrors()` methods
+Implemented:
+- `ErrorReporter` struct (accumulates up to 64 errors)
+- Error codes (1xx scanner, 2xx parser, 3xx type, 4xx semantic)
+- `ErrorReporter_hasErrors()`, `ErrorReporter_errorCount()`
+- Convenience functions for common error patterns
+- Source context printing with caret indicators
 
 ### 5. src/codegen/arm64.zig - ARM64 Codegen (1% complete)
 
@@ -124,8 +146,8 @@ Zig has 8+ optimization passes not implemented in cot1:
 | frontend/checker.zig | frontend/checker.cot | 95% |
 | frontend/ir.zig | frontend/ir.cot | 95% |
 | frontend/lower.zig | frontend/lower.cot | 95% |
-| frontend/source.zig | None | 0% MISSING |
-| frontend/errors.zig | lib/error.cot | 30% |
+| frontend/source.zig | lib/source.cot | 90% |
+| frontend/errors.zig | lib/reporter.cot | 95% |
 | frontend/ssa_builder.zig | ssa/builder.cot | 67% |
 | ssa/value.zig | ssa/value.cot | 95% |
 | ssa/block.zig | ssa/block.cot | 95% |
@@ -135,8 +157,8 @@ Zig has 8+ optimization passes not implemented in cot1:
 | ssa/liveness.zig | ssa/liveness.cot | 70% |
 | ssa/regalloc.zig | ssa/regalloc.cot | 54% |
 | ssa/stackalloc.zig | ssa/stackalloc.cot | 91% |
-| ssa/compile.zig | None | 0% MISSING |
-| ssa/debug.zig | None | 0% MISSING |
+| ssa/compile.zig | ssa/compile.cot | 50% |
+| ssa/debug.zig | ssa/debug.cot | 55% |
 | ssa/passes/lower.zig | ssa/passes/lower.cot | 95% |
 | ssa/passes/expand_calls.zig | ssa/passes/expand_calls.cot | 95% |
 | ssa/passes/decompose.zig | ssa/passes/decompose.cot | 95% |

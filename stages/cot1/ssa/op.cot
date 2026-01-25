@@ -350,3 +350,103 @@ fn Op_isStore(op: Op) bool {
     if op == Op.ARM64_STR { return true; }
     return false;
 }
+
+// Get operation name as string
+// Reference: Zig's @tagName(op)
+// Note: Named Op_toString to avoid conflict with Op_name in validate.cot
+fn Op_toString(op: Op) string {
+    if op == Op.Invalid { return "Invalid"; }
+    if op == Op.InitMem { return "InitMem"; }
+    if op == Op.ConstBool { return "ConstBool"; }
+    if op == Op.ConstInt { return "ConstInt"; }
+    if op == Op.ConstNil { return "ConstNil"; }
+    if op == Op.ConstString { return "ConstString"; }
+    if op == Op.ConstPtr { return "ConstPtr"; }
+    if op == Op.Add64 { return "Add64"; }
+    if op == Op.Sub64 { return "Sub64"; }
+    if op == Op.Mul64 { return "Mul64"; }
+    if op == Op.Div64 { return "Div64"; }
+    if op == Op.Mod64 { return "Mod64"; }
+    if op == Op.Neg64 { return "Neg64"; }
+    if op == Op.And64 { return "And64"; }
+    if op == Op.Or64 { return "Or64"; }
+    if op == Op.Xor64 { return "Xor64"; }
+    if op == Op.Shl64 { return "Shl64"; }
+    if op == Op.Shr64 { return "Shr64"; }
+    if op == Op.Sar64 { return "Sar64"; }
+    if op == Op.Not64 { return "Not64"; }
+    if op == Op.Eq64 { return "Eq64"; }
+    if op == Op.Ne64 { return "Ne64"; }
+    if op == Op.Lt64 { return "Lt64"; }
+    if op == Op.Le64 { return "Le64"; }
+    if op == Op.Gt64 { return "Gt64"; }
+    if op == Op.Ge64 { return "Ge64"; }
+    if op == Op.Ltu64 { return "Ltu64"; }
+    if op == Op.Leu64 { return "Leu64"; }
+    if op == Op.SignExt8to64 { return "SignExt8to64"; }
+    if op == Op.SignExt16to64 { return "SignExt16to64"; }
+    if op == Op.SignExt32to64 { return "SignExt32to64"; }
+    if op == Op.ZeroExt8to64 { return "ZeroExt8to64"; }
+    if op == Op.ZeroExt16to64 { return "ZeroExt16to64"; }
+    if op == Op.ZeroExt32to64 { return "ZeroExt32to64"; }
+    if op == Op.Trunc64to8 { return "Trunc64to8"; }
+    if op == Op.Trunc64to16 { return "Trunc64to16"; }
+    if op == Op.Trunc64to32 { return "Trunc64to32"; }
+    if op == Op.Load { return "Load"; }
+    if op == Op.Store { return "Store"; }
+    if op == Op.Move { return "Move"; }
+    if op == Op.Zero { return "Zero"; }
+    if op == Op.Addr { return "Addr"; }
+    if op == Op.LocalAddr { return "LocalAddr"; }
+    if op == Op.GlobalAddr { return "GlobalAddr"; }
+    if op == Op.GlobalLoad { return "GlobalLoad"; }
+    if op == Op.GlobalStore { return "GlobalStore"; }
+    if op == Op.OffPtr { return "OffPtr"; }
+    if op == Op.AddPtr { return "AddPtr"; }
+    if op == Op.Phi { return "Phi"; }
+    if op == Op.Copy { return "Copy"; }
+    if op == Op.Arg { return "Arg"; }
+    if op == Op.FwdRef { return "FwdRef"; }
+    if op == Op.Call { return "Call"; }
+    if op == Op.TailCall { return "TailCall"; }
+    if op == Op.ClosureCall { return "ClosureCall"; }
+    if op == Op.Return { return "Return"; }
+    if op == Op.SliceLen { return "SliceLen"; }
+    if op == Op.SlicePtr { return "SlicePtr"; }
+    if op == Op.SliceMake { return "SliceMake"; }
+    if op == Op.StringLen { return "StringLen"; }
+    if op == Op.StringPtr { return "StringPtr"; }
+    if op == Op.StringMake { return "StringMake"; }
+    if op == Op.StringConcat { return "StringConcat"; }
+    if op == Op.StructMake { return "StructMake"; }
+    if op == Op.StructSelect { return "StructSelect"; }
+    if op == Op.ARM64_ADD { return "ARM64_ADD"; }
+    if op == Op.ARM64_SUB { return "ARM64_SUB"; }
+    if op == Op.ARM64_MUL { return "ARM64_MUL"; }
+    if op == Op.ARM64_SDIV { return "ARM64_SDIV"; }
+    if op == Op.ARM64_AND { return "ARM64_AND"; }
+    if op == Op.ARM64_ORR { return "ARM64_ORR"; }
+    if op == Op.ARM64_EOR { return "ARM64_EOR"; }
+    if op == Op.ARM64_LSL { return "ARM64_LSL"; }
+    if op == Op.ARM64_LSR { return "ARM64_LSR"; }
+    if op == Op.ARM64_ASR { return "ARM64_ASR"; }
+    if op == Op.ARM64_CMP { return "ARM64_CMP"; }
+    if op == Op.ARM64_CSEL { return "ARM64_CSEL"; }
+    if op == Op.ARM64_LDR { return "ARM64_LDR"; }
+    if op == Op.ARM64_STR { return "ARM64_STR"; }
+    if op == Op.ARM64_MOV { return "ARM64_MOV"; }
+    if op == Op.ARM64_MOVK { return "ARM64_MOVK"; }
+    if op == Op.ARM64_MOVZ { return "ARM64_MOVZ"; }
+    if op == Op.ARM64_MOVN { return "ARM64_MOVN"; }
+    if op == Op.ARM64_ADR { return "ARM64_ADR"; }
+    if op == Op.ARM64_ADRP { return "ARM64_ADRP"; }
+    if op == Op.ARM64_BL { return "ARM64_BL"; }
+    if op == Op.ARM64_RET { return "ARM64_RET"; }
+    if op == Op.SpillReg { return "SpillReg"; }
+    if op == Op.RestoreReg { return "RestoreReg"; }
+    if op == Op.StoreReg { return "StoreReg"; }
+    if op == Op.LoadReg { return "LoadReg"; }
+    if op == Op.Nop { return "Nop"; }
+    if op == Op.Select { return "Select"; }
+    return "Unknown";
+}

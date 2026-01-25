@@ -1,0 +1,314 @@
+// =============================================================================
+// SSA Compilation Pass Infrastructure
+// =============================================================================
+//
+// Reference: src/ssa/compile.zig
+// Reference: cmd/compile/internal/ssa/compile.go
+//
+// Manages the sequence of compilation passes that transform SSA.
+// Each pass runs a specific transformation or analysis on a Func.
+//
+// Pass Categories:
+// 1. Early passes - expand_calls (handle ABI details)
+// 2. Optimization passes - decompose (split 16-byte values)
+// 3. Lowering passes - lower (peephole optimizations)
+// 4. Late passes - schedule (order values for codegen)
+// 5. Register allocation - liveness + regalloc
+//
+// =============================================================================
+
+import "func.cot"
+
+extern fn malloc_u8(count: i64) *u8;
+
+// =============================================================================
+// Pass Identifiers
+// =============================================================================
+
+// Pass enum - identifies which pass to run
+// Using enum instead of function pointers since cot1 doesn't support fn ptrs in arrays
+enum PassId {
+    ExpandCalls,      // Handle >16B struct args, decompose aggregates
+    Decompose,        // Split 16-byte values (strings, slices)
+    Lower,            // Peephole optimizations (mul->shl, add 0->copy)
+    Schedule,         // Order values within blocks
+    Liveness,         // Compute use distances for regalloc
+    RegAlloc,         // Assign physical registers
+    StackAlloc,       // Compute stack layout
+    DomTree,          // Compute dominator tree
+}
+
+// =============================================================================
+// Analysis Kinds (cached analyses that passes can invalidate)
+// =============================================================================
+
+enum AnalysisKind {
+    Dominators,       // Dominator tree
+    Postorder,        // Postorder block traversal
+    LoopInfo,         // Loop information
+    Liveness,         // Value liveness information
+}
+
+// =============================================================================
+// Pass Definition
+// =============================================================================
+
+struct Pass {
+    id: PassId,           // Which pass
+    name_ptr: *u8,        // Pass name (for debugging)
+    name_len: i64,
+    required: bool,       // Cannot be disabled?
+    disabled: bool,       // Currently disabled?
+    preserves_cfg: bool,  // Does this pass preserve CFG structure?
+    preserves_uses: bool, // Does this pass preserve value use counts?
+    time_ns: i64,         // Time spent in this pass (for profiling)
+    run_count: i64,       // Number of times run
+}
+
+fn Pass_new(id: PassId, name: string, required: bool) Pass {
+    return Pass{
+        .id = id,
+        .name_ptr = name.ptr,
+        .name_len = name.len,
+        .required = required,
+        .disabled = false,
+        .preserves_cfg = true,
+        .preserves_uses = true,
+        .time_ns = 0,
+        .run_count = 0,
+    };
+}
+
+// =============================================================================
+// Compiler Configuration
+// =============================================================================
+
+struct Config {
+    optimize: bool,            // Enable optimization passes
+    debug_passes: bool,        // Debug output after each pass
+    verify_after_passes: bool, // Verify SSA invariants after each pass (slow)
+}
+
+fn Config_default() Config {
+    return Config{
+        .optimize = true,
+        .debug_passes = false,
+        .verify_after_passes = false,
+    };
+}
+
+fn Config_debug() Config {
+    return Config{
+        .optimize = true,
+        .debug_passes = true,
+        .verify_after_passes = true,
+    };
+}
+
+// =============================================================================
+// Pass Statistics
+// =============================================================================
+
+const MAX_PASSES: i64 = 16;
+
+struct PassStats {
+    total_time_ns: i64,
+    pass_times: [16]i64,       // Per-pass timing
+    values_before: i64,
+    values_after: i64,
+    blocks_before: i64,
+    blocks_after: i64,
+}
+
+fn PassStats_init(stats: *PassStats) {
+    stats.total_time_ns = 0;
+    var i: i64 = 0;
+    while i < MAX_PASSES {
+        stats.pass_times[i] = 0;
+        i = i + 1;
+    }
+    stats.values_before = 0;
+    stats.values_after = 0;
+    stats.blocks_before = 0;
+    stats.blocks_after = 0;
+}
+
+fn PassStats_print(stats: *PassStats) {
+    print("Compilation Statistics:\n");
+    print("  Values: ");
+    print(stats.values_before);
+    print(" -> ");
+    print(stats.values_after);
+    print("\n");
+    print("  Blocks: ");
+    print(stats.blocks_before);
+    print(" -> ");
+    print(stats.blocks_after);
+    print("\n");
+}
+
+// =============================================================================
+// Pass Registry
+// =============================================================================
+
+// Standard pass sequence for compilation
+// Note: These are the pass definitions, not instances
+// The actual pass execution happens in compile()
+
+const NUM_STANDARD_PASSES: i64 = 8;
+
+// Pass names as strings
+fn PassId_name(id: PassId) string {
+    if id == PassId.ExpandCalls { return "expand_calls"; }
+    if id == PassId.Decompose { return "decompose"; }
+    if id == PassId.Lower { return "lower"; }
+    if id == PassId.Schedule { return "schedule"; }
+    if id == PassId.Liveness { return "liveness"; }
+    if id == PassId.RegAlloc { return "regalloc"; }
+    if id == PassId.StackAlloc { return "stackalloc"; }
+    if id == PassId.DomTree { return "domtree"; }
+    return "unknown";
+}
+
+// Check if pass is required (cannot be skipped even without optimization)
+fn PassId_isRequired(id: PassId) bool {
+    // These passes are always required for correct codegen
+    if id == PassId.ExpandCalls { return true; }
+    if id == PassId.Decompose { return true; }
+    if id == PassId.Schedule { return true; }
+    if id == PassId.Liveness { return true; }
+    if id == PassId.RegAlloc { return true; }
+    if id == PassId.StackAlloc { return true; }
+    if id == PassId.DomTree { return true; }
+    // Lower is an optimization pass
+    if id == PassId.Lower { return false; }
+    return false;
+}
+
+// =============================================================================
+// Pass Execution
+// =============================================================================
+
+// Run a single pass by ID
+// Note: The actual pass functions are imported via func.cot's transitive imports
+// Caller must have the pass functions available (expand_calls, decompose, etc.)
+//
+// This function is a dispatcher - it calls the appropriate pass function
+// based on the PassId. Since cot1 doesn't have function pointers, we use
+// a switch-like pattern with if statements.
+//
+// Returns: 0 on success, non-zero on error
+
+// Forward declarations of pass functions (defined in their respective files)
+// These are imported transitively through main.cot
+// extern fn expandCalls(f: *Func, types: *TypeRegistry);
+// extern fn decompose(f: *Func, types: *TypeRegistry);
+// extern fn lower(f: *Func);
+// extern fn schedule(f: *Func);
+
+// Note: Liveness, RegAlloc, StackAlloc, DomTree are more complex and have
+// their own state structures. They're typically called directly from main.cot
+// rather than through this pass infrastructure.
+
+// =============================================================================
+// Compile Function - Orchestrates All Passes
+// =============================================================================
+
+// This is a reference implementation showing how passes would be orchestrated.
+// The actual pass execution in cot1 is currently in main.cot's Driver_compileFile.
+//
+// To use this, main.cot would call:
+//   var config: Config = Config_default();
+//   var stats: PassStats = undefined;
+//   PassStats_init(&stats);
+//   compile_func(&ssa_func, &type_pool, &config, &stats);
+
+// Note: Full implementation requires pass functions to be available.
+// Currently serving as documentation of the intended pass sequence.
+
+// =============================================================================
+// Pass Result Tracking
+// =============================================================================
+
+struct PassResult {
+    success: bool,
+    error_msg_ptr: *u8,
+    error_msg_len: i64,
+    values_changed: i64,
+    blocks_changed: i64,
+}
+
+fn PassResult_ok() PassResult {
+    return PassResult{
+        .success = true,
+        .error_msg_ptr = null,
+        .error_msg_len = 0,
+        .values_changed = 0,
+        .blocks_changed = 0,
+    };
+}
+
+fn PassResult_error(msg: string) PassResult {
+    return PassResult{
+        .success = false,
+        .error_msg_ptr = msg.ptr,
+        .error_msg_len = msg.len,
+        .values_changed = 0,
+        .blocks_changed = 0,
+    };
+}
+
+// =============================================================================
+// Phase Tracking
+// =============================================================================
+
+// Compilation phases (for progress reporting)
+enum Phase {
+    Parsing,
+    TypeChecking,
+    IRGeneration,
+    SSAConstruction,
+    Optimization,
+    RegisterAllocation,
+    CodeGeneration,
+    ObjectEmission,
+}
+
+fn Phase_name(phase: Phase) string {
+    if phase == Phase.Parsing { return "parsing"; }
+    if phase == Phase.TypeChecking { return "type checking"; }
+    if phase == Phase.IRGeneration { return "IR generation"; }
+    if phase == Phase.SSAConstruction { return "SSA construction"; }
+    if phase == Phase.Optimization { return "optimization"; }
+    if phase == Phase.RegisterAllocation { return "register allocation"; }
+    if phase == Phase.CodeGeneration { return "code generation"; }
+    if phase == Phase.ObjectEmission { return "object emission"; }
+    return "unknown";
+}
+
+// =============================================================================
+// Verification Support
+// =============================================================================
+
+// Verification is implemented in debug.cot
+// This struct holds verification results
+
+struct VerifyResult {
+    valid: bool,
+    error_count: i64,
+    first_error_ptr: *u8,
+    first_error_len: i64,
+}
+
+fn VerifyResult_ok() VerifyResult {
+    return VerifyResult{
+        .valid = true,
+        .error_count = 0,
+        .first_error_ptr = null,
+        .first_error_len = 0,
+    };
+}
+
+fn VerifyResult_hasErrors(result: *VerifyResult) bool {
+    return result.error_count > 0;
+}

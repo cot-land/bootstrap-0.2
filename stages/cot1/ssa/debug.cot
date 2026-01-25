@@ -1,0 +1,484 @@
+// =============================================================================
+// SSA Debug and Visualization Support
+// =============================================================================
+//
+// Reference: src/ssa/debug.zig
+// Reference: cmd/compile/internal/ssa/html.go
+//
+// Provides various output formats for debugging SSA:
+// - Text format - Human-readable dump
+// - DOT format - Graphviz CFG visualization
+// - Verification of SSA invariants
+//
+// =============================================================================
+
+import "func.cot"
+import "compile.cot"  // For VerifyResult
+
+extern fn malloc_u8(count: i64) *u8;
+extern fn write(fd: i32, buf: *u8, count: i64) i64;
+
+// =============================================================================
+// Output Format
+// =============================================================================
+
+enum DumpFormat {
+    Text,    // Human-readable text
+    Dot,     // Graphviz DOT format
+}
+
+// =============================================================================
+// Text Dump - Human Readable
+// =============================================================================
+
+// Dump function to stderr in text format
+fn Func_dumpText(f: *Func, source: *u8, source_len: i64) {
+    eprint("func ");
+    // Print function name from source
+    if f.name_start >= 0 and f.name_len > 0 and f.name_start + f.name_len <= source_len {
+        eprint(@string(source + f.name_start, f.name_len));
+    } else {
+        eprint("<unknown>");
+    }
+    eprintln(":");
+
+    // Print blocks
+    var block_idx: i64 = 0;
+    while block_idx < f.blocks_count {
+        let b: *Block = f.blocks + block_idx;
+        Func_dumpBlock(f, b, source, source_len);
+        block_idx = block_idx + 1;
+    }
+}
+
+// Dump a single block
+fn Func_dumpBlock(f: *Func, b: *Block, source: *u8, source_len: i64) {
+    eprint("  b");
+    eprint(b.id);
+    eprint(" (");
+    eprint(BlockKind_name(b.kind));
+    eprintln("):");
+
+    // Print predecessors
+    if b.preds.count > 0 {
+        eprint("    preds: ");
+        var i: i64 = 0;
+        while i < b.preds.count {
+            if i > 0 { eprint(", "); }
+            eprint("b");
+            eprint(i64list_get(&b.preds, i));
+            i = i + 1;
+        }
+        eprintln("");
+    }
+
+    // Print values in this block
+    var val_idx: i64 = b.values_start;
+    let val_end: i64 = b.values_start + b.values_count;
+    while val_idx < val_end and val_idx < f.values_count {
+        let v: *Value = f.values + val_idx;
+        Func_dumpValue(f, v);
+        val_idx = val_idx + 1;
+    }
+
+    // Print control value
+    if b.control != INVALID_ID {
+        eprint("    control: v");
+        eprint(b.control);
+        eprintln("");
+    }
+
+    // Print successors
+    if b.succs_count > 0 {
+        eprint("    succs: ");
+        var i: i64 = 0;
+        while i < b.succs_count {
+            if i > 0 { eprint(", "); }
+            eprint("b");
+            eprint(b.succs[i]);
+            i = i + 1;
+        }
+        eprintln("");
+    }
+
+    eprintln("");
+}
+
+// Dump a single value
+fn Func_dumpValue(f: *Func, v: *Value) {
+    // Format: v{id} = {op} args [aux] : uses={n}
+    let dead_marker: string = "";
+    if v.uses == 0 and not Op_hasSideEffects(v.op) {
+        dead_marker = " (dead)";
+    }
+
+    eprint("    v");
+    eprint(v.id);
+    eprint(dead_marker);
+    eprint(" = ");
+    eprint(Op_toString(v.op));
+
+    // Print arguments
+    if v.args.count > 0 {
+        eprint(" ");
+        var i: i64 = 0;
+        while i < v.args.count {
+            if i > 0 { eprint(", "); }
+            eprint("v");
+            eprint(i64list_get(&v.args, i));
+            i = i + 1;
+        }
+    }
+
+    // Print aux_int if non-zero
+    if v.aux_int != 0 {
+        eprint(" [");
+        eprint(v.aux_int);
+        eprint("]");
+    }
+
+    // Print use count
+    eprint(" : uses=");
+    eprint(v.uses);
+    eprintln("");
+}
+
+// =============================================================================
+// DOT Dump - Graphviz Format
+// =============================================================================
+
+// Dump function to stderr in DOT format
+// Output can be rendered with: dot -Tpng ssa.dot -o ssa.png
+fn Func_dumpDot(f: *Func, source: *u8, source_len: i64) {
+    eprint("digraph \"");
+    if f.name_start >= 0 and f.name_len > 0 and f.name_start + f.name_len <= source_len {
+        eprint(@string(source + f.name_start, f.name_len));
+    } else {
+        eprint("func");
+    }
+    eprintln("\" {");
+    eprintln("  rankdir=TB;");
+    eprintln("  node [shape=box, fontname=\"Courier\"];");
+    eprintln("");
+
+    // Emit nodes for each block
+    var block_idx: i64 = 0;
+    while block_idx < f.blocks_count {
+        let b: *Block = f.blocks + block_idx;
+        Func_dumpDotBlock(f, b);
+        block_idx = block_idx + 1;
+    }
+
+    eprintln("");
+
+    // Emit edges
+    block_idx = 0;
+    while block_idx < f.blocks_count {
+        let b: *Block = f.blocks + block_idx;
+        var succ_idx: i64 = 0;
+        while succ_idx < b.succs_count {
+            eprint("  b");
+            eprint(b.id);
+            eprint(" -> b");
+            eprint(b.succs[succ_idx]);
+            // Add label for conditional branches
+            if b.kind == BlockKind.If {
+                if succ_idx == 0 {
+                    eprint(" [label=\"T\"]");
+                } else {
+                    eprint(" [label=\"F\"]");
+                }
+            }
+            eprintln(";");
+            succ_idx = succ_idx + 1;
+        }
+        block_idx = block_idx + 1;
+    }
+
+    eprintln("}");
+}
+
+// Dump a single block as DOT node
+fn Func_dumpDotBlock(f: *Func, b: *Block) {
+    eprint("  b");
+    eprint(b.id);
+    eprint(" [label=\"b");
+    eprint(b.id);
+    eprint(" (");
+    eprint(BlockKind_name(b.kind));
+    eprint(")\\l");
+
+    // Add values to label
+    var val_idx: i64 = b.values_start;
+    let val_end: i64 = b.values_start + b.values_count;
+    while val_idx < val_end and val_idx < f.values_count {
+        let v: *Value = f.values + val_idx;
+        eprint("v");
+        eprint(v.id);
+        eprint(" = ");
+        eprint(Op_toString(v.op));
+
+        // Print args
+        if v.args.count > 0 {
+            eprint(" ");
+            var i: i64 = 0;
+            while i < v.args.count {
+                if i > 0 { eprint(", "); }
+                eprint("v");
+                eprint(i64list_get(&v.args, i));
+                i = i + 1;
+            }
+        }
+
+        if v.aux_int != 0 {
+            eprint(" [");
+            eprint(v.aux_int);
+            eprint("]");
+        }
+        eprint("\\l");
+        val_idx = val_idx + 1;
+    }
+
+    eprintln("\"];");
+}
+
+// =============================================================================
+// BlockKind Name Helper
+// =============================================================================
+
+fn BlockKind_name(kind: BlockKind) string {
+    if kind == BlockKind.Invalid { return "invalid"; }
+    if kind == BlockKind.Plain { return "plain"; }
+    if kind == BlockKind.If { return "if"; }
+    if kind == BlockKind.Return { return "return"; }
+    if kind == BlockKind.Exit { return "exit"; }
+    return "unknown";
+}
+
+// Note: Op_toString and Op_hasSideEffects are defined in op.cot
+// They're available via the import chain: func.cot -> block.cot -> value.cot -> op.cot
+
+// =============================================================================
+// SSA Verification
+// =============================================================================
+
+// Maximum errors to collect during verification
+const MAX_VERIFY_ERRORS: i64 = 32;
+
+// Verify SSA invariants for a function
+// Returns a VerifyResult with error information
+fn Func_verify(f: *Func) VerifyResult {
+    var result: VerifyResult = VerifyResult_ok();
+
+    // Check each block
+    var block_idx: i64 = 0;
+    while block_idx < f.blocks_count {
+        let b: *Block = f.blocks + block_idx;
+
+        // Verify block values are in valid range
+        if b.values_start < 0 or b.values_start > f.values_count {
+            result.valid = false;
+            result.error_count = result.error_count + 1;
+            if result.first_error_ptr == null {
+                let msg: string = "block values_start out of range";
+                result.first_error_ptr = msg.ptr;
+                result.first_error_len = msg.len;
+            }
+        }
+
+        if b.values_start + b.values_count > f.values_count {
+            result.valid = false;
+            result.error_count = result.error_count + 1;
+            if result.first_error_ptr == null {
+                let msg: string = "block values extend past end of value array";
+                result.first_error_ptr = msg.ptr;
+                result.first_error_len = msg.len;
+            }
+        }
+
+        // Verify values in this block
+        var val_idx: i64 = b.values_start;
+        let val_end: i64 = b.values_start + b.values_count;
+        while val_idx < val_end and val_idx < f.values_count {
+            let v: *Value = f.values + val_idx;
+
+            // Check value's block_id matches
+            if v.block_id != b.id {
+                result.valid = false;
+                result.error_count = result.error_count + 1;
+                if result.first_error_ptr == null {
+                    let msg: string = "value block_id mismatch";
+                    result.first_error_ptr = msg.ptr;
+                    result.first_error_len = msg.len;
+                }
+            }
+
+            // Check arguments are valid value IDs
+            var arg_idx: i64 = 0;
+            while arg_idx < v.args.count {
+                let arg_id: i64 = i64list_get(&v.args, arg_idx);
+                if arg_id < 0 or arg_id >= f.values_count {
+                    result.valid = false;
+                    result.error_count = result.error_count + 1;
+                    if result.first_error_ptr == null {
+                        let msg: string = "value has invalid arg ID";
+                        result.first_error_ptr = msg.ptr;
+                        result.first_error_len = msg.len;
+                    }
+                }
+                arg_idx = arg_idx + 1;
+            }
+
+            val_idx = val_idx + 1;
+        }
+
+        // Verify successors are valid block IDs
+        var succ_idx: i64 = 0;
+        while succ_idx < b.succs_count {
+            let succ_id: i64 = b.succs[succ_idx];
+            if succ_id < 0 or succ_id >= f.blocks_count {
+                result.valid = false;
+                result.error_count = result.error_count + 1;
+                if result.first_error_ptr == null {
+                    let msg: string = "block has invalid successor ID";
+                    result.first_error_ptr = msg.ptr;
+                    result.first_error_len = msg.len;
+                }
+            }
+            succ_idx = succ_idx + 1;
+        }
+
+        // Verify predecessors are valid block IDs
+        var pred_idx: i64 = 0;
+        while pred_idx < b.preds.count {
+            let pred_id: i64 = i64list_get(&b.preds, pred_idx);
+            if pred_id < 0 or pred_id >= f.blocks_count {
+                result.valid = false;
+                result.error_count = result.error_count + 1;
+                if result.first_error_ptr == null {
+                    let msg: string = "block has invalid predecessor ID";
+                    result.first_error_ptr = msg.ptr;
+                    result.first_error_len = msg.len;
+                }
+            }
+            pred_idx = pred_idx + 1;
+        }
+
+        // Verify edge bidirectional invariant
+        // For each successor, this block should be in that successor's preds
+        succ_idx = 0;
+        while succ_idx < b.succs_count {
+            let succ_id: i64 = b.succs[succ_idx];
+            if succ_id >= 0 and succ_id < f.blocks_count {
+                let succ: *Block = f.blocks + succ_id;
+                let found: bool = Func_blockHasPred(succ, b.id);
+                if not found {
+                    result.valid = false;
+                    result.error_count = result.error_count + 1;
+                    if result.first_error_ptr == null {
+                        let msg: string = "edge bidirectional invariant violated (succ missing pred)";
+                        result.first_error_ptr = msg.ptr;
+                        result.first_error_len = msg.len;
+                    }
+                }
+            }
+            succ_idx = succ_idx + 1;
+        }
+
+        // Verify control value for conditional blocks
+        if b.kind == BlockKind.If {
+            if b.control == INVALID_ID {
+                result.valid = false;
+                result.error_count = result.error_count + 1;
+                if result.first_error_ptr == null {
+                    let msg: string = "If block missing control value";
+                    result.first_error_ptr = msg.ptr;
+                    result.first_error_len = msg.len;
+                }
+            }
+            if b.succs_count != 2 {
+                result.valid = false;
+                result.error_count = result.error_count + 1;
+                if result.first_error_ptr == null {
+                    let msg: string = "If block should have exactly 2 successors";
+                    result.first_error_ptr = msg.ptr;
+                    result.first_error_len = msg.len;
+                }
+            }
+        }
+
+        // Verify Return/Exit blocks have no successors
+        if b.kind == BlockKind.Return or b.kind == BlockKind.Exit {
+            if b.succs_count != 0 {
+                result.valid = false;
+                result.error_count = result.error_count + 1;
+                if result.first_error_ptr == null {
+                    let msg: string = "Return/Exit block should have no successors";
+                    result.first_error_ptr = msg.ptr;
+                    result.first_error_len = msg.len;
+                }
+            }
+        }
+
+        block_idx = block_idx + 1;
+    }
+
+    return result;
+}
+
+// Helper: check if block has a predecessor with given ID
+fn Func_blockHasPred(b: *Block, pred_id: i64) bool {
+    var i: i64 = 0;
+    while i < b.preds.count {
+        if i64list_get(&b.preds, i) == pred_id {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
+
+// =============================================================================
+// Verification Result Reporting
+// =============================================================================
+
+fn VerifyResult_print(result: *VerifyResult) {
+    if result.valid {
+        eprintln("SSA verification: PASSED");
+    } else {
+        eprint("SSA verification: FAILED (");
+        eprint(result.error_count);
+        eprintln(" errors)");
+        if result.first_error_ptr != null {
+            eprint("  First error: ");
+            eprintln(@string(result.first_error_ptr, result.first_error_len));
+        }
+    }
+}
+
+// =============================================================================
+// Dump Entry Point
+// =============================================================================
+
+// Dump function in specified format
+fn Func_dump(f: *Func, format: DumpFormat, source: *u8, source_len: i64) {
+    if format == DumpFormat.Text {
+        Func_dumpText(f, source, source_len);
+    } else if format == DumpFormat.Dot {
+        Func_dumpDot(f, source, source_len);
+    }
+}
+
+// Quick dump for debugging (text format to stderr)
+fn Func_debugDump(f: *Func, source: *u8, source_len: i64) {
+    eprintln("=== SSA Debug Dump ===");
+    Func_dumpText(f, source, source_len);
+    eprintln("=== End Dump ===");
+}
+
+// Verify and report errors
+fn Func_verifyAndReport(f: *Func) bool {
+    let result: VerifyResult = Func_verify(f);
+    VerifyResult_print(&result);
+    return result.valid;
+}

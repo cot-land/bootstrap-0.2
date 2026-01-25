@@ -82,6 +82,10 @@ import "ssa/passes/schedule.cot"
 import "ssa/liveness.cot"
 import "ssa/regalloc.cot"
 
+// SSA pass infrastructure and debugging
+import "ssa/compile.cot"
+import "ssa/debug.cot"
+
 // Object file writer
 import "obj/macho.cot"
 
