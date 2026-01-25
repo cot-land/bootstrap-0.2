@@ -36,6 +36,11 @@ The compiler source now uses its own features:
 | ir.cot | `IRIndex`, `LocalIndex`, `BlockIndex` |
 | checker.cot | `SymbolIndex` |
 
+**Note:** Optional types (`?*T`) and error unions (`!T`) cannot be dogfooded yet because:
+- The Zig bootstrap has stricter type checking than cot1's implementation
+- cot1 treats `?T` and `!T` as just `T` (syntax only, no unwrapping required)
+- Full dogfooding of these features requires cot1 self-hosting first
+
 ### Documentation Updates ✅
 - Added "MANDATORY: DOGFOOD NEW FEATURES" to CLAUDE.md
 - Added "Dogfood Every Feature" principle to LANGUAGE_EVOLUTION.md
