@@ -1,0 +1,219 @@
+// StrMap - String to i64 hash map
+// Reference: Go runtime/map.go
+//
+// This is a bootstrap implementation for cot1. In cot2 with generics,
+// this becomes Map(K, V) where K: Hashable.
+//
+// Uses linear probing for collision resolution.
+// Keys are copied on insert (map owns the memory).
+// Returns -1 for not found.
+
+extern fn memcpy(dest: *u8, src: *u8, n: i64) *u8;
+
+// djb2 hash function (simpler, fits in i64)
+// Reference: http://www.cse.yorku.ca/~oz/hash.html
+fn djb2_hash(ptr: *u8, len: i64) i64 {
+    var hash: i64 = 5381;
+    var i: i64 = 0;
+    while i < len {
+        let c: u8 = (ptr + i).*;
+        // hash = hash * 33 + c
+        hash = ((hash * 32) + hash) + @intCast(i64, c);
+        i = i + 1;
+    }
+    // Ensure positive result for modulo operations
+    if hash < 0 {
+        hash = 0 - hash;
+    }
+    return hash;
+}
+
+// Map entry - stores copied key and value
+struct StrMapEntry {
+    key_ptr: *u8,      // Copied string data (owned by map)
+    key_len: i64,
+    value: i64,
+    used: bool,
+}
+
+// String to i64 hash map
+struct StrMap {
+    entries: *StrMapEntry,
+    count: i64,        // Number of entries used
+    cap: i64,          // Total capacity (always power of 2)
+}
+
+// Typed malloc for StrMapEntry array
+extern fn malloc_StrMapEntry(count: i64) *StrMapEntry;
+
+// Initialize an empty map with given capacity
+fn StrMap_init(initial_cap: i64) StrMap {
+    var m: StrMap = undefined;
+
+    // Round up to power of 2
+    var cap: i64 = 16;
+    while cap < initial_cap {
+        cap = cap * 2;
+    }
+
+    // Allocate entries array
+    m.entries = malloc_StrMapEntry(cap);
+
+    // Zero initialize all entries
+    var i: i64 = 0;
+    while i < cap {
+        let e: *StrMapEntry = m.entries + i;
+        e.key_ptr = null;
+        e.key_len = 0;
+        e.value = 0;
+        e.used = false;
+        i = i + 1;
+    }
+
+    m.count = 0;
+    m.cap = cap;
+    return m;
+}
+
+// Compare two strings for equality
+fn str_equal(a_ptr: *u8, a_len: i64, b_ptr: *u8, b_len: i64) bool {
+    if a_len != b_len { return false; }
+    var i: i64 = 0;
+    while i < a_len {
+        if (a_ptr + i).* != (b_ptr + i).* {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Get value for key, returns -1 if not found
+fn StrMap_get(m: *StrMap, key_ptr: *u8, key_len: i64) i64 {
+    if m.cap == 0 { return -1; }
+
+    let hash: i64 = djb2_hash(key_ptr, key_len);
+    var idx: i64 = hash % m.cap;
+
+    // Linear probe until we find key or empty slot
+    var probes: i64 = 0;
+    while probes < m.cap {
+        let e: *StrMapEntry = m.entries + idx;
+
+        if not e.used {
+            // Empty slot - key not in map
+            return -1;
+        }
+
+        if str_equal(e.key_ptr, e.key_len, key_ptr, key_len) {
+            // Found it
+            return e.value;
+        }
+
+        // Collision - try next slot
+        idx = (idx + 1) % m.cap;
+        probes = probes + 1;
+    }
+
+    // Table full (shouldn't happen with proper load factor)
+    return -1;
+}
+
+// Internal: grow the map to double capacity
+fn StrMap_grow(m: *StrMap) {
+    let old_entries: *StrMapEntry = m.entries;
+    let old_cap: i64 = m.cap;
+
+    // Allocate new entries array (double size)
+    let new_cap: i64 = old_cap * 2;
+    m.entries = malloc_StrMapEntry(new_cap);
+    m.cap = new_cap;
+    m.count = 0;
+
+    // Zero initialize new entries
+    var i: i64 = 0;
+    while i < new_cap {
+        let e: *StrMapEntry = m.entries + i;
+        e.key_ptr = null;
+        e.key_len = 0;
+        e.value = 0;
+        e.used = false;
+        i = i + 1;
+    }
+
+    // Reinsert all old entries
+    i = 0;
+    while i < old_cap {
+        let old_e: *StrMapEntry = old_entries + i;
+        if old_e.used {
+            // Reuse the already-copied key
+            let hash: i64 = djb2_hash(old_e.key_ptr, old_e.key_len);
+            var idx: i64 = hash % new_cap;
+
+            // Find empty slot
+            while (m.entries + idx).used {
+                idx = (idx + 1) % new_cap;
+            }
+
+            let new_e: *StrMapEntry = m.entries + idx;
+            new_e.key_ptr = old_e.key_ptr;
+            new_e.key_len = old_e.key_len;
+            new_e.value = old_e.value;
+            new_e.used = true;
+            m.count = m.count + 1;
+        }
+        i = i + 1;
+    }
+
+    // Note: old_entries is leaked (no free in bootstrap)
+}
+
+// Put key-value pair into map
+// Key is copied - caller doesn't need to keep it alive
+fn StrMap_put(m: *StrMap, key_ptr: *u8, key_len: i64, value: i64) {
+    // Check load factor - grow if > 70%
+    let threshold: i64 = (m.cap * 70) / 100;
+    if m.count >= threshold {
+        StrMap_grow(m);
+    }
+
+    let hash: i64 = djb2_hash(key_ptr, key_len);
+    var idx: i64 = hash % m.cap;
+
+    // Linear probe to find slot
+    var probes: i64 = 0;
+    while probes < m.cap {
+        let e: *StrMapEntry = m.entries + idx;
+
+        if not e.used {
+            // Empty slot - insert here
+            // Copy the key
+            let key_copy: *u8 = malloc_u8(key_len);
+            memcpy(key_copy, key_ptr, key_len);
+
+            e.key_ptr = key_copy;
+            e.key_len = key_len;
+            e.value = value;
+            e.used = true;
+            m.count = m.count + 1;
+            return;
+        }
+
+        if str_equal(e.key_ptr, e.key_len, key_ptr, key_len) {
+            // Key exists - update value
+            e.value = value;
+            return;
+        }
+
+        // Collision - try next slot
+        idx = (idx + 1) % m.cap;
+        probes = probes + 1;
+    }
+
+    // Table full (shouldn't happen)
+}
+
+// Check if map contains key
+fn StrMap_contains(m: *StrMap, key_ptr: *u8, key_len: i64) bool {
+    return StrMap_get(m, key_ptr, key_len) >= 0;
+}

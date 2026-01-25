@@ -241,7 +241,7 @@ fn resolve_named_type(pool: *TypeRegistry, source: *u8, name_start: i64, name_le
     }
 
     // Look up user-defined type in TypeRegistry
-    return TypeRegistry_findByName(pool, name_start, name_len);
+    return TypeRegistry_findByName(pool, source + name_start, name_len);
 }
 
 // cot1: Resolve a named type with support for type aliases
@@ -2418,7 +2418,7 @@ fn Lowerer_lowerStructLit(l: *Lowerer, node: *Node) i64 {
     let fields_count: i64 = node.field3;
 
     // Look up the struct type by name
-    let struct_type_idx: i64 = TypeRegistry_findByName(l.type_pool, type_name_start, type_name_len);
+    let struct_type_idx: i64 = TypeRegistry_findByName(l.type_pool, l.source + type_name_start, type_name_len);
     if struct_type_idx < 0 {
         return NULL_NODE;
     }
@@ -2449,7 +2449,7 @@ fn Lowerer_lowerStructLit(l: *Lowerer, node: *Node) i64 {
 
         // Look up field offset from struct type
         let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, struct_type_idx,
-                                                              field_name_start, field_name_len);
+                                                              l.source + field_name_start, field_name_len);
         if field_info != null {
             let field_offset: i64 = field_info.offset;
             FuncBuilder_emitStoreFieldLocal(fb, temp_idx, field_offset, value_ir);
@@ -3619,7 +3619,7 @@ fn Lowerer_lowerAddressOf(l: *Lowerer, node: *Node) i64 {
             if local_idx >= 0 {
                 // Look up field offset in the struct type
                 let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, local_type_idx,
-                                                               field_name_start, field_name_len);
+                                                               l.source + field_name_start, field_name_len);
                 if field_info != null {
                     // Get address of local + field offset
                     let base_addr: i64 = FuncBuilder_emitAddrLocal(fb, local_idx, TYPE_I64);
@@ -3659,7 +3659,7 @@ fn Lowerer_lowerAddressOf(l: *Lowerer, node: *Node) i64 {
 
                 // Look up field offset in the struct type
                 let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, global_type_idx,
-                                                               field_name_start, field_name_len);
+                                                               l.source + field_name_start, field_name_len);
                 if field_info != null {
                     // Get address of global + field offset
                     let base_addr: i64 = FuncBuilder_emitAddrGlobal(fb, global_idx, TYPE_I64);
@@ -3813,7 +3813,7 @@ fn Lowerer_lowerFieldAccess(l: *Lowerer, node: *Node) i64 {
 
             // Look up field in the pointee struct
             let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, struct_type_idx,
-                                                           field_name_start, field_name_len);
+                                                           l.source + field_name_start, field_name_len);
             if field_info != null {
                 // Load the pointer value
                 let ptr_val: i64 = FuncBuilder_emitLoadLocal(fb, local_idx);
@@ -3847,7 +3847,7 @@ fn Lowerer_lowerFieldAccess(l: *Lowerer, node: *Node) i64 {
 
         // Direct struct access
         let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, struct_type_idx,
-                                                       field_name_start, field_name_len);
+                                                       l.source + field_name_start, field_name_len);
         if field_info != null {
             return FuncBuilder_emitFieldLocal(fb, local_idx, field_info.offset, field_info.type_idx);
         }
@@ -4041,7 +4041,7 @@ fn Lowerer_lowerFieldAccess(l: *Lowerer, node: *Node) i64 {
                 // Get field offset within the element struct
                 var field_offset: i64 = 0;
                 let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, elem_type_idx,
-                                                                       field_name_start, field_name_len);
+                                                                       l.source + field_name_start, field_name_len);
                 if field_info != null {
                     field_offset = field_info.offset;
                     field_type_idx = field_info.type_idx;
@@ -4354,7 +4354,7 @@ fn Lowerer_lowerFieldAssign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
 
             // Look up field in the pointee struct
             let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, struct_type_idx,
-                                                           field_name_start, field_name_len);
+                                                           l.source + field_name_start, field_name_len);
             if field_info == null {
                 return NULL_NODE;  // Field not found
             }
@@ -4367,7 +4367,7 @@ fn Lowerer_lowerFieldAssign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
 
         // Direct struct assignment
         let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, struct_type_idx,
-                                                       field_name_start, field_name_len);
+                                                       l.source + field_name_start, field_name_len);
         if field_info != null {
             return FuncBuilder_emitStoreFieldLocal(fb, local_idx, field_info.offset, value_idx);
         }
@@ -4478,14 +4478,14 @@ fn Lowerer_lowerFieldAssign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
 
                     // Look up base field (e.g., "inner") in root's struct type
                     let base_field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, root_type_idx,
-                        base_field_name_start, base_field_name_len);
+                        l.source + base_field_name_start, base_field_name_len);
 
                     if base_field_info != null {
                         total_offset = base_field_info.offset;
 
                         // Look up final field (e.g., "x") in base field's type
                         let final_field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, base_field_info.type_idx,
-                            field_name_start, field_name_len);
+                            l.source + field_name_start, field_name_len);
 
                         if final_field_info != null {
                             total_offset = total_offset + final_field_info.offset;
@@ -4591,7 +4591,7 @@ fn Lowerer_lowerFieldAssign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
                 // Get field offset within the element struct
                 var field_offset: i64 = 0;
                 let field_info: *FieldInfo = TypeRegistry_lookupField(l.type_pool, elem_type_idx,
-                                                                       field_name_start, field_name_len);
+                                                                       l.source + field_name_start, field_name_len);
                 if field_info != null {
                     field_offset = field_info.offset;
                 }

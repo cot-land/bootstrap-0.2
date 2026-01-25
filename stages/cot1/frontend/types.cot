@@ -12,6 +12,7 @@
 
 import "token.cot"
 import "../lib/list.cot"  // For realloc_i64
+import "../lib/strmap.cot"  // For type name lookup
 
 // ============================================================================
 // Type Aliases (cot1 feature: dogfooding our own language features)
@@ -127,6 +128,9 @@ struct TypeRegistry {
     // Source text for name comparison
     source: *u8,
     source_len: i64,
+
+    // Name to type index map (for fast lookup)
+    name_map: StrMap,
 }
 
 // ============================================================================
@@ -290,6 +294,7 @@ fn TypeRegistry_initWithStorage(pool: *TypeRegistry, types: *Type, types_cap: i6
     pool.fields_count = 0;
     pool.source = null;
     pool.source_len = 0;
+    pool.name_map = StrMap_init(256);  // Initialize type name lookup map
 
     // Register basic types in order
     TypeRegistry_registerBasic(pool, TypeKind.Invalid, 0, 0);   // 0: invalid
@@ -317,6 +322,7 @@ fn TypeRegistry_init(pool: *TypeRegistry) {
     pool.fields_count = 0;
     pool.source = null;
     pool.source_len = 0;
+    pool.name_map = StrMap_init(256);  // Initialize type name lookup map
 
     // Register basic types in order
     TypeRegistry_registerBasic(pool, TypeKind.Invalid, 0, 0);   // 0: invalid
@@ -387,63 +393,20 @@ fn TypeInfo_isInvalid(pool: *TypeRegistry, idx: i64) bool {
 
 // Find a struct type by name in the pool
 // Returns the type index, or INVALID_TYPE if not found
-fn TypeRegistry_findByName(pool: *TypeRegistry, name_start: i64, name_len: i64) i64 {
-    var i: i64 = 0;
-    while i < pool.count {
-        let t: *Type = pool.types + i;
-        if t.kind == TypeKind.Struct {
-            // Compare names
-            if t.name_len == name_len {
-                var match: bool = true;
-                var j: i64 = 0;
-                while j < name_len {
-                    let c1: u8 = (pool.source + t.name_start + j).*;
-                    let c2: u8 = (pool.source + name_start + j).*;
-                    if c1 != c2 {
-                        match = false;
-                        break;
-                    }
-                    j = j + 1;
-                }
-                if match {
-                    return i;
-                }
-            }
-        }
-        i = i + 1;
-    }
-    return INVALID_TYPE;
+// Find a type by name using StrMap lookup
+// name_ptr: pointer to the name string (in any source buffer)
+// name_len: length of the name
+// Returns type index or INVALID_TYPE if not found
+fn TypeRegistry_findByName(pool: *TypeRegistry, name_ptr: *u8, name_len: i64) i64 {
+    return StrMap_get(&pool.name_map, name_ptr, name_len);
 }
 
 // cot1: Look up a type by name from source (supports struct and enum types)
 // source: source buffer to read name from
 // name_start, name_len: position of name in source
+// This is a convenience wrapper that computes the pointer
 fn TypeRegistry_lookupByName(pool: *TypeRegistry, source: *u8, name_start: i64, name_len: i64) i64 {
-    var i: i64 = 0;
-    while i < pool.count {
-        let t: *Type = pool.types + i;
-        // Check struct or enum types
-        if t.kind == TypeKind.Struct or t.kind == TypeKind.Enum {
-            if t.name_len == name_len {
-                var match: bool = true;
-                var j: i64 = 0;
-                while j < name_len {
-                    let c1: u8 = (pool.source + t.name_start + j).*;
-                    let c2: u8 = (source + name_start + j).*;
-                    if c1 != c2 {
-                        match = false;
-                        break;
-                    }
-                    j = j + 1;
-                }
-                if match {
-                    return i;
-                }
-            }
-        }
-        i = i + 1;
-    }
-    return INVALID_TYPE;
+    return StrMap_get(&pool.name_map, source + name_start, name_len);
 }
 
 // ============================================================================
@@ -567,6 +530,11 @@ fn TypeRegistry_makeStruct(pool: *TypeRegistry, name_start: i64, name_len: i64,
     t.size = size;
     t.align = align;
 
+    // Register in name map for fast lookup
+    if name_len > 0 and pool.source != null {
+        StrMap_put(&pool.name_map, pool.source + name_start, name_len, idx);
+    }
+
     return idx;
 }
 
@@ -589,6 +557,11 @@ fn TypeRegistry_makeEnum(pool: *TypeRegistry, name_start: i64, name_len: i64,
     t.name_len = name_len;
     t.size = 4;   // Enums are 4 bytes (i32)
     t.align = 4;
+
+    // Register in name map for fast lookup
+    if name_len > 0 and pool.source != null {
+        StrMap_put(&pool.name_map, pool.source + name_start, name_len, idx);
+    }
 
     return idx;
 }
@@ -970,14 +943,15 @@ fn TypeRegistry_getField(pool: *TypeRegistry, idx: i64) *FieldInfo {
     return pool.fields + idx;
 }
 
-// Compare two strings in source
-fn names_equal_types(source: *u8, start1: i64, len1: i64, start2: i64, len2: i64) bool {
+// Compare string in pool.source against external pointer
+// This allows comparing field names from different source buffers
+fn names_equal_ptr(source: *u8, start: i64, len1: i64, ptr: *u8, len2: i64) bool {
     if len1 != len2 { return false; }
     var i: i64 = 0;
     while i < len1 {
-        let p1: *u8 = source + start1 + i;
-        let p2: *u8 = source + start2 + i;
-        if p1.* != p2.* { return false; }
+        let c1: u8 = (source + start + i).*;
+        let c2: u8 = (ptr + i).*;
+        if c1 != c2 { return false; }
         i = i + 1;
     }
     return true;
@@ -986,9 +960,11 @@ fn names_equal_types(source: *u8, start1: i64, len1: i64, start2: i64, len2: i64
 // Look up field by name in a struct type
 // Returns field info if found, null otherwise
 // type_idx must be a struct type
+// NOTE: field_name_ptr is a POINTER to the field name string, not an offset
 fn TypeRegistry_lookupField(pool: *TypeRegistry, type_idx: i64,
-                     field_name_start: i64, field_name_len: i64) *FieldInfo {
+                     field_name_ptr: *u8, field_name_len: i64) *FieldInfo {
     let t: *Type = TypeRegistry_get(pool, type_idx);
+
     if t.kind != TypeKind.Struct {
         return null;
     }
@@ -1000,8 +976,9 @@ fn TypeRegistry_lookupField(pool: *TypeRegistry, type_idx: i64,
     var i: i64 = 0;
     while i < fields_count {
         let f: *FieldInfo = pool.fields + fields_start + i;
-        if names_equal_types(pool.source, f.name_start, f.name_len,
-                            field_name_start, field_name_len) {
+
+        if names_equal_ptr(pool.source, f.name_start, f.name_len,
+                          field_name_ptr, field_name_len) {
             return f;
         }
         i = i + 1;

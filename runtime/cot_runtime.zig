@@ -1005,6 +1005,7 @@ export fn malloc_BlockDefs(count: i64) ?*anyopaque { return malloc_struct(count,
 export fn malloc_BlockMapping(count: i64) ?*anyopaque { return malloc_struct(count, 16); }
 export fn malloc_VarDef(count: i64) ?*anyopaque { return malloc_struct(count, 24); }
 export fn malloc_TypeAliasEntry(count: i64) ?*anyopaque { return malloc_struct(count, 24); }  // TypeAliasEntry: 3 * 8 = 24
+export fn malloc_StrMapEntry(count: i64) ?*anyopaque { return malloc_struct(count, 32); }  // StrMapEntry: 4 * 8 = 32
 
 // Liveness and RegAlloc types
 export fn malloc_ValState(count: i64) ?*anyopaque { return malloc_struct(count, 24); }  // ValState: regs(8) + spill(8) + 3 bools(8 padded) = 24
