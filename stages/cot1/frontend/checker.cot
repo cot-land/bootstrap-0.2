@@ -12,6 +12,13 @@
 // Note: Dependencies (token.cot, types.cot, ast.cot) are imported by main.cot
 
 // ============================================================================
+// Type Aliases (cot1 feature: dogfooding our own language features)
+// ============================================================================
+
+// SymbolIndex: Index into symbol table arrays
+type SymbolIndex = i64
+
+// ============================================================================
 // Symbol Kinds
 // ============================================================================
 
