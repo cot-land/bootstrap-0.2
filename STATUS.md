@@ -13,6 +13,25 @@
 
 ## Recent Progress (2026-01-26)
 
+### Dead Code Cleanup ✅
+- **Removed 9 dead files** (876 lines of unused code)
+- **Final count**: 46 .cot files, all reachable from main.cot
+- Deleted debug/test files and unused library modules
+- Kept lib/reporter.cot and lib/source.cot for future use (match Zig patterns)
+
+### Pointer Arithmetic Fix ✅
+- **Fixed array decay in arithmetic context**
+- Arrays now correctly scale offsets by element size in pointer arithmetic
+- `var arr: [3]i64; arr + 1` now correctly advances by sizeof(i64)
+- Updated Lowerer_lowerBinary and Lowerer_getPtrElemSize
+
+### Stage2 Investigation
+- **Root cause identified**: Corrupted symbol `_rn false; }` instead of `_realloc_VarDef`
+- The linker error occurs when cot1-stage1 compiles SSABuilder_cacheNode
+- func_name_start/func_name_len are pointing to wrong source locations
+- Appears to be a multi-file source position tracking bug
+- Investigation ongoing
+
 ### main.cot Code Reduction ✅
 - **48% reduction**: main.cot reduced from 1751 to ~900 lines
 - **GenState_finalize**: Moved ~570 lines of finalization/linking code to genssa.cot

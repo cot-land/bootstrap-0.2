@@ -49,38 +49,55 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
-### BUG-063: cot1 struct field offset architecture is broken
+### BUG-063: cot1-stage2 linker error - corrupted symbol name
 
-**Status:** REQUIRES REWRITE (not debuggable)
+**Status:** INVESTIGATING (source position tracking bug)
 **Priority:** HIGH (blocks cot1 self-hosting chain)
 **Discovered:** 2026-01-25
+**Updated:** 2026-01-26
 
-**Root Cause:** Architectural flaw - offsets computed in THREE places with different logic.
+**Current Findings:**
 
-**Solution:** Complete rewrite following Zig's single-source-of-truth pattern.
+The stage2 linker fails with:
+```
+error: undefined symbol: _rn false; }
+   note: referenced by /tmp/cot1-stage2.o:_SSABuilder_cacheNode
+```
 
-**Investigation:** Check codegen/genssa.cot for incorrect struct field offset calculations.
+The expected symbol is `_realloc_VarDef` but it's being emitted as `_rn false; }`.
 
-**Summary of the problem:**
-1. Checker computes offsets correctly and stores in TypeRegistry
-2. Lowerer IGNORES TypeRegistry and recomputes from AST using broken logic
-3. For pointer types, AST-based calculation returns wrong values
-4. Field accesses use wrong offsets, causing memory corruption
+**Analysis:**
+- The corrupted symbol `_rn false; }` (11 chars) comes from "return false; }" in lower.cot
+- The call to `realloc_VarDef` at builder.cot:787 has wrong func_name_start/func_name_len
+- func_name_start is pointing into the wrong file's source buffer
+- Other calls to `realloc_VarDef` (lines 363, 495) appear to work correctly
 
-**Why debugging failed:** Six Claude instances spent 6+ hours attempting to debug this. Each found "a bug" and "fixed it" but the architecture has THREE offset computation paths that all need to agree. Patching one doesn't fix the others.
+**Root Cause Hypothesis:**
+Multi-file source position tracking bug in stage1 when compiling the full cot1 codebase. The `func_name_start` for some call nodes is not being correctly adjusted when importing files, or is getting corrupted during lowering/SSA building.
 
-**The fix:** Delete all AST-based offset computation from lower.cot and use ONLY TypeRegistry's pre-computed offsets. See the rewrite document for exact functions to delete and call sites to modify.
+**Key Files to Investigate:**
+1. `stages/cot1/lib/import.cot` - Import_adjustNodePositions function
+2. `stages/cot1/frontend/lower.cot` - Lowerer_lowerCall, func_name handling
+3. `stages/cot1/ssa/builder.cot` - SSABuilder_convertCall, v.aux_int/aux_ptr
+
+**Previous Theory (field offset issue):**
+Earlier investigations focused on struct field offsets. This was a real bug (array pointer arithmetic not scaling correctly) and has been fixed. However, the root cause of stage2 failure is now identified as the symbol name corruption.
 
 **Reproduction:**
 ```bash
 # Build cot1-stage1
 ./zig-out/bin/cot stages/cot1/main.cot -o /tmp/cot1-stage1
 
-# Build cot1-stage2
+# Build cot1-stage2 (produces .o file)
 /tmp/cot1-stage1 stages/cot1/main.cot -o /tmp/cot1-stage2.o
 
-# Link cot1-stage2 (currently fails)
+# Link cot1-stage2 (fails with undefined symbol)
 zig cc /tmp/cot1-stage2.o runtime/cot_runtime.o -o /tmp/cot1-stage2 -lSystem
+# error: undefined symbol: _rn false; }
+
+# Check corrupted symbol
+nm /tmp/cot1-stage2.o | grep "_rn"
+# U _rn false; }
 ```
 
 ---
