@@ -40,7 +40,7 @@ Note: Previous estimates based on line counts were misleading. cot1's more verbo
 |--------|-----|------|----------|-------|
 | SSA Builder | ssa_builder.zig | builder.cot | **85%** | Phi insertion works, some edge cases |
 | expand_calls | expand_calls.zig | expand_calls.cot | **90%** | >8 arg handling |
-| lower | lower.zig | lower.cot | **95%** | Peephole opts (mul→shl) |
+| lower | lower.zig | lower.cot | **98%** | Peephole opts (mul→shl), constant folding |
 | decompose | decompose.zig | decompose.cot | **90%** | 16-byte value splits |
 | schedule | schedule.zig | schedule.cot | **88%** | Value ordering |
 | liveness | liveness.zig | liveness.cot | **92%** | Live range computation |
