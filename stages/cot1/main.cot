@@ -79,6 +79,7 @@ import "ssa/passes/expand_calls.cot"
 import "ssa/passes/lower.cot"
 import "ssa/passes/decompose.cot"
 import "ssa/passes/schedule.cot"
+import "ssa/passes/deadcode.cot"
 import "ssa/liveness.cot"
 import "ssa/regalloc.cot"
 
@@ -591,6 +592,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // Run decompose pass - split 16-byte values (strings, slices)
         // Reference: ssa/passes/decompose.zig
         decompose(&ssa_func, &g_type_pool);
+
+        // Run early deadcode pass - decrement use counts for dead values
+        // Reference: ssa/compile.zig earlyDeadcode
+        earlyDeadcode(&ssa_func);
 
         // Run lower pass - peephole optimizations (mul->shl, add 0->copy, etc.)
         // Reference: ssa/passes/lower.zig

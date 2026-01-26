@@ -28,6 +28,7 @@ extern fn malloc_u8(count: i64) *u8;
 // Pass enum - identifies which pass to run
 // Using enum instead of function pointers since cot1 doesn't support fn ptrs in arrays
 enum PassId {
+    EarlyDeadcode,    // Remove values with zero uses
     ExpandCalls,      // Handle >16B struct args, decompose aggregates
     Decompose,        // Split 16-byte values (strings, slices)
     Lower,            // Peephole optimizations (mul->shl, add 0->copy)
@@ -159,6 +160,7 @@ const NUM_STANDARD_PASSES: i64 = 8;
 
 // Pass names as strings
 fn PassId_name(id: PassId) string {
+    if id == PassId.EarlyDeadcode { return "early_deadcode"; }
     if id == PassId.ExpandCalls { return "expand_calls"; }
     if id == PassId.Decompose { return "decompose"; }
     if id == PassId.Lower { return "lower"; }

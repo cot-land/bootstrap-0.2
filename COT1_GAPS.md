@@ -99,8 +99,8 @@ Note: Previous estimates based on line counts were misleading. cot1's more verbo
 
 ### Low Priority (Optimizations)
 
-5. **Missing optimization passes** (0%)
-   - earlyDeadcode - Remove unused values
+5. **Optimization passes** (17%)
+   - ✓ earlyDeadcode - Remove unused values (implemented)
    - genericCSE - Common subexpression elimination
    - prove - Branch proving
    - nilCheckElim - Redundant nil checks

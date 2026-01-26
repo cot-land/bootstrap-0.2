@@ -1,0 +1,89 @@
+// Early Deadcode Pass - Remove Unused Values
+// Reference: src/ssa/compile.zig earlyDeadcode
+// Reference: cmd/compile/internal/ssa/deadcode.go
+//
+// This pass removes values that have zero uses and no side effects.
+// It runs early in the pass sequence to reduce work for later passes.
+//
+// NOTE: In cot1's flat value array model, we cannot actually remove values.
+// Instead, we just decrement use counts of dead values' arguments,
+// which can cascade to make more values dead.
+// Actual removal would require a compaction pass that renumbers everything.
+//
+// For now, this pass only decrements use counts - it doesn't modify ops.
+// This is safe but less effective than the Zig version.
+
+// Note: func.cot and related imports come from genssa.cot/main.cot
+
+// Run the early deadcode pass on a function
+// Reference: compile.zig:315 earlyDeadcode
+fn earlyDeadcode(f: *Func) {
+    // May need multiple passes as removing values can create new dead values
+    var changed: bool = true;
+    var iterations: i64 = 0;
+
+    while changed and iterations < 10 {
+        changed = false;
+        iterations = iterations + 1;
+
+        var b: i64 = 0;
+        while b < f.blocks_count {
+            let block: *Block = Func_getBlock(f, b);
+            if earlyDeadcodeBlock(f, block) {
+                changed = true;
+            }
+            b = b + 1;
+        }
+    }
+}
+
+// Process a single block for deadcode elimination
+// Returns true if any use counts were decremented
+fn earlyDeadcodeBlock(f: *Func, block: *Block) bool {
+    var changed: bool = false;
+    var vi: i64 = 0;
+
+    while vi < block.values_count {
+        let v: *Value = Func_getValue(f, block.values_start + vi);
+
+        // Skip if value has uses or has side effects
+        if v.uses > 0 or Op_hasSideEffects(v.op) {
+            vi = vi + 1;
+            continue;
+        }
+
+        // Skip if already processed (marked by negative uses)
+        if v.uses < 0 {
+            vi = vi + 1;
+            continue;
+        }
+
+        // This value is dead - decrement use counts of its arguments
+        // This may cascade to make more values dead
+        var ai: i64 = 0;
+        while ai < v.args.count {
+            let arg_id: i64 = Value_getArg(v, ai);
+            if arg_id >= 0 and arg_id < f.values_count {
+                let arg: *Value = Func_getValue(f, arg_id);
+                if arg.uses > 0 {
+                    arg.uses = arg.uses - 1;
+                    changed = true;
+                }
+            }
+            ai = ai + 1;
+        }
+
+        // Mark as processed by setting uses to -1
+        // This prevents reprocessing but doesn't break iteration
+        v.uses = -1;
+
+        vi = vi + 1;
+    }
+
+    return changed;
+}
+
+// Check if a value can be removed (dead and no side effects)
+fn isDeadValue(v: *Value) bool {
+    return v.uses == 0 and not Op_hasSideEffects(v.op);
+}
