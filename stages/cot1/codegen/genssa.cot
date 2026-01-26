@@ -1539,6 +1539,14 @@ fn GenState_store(gs: *GenState, v: *Value) {
     // IMPORTANT: Check DESTINATION type (from LocalAddr), not source value type
     // This handles cases like "let d: u8 = 101" where 101 has type i64
     var is_byte: bool = val.type_idx == 6 or val.type_idx == 2;
+
+    // BUG FIX: Check Store's aux_int for explicit element size
+    // StoreIndexLocal/StoreIndexValue set aux_int = elem_size
+    // This handles byte array indexing: arr[i] = value
+    if v.aux_int == 1 {
+        is_byte = true;
+    }
+
     if addr.op == Op.LocalAddr {
         let local_idx: i64 = addr.aux_int;
         let local: *Local = Func_getLocal(f, local_idx);

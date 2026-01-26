@@ -1852,8 +1852,11 @@ fn SSABuilder_convertStoreIndexLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
     SSABuilder_assignReg(b, ptr_val);
 
     // 4. Store the value
+    // BUG FIX: Propagate elem_size to Store for correct sized store instruction
+    // Without this, codegen uses 64-bit STR for byte arrays, corrupting stack
     let store_val: *Value = Func_newValue(b.func, Op.Store, TYPE_VOID);
     Value_addArg2(store_val, ptr_val, val_val);
+    store_val.aux_int = elem_size;  // Store element size for codegen
     return store_val.id;
 }
 
@@ -1875,8 +1878,10 @@ fn SSABuilder_convertStoreIndexValue(b: *SSABuilder, ir_node: *IRNode) i64 {
     SSABuilder_assignReg(b, ptr_val);
 
     // 3. Store the value
+    // BUG FIX: Propagate elem_size to Store for correct sized store instruction
     let store_val: *Value = Func_newValue(b.func, Op.Store, TYPE_VOID);
     Value_addArg2(store_val, ptr_val, val_val);
+    store_val.aux_int = elem_size;  // Store element size for codegen
     return store_val.id;
 }
 

@@ -3927,6 +3927,18 @@ fn Lowerer_lowerFieldAccess(l: *Lowerer, node: *Node) i64 {
         }
     }
 
+    // Case 4b: String literal with .ptr or .len access
+    // When "Hi".ptr is used directly, emit SlicePtr(ConstString) not FieldValue
+    if base_node.kind == NodeKind.StringLit {
+        let base_val: i64 = Lowerer_lowerExpr(l, base_node);
+        if name_is_ptr(l.source, field_name_start, field_name_len) {
+            return FuncBuilder_emitSlicePtr(fb, base_val, TYPE_I64);
+        }
+        if name_is_len(l.source, field_name_start, field_name_len) {
+            return FuncBuilder_emitSliceLen(fb, base_val);
+        }
+    }
+
     // Case 5: Other expressions - lower them and access field at offset 0
     let base_val: i64 = Lowerer_lowerExpr(l, base_node);
     return FuncBuilder_emitFieldValue(fb, base_val, 0, TYPE_I64);
@@ -4503,9 +4515,6 @@ fn Lowerer_lowerIndexAssign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
     let base_node: *Node = l.nodes + target.field0;
     let index_node_idx: i64 = target.field1;
 
-    // For cot0, assume element type is i64 (8 bytes) for simplicity
-    let elem_size: i64 = 8;
-
     // Lower the index expression
     let index_node: *Node = l.nodes + index_node_idx;
     let index_ir: i64 = Lowerer_lowerExpr(l, index_node);
@@ -4527,6 +4536,15 @@ fn Lowerer_lowerIndexAssign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
         }
 
         if local_idx >= 0 {
+            // BUG FIX: Compute elem_size from array type instead of defaulting to 8
+            // Without this, byte arrays get 64-bit stores which corrupt the stack
+            var elem_size: i64 = 8;  // Default to i64
+            let local_type: *Type = TypeRegistry_get(l.type_pool, local_type_idx);
+            if local_type != null and local_type.kind == TypeKind.Array {
+                let elem_type_idx: i64 = local_type.elem;
+                elem_size = TypeRegistry_sizeof(l.type_pool, elem_type_idx);
+            }
+
             // Check if local is a slice - slices store a pointer, not data
             // Following src/frontend/lower.zig:815-825 slice handling
             if local_type_idx == TYPE_SLICE {
@@ -4539,6 +4557,9 @@ fn Lowerer_lowerIndexAssign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
             }
         }
     }
+
+    // Default elem_size for non-local cases
+    let elem_size: i64 = 8;
 
     // Case 2: Base is any other expression - lower it and emit StoreIndexValue
     // Following src/frontend/lower.zig:849-857 slice handling pattern

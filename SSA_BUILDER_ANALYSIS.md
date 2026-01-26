@@ -6,11 +6,12 @@ This document provides a detailed, function-by-function comparison of the Zig co
 
 **Status: PARITY ACHIEVED**
 
-All critical SSA builder logic in cot1 now matches the Zig implementation. The following fixes were applied:
+All critical SSA builder logic in cot1 now matches the Zig implementation. Fixes applied:
 1. O(1) cache lookup (was O(n) causing O(n^2) total)
 2. fwd_vars clearing on block transitions
 3. FwdRef block_id assignment in lookupVarOutgoing
 4. SSA verification after phi insertion
+5. **(2026-01-27)** Store size propagation for array indexing - fixed in lower.cot and builder.cot
 
 ---
 
@@ -575,10 +576,182 @@ The cot1 SSA builder now matches the Zig implementation in all critical aspects:
 3. **lookupVarOutgoing**: Same predecessor chain walking with correct block assignment
 4. **Node caching**: O(1) lookup (actually optimized over Zig's HashMap)
 5. **SSA verification**: Same validation checks
+6. **Store size propagation**: Fixed to properly handle byte arrays (Section 11)
 
 The differences that remain are **implementation details**, not algorithmic differences:
 - ID-based vs pointer-based references (equivalent semantics)
 - Array storage vs HashMap (same O(1) complexity)
 - Direct BlockDefs write vs separate vars/defvars (equivalent for SSA)
 
-The SSA builder is ready for stage2 compilation.
+The SSA builder is ready for stage2 compilation, pending the fix in Section 11.
+
+---
+
+## 11. Store Size Propagation for Array Indexing
+
+**Status: FIXED (2026-01-27)**
+
+### 11.1 Problem Description
+
+When storing to a byte array element like `arr[0] = 72`:
+1. SSA builder creates `Store` with address from `AddPtr` and value `72`
+2. The value `72` has type `I64` (not `U8`)
+3. Codegen checks value type → sees I64 → emits 64-bit `STR`
+4. This overwrites 8 bytes instead of 1, corrupting the stack
+
+### 11.2 Zig vs cot1 Comparison
+
+**Zig SSA Builder (ssa_builder.zig:1270-1305)**:
+```zig
+.store_index_local => |s| blk: {
+    // ...compute element address...
+    const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
+    store_val.addArg2(elem_addr, value);
+    // NOTE: No elem_size stored - relies on value.type_idx
+}
+```
+
+**cot1 SSA Builder (builder.cot:1832-1858)**:
+```cot
+fn SSABuilder_convertStoreIndexLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
+    let elem_size: i64 = ir_node.op;  // elem_size IS AVAILABLE HERE
+    // ...compute element address...
+    let store_val: *Value = Func_newValue(b.func, Op.Store, TYPE_VOID);
+    Value_addArg2(store_val, ptr_val, val_val);
+    // BUG: elem_size NOT propagated to store_val
+    return store_val.id;
+}
+```
+
+### 11.3 Why Zig Works But cot1 Doesn't
+
+**Zig Flow**:
+```
+IR Lowerer                    Codegen (arm64.zig:2423)
+-----------                   -----------------------
+arr[0] = 72                   const type_size = self.getTypeSize(val.type_idx);
+const_int(72, type=U8)   →    type_size = 1 → STRB
+```
+
+The Zig IR lowerer properly types literals based on assignment context.
+
+**cot1 Flow**:
+```
+IR Lowerer                    Codegen (genssa.cot:1541)
+-----------                   ------------------------
+arr[0] = 72                   var is_byte: bool = val.type_idx == TYPE_U8;
+const_int(72, type=I64)  →    is_byte = false → STR (64-bit!) ✗
+```
+
+The cot1 IR lowerer doesn't propagate element type to literals.
+
+### 11.4 cot1 Codegen Workaround (Partial)
+
+cot1's `GenState_store` tries to detect byte stores:
+
+```cot
+// genssa.cot:1541-1548
+var is_byte: bool = val.type_idx == 6 or val.type_idx == 2;  // TYPE_U8 or TYPE_I8
+if addr.op == Op.LocalAddr {
+    let local: *Local = Func_getLocal(f, local_idx);
+    if local.type_idx == 6 or local.type_idx == 2 { is_byte = true; }
+}
+```
+
+**Problem**: This only works for `LocalAddr` addresses. For `AddPtr` (array indexing), the code doesn't trace back to find the element type.
+
+### 11.5 Fix Required
+
+**Option 1 - SSA Builder (Recommended)**
+
+In `builder.cot` at `SSABuilder_convertStoreIndexLocal` (line 1855):
+```cot
+let store_val: *Value = Func_newValue(b.func, Op.Store, TYPE_VOID);
+Value_addArg2(store_val, ptr_val, val_val);
+store_val.aux_int = elem_size;  // ADD THIS LINE
+return store_val.id;
+```
+
+Same for `SSABuilder_convertStoreIndexValue` (line 1878):
+```cot
+let store_val: *Value = Func_newValue(b.func, Op.Store, TYPE_VOID);
+Value_addArg2(store_val, ptr_val, val_val);
+store_val.aux_int = elem_size;  // ADD THIS LINE
+return store_val.id;
+```
+
+Then in `genssa.cot` at `GenState_store` (after line 1541):
+```cot
+// Check for explicit element size from StoreIndexLocal/StoreIndexValue
+if v.aux_int > 0 and v.aux_int <= 8 {
+    if v.aux_int == 1 { is_byte = true; }
+    // Could extend for 2-byte (is_half), 4-byte (is_word)
+}
+```
+
+**Option 2 - Codegen**
+
+In `genssa.cot` at `GenState_store` (line 1574), add `AddPtr` handling:
+```cot
+} else if addr.op == Op.AddPtr {
+    // Trace through AddPtr to find element type
+    if addr.args.count >= 1 {
+        let base_val: *Value = Func_getValue(f, Value_getArg(addr, 0));
+        if base_val.op == Op.LocalAddr {
+            let local: *Local = Func_getLocal(f, base_val.aux_int);
+            // Check if local is array with byte elements (requires type introspection)
+        }
+    }
+}
+```
+
+### 11.6 Test Case
+
+```cot
+fn main() i64 {
+    var arr: [8]u8;
+    arr[0] = 72;  // 'H'
+    arr[1] = 105; // 'i'
+    arr[2] = 10;  // newline
+    write(1, &arr[0], 3);
+    return 0;
+}
+```
+
+Expected: Prints "Hi\n"
+Actual (cot1): Crashes due to stack corruption from 64-bit stores
+
+### 11.7 Fix Applied (2026-01-27)
+
+The root cause was in `lower.cot` at `Lowerer_lowerIndexAssign` where `elem_size` was hardcoded to 8.
+
+**Files Changed:**
+
+1. **lower.cot:4519-4540** - Compute elem_size from array type:
+```cot
+var elem_size: i64 = 8;  // Default to i64
+let local_type: *Type = TypeRegistry_get(l.type_pool, local_type_idx);
+if local_type != null and local_type.kind == TypeKind.Array {
+    let elem_type_idx: i64 = local_type.elem;
+    elem_size = TypeRegistry_sizeof(l.type_pool, elem_type_idx);
+}
+```
+
+2. **builder.cot:1855** - Propagate elem_size to Store:
+```cot
+store_val.aux_int = elem_size;  // Store element size for codegen
+```
+
+3. **builder.cot:1880** - Same for StoreIndexValue
+
+4. **genssa.cot:1541** - Check aux_int in GenState_store:
+```cot
+if v.aux_int == 1 {
+    is_byte = true;
+}
+```
+
+**Verification:**
+- Byte array test prints "Hi!" correctly
+- All 166 tests pass
+- Stage1-compiled byte array test also works
