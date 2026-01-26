@@ -337,6 +337,87 @@ fn lowerBlock(f: *Func, block: *Block) {
             }
         }
 
+        // Pattern 16: Sub of same value → ConstInt 0
+        // x - x → 0
+        if v.op == Op.Sub64 and v.args.count == 2 {
+            let left_id: i64 = Value_getArg(v, 0);
+            let right_id: i64 = Value_getArg(v, 1);
+            if left_id == right_id and left_id >= 0 {
+                let arg: *Value = Func_getValue(f, left_id);
+                // Decrement uses by 2 (both args point to same value)
+                arg.uses = arg.uses - 2;
+
+                v.op = Op.ConstInt;
+                v.aux_int = 0;
+                i64list_clear(&v.args);
+            }
+        }
+
+        // Pattern 17: Xor of same value → ConstInt 0
+        // x ^ x → 0
+        if v.op == Op.Xor64 and v.args.count == 2 {
+            let left_id: i64 = Value_getArg(v, 0);
+            let right_id: i64 = Value_getArg(v, 1);
+            if left_id == right_id and left_id >= 0 {
+                let arg: *Value = Func_getValue(f, left_id);
+                arg.uses = arg.uses - 2;
+
+                v.op = Op.ConstInt;
+                v.aux_int = 0;
+                i64list_clear(&v.args);
+            }
+        }
+
+        // Pattern 18: And of same value → Copy
+        // x & x → x
+        if v.op == Op.And64 and v.args.count == 2 {
+            let left_id: i64 = Value_getArg(v, 0);
+            let right_id: i64 = Value_getArg(v, 1);
+            if left_id == right_id and left_id >= 0 {
+                let arg: *Value = Func_getValue(f, left_id);
+                // One use remains (for Copy), one removed
+                arg.uses = arg.uses - 1;
+
+                v.op = Op.Copy;
+                Value_truncateArgs(v, 1);
+            }
+        }
+
+        // Pattern 19: Or of same value → Copy
+        // x | x → x
+        if v.op == Op.Or64 and v.args.count == 2 {
+            let left_id: i64 = Value_getArg(v, 0);
+            let right_id: i64 = Value_getArg(v, 1);
+            if left_id == right_id and left_id >= 0 {
+                let arg: *Value = Func_getValue(f, left_id);
+                arg.uses = arg.uses - 1;
+
+                v.op = Op.Copy;
+                Value_truncateArgs(v, 1);
+            }
+        }
+
+        // Pattern 20: Neg64 of Neg64 → Copy
+        // -(-x) → x
+        if v.op == Op.Neg64 and v.args.count == 1 {
+            let arg_id: i64 = Value_getArg(v, 0);
+            if arg_id >= 0 {
+                let arg: *Value = Func_getValue(f, arg_id);
+                if arg.op == Op.Neg64 and arg.args.count == 1 {
+                    let inner_id: i64 = Value_getArg(arg, 0);
+                    if inner_id >= 0 {
+                        let inner: *Value = Func_getValue(f, inner_id);
+                        // v now directly uses inner instead of arg
+                        arg.uses = arg.uses - 1;
+                        inner.uses = inner.uses + 1;
+
+                        v.op = Op.Copy;
+                        Value_setArgById(v, 0, inner_id);
+                    }
+                }
+            }
+        }
+
         vi = vi + 1;
     }
 }
