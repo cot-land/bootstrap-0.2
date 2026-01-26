@@ -1002,8 +1002,46 @@ fn Parser_parseUnary(p: *Parser) i64 {
         return result;
     }
 
-    // Other atoms
-    return Parser_parseAtom(p);
+    // Other atoms - with postfix handling for string literals, etc.
+    var result: i64 = Parser_parseAtom(p);
+
+    // Handle postfix operations on atoms: "string".ptr, "string".len, etc.
+    var atom_done: bool = false;
+    while not atom_done {
+        if Parser_check(p, TokenType.Dot) {
+            Parser_advance(p);  // Consume '.'
+
+            if Parser_check(p, TokenType.Star) {
+                // Dereference: expr.*
+                let result_node: *Node = Node_get(p.pool, result);
+                Parser_advance(p);  // Consume '*'
+                result = Node_deref(p.pool, result, result_node.start, p.current.start);
+            } else {
+                // Field access: "string".ptr or "string".len
+                let field_start: i64 = p.current.start;
+                let field_len: i64 = p.current.end;
+                Parser_want(p, TokenType.Ident);
+
+                let result_node: *Node = Node_get(p.pool, result);
+                result = Node_fieldAccess(p.pool, result, field_start, field_len,
+                                          result_node.start, p.current.start);
+            }
+        }
+        else if Parser_check(p, TokenType.LBracket) {
+            // Index: expr[index]
+            let result_node: *Node = Node_get(p.pool, result);
+            let idx_start: i64 = result_node.start;
+            Parser_advance(p);  // Consume '['
+            let idx_expr: i64 = Parser_parseExpr(p);
+            let end: i64 = p.current.start + p.current.end;
+            Parser_want(p, TokenType.RBracket);
+            result = Node_index(p.pool, result, idx_expr, idx_start, end);
+        }
+        else {
+            atom_done = true;
+        }
+    }
+    return result;
 }
 
 // Parse binary expression with precedence climbing
