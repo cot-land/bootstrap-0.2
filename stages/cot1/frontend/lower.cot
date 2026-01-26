@@ -14,6 +14,7 @@ import "ast.cot"
 import "ir.cot"
 import "types.cot"
 import "parser.cot"  // For parse_* functions
+import "../lib/strmap.cot"  // For O(1) function lookup
 
 // ============================================================================
 // Lowerer Context
@@ -131,6 +132,9 @@ struct Lowerer {
     defer_stack_cap: i64,
 
     // call_args removed - args now stored directly in IRNode.call_args (matches Zig)
+
+    // Function name → index map for O(1) lookup
+    func_map: StrMap,
 }
 
 // ============================================================================
@@ -424,6 +428,9 @@ fn Lowerer_init(l: *Lowerer,
     l.label_continue_blocks = malloc_i64(l.label_cap);
     l.label_defer_depths = malloc_i64(l.label_cap);
     l.label_count = 0;
+
+    // Initialize function map for O(1) lookup
+    l.func_map = StrMap_init(256);
 }
 
 // cot1: Register a type alias
@@ -742,18 +749,9 @@ fn Lowerer_lookupGlobal(l: *Lowerer, name_start: i64, name_len: i64) i64 {
 }
 
 // Look up a function by name, returns its index or -1 if not found
-// Following Zig: src/frontend/lower.zig:1446-1449 (function pointer lookup)
+// Uses StrMap for O(1) lookup instead of linear scan
 fn Lowerer_lookupFunc(l: *Lowerer, name_start: i64, name_len: i64) i64 {
-    if l.ir_funcs == null { return -1; }
-    var i: i64 = 0;
-    while i < l.ir_funcs_count {
-        let f: *IRFunc = l.ir_funcs + i;
-        if names_equal(l.source, f.name_start, f.name_len, name_start, name_len) {
-            return i;
-        }
-        i = i + 1;
-    }
-    return -1;  // Not found
+    return StrMap_get(&l.func_map, l.source + name_start, name_len);
 }
 
 // Look up an enum variant by enum name and variant name
@@ -982,6 +980,11 @@ fn Lowerer_registerStructType(l: *Lowerer, node: *Node, node_idx: i64) {
     let ast_fields_start: i64 = node.field2;
     let fields_count: i64 = node.field3;
 
+    // Bounds check
+    if ast_fields_start < 0 or ast_fields_start + fields_count > l.children_count {
+        return;
+    }
+
     // Record start of fields in TypeRegistry's fields array
     let type_fields_start: i64 = l.type_pool.fields_count;
 
@@ -992,16 +995,35 @@ fn Lowerer_registerStructType(l: *Lowerer, node: *Node, node_idx: i64) {
     while i < fields_count {
         let child_ptr: *i64 = l.children + ast_fields_start + i;
         let field_node_idx: i64 = child_ptr.*;
+
+        // Bounds check field_node_idx
+        if field_node_idx < 0 or field_node_idx >= l.nodes_count {
+            i = i + 1;
+            continue;
+        }
+
         let field_node: *Node = l.nodes + field_node_idx;
 
         let fname_start: i64 = field_node.field0;
         let fname_len: i64 = field_node.field1;
         let type_expr_idx: i64 = field_node.field3;
 
+        // Bounds check type_expr_idx
+        if type_expr_idx < 0 or type_expr_idx >= l.nodes_count {
+            i = i + 1;
+            continue;
+        }
+
         // Resolve field type using TypeExpr AST node
         var field_type: i64 = resolve_type_expr(l, type_expr_idx);
         if field_type < 0 {
             field_type = TYPE_I64;
+        }
+
+        // Bounds check resolved type before TypeRegistry_get
+        if field_type < 0 or field_type >= l.type_pool.count {
+            i = i + 1;
+            continue;
         }
 
         // Get size and alignment from resolved type
@@ -1039,6 +1061,9 @@ fn Lowerer_registerStructType(l: *Lowerer, node: *Node, node_idx: i64) {
 
 // Lower all declarations in the AST
 fn Lowerer_lowerAll(l: *Lowerer) i64 {
+    var t0: i64 = get_time_ns();
+    var t1: i64 = 0;
+
     // Pass 0: Register struct types in TypeRegistry
     // This must happen before any type references are resolved
     var i: i64 = 0;
@@ -1049,6 +1074,9 @@ fn Lowerer_lowerAll(l: *Lowerer) i64 {
         }
         i = i + 1;
     }
+    t1 = get_time_ns();
+    print("    pass0 structs: "); print((t1 - t0) / 1000000); print("ms\n");
+    t0 = t1;
 
     // cot1 Pass 0.5: Register type aliases
     // TypeAliasDecl: field0=name_start, field1=name_len, field2=type_node_idx (AST node, NOT PTYPE_*)
@@ -1066,6 +1094,9 @@ fn Lowerer_lowerAll(l: *Lowerer) i64 {
         }
         i = i + 1;
     }
+    t1 = get_time_ns();
+    print("    pass0.5 aliases: "); print((t1 - t0) / 1000000); print("ms\n");
+    t0 = t1;
 
     // First pass: process const declarations
     i = 0;
@@ -1076,6 +1107,9 @@ fn Lowerer_lowerAll(l: *Lowerer) i64 {
         }
         i = i + 1;
     }
+    t1 = get_time_ns();
+    print("    pass1 consts: "); print((t1 - t0) / 1000000); print("ms\n");
+    t0 = t1;
 
     // Pass 1.5: Register global variable declarations (top-level var)
     i = 0;
@@ -1086,6 +1120,25 @@ fn Lowerer_lowerAll(l: *Lowerer) i64 {
         }
         i = i + 1;
     }
+    t1 = get_time_ns();
+    print("    pass1.5 globals: "); print((t1 - t0) / 1000000); print("ms\n");
+    t0 = t1;
+
+    // Pass 1.9: Pre-populate func_map with all function names for O(1) lookup
+    // This must happen before lowering function bodies
+    var func_idx: i64 = 0;
+    i = 0;
+    while i < l.nodes_count {
+        let node: *Node = l.nodes + i;
+        if node.kind == NodeKind.FnDecl {
+            StrMap_put(&l.func_map, l.source + node.field0, node.field1, func_idx);
+            func_idx = func_idx + 1;
+        }
+        i = i + 1;
+    }
+    t1 = get_time_ns();
+    print("    pass1.9 funcmap: "); print((t1 - t0) / 1000000); print("ms\n");
+    t0 = t1;
 
     // Second pass: process function declarations
     // Note: ExternFnDecl nodes are skipped - they don't need IR,
@@ -1099,6 +1152,9 @@ fn Lowerer_lowerAll(l: *Lowerer) i64 {
         // ExternFnDecl - skip, no IR needed (linker resolves external symbols)
         i = i + 1;
     }
+    t1 = get_time_ns();
+    print("    pass2 functions: "); print((t1 - t0) / 1000000); print("ms\n");
+
     return l.ir_nodes_count;
 }
 
@@ -2856,14 +2912,7 @@ fn Lowerer_lowerBinary(l: *Lowerer, node: *Node) i64 {
     // This matches Zig/C semantics for pointer arithmetic
     if is_ptr_arith and is_add_or_sub {
         let elem_size: i64 = Lowerer_getPtrElemSize(l, left_type);
-        // DEBUG: Print scaling info for struct pointers (elem_size > 8)
-        if elem_size > 8 {
-            print("  PTR_ARITH: left_type=");
-            print(left_type);
-            print(" elem_size=");
-            print(elem_size);
-            print("\n");
-        }
+        // Pointer arithmetic scaling debug removed for cleaner output
         let size_val: i64 = FuncBuilder_emitConstInt(fb, elem_size);
         right_idx = FuncBuilder_emitBinary(fb, IR_OP_MUL, right_idx, size_val, TYPE_I64);
     }
@@ -4587,6 +4636,34 @@ fn Lowerer_lowerBuiltinCall(l: *Lowerer, node: *Node) i64 {
     if first_char == 97 and name_len == 7 {  // 'a' and length 7
         // For now, return 8 (alignment of i64)
         return FuncBuilder_emitConstInt(fb, 8);
+    }
+
+    // @ptrToInt(ptr) - convert pointer to i64
+    // Following Zig pattern: src/frontend/lower.zig:2456-2461
+    // Just return the operand - pointers are already i64 internally
+    if first_char == 112 and name_len == 8 {  // 'p' and length 8 for "ptrToInt"
+        if arg1_idx >= 0 {
+            let ptr_node: *Node = l.nodes + arg1_idx;
+            return Lowerer_lowerExpr(l, ptr_node);
+        }
+    }
+
+    // @intToPtr(type, val) - convert i64 to pointer
+    // Just return the value - it's already i64 internally
+    if first_char == 105 and name_len == 8 {  // 'i' and length 8 for "intToPtr"
+        if arg1_idx >= 0 {
+            let val_node: *Node = l.nodes + arg1_idx;
+            return Lowerer_lowerExpr(l, val_node);
+        }
+    }
+
+    // @ptrCast(type, ptr) - reinterpret pointer type
+    // Following Zig: just return the operand since pointers are i64 internally
+    if first_char == 112 and name_len == 7 {  // 'p' and length 7 for "ptrCast"
+        if arg1_idx >= 0 {
+            let ptr_node: *Node = l.nodes + arg1_idx;
+            return Lowerer_lowerExpr(l, ptr_node);
+        }
     }
 
     return NULL_NODE;
