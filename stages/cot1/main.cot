@@ -80,6 +80,7 @@ import "ssa/passes/lower.cot"
 import "ssa/passes/decompose.cot"
 import "ssa/passes/schedule.cot"
 import "ssa/passes/deadcode.cot"
+import "ssa/passes/copyelim.cot"
 import "ssa/liveness.cot"
 import "ssa/regalloc.cot"
 
@@ -596,6 +597,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // Run early deadcode pass - decrement use counts for dead values
         // Reference: ssa/compile.zig earlyDeadcode
         earlyDeadcode(&ssa_func);
+
+        // Run copy elimination pass - replace uses of copy(x) with x
+        // Reference: ssa/compile.zig earlyCopyElim
+        copyelim(&ssa_func);
 
         // Run lower pass - peephole optimizations (mul->shl, add 0->copy, etc.)
         // Reference: ssa/passes/lower.zig
