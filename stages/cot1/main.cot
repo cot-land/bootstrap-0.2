@@ -35,14 +35,8 @@ import "lib/safe_array.cot"
 // Type/Kind validation helpers - NodeKind_name, IRNodeKind_name, assert_* functions
 import "lib/validate.cot"
 
-// Compiler invariant checks - Scanner, Parser, Lowerer, SSA invariants
-import "lib/invariants.cot"
-
 // Debug tracing infrastructure - phase tracking, checkpoints, hexdump
 import "lib/debug.cot"
-
-// Safe memory allocation - checked malloc/realloc/free with tracking
-import "lib/safe_alloc.cot"
 
 // Debug initialization - command-line parsing and startup/shutdown
 import "lib/debug_init.cot"

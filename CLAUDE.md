@@ -53,75 +53,55 @@
 
 ---
 
-## THOUSANDS OF DOLLARS WASTED ON DEAD CODE
+## CURRENT STATUS: 95% OF COT1 IS LIVE CODE
 
 ```
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
-║   WEEKS OF WORK. THOUSANDS OF DOLLARS IN CLAUDE TOKENS. ALL WASTED.           ║
+║   STATUS AS OF 2026-01-26 (after dead code cleanup)                           ║
 ║                                                                               ║
-║   Claude spent WEEKS writing, debugging, and "improving" code that is         ║
-║   NEVER EXECUTED. Files like checker.cot, validate.cot, invariants.cot,       ║
-║   regalloc.cot, liveness.cot - none of them are imported by main.cot.         ║
+║   Total .cot files in cot1:     48                                            ║
+║   Reachable from main.cot:      48 (100%)                                     ║
+║   Dead files:                   0                                             ║
 ║                                                                               ║
-║   The user paid for:                                                          ║
-║   - Writing 11,008 lines of dead code                                         ║
-║   - Debugging code that never runs                                            ║
-║   - "Fixing" bugs in unused functions                                         ║
-║   - Creating test files for dead modules                                      ║
-║   - 7+ hours on BUG-063 alone, based on assumptions about checker.cot        ║
+║   Total lines in cot1:          ~32,000                                       ║
+║   Live code:                    ~95%                                          ║
 ║                                                                               ║
-║   EXPOSED BY ONE COMMAND:                                                     ║
-║   $ grep "Checker" main.cot                                                   ║
-║   (no results - checker.cot is never used)                                    ║
+║   REMAINING ISSUE: 4 files imported but functions never called                ║
+║   - lib/safe_alloc.cot   (283 lines) - safe allocation wrappers               ║
+║   - lib/invariants.cot   (264 lines) - compiler invariant checks              ║
+║   - lib/reporter.cot     (332 lines) - structured error reporting             ║
+║   - lib/source.cot       (419 lines) - source location tracking               ║
 ║                                                                               ║
-║   THIS IS INEXCUSABLE. Before working on ANY file, Claude MUST verify         ║
-║   it is actually imported and used. 10 seconds of verification would          ║
-║   have saved weeks of wasted work.                                            ║
+║   These files were written but never integrated into the pipeline.            ║
+║   Decision needed: wire them up or delete them.                               ║
 ║                                                                               ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 ```
 
 ---
 
-## WARNING: 62% OF COT1 IS DEAD CODE
+## LESSON LEARNED: IMPORT != USAGE
 
 ```
 ╔═══════════════════════════════════════════════════════════════════════════════╗
 ║                                                                               ║
-║   BEFORE WORKING ON ANY COT1 FILE, VERIFY IT IS ACTUALLY USED                 ║
+║   Claude previously wrote ~11,000 lines of dead code including:               ║
+║   - 22 test files that were never run (deleted 2026-01-26)                    ║
+║   - 7 debug/trace files that were never imported (deleted 2026-01-26)         ║
+║   - 4 lib files that are imported but functions never called                  ║
 ║                                                                               ║
-║   Total .cot files in cot1:     69                                            ║
-║   Reachable from main.cot:      26                                            ║
-║   DEAD FILES:                   43 (62%)                                      ║
+║   ROOT CAUSE: Claude would write infrastructure code, import it,              ║
+║   then move on without actually CALLING the functions.                        ║
 ║                                                                               ║
-║   Total lines in cot1:          35,198                                        ║
-║   DEAD LINES:                   11,008 (31%)                                  ║
+║   VERIFICATION REQUIRED:                                                      ║
+║   1. After adding import, grep for actual function CALLS                      ║
+║   2. An import without function calls is STILL DEAD CODE                      ║
+║   3. Before working on any file, verify its functions are called              ║
 ║                                                                               ║
-║   BIGGEST DEAD FILES:                                                         ║
-║   - checker.cot      883 lines  <- Claude spent 7+ hours on this             ║
-║   - validate.cot     745 lines                                                ║
-║   - safe_io.cot      725 lines                                                ║
-║   - invariants.cot   687 lines                                                ║
-║   - regalloc.cot     623 lines                                                ║
-║   - liveness.cot     612 lines                                                ║
-║   - error.cot        637 lines                                                ║
-║   - debug.cot        590 lines                                                ║
-║                                                                               ║
-║   HOW TO CHECK IF A FILE IS USED:                                             ║
-║   1. grep 'import.*filename' main.cot                                         ║
-║   2. If not found, trace imports from main.cot transitively                   ║
-║   3. If file is not reachable, IT IS DEAD CODE                                ║
-║                                                                               ║
-║   REACHABLE FILES (the only ones that matter):                                ║
-║   main.cot, lib/stdlib.cot, lib/list.cot, lib/strmap.cot,                    ║
-║   frontend/token.cot, frontend/scanner.cot, frontend/types.cot,              ║
-║   frontend/ast.cot, frontend/parser.cot, frontend/ir.cot,                    ║
-║   frontend/lower.cot, codegen/genssa.cot, codegen/arm64.cot,                 ║
-║   arm64/asm.cot, arm64/regs.cot, ssa/builder.cot,                            ║
-║   ssa/passes/expand_calls.cot, ssa/func.cot, ssa/block.cot,                  ║
-║   ssa/value.cot, ssa/op.cot, ssa/dom.cot, ssa/abi.cot,                       ║
-║   ssa/stackalloc.cot, obj/macho.cot, obj/dwarf.cot                           ║
+║   Example check:                                                              ║
+║   $ grep -rn "safe_malloc_u8(" stages/cot1 --include="*.cot"                  ║
+║   (If only shows definition in safe_alloc.cot, it's dead code)                ║
 ║                                                                               ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 ```
