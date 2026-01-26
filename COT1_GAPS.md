@@ -4,7 +4,7 @@
 
 ## Executive Summary
 
-**Overall Functional Coverage: 94%**
+**Overall Functional Coverage: 95%**
 
 cot1 is a near-complete translation of the Zig bootstrap compiler. All critical path functions exist and the compiler successfully self-hosts (cot1-stage1 compiles cot1-stage2).
 
@@ -40,7 +40,7 @@ Note: Previous estimates based on line counts were misleading. cot1's more verbo
 |--------|-----|------|----------|-------|
 | SSA Builder | ssa_builder.zig | builder.cot | **85%** | Phi insertion works, some edge cases |
 | expand_calls | expand_calls.zig | expand_calls.cot | **90%** | >8 arg handling |
-| lower | lower.zig | lower.cot | **98%** | Peephole opts (mul→shl), constant folding |
+| lower | lower.zig | lower.cot | **99%** | Peephole opts (mul→shl), constant folding, 20 patterns |
 | decompose | decompose.zig | decompose.cot | **90%** | 16-byte value splits |
 | schedule | schedule.zig | schedule.cot | **88%** | Value ordering |
 | liveness | liveness.zig | liveness.cot | **92%** | Live range computation |
@@ -113,7 +113,7 @@ These are optimizations, not required for correctness.
 
 ## File Count Summary
 
-**Reachable from main.cot: 45 files**
+**Reachable from main.cot: 48 files**
 
 ```
 main.cot
@@ -126,14 +126,15 @@ main.cot
 ├── frontend/ (8 files)
 │   ├── token.cot, scanner.cot, ast.cot, types.cot
 │   ├── parser.cot, checker.cot, ir.cot, lower.cot
-├── ssa/ (15 files)
+├── ssa/ (18 files)
 │   ├── value.cot, block.cot, func.cot, op.cot
 │   ├── builder.cot, dom.cot, abi.cot
 │   ├── stackalloc.cot, liveness.cot, regalloc.cot
 │   ├── compile.cot, debug.cot
-│   └── passes/ (4 files)
+│   └── passes/ (7 files)
 │       ├── expand_calls.cot, lower.cot
 │       ├── decompose.cot, schedule.cot
+│       ├── deadcode.cot, copyelim.cot, cse.cot
 ├── codegen/ (2 files)
 │   ├── genssa.cot, arm64.cot
 ├── arm64/ (2 files)
@@ -153,10 +154,10 @@ main.cot
 
 ## Conclusion
 
-cot1 is **94% functionally complete** compared to the Zig bootstrap compiler. All critical compilation paths work. The remaining 6% consists of:
+cot1 is **95% functionally complete** compared to the Zig bootstrap compiler. All critical compilation paths work. The remaining 5% consists of:
 
 - Advanced phi node edge cases (~2%)
-- Optimization passes (~3%)
+- Remaining optimization passes (~2%) - prove, nilCheckElim, critical, layout
 - DWARF enhancements (~1%)
 
 The compiler is **production-ready for self-hosting**.
