@@ -420,6 +420,10 @@ fn Driver_parseFileRecursive(pool: *NodePool, main_file_nodes: i64) {
 // ============================================================================
 
 fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
+    let t_start: i64 = get_time_ns();
+    var t_phase: i64 = t_start;
+    var t_now: i64 = 0;
+
     print("Phase 1: Scanning...\n");
 
     // Phase 1: Scan and count tokens
@@ -436,6 +440,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
     // Initialize type registry (needed for parser) - self-allocates storage
     TypeRegistry_init(&g_type_pool);
+
+    t_now = get_time_ns();
+    print("  [Phase 1 time: "); print((t_now - t_phase) / 1000000); print("ms]\n");
+    t_phase = t_now;
 
     // Phase 2: Parse
     print("Phase 2: Parsing...\n");
@@ -459,6 +467,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     // Save main file node count before imports are added
     let main_file_nodes: i64 = pool.count;
 
+    t_now = get_time_ns();
+    print("  [Phase 2 time: "); print((t_now - t_phase) / 1000000); print("ms]\n");
+    t_phase = t_now;
+
     // Phase 2.5: Process imports
     print("Phase 2.5: Processing imports...\n");
     Driver_parseFileRecursive(pool, main_file_nodes);
@@ -467,6 +479,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print(", Children: ");
     print(pool.children.count);
     print("\n");
+
+    t_now = get_time_ns();
+    print("  [Phase 2.5 time: "); print((t_now - t_phase) / 1000000); print("ms]\n");
+    t_phase = t_now;
 
     // Phase 2.6: Type check
     // Following Zig: driver.zig creates Checker for each file, runs checkFile
@@ -488,6 +504,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         return 1;
     }
     print("  Type check OK\n");
+
+    t_now = get_time_ns();
+    print("  [Phase 2.6 time: "); print((t_now - t_phase) / 1000000); print("ms]\n");
+    t_phase = t_now;
 
     // Phase 3: Lower to IR
     print("Phase 3: Lowering to IR...\n");
@@ -530,6 +550,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print(lowerer.ir_globals_count);
     print("\n");
 
+    t_now = get_time_ns();
+    print("  [Phase 3 time: "); print((t_now - t_phase) / 1000000); print("ms]\n");
+    t_phase = t_now;
+
     // Phase 4 & 5: Build SSA and generate code for each function
     print("Phase 4/5: Building SSA and generating code...\n");
 
@@ -553,6 +577,9 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     // Process each function
     var func_idx: i64 = 0;
     while func_idx < lowerer.ir_funcs_count {
+        if func_idx >= 119 and func_idx < 125 {
+            print("  func "); print(func_idx); print("\n");
+        }
         let ir_func: *IRFunc = g_ir_funcs + (func_idx);
 
         // Record code offset for this function
@@ -673,6 +700,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print(gs.global_relocs_count);
     print("\n");
 
+    t_now = get_time_ns();
+    print("  [Phase 4/5 time: "); print((t_now - t_phase) / 1000000); print("ms]\n");
+    t_phase = t_now;
+
     // Phase 6: Finalize - Create Mach-O object
     // Following Zig: ARM64CodeGen.finalize() pattern
     print("Phase 6: Creating Mach-O object...\n");
@@ -709,6 +740,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print(macho_bytes);
     print("\n");
 
+    t_now = get_time_ns();
+    print("  [Phase 6 time: "); print((t_now - t_phase) / 1000000); print("ms]\n");
+    t_phase = t_now;
+
     // Phase 7: Write to output file
     print("Phase 7: Writing output...\n");
 
@@ -723,6 +758,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     } else {
         print("  (No output path specified, skipping write)\n");
     }
+
+    t_now = get_time_ns();
+    print("  [Phase 7 time: "); print((t_now - t_phase) / 1000000); print("ms]\n");
+    print("\n  [TOTAL time: "); print((t_now - t_start) / 1000000); print("ms]\n");
 
     return 0;
 }
@@ -789,8 +828,8 @@ fn main(argc: i64, argv: **u8) i64 {
 
     // Allocate ALL dynamic buffers - NO STATIC ARRAYS
 
-    // Byte buffers
-    g_source_cap = 1048576;
+    // Byte buffers - 4MB for source (cot1 needs ~1.5MB total)
+    g_source_cap = 4194304;
     g_source = malloc_u8(g_source_cap);
     // g_code, g_data, g_line_entries now allocated by genssa.cot
     // g_output, g_strings, g_debug_line/abbrev/info now allocated by macho.cot
@@ -798,8 +837,8 @@ fn main(argc: i64, argv: **u8) i64 {
     g_output_path = malloc_u8(g_output_path_cap);
     // Import tracking buffers now self-allocated by lib/import.cot (Import_init)
 
-    // AST storage
-    g_nodes_cap = 100000;
+    // AST storage - needs ~107K for self-hosting
+    g_nodes_cap = 200000;
     g_nodes = malloc_Node(g_nodes_cap);
 
     // Type storage - now self-allocated inside types.cot module via TypeRegistry_init()

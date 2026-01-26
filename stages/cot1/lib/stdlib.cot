@@ -1,8 +1,14 @@
 // Cot0 Standard Library
-// Basic functions: len, print, println, write
+// Basic functions: len, print, println, eprint, eprintln, write
 // Import this file to get these utilities
+//
+// Note: print/println/eprint/eprintln work with both strings and integers.
+// The compiler detects the argument type and generates appropriate code:
+// - For strings: calls write() with the string ptr/len
+// - For integers: calls __print_int/__eprint_int runtime functions
 
 extern fn write(fd: i32, buf: *u8, count: i64) i64;
+extern fn get_time_ns() i64;
 
 // Length of a string
 // Note: For string literals, this is computed at compile time by the Zig compiler
@@ -21,4 +27,16 @@ fn println(s: string) {
     print(s);
     var nl: u8 = 10;
     write(1, &nl, 1);
+}
+
+// Print a string to stderr (no newline)
+fn eprint(s: string) {
+    write(2, s.ptr, s.len);
+}
+
+// Print a string to stderr with newline
+fn eprintln(s: string) {
+    eprint(s);
+    var nl: u8 = 10;
+    write(2, &nl, 1);
 }
