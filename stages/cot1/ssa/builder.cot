@@ -56,10 +56,19 @@ fn SSABuilder_allocateStorage() {
     }
 
     // BlockDefs allocation - use @sizeOf for correct struct size
+    // All entries are cleared (uninitialized) for O(1) direct indexing by block_id
     sb_all_defs_cap = SB_INIT_BLOCK_DEFS;
     let blockdefs_size: i64 = @sizeOf(BlockDefs);
     let blockdefs_raw: *u8 = malloc_sized(sb_all_defs_cap, blockdefs_size);
     sb_all_defs = @ptrCast(*BlockDefs, blockdefs_raw);
+
+    // Initialize all entries as uninitialized for direct indexing
+    var bd_idx: i64 = 0;
+    while bd_idx < sb_all_defs_cap {
+        let bd: *BlockDefs = sb_all_defs + bd_idx;
+        BlockDefs_clear(bd);
+        bd_idx = bd_idx + 1;
+    }
 
     // BlockMapping allocation - use @sizeOf for correct struct size
     sb_block_map_cap = SB_INIT_BLOCK_MAP;
@@ -141,6 +150,7 @@ struct BlockDefs {
     defs: *VarDef,        // Array of VarDef
     defs_count: i64,
     defs_cap: i64,
+    initialized: bool,    // True if this block has been visited (for O(1) direct indexing)
 }
 
 fn BlockDefs_init(bd: *BlockDefs, block_id: i64, defs: *VarDef, cap: i64) {
@@ -148,6 +158,16 @@ fn BlockDefs_init(bd: *BlockDefs, block_id: i64, defs: *VarDef, cap: i64) {
     bd.defs = defs;
     bd.defs_count = 0;
     bd.defs_cap = cap;
+    bd.initialized = true;
+}
+
+// Mark BlockDefs as uninitialized (used when pre-allocating the array)
+fn BlockDefs_clear(bd: *BlockDefs) {
+    bd.block_id = -1;
+    bd.defs = null;
+    bd.defs_count = 0;
+    bd.defs_cap = 0;
+    bd.initialized = false;
 }
 
 // Set variable value (add or update)
@@ -399,24 +419,44 @@ fn SSABuilder_currentBlock(b: *SSABuilder) i64 {
 }
 
 // Set current block
+// Reference: Zig uses getOrPut pattern - reuse existing BlockDefs if present
+// OPTIMIZED: Uses direct indexing by block_id for O(1) access
 fn SSABuilder_setBlock(b: *SSABuilder, block_id: i64) {
     b.current_block = block_id;
     Func_setBlock(b.func, block_id);
 
-    // Grow all_defs if needed - use @sizeOf for correct size
-    if b.all_defs_count >= b.all_defs_cap {
+    // Grow all_defs if block_id is beyond capacity
+    // This ensures we can use direct indexing: all_defs[block_id]
+    while block_id >= b.all_defs_cap {
         let new_cap: i64 = b.all_defs_cap * 2;
         let blockdefs_size: i64 = @sizeOf(BlockDefs);
         let old_ptr: *u8 = @ptrCast(*u8, sb_all_defs);
         let new_ptr: *u8 = realloc_sized(old_ptr, sb_all_defs_cap, new_cap, blockdefs_size);
         sb_all_defs = @ptrCast(*BlockDefs, new_ptr);
+
+        // Initialize new entries as uninitialized
+        var i: i64 = sb_all_defs_cap;
+        while i < new_cap {
+            let bd: *BlockDefs = sb_all_defs + i;
+            BlockDefs_clear(bd);
+            i = i + 1;
+        }
+
         sb_all_defs_cap = new_cap;
         b.all_defs = sb_all_defs;
         b.all_defs_cap = new_cap;
     }
 
-    // Create BlockDefs for this block
-    let bd: *BlockDefs = b.all_defs + b.all_defs_count;
+    // Direct index: all_defs[block_id]
+    let bd: *BlockDefs = b.all_defs + block_id;
+
+    // Check if already initialized (like Zig's getOrPut)
+    if bd.initialized {
+        b.current_defs = bd;
+        return;
+    }
+
+    // First visit to this block - initialize it
     let storage: *VarDef = SSABuilder_allocDefs(b, MAX_VAR_DEFS);
     BlockDefs_init(bd, block_id, storage, MAX_VAR_DEFS);
     b.current_defs = bd;
@@ -699,14 +739,21 @@ fn SSABuilder_insertPhis(b: *SSABuilder) {
 
     // Safety: limit iterations to prevent infinite loops
     // Max iterations = initial FwdRefs * max_block_count (generous upper bound)
+    let initial_fwd_refs: i64 = fwd_refs.count;
     let max_iters: i64 = (fwd_refs.count + 1) * (b.func.blocks_count + 1) * 2;
     var iter_count: i64 = 0;
+
+    // DEBUG: Print phi insertion stats for large functions
+    if initial_fwd_refs > 10 or b.func.blocks_count > 20 {
+        print("  phi: fwd="); print(initial_fwd_refs); print(" blks="); print(b.func.blocks_count); print("\n");
+    }
 
     // Process FwdRefs iteratively until the work list is empty
     while fwd_refs.count > 0 {
         iter_count = iter_count + 1;
         if iter_count > max_iters {
-            // Bail out to prevent infinite loop
+            // Bail out to prevent infinite loop - print warning
+            // print("  WARNING: phi insertion bailed out at iter="); print(iter_count); print(" remaining="); print(fwd_refs.count); print("\n");
             break;
         }
 
@@ -714,23 +761,9 @@ fn SSABuilder_insertPhis(b: *SSABuilder) {
         let fwd_id: i64 = i64list_pop(&fwd_refs);
         let fwd: *Value = Func_getValue(b.func, fwd_id);
 
-        // Find which block this FwdRef is in
-        var fwd_block_id: i64 = -1;
-        block_idx = 0;
-        while block_idx < b.func.blocks_count {
-            let blk: *Block = Func_getBlock(b.func, block_idx);
-            var i: i64 = 0;
-            while i < blk.values_count {
-                if blk.values_start + i == fwd_id {
-                    fwd_block_id = block_idx;
-                    break;
-                }
-                i = i + 1;
-            }
-            if fwd_block_id >= 0 { break; }
-            block_idx = block_idx + 1;
-        }
-
+        // Get block directly from Value's block_id field (O(1) instead of O(n*m) search)
+        // This matches Zig: const block = fwd.block orelse continue;
+        let fwd_block_id: i64 = fwd.block_id;
         if fwd_block_id < 0 { continue; }
 
         let blk: *Block = Func_getBlock(b.func, fwd_block_id);
@@ -1934,14 +1967,15 @@ fn SSABuilder_convertReturn(b: *SSABuilder, ir_node: *IRNode) {
 // ============================================================================
 
 // Get BlockDefs for a specific SSA block
+// OPTIMIZED: O(1) direct indexing by block_id (like Zig's HashMap)
 fn SSABuilder_getBlockDefs(b: *SSABuilder, block_id: i64) *BlockDefs {
-    var i: i64 = 0;
-    while i < b.all_defs_count {
-        let bd: *BlockDefs = b.all_defs + i;
-        if bd.block_id == block_id {
-            return bd;
-        }
-        i = i + 1;
+    // Bounds check
+    if block_id < 0 or block_id >= b.all_defs_cap {
+        return null;
+    }
+    let bd: *BlockDefs = b.all_defs + block_id;
+    if bd.initialized {
+        return bd;
     }
     return null;
 }

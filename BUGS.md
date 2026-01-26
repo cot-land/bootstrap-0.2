@@ -49,26 +49,35 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
-### BUG-063: cot1-stage2 runtime crash
+### BUG-063: cot1-stage2 linker error (undefined symbol `_`)
 
-**Status:** PARTIALLY FIXED - now links, crashes at runtime
+**Status:** IN PROGRESS - compiles in ~100s, linker error with empty function name
 **Priority:** HIGH (blocks cot1 self-hosting chain)
 **Discovered:** 2026-01-25
 **Updated:** 2026-01-26
 
-**Progress (2026-01-26 evening):**
+**Progress (2026-01-26 late evening):**
 
-The linker error is FIXED. Stage2 now compiles and links successfully (~763KB). However, it crashes at runtime with SIGSEGV.
+Major SSA builder performance fixes. Stage2 now COMPILES completely in ~100 seconds (previously hung indefinitely at func 124). Generates valid output: 8917 blocks, 106649 values, 602KB code.
 
-**Fixes applied:**
-1. Fixed @sizeOf builtin to compute actual struct sizes (was returning constant 8)
-2. Added malloc_sized/realloc_sized generic allocation to runtime
-3. Updated func.cot to use @sizeOf(Block/Value/Local) for allocations
-4. Fixed CallSite size: 16→24 bytes (3 fields × 8)
-5. Fixed Reloc realloc size: 24→48 bytes (matching malloc)
+Linking fails with:
+```
+error: undefined symbol: _
+    note: referenced by /tmp/cot1-stage2.o:_Parser_parseIfStmt
+    note: referenced by /tmp/cot1-stage2.o:_Lowerer_lowerFieldAccess
+```
+
+The undefined symbol `_` (empty name) indicates a codegen bug where a function call is emitting an empty function name.
+
+**Fixes applied (2026-01-26):**
+1. Fixed SSA builder O(n²) block search - now uses Value.block_id for O(1)
+2. Fixed SSABuilder_getBlockDefs - changed to O(1) direct indexing by block_id
+3. Fixed SSABuilder_setBlock to not create duplicate BlockDefs entries
+4. Added `initialized` field to BlockDefs for direct array indexing
+5. Previous fixes: @sizeOf, malloc_sized, struct sizes
 
 **Current issue:**
-Stage2 crashes immediately at startup with SIGSEGV. Likely more struct size mismatches in generated code. The mature path forward is to continue converting type-specific mallocs to use `malloc_sized` + `@sizeOf(T)` pattern.
+Codegen emitting empty function names for some calls. Need to investigate what's different about the calls in `Parser_parseIfStmt` and `Lowerer_lowerFieldAccess`.
 
 **Previous issue (now fixed):**
 

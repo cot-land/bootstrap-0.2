@@ -6,10 +6,10 @@
 |-------|--------|-------------|
 | Stage 0 | Complete | Zig compiler (`src/*.zig`) - 166 tests pass |
 | Stage 1 | Complete | Zig compiles cot1 → `cot1-stage1` works, 180 tests pass |
-| Stage 2 | Partial | cot1-stage1 compiles cot1 → `cot1-stage2` links but crashes at runtime |
-| Stage 3+ | Blocked | Self-hosting blocked by stage 2 crash |
+| Stage 2 | Partial | cot1-stage1 compiles cot1 → `cot1-stage2.o` in ~100s, linker error (undefined `_` symbol) |
+| Stage 3+ | Blocked | Self-hosting blocked by stage 2 linker error |
 
-**Status**: cot1-stage1 works correctly (180 tests pass: 166 bootstrap + 14 feature tests). cot1-stage2 compiles and links successfully (~763KB Mach-O) but crashes at startup (SIGSEGV - likely remaining struct size mismatches in generated code).
+**Status**: cot1-stage1 works correctly (180 tests pass). cot1-stage2 compilation completes in ~100 seconds (8917 blocks, 106649 values, 602KB code). Linking fails with undefined symbol `_` (codegen bug generating empty function names).
 
 ## What Works
 
