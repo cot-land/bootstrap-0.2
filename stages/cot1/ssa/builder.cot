@@ -28,13 +28,9 @@ const SB_INIT_BLOCK_MAP: i64 = 500;
 const SB_INIT_VAR_STORAGE: i64 = 100000;
 const SB_INIT_FWD_VARS: i64 = 1000;
 
-// Malloc/realloc externs for self-allocation with dynamic growth
-extern fn malloc_BlockDefs(count: i64) *BlockDefs;
-extern fn malloc_BlockMapping(count: i64) *BlockMapping;
-extern fn malloc_VarDef(count: i64) *VarDef;
-extern fn realloc_BlockDefs(ptr: *BlockDefs, old_count: i64, new_count: i64) *BlockDefs;
-extern fn realloc_BlockMapping(ptr: *BlockMapping, old_count: i64, new_count: i64) *BlockMapping;
-extern fn realloc_VarDef(ptr: *VarDef, old_count: i64, new_count: i64) *VarDef;
+// Generic sized allocation - use @sizeOf(T) to compute struct sizes at compile time
+extern fn malloc_sized(count: i64, struct_size: i64) *u8;
+extern fn realloc_sized(ptr: *u8, old_count: i64, new_count: i64, struct_size: i64) *u8;
 
 // ============================================================================
 // Module-Level Storage (self-allocated)
@@ -59,20 +55,32 @@ fn SSABuilder_allocateStorage() {
         return;
     }
 
+    // BlockDefs allocation - use @sizeOf for correct struct size
     sb_all_defs_cap = SB_INIT_BLOCK_DEFS;
-    sb_all_defs = malloc_BlockDefs(sb_all_defs_cap);
+    let blockdefs_size: i64 = @sizeOf(BlockDefs);
+    let blockdefs_raw: *u8 = malloc_sized(sb_all_defs_cap, blockdefs_size);
+    sb_all_defs = @ptrCast(*BlockDefs, blockdefs_raw);
 
+    // BlockMapping allocation - use @sizeOf for correct struct size
     sb_block_map_cap = SB_INIT_BLOCK_MAP;
-    sb_block_map = malloc_BlockMapping(sb_block_map_cap);
+    let blockmap_size: i64 = @sizeOf(BlockMapping);
+    let blockmap_raw: *u8 = malloc_sized(sb_block_map_cap, blockmap_size);
+    sb_block_map = @ptrCast(*BlockMapping, blockmap_raw);
+
+    // VarDef allocations - use @sizeOf for correct struct size
+    let vardef_size: i64 = @sizeOf(VarDef);
 
     sb_node_values_cap = SB_INIT_VAR_DEFS;
-    sb_node_values = malloc_VarDef(sb_node_values_cap);
+    let nodevals_raw: *u8 = malloc_sized(sb_node_values_cap, vardef_size);
+    sb_node_values = @ptrCast(*VarDef, nodevals_raw);
 
     sb_var_storage_cap = SB_INIT_VAR_STORAGE;
-    sb_var_storage = malloc_VarDef(sb_var_storage_cap);
+    let varstorage_raw: *u8 = malloc_sized(sb_var_storage_cap, vardef_size);
+    sb_var_storage = @ptrCast(*VarDef, varstorage_raw);
 
     sb_fwd_vars_cap = SB_INIT_FWD_VARS;
-    sb_fwd_vars = malloc_VarDef(sb_fwd_vars_cap);
+    let fwdvars_raw: *u8 = malloc_sized(sb_fwd_vars_cap, vardef_size);
+    sb_fwd_vars = @ptrCast(*VarDef, fwdvars_raw);
 
     sb_storage_initialized = true;
 }
@@ -359,8 +367,11 @@ fn SSABuilder_allocDefs(b: *SSABuilder, count: i64) *VarDef {
     // Grow var_storage if needed
     if b.var_storage_used + count > b.var_storage_cap {
         let new_cap: i64 = b.var_storage_cap * 2;
-        // Update both local and global pointers
-        sb_var_storage = realloc_VarDef(sb_var_storage, sb_var_storage_cap, new_cap);
+        // Update both local and global pointers - use @sizeOf for correct size
+        let vardef_size: i64 = @sizeOf(VarDef);
+        let old_ptr: *u8 = @ptrCast(*u8, sb_var_storage);
+        let new_ptr: *u8 = realloc_sized(old_ptr, sb_var_storage_cap, new_cap, vardef_size);
+        sb_var_storage = @ptrCast(*VarDef, new_ptr);
         sb_var_storage_cap = new_cap;
         b.var_storage = sb_var_storage;
         b.var_storage_cap = new_cap;
@@ -392,10 +403,13 @@ fn SSABuilder_setBlock(b: *SSABuilder, block_id: i64) {
     b.current_block = block_id;
     Func_setBlock(b.func, block_id);
 
-    // Grow all_defs if needed
+    // Grow all_defs if needed - use @sizeOf for correct size
     if b.all_defs_count >= b.all_defs_cap {
         let new_cap: i64 = b.all_defs_cap * 2;
-        sb_all_defs = realloc_BlockDefs(sb_all_defs, sb_all_defs_cap, new_cap);
+        let blockdefs_size: i64 = @sizeOf(BlockDefs);
+        let old_ptr: *u8 = @ptrCast(*u8, sb_all_defs);
+        let new_ptr: *u8 = realloc_sized(old_ptr, sb_all_defs_cap, new_cap, blockdefs_size);
+        sb_all_defs = @ptrCast(*BlockDefs, new_ptr);
         sb_all_defs_cap = new_cap;
         b.all_defs = sb_all_defs;
         b.all_defs_cap = new_cap;
@@ -411,10 +425,13 @@ fn SSABuilder_setBlock(b: *SSABuilder, block_id: i64) {
 
 // Map IR block to SSA block
 fn SSABuilder_mapBlock(b: *SSABuilder, ir_block: i64, ssa_block: i64) {
-    // Grow block_map if needed
+    // Grow block_map if needed - use @sizeOf for correct size
     if b.block_map_count >= b.block_map_cap {
         let new_cap: i64 = b.block_map_cap * 2;
-        sb_block_map = realloc_BlockMapping(sb_block_map, sb_block_map_cap, new_cap);
+        let blockmap_size: i64 = @sizeOf(BlockMapping);
+        let old_ptr: *u8 = @ptrCast(*u8, sb_block_map);
+        let new_ptr: *u8 = realloc_sized(old_ptr, sb_block_map_cap, new_cap, blockmap_size);
+        sb_block_map = @ptrCast(*BlockMapping, new_ptr);
         sb_block_map_cap = new_cap;
         b.block_map = sb_block_map;
         b.block_map_cap = new_cap;
@@ -489,10 +506,13 @@ fn SSABuilder_getFwdVar(b: *SSABuilder, var_idx: i64) i64 {
 
 // Cache FwdRef for variable in current block
 fn SSABuilder_setFwdVar(b: *SSABuilder, var_idx: i64, value_id: i64) {
-    // Grow fwd_vars if needed
+    // Grow fwd_vars if needed - use @sizeOf for correct size
     if b.fwd_vars_count >= b.fwd_vars_cap {
         let new_cap: i64 = b.fwd_vars_cap * 2;
-        sb_fwd_vars = realloc_VarDef(sb_fwd_vars, sb_fwd_vars_cap, new_cap);
+        let vardef_size: i64 = @sizeOf(VarDef);
+        let old_ptr: *u8 = @ptrCast(*u8, sb_fwd_vars);
+        let new_ptr: *u8 = realloc_sized(old_ptr, sb_fwd_vars_cap, new_cap, vardef_size);
+        sb_fwd_vars = @ptrCast(*VarDef, new_ptr);
         sb_fwd_vars_cap = new_cap;
         b.fwd_vars = sb_fwd_vars;
         b.fwd_vars_cap = new_cap;
@@ -792,10 +812,13 @@ fn SSABuilder_insertPhis(b: *SSABuilder) {
 
 // Cache IR node → SSA value mapping
 fn SSABuilder_cacheNode(b: *SSABuilder, node_idx: i64, value_id: i64) {
-    // Grow node_values if needed
+    // Grow node_values if needed - use @sizeOf for correct size
     if b.node_values_count >= b.node_values_cap {
         let new_cap: i64 = b.node_values_cap * 2;
-        sb_node_values = realloc_VarDef(sb_node_values, sb_node_values_cap, new_cap);
+        let vardef_size: i64 = @sizeOf(VarDef);
+        let old_ptr: *u8 = @ptrCast(*u8, sb_node_values);
+        let new_ptr: *u8 = realloc_sized(old_ptr, sb_node_values_cap, new_cap, vardef_size);
+        sb_node_values = @ptrCast(*VarDef, new_ptr);
         sb_node_values_cap = new_cap;
         b.node_values = sb_node_values;
         b.node_values_cap = new_cap;

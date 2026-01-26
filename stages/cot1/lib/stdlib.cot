@@ -10,6 +10,11 @@
 extern fn write(fd: i32, buf: *u8, count: i64) i64;
 extern fn get_time_ns() i64;
 
+// Generic sized allocation - use @sizeOf(T) to compute struct sizes at compile time
+// This avoids hardcoded sizes in the runtime which can become mismatched
+extern fn malloc_sized(count: i64, struct_size: i64) *u8;
+extern fn realloc_sized(ptr: *u8, old_count: i64, new_count: i64, struct_size: i64) *u8;
+
 // Length of a string
 // Note: For string literals, this is computed at compile time by the Zig compiler
 // For cot0-stage1, we need runtime support

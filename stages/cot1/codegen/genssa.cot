@@ -156,9 +156,9 @@ struct StringReloc {
     // The ADD instruction is at code_offset + 4
 }
 
-// Extern malloc declarations for struct types (must come after struct definitions)
-extern fn malloc_Branch(count: i64) *Branch;
-extern fn malloc_CallSite(count: i64) *CallSite;
+// Generic sized allocation - available from lib/stdlib.cot
+// Use @sizeOf(T) to compute struct sizes at compile time
+extern fn malloc_sized(count: i64, struct_size: i64) *u8;
 
 // ============================================================================
 // Codegen State
@@ -272,13 +272,17 @@ fn GenState_allocateStorage() {
     gs_bstart_cap = GS_BSTART_CAP;
     gs_bstart = malloc_i64(gs_bstart_cap);
 
-    // Branches
+    // Branches - use @sizeOf for correct struct size
     gs_branches_cap = GS_BRANCHES_CAP;
-    gs_branches = malloc_Branch(gs_branches_cap);
+    let branch_size: i64 = @sizeOf(Branch);
+    let branches_raw: *u8 = malloc_sized(gs_branches_cap, branch_size);
+    gs_branches = @ptrCast(*Branch, branches_raw);
 
-    // Call sites
+    // Call sites - use @sizeOf for correct struct size
     gs_call_sites_cap = GS_CALL_SITES_CAP;
-    gs_call_sites = malloc_CallSite(gs_call_sites_cap);
+    let callsite_size: i64 = @sizeOf(CallSite);
+    let callsites_raw: *u8 = malloc_sized(gs_call_sites_cap, callsite_size);
+    gs_call_sites = @ptrCast(*CallSite, callsites_raw);
 
     // Global relocations (parallel arrays)
     gs_global_relocs_cap = GS_GLOBAL_RELOCS_CAP;
