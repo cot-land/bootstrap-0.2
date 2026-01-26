@@ -1102,26 +1102,13 @@ fn GenState_sliceLen(gs: *GenState, v: *Value) {
     } else if slice_val.op == Op.Load and slice_val.args.count >= 1 {
         // Load of a string/slice local: len is at offset 8 from base
         // Check if type is TYPE_STRING or TYPE_SLICE (16-byte composite)
-        print("DEBUG: SliceLen Load type_idx=");
-        print(slice_val.type_idx);
-        print(" TYPE_STRING=");
-        print(TYPE_STRING);
-        print("\n");
         if slice_val.type_idx == TYPE_STRING or slice_val.type_idx == TYPE_SLICE {
             let addr_val: *Value = Func_getValue(f, Value_getArg(slice_val, 0));
-            print("DEBUG: SliceLen addr_val.op=");
-            print(addr_val.op);
-            print(" LocalAddr=");
-            print(Op.LocalAddr);
-            print("\n");
             if addr_val.op == Op.LocalAddr {
                 // Direct SP-relative load from offset + 8
                 let local_idx: i64 = addr_val.aux_int;
                 let local: *Local = Func_getLocal(f, local_idx);
                 let len_offset: i64 = local.offset + 8;
-                print("DEBUG: SliceLen emitting LDR from offset+8=");
-                print(len_offset);
-                print("\n");
                 GenState_emitInst(gs, encode_ldr(rd, SP, len_offset));
             } else {
                 // Generic case: load from addr + 8
@@ -2837,6 +2824,13 @@ fn GenState_finalize(
 
         // If not internal, add external symbol and relocation
         if not is_internal {
+            // Skip call sites with obviously invalid func_name_len
+            // Valid function names should be 1-64 characters
+            if cs2.func_name_len <= 0 or cs2.func_name_len > 64 {
+                call_idx = call_idx + 1;
+                continue;
+            }
+
             var ext_sym_len: i64 = 0;
             let sn2: *u8 = sym_name.items;
 
@@ -2852,11 +2846,15 @@ fn GenState_finalize(
             } else {
                 sn2.* = 95;
                 var ext_name_idx: i64 = 0;
-                while ext_name_idx < cs2.func_name_len and ext_name_idx < 126 {
+                // Limit to 126 chars max (plus underscore prefix = 127 total)
+                var copy_len: i64 = cs2.func_name_len;
+                if copy_len < 0 { copy_len = 0; }
+                if copy_len > 126 { copy_len = 126; }
+                while ext_name_idx < copy_len {
                     (sn2 + 1 + ext_name_idx).* = (source + cs2.func_name_start + ext_name_idx).*;
                     ext_name_idx = ext_name_idx + 1;
                 }
-                ext_sym_len = 1 + cs2.func_name_len;
+                ext_sym_len = 1 + copy_len;
             }
 
             let sym_idx: i64 = MachOWriter_addSymbol(writer, sym_name.items, ext_sym_len, 0, 0, true);
@@ -2985,11 +2983,15 @@ fn GenState_finalize(
             let snf: *u8 = sym_name.items;
             snf.* = 95;
             var far_name_idx: i64 = 0;
-            while far_name_idx < far_func_name_len and far_name_idx < 126 {
+            // Limit to 126 chars max, handle negative
+            var far_copy_len: i64 = far_func_name_len;
+            if far_copy_len < 0 { far_copy_len = 0; }
+            if far_copy_len > 126 { far_copy_len = 126; }
+            while far_name_idx < far_copy_len {
                 (snf + 1 + far_name_idx).* = (source + far_func_name_start + far_name_idx).*;
                 far_name_idx = far_name_idx + 1;
             }
-            let far_sym_len: i64 = 1 + far_func_name_len;
+            let far_sym_len: i64 = 1 + far_copy_len;
             found_sym_idx = MachOWriter_addSymbol(writer, sym_name.items, far_sym_len, 0, 0, true);
         }
 
