@@ -148,11 +148,14 @@ main.cot
 | Stage | Status | Notes |
 |-------|--------|-------|
 | cot1-stage1 | ✓ Works | Zig compiles cot1, 166/166 tests pass |
-| cot1-stage2 | ⚠️ Blocked | cot1-stage1 cannot parse full cot1 source (parser error at EOF) |
+| cot1-stage2 | ⚠️ Partial | Parsing works (94008 nodes), crashes in SSA building at scale |
 | Individual files | ✓ Works | cot1-stage1 can compile individual cot1 files |
 
-**Note**: Full self-hosting (cot1-stage1 compiling complete cot1) is blocked by parser limitations
-when processing the full source with all imports. Individual file compilation works.
+**Progress**: Parser now fully handles all cot1 syntax including `"string".ptr`.
+The self-hosting pipeline successfully:
+- Parses all 48 source files (94008 AST nodes)
+- Lowers to IR (61381 nodes, 1106 functions, 148 globals)
+- Crashes during SSA building (stack overflow suspected at 8MB stack limit)
 
 ## Conclusion
 
