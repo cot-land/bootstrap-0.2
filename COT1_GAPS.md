@@ -147,10 +147,12 @@ main.cot
 
 | Stage | Status | Notes |
 |-------|--------|-------|
-| cot0-stage1 | ✓ Works | Zig compiles cot0 |
-| cot1-stage1 | ✓ Works | Zig compiles cot1 |
-| cot1-stage2 | ✓ Works | cot1-stage1 compiles cot1 |
-| All 166 tests | ✓ Pass | Full test suite |
+| cot1-stage1 | ✓ Works | Zig compiles cot1, 166/166 tests pass |
+| cot1-stage2 | ⚠️ Blocked | cot1-stage1 cannot parse full cot1 source (parser error at EOF) |
+| Individual files | ✓ Works | cot1-stage1 can compile individual cot1 files |
+
+**Note**: Full self-hosting (cot1-stage1 compiling complete cot1) is blocked by parser limitations
+when processing the full source with all imports. Individual file compilation works.
 
 ## Conclusion
 
