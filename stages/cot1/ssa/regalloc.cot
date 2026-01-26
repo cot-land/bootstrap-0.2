@@ -629,3 +629,131 @@ fn RegAlloc_inReg(ra: *RegAllocState, value_id: i64) bool {
     let vs: *ValState = ra.val_states + value_id;
     return ValState_inReg(vs);
 }
+
+// ============================================================================
+// Additional Register Allocator Functions
+// Reference: src/ssa/regalloc.zig
+// ============================================================================
+
+// Get the total number of spill slots used
+// Reference: Zig regalloc.zig num_spills field
+fn RegAlloc_getSpillCount(ra: *RegAllocState) i64 {
+    return ra.num_spills;
+}
+
+// Get the register mask for a value (which registers hold it)
+fn RegAlloc_getRegMask(ra: *RegAllocState, value_id: i64) i64 {
+    if value_id < 0 or value_id >= ra.val_states_count {
+        return 0;
+    }
+    let vs: *ValState = ra.val_states + value_id;
+    return vs.regs;
+}
+
+// Check if a value is rematerializable (can be recomputed instead of spilled)
+fn RegAlloc_isRematerializable(ra: *RegAllocState, value_id: i64) bool {
+    if value_id < 0 or value_id >= ra.val_states_count {
+        return false;
+    }
+    let vs: *ValState = ra.val_states + value_id;
+    return vs.rematerializable;
+}
+
+// Check if a value has been spilled
+fn RegAlloc_isSpilled(ra: *RegAllocState, value_id: i64) bool {
+    if value_id < 0 or value_id >= ra.val_states_count {
+        return false;
+    }
+    let vs: *ValState = ra.val_states + value_id;
+    return vs.spill_used;
+}
+
+// Load a spilled value back into a register
+// Returns the register number, or -1 if failed
+// Reference: Zig regalloc.zig loadValue()
+fn RegAlloc_loadValue(ra: *RegAllocState, value_id: i64, block_id: i64) i64 {
+    if value_id < 0 or value_id >= ra.val_states_count {
+        return -1;
+    }
+
+    let vs: *ValState = ra.val_states + value_id;
+
+    // If already in a register, return it
+    if ValState_inReg(vs) {
+        return ValState_firstReg(vs);
+    }
+
+    // If rematerializable, we can recompute instead of loading
+    // (genssa handles this during code generation)
+    if vs.rematerializable {
+        // Allocate a register for the rematerialized value
+        let reg: i64 = RegAlloc_allocReg(ra, ALLOCATABLE_MASK, block_id);
+        if reg >= 0 {
+            RegAlloc_assignReg(ra, value_id, reg);
+        }
+        return reg;
+    }
+
+    // If spilled, need to load from stack
+    if vs.spill >= 0 {
+        // Allocate a register
+        let reg: i64 = RegAlloc_allocReg(ra, ALLOCATABLE_MASK, block_id);
+        if reg >= 0 {
+            RegAlloc_assignReg(ra, value_id, reg);
+            // Note: genssa will see the spill_slot and generate the load
+        }
+        return reg;
+    }
+
+    // Value has no location - error
+    return -1;
+}
+
+// Mark a value as needing a register (or not)
+fn RegAlloc_setNeedsReg(ra: *RegAllocState, value_id: i64, needs: bool) {
+    if value_id < 0 or value_id >= ra.val_states_count {
+        return;
+    }
+    let vs: *ValState = ra.val_states + value_id;
+    vs.needs_reg = needs;
+}
+
+// Mark a value as rematerializable
+fn RegAlloc_setRematerializable(ra: *RegAllocState, value_id: i64, remat: bool) {
+    if value_id < 0 or value_id >= ra.val_states_count {
+        return;
+    }
+    let vs: *ValState = ra.val_states + value_id;
+    vs.rematerializable = remat;
+}
+
+// Clear all register state (for starting a new block)
+// Reference: Zig regalloc.zig clearRegs pattern
+fn RegAlloc_clearRegs(ra: *RegAllocState) {
+    var reg: i64 = 0;
+    while reg < NUM_REGS {
+        let rs: *RegState = ra.reg_states + reg;
+        // Don't clear val_states, just register state
+        if not RegState_isFree(rs) {
+            let value_id: i64 = rs.value_id;
+            if value_id >= 0 and value_id < ra.val_states_count {
+                let vs: *ValState = ra.val_states + value_id;
+                vs.regs = 0;  // Value no longer in any register
+            }
+            RegState_clear(rs);
+        }
+        reg = reg + 1;
+    }
+    ra.used = 0;
+}
+
+// Print register allocation statistics
+fn RegAlloc_printStats(ra: *RegAllocState) {
+    print("Register allocation stats:\n");
+    print("  Values tracked: ");
+    print(ra.val_states_count);
+    print("\n");
+    print("  Spill slots used: ");
+    print(ra.num_spills);
+    print("\n");
+}
