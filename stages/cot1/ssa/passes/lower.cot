@@ -216,6 +216,127 @@ fn lowerBlock(f: *Func, block: *Block) {
             }
         }
 
+        // Pattern 12: Constant folding - Add/Sub/Mul of two constants
+        // Reference: compile.zig opt() - constant folding
+        if (v.op == Op.Add64 or v.op == Op.Sub64 or v.op == Op.Mul64) and v.args.count == 2 {
+            let left_id: i64 = Value_getArg(v, 0);
+            let right_id: i64 = Value_getArg(v, 1);
+            if left_id >= 0 and right_id >= 0 {
+                let left: *Value = Func_getValue(f, left_id);
+                let right: *Value = Func_getValue(f, right_id);
+                if left.op == Op.ConstInt and right.op == Op.ConstInt {
+                    // Both are constants - fold
+                    var result: i64 = 0;
+                    if v.op == Op.Add64 {
+                        result = left.aux_int + right.aux_int;
+                    } else if v.op == Op.Sub64 {
+                        result = left.aux_int - right.aux_int;
+                    } else if v.op == Op.Mul64 {
+                        result = left.aux_int * right.aux_int;
+                    }
+
+                    // Decrement use counts
+                    left.uses = left.uses - 1;
+                    right.uses = right.uses - 1;
+
+                    // Transform to constant
+                    v.op = Op.ConstInt;
+                    v.aux_int = result;
+                    i64list_clear(&v.args);
+                }
+            }
+        }
+
+        // Pattern 13: Constant folding - bitwise operations on constants
+        if (v.op == Op.And64 or v.op == Op.Or64 or v.op == Op.Xor64) and v.args.count == 2 {
+            let left_id: i64 = Value_getArg(v, 0);
+            let right_id: i64 = Value_getArg(v, 1);
+            if left_id >= 0 and right_id >= 0 {
+                let left: *Value = Func_getValue(f, left_id);
+                let right: *Value = Func_getValue(f, right_id);
+                if left.op == Op.ConstInt and right.op == Op.ConstInt {
+                    var result: i64 = 0;
+                    if v.op == Op.And64 {
+                        result = left.aux_int & right.aux_int;
+                    } else if v.op == Op.Or64 {
+                        result = left.aux_int | right.aux_int;
+                    } else if v.op == Op.Xor64 {
+                        result = left.aux_int ^ right.aux_int;
+                    }
+
+                    left.uses = left.uses - 1;
+                    right.uses = right.uses - 1;
+
+                    v.op = Op.ConstInt;
+                    v.aux_int = result;
+                    i64list_clear(&v.args);
+                }
+            }
+        }
+
+        // Pattern 14: Constant folding - shift operations on constants
+        if (v.op == Op.Shl64 or v.op == Op.Shr64) and v.args.count == 2 {
+            let left_id: i64 = Value_getArg(v, 0);
+            let right_id: i64 = Value_getArg(v, 1);
+            if left_id >= 0 and right_id >= 0 {
+                let left: *Value = Func_getValue(f, left_id);
+                let right: *Value = Func_getValue(f, right_id);
+                if left.op == Op.ConstInt and right.op == Op.ConstInt {
+                    // Only fold if shift amount is reasonable
+                    if right.aux_int >= 0 and right.aux_int < 64 {
+                        var result: i64 = 0;
+                        if v.op == Op.Shl64 {
+                            result = left.aux_int << right.aux_int;
+                        } else if v.op == Op.Shr64 {
+                            // Logical shift right (unsigned)
+                            result = left.aux_int >> right.aux_int;
+                        }
+
+                        left.uses = left.uses - 1;
+                        right.uses = right.uses - 1;
+
+                        v.op = Op.ConstInt;
+                        v.aux_int = result;
+                        i64list_clear(&v.args);
+                    }
+                }
+            }
+        }
+
+        // Pattern 15: Constant comparison folding
+        if (v.op == Op.Eq64 or v.op == Op.Ne64 or v.op == Op.Lt64 or
+            v.op == Op.Le64 or v.op == Op.Gt64 or v.op == Op.Ge64) and v.args.count == 2 {
+            let left_id: i64 = Value_getArg(v, 0);
+            let right_id: i64 = Value_getArg(v, 1);
+            if left_id >= 0 and right_id >= 0 {
+                let left: *Value = Func_getValue(f, left_id);
+                let right: *Value = Func_getValue(f, right_id);
+                if left.op == Op.ConstInt and right.op == Op.ConstInt {
+                    var result: i64 = 0;
+                    if v.op == Op.Eq64 {
+                        if left.aux_int == right.aux_int { result = 1; }
+                    } else if v.op == Op.Ne64 {
+                        if left.aux_int != right.aux_int { result = 1; }
+                    } else if v.op == Op.Lt64 {
+                        if left.aux_int < right.aux_int { result = 1; }
+                    } else if v.op == Op.Le64 {
+                        if left.aux_int <= right.aux_int { result = 1; }
+                    } else if v.op == Op.Gt64 {
+                        if left.aux_int > right.aux_int { result = 1; }
+                    } else if v.op == Op.Ge64 {
+                        if left.aux_int >= right.aux_int { result = 1; }
+                    }
+
+                    left.uses = left.uses - 1;
+                    right.uses = right.uses - 1;
+
+                    v.op = Op.ConstInt;
+                    v.aux_int = result;
+                    i64list_clear(&v.args);
+                }
+            }
+        }
+
         vi = vi + 1;
     }
 }
