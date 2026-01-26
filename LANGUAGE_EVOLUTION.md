@@ -47,7 +47,7 @@
 ║   Test Pattern:                                                               ║
 ║   ┌─────────────────────────────────────────────────────────────────────────┐ ║
 ║   │  test/bootstrap/all_tests.cot        # 166 baseline tests               │ ║
-║   │  test/stages/cot1/cot1_features.cot  # 11 cot1 feature tests            │ ║
+║   │  test/stages/cot1/cot1_features.cot  # 14 cot1 feature tests            │ ║
 ║   │  test/stages/cot2/cot2_features.cot  # (future) cot2 feature tests      │ ║
 ║   └─────────────────────────────────────────────────────────────────────────┘ ║
 ║                                                                               ║

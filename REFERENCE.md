@@ -269,4 +269,3 @@ switch (v.op) {
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) - Compiler pipeline overview
 - [SYNTAX.md](SYNTAX.md) - Language syntax reference
-- [cot0/COMPARISON.md](cot0/COMPARISON.md) - Function parity tracking

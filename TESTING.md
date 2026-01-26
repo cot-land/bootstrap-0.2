@@ -17,10 +17,10 @@ The Cot compiler uses a staged bootstrap architecture where each stage must pass
 │                ├── compiles test/bootstrap/all_tests.cot (166 tests)        │
 │                │   ✅ MUST PASS - proves cot1 has baseline parity           │
 │                │                                                            │
-│                ├── compiles test/stages/cot1/cot1_features.cot (9 tests)    │
+│                ├── compiles test/stages/cot1/cot1_features.cot (14 tests)   │
 │                │   ✅ MUST PASS - proves cot1 features work                 │
 │                │                                                            │
-│                └── TOTAL: 175 tests for cot1                                │
+│                └── TOTAL: 180 tests for cot1                                │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -38,8 +38,8 @@ The Cot compiler uses a staged bootstrap architecture where each stage must pass
 | Compiler | Bootstrap Tests | Feature Tests | Total |
 |----------|-----------------|---------------|-------|
 | Zig bootstrap | 166 | - | 166 |
-| cot1-stage1 | 166 | 11 | **177** |
-| cot2-stage1 | 166 | 11 + N | 177+ |
+| cot1-stage1 | 166 | 14 | **180** |
+| cot2-stage1 | 166 | 14 + N | 180+ |
 
 ## Running Tests
 
@@ -68,7 +68,7 @@ zig cc /tmp/bootstrap_test.o runtime/cot_runtime.o -o /tmp/bootstrap_test && /tm
 /tmp/cot1-stage1 test/stages/cot1/cot1_features.cot -o /tmp/cot1_features.o
 cp /tmp/cot1_features.o /tmp/cot1_features_test.o
 zig cc /tmp/cot1_features_test.o runtime/cot_runtime.o -o /tmp/cot1_features_test && /tmp/cot1_features_test
-# Expected: All 9 tests passed!
+# Expected: All 14 tests passed!
 ```
 
 ### Quick Test Script

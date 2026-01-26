@@ -68,7 +68,7 @@ Object File (.o)
 ## Directory Structure
 
 ```
-src/                          cot0/
+src/                          stages/cot1/
 ├── main.zig                  ├── main.cot
 ├── driver.zig                │
 ├── frontend/                 ├── frontend/

@@ -756,7 +756,7 @@ fn main() i64 {
 
 ### Test Progress
 
-See `test/e2e/all_tests.cot` for the full test suite.
+See `test/bootstrap/all_tests.cot` for the full test suite.
 
 **Current:** 166 e2e tests passing
 

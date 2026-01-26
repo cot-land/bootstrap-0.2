@@ -1,18 +1,20 @@
 # Bug Tracking
 
-## ⚠️ CRITICAL: ALL 166 TESTS MUST PASS ON COT0 FIRST ⚠️
+## Current Status
 
-**THIS IS THE ONLY FOCUS. NOTHING ELSE MATTERS UNTIL THIS IS DONE.**
+**All 180 tests pass on cot1-stage1** (166 bootstrap + 14 feature tests).
 
+**Current blocker:** Stage 2 crashes at runtime (SIGBUS, likely stack overflow during SSA building at scale).
+
+```bash
+# Test commands
+./zig-out/bin/cot test/bootstrap/all_tests.cot -o /tmp/t && /tmp/t
+
+# Build and test stage1
+./zig-out/bin/cot stages/cot1/main.cot -o /tmp/cot1-stage1
+/tmp/cot1-stage1 test/bootstrap/all_tests.cot -o /tmp/bt.o
+zig cc /tmp/bt.o runtime/cot_runtime.o -o /tmp/bt -lSystem && /tmp/bt
 ```
-/tmp/cot0-stage1 test/e2e/all_tests.cot -o /tmp/tests && /tmp/tests
-```
-
-**Current blockers:**
-- ~~Self-compilation crash (BUG-057) - crashes in codegen~~ FIXED (malloc_IRLocal size 32->80)
-- ~~String literals - garbled output (BUG-055)~~ FIXED (escape sequences + TYPE_STRING field access)
-
-**Current status:** Self-compilation works! BUG-055 and BUG-057 fixed (2026-01-24)
 
 ---
 
@@ -57,7 +59,7 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 **Solution:** Complete rewrite following Zig's single-source-of-truth pattern.
 
-**See:** [REWRITE_FIELD_OFFSETS.md](REWRITE_FIELD_OFFSETS.md) for the complete rewrite plan.
+**Investigation:** Check codegen/genssa.cot for incorrect struct field offset calculations.
 
 **Summary of the problem:**
 1. Checker computes offsets correctly and stores in TypeRegistry

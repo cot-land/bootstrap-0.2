@@ -23,7 +23,7 @@
 ║      c) Fix the Zig compiler (src/*.zig) to match Go's approach               ║
 ║      d) Rebuild: zig build                                                    ║
 ║      e) Test the fix compiles cot1                                            ║
-║      f) Run tests: ./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/t && /tmp/t║
+║      f) Run tests: ./zig-out/bin/cot test/bootstrap/all_tests.cot -o /tmp/t && /tmp/t║
 ║                                                                               ║
 ║   4. WIRE UP THE FUNCTIONS - Find where each function should be called        ║
 ║      - Check the equivalent in Zig compiler (src/*.zig)                       ║
@@ -128,45 +128,6 @@
 
 ---
 
-## BUG-063: 7+ HOURS WASTED ON DEAD CODE
-
-```
-╔═══════════════════════════════════════════════════════════════════════════════╗
-║                                                                               ║
-║   2026-01-25: COMPLETE FAILURE                                                ║
-║                                                                               ║
-║   6+ Claude instances spent 7+ HOURS "fixing" BUG-063 based on the           ║
-║   assumption that "the checker computes correct offsets in TypeRegistry."    ║
-║                                                                               ║
-║   THE CHECKER IS NEVER CALLED. IT IS 883 LINES OF DEAD CODE.                 ║
-║                                                                               ║
-║   - checker.cot: 883 lines, 13 functions                                     ║
-║   - Only imported by: checker_test.cot (a test file)                         ║
-║   - main.cot: zero references to "Checker"                                   ║
-║   - grep "Checker" main.cot returns: NOTHING                                 ║
-║                                                                               ║
-║   WHAT CLAUDE DID:                                                           ║
-║   - Created 4 "rewrite" documents based on checker assumptions               ║
-║   - Deleted 175 lines from lower.cot                                         ║
-║   - Rewrote 17 call sites (~200 lines changed)                               ║
-║   - Added back 70 lines after breaking everything                            ║
-║   - Result: ZERO EFFECT ON BUG                                               ║
-║                                                                               ║
-║   WHAT CLAUDE SHOULD HAVE DONE:                                              ║
-║   - Run: grep "Checker" main.cot                                             ║
-║   - See: no results                                                          ║
-║   - Conclude: checker is dead code, assumption is wrong                      ║
-║   - Time required: 10 seconds                                                ║
-║                                                                               ║
-║   THE BUG IS IN genssa.cot (codegen), NOT lower.cot OR checker.cot           ║
-║                                                                               ║
-║   See BUG063_MASTER_FIX.md for the complete failure analysis.                ║
-║                                                                               ║
-╚═══════════════════════════════════════════════════════════════════════════════╝
-```
-
----
-
 ## THE ONE RULE - COPY FROM GO/ZIG, NEVER INVENT
 
 ```
@@ -234,7 +195,7 @@ Test naming: `test_<feature>_<case>.cot`
 
 Run ALL tests after each change:
 ```bash
-./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/t && /tmp/t
+./zig-out/bin/cot test/bootstrap/all_tests.cot -o /tmp/t && /tmp/t
 ```
 
 ---
@@ -254,34 +215,30 @@ Example: When implementing type aliases for cot1:
 
 ## STAGE1 TESTING - ALWAYS USE ALL_TESTS
 
-When testing stage1 hasn't regressed, ALWAYS run e2e/all_tests:
+When testing stage1 hasn't regressed, ALWAYS run all_tests:
 
 ```bash
-/tmp/cot0-stage1 test/e2e/all_tests.cot -o /tmp/all_tests && /tmp/all_tests
+./zig-out/bin/cot test/bootstrap/all_tests.cot -o /tmp/t && /tmp/t
 ```
 
 Verify ALL tests pass. Never use trivial "return 42" tests.
 
 ---
 
-## Current Priority: Field Offset Rewrite
+## Current Priority: Fix Stage 2 Crash
 
-**READ THIS FIRST:** [REWRITE_FIELD_OFFSETS.md](REWRITE_FIELD_OFFSETS.md)
+cot1-stage2 compiles successfully but crashes at startup (SIGBUS). Suspected causes:
+1. Stack overflow during SSA building (8MB stack limit at scale)
+2. Performance: O(n) function lookup causing slowdown (1.6 seconds in lowering)
+3. Incorrect struct field offset calculations in codegen
 
-The cot1 struct field offset handling is architecturally broken. It computes offsets in THREE different places using THREE different methods. The rewrite document explains:
-
-1. Why debugging cannot fix this (architecture is wrong)
-2. How Zig does it correctly (single source of truth)
-3. Exactly what to delete and what to add
-4. All 17 call sites that need fixing
-
-**Do NOT attempt to debug the old code. Follow the rewrite plan.**
+**Investigation approach:** Add timing instrumentation, replace linear scans with StrMap lookups.
 
 ---
 
 ## Long-term Goal
 
-Make every function in [cot0/COMPARISON.md](cot0/COMPARISON.md) show "Same":
+Make every function in cot1 match the Zig compiler (`src/*.zig`):
 - Same name (adapted to Cot naming: `Scanner_init` not `scanner_init`)
 - Same logic (identical algorithm, different syntax)
 - Same behavior (identical outputs for identical inputs)
@@ -305,7 +262,7 @@ Make every function in [cot0/COMPARISON.md](cot0/COMPARISON.md) show "Same":
 
 4. TEST
    zig build
-   ./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/t && /tmp/t
+   ./zig-out/bin/cot test/bootstrap/all_tests.cot -o /tmp/t && /tmp/t
 ```
 
 ---
@@ -317,7 +274,7 @@ Make every function in [cot0/COMPARISON.md](cot0/COMPARISON.md) show "Same":
 ─────────────────────────────────────────────────────────────────────
 Debug creatively                     Ask: "How does Zig handle this?"
 Invent a fix                         Find the Zig/Go code
-Add a null check                     Copy that code to cot0
+Add a null check                     Copy that code to cot1
 Try a different approach             If missing infrastructure, note
                                      it and move on
 Add debug prints endlessly           Make a code change and test
@@ -343,22 +300,22 @@ Read code for 30+ minutes            Make a fix attempt within 5 min
 ## Commands
 
 ```bash
-# Build and test
+# Build and test Zig compiler
 zig build
-./zig-out/bin/cot test/e2e/all_tests.cot -o /tmp/all_tests && /tmp/all_tests
-
-# Build cot0-stage1
-./zig-out/bin/cot cot0/main.cot -o /tmp/cot0-stage1
-
-# Test with stage1
-echo 'fn main() i64 { return 42 }' > /tmp/test.cot
-/tmp/cot0-stage1 /tmp/test.cot -o /tmp/test.o
-zig cc /tmp/test.o -o /tmp/test && /tmp/test; echo "Exit: $?"
+./zig-out/bin/cot test/bootstrap/all_tests.cot -o /tmp/t && /tmp/t
 
 # Build cot1-stage1
 ./zig-out/bin/cot stages/cot1/main.cot -o /tmp/cot1-stage1
 
-# Build cot1-stage2 (currently blocked by field offset bug)
+# Test stage1 with bootstrap tests
+/tmp/cot1-stage1 test/bootstrap/all_tests.cot -o /tmp/bt.o
+zig cc /tmp/bt.o runtime/cot_runtime.o -o /tmp/bt -lSystem && /tmp/bt
+
+# Test stage1 with cot1 feature tests
+/tmp/cot1-stage1 test/stages/cot1/cot1_features.cot -o /tmp/ft.o
+zig cc /tmp/ft.o runtime/cot_runtime.o -o /tmp/ft -lSystem && /tmp/ft
+
+# Build cot1-stage2 (currently crashes at startup)
 /tmp/cot1-stage1 stages/cot1/main.cot -o /tmp/cot1-stage2.o
 zig cc /tmp/cot1-stage2.o runtime/cot_runtime.o -o /tmp/cot1-stage2 -lSystem
 ```
@@ -369,23 +326,22 @@ zig cc /tmp/cot1-stage2.o runtime/cot_runtime.o -o /tmp/cot1-stage2 -lSystem
 
 | Document | Purpose |
 |----------|---------|
-| [REWRITE_FIELD_OFFSETS.md](REWRITE_FIELD_OFFSETS.md) | **CURRENT PRIORITY** - Complete rewrite plan for field offsets |
-| [cot0/COMPARISON.md](cot0/COMPARISON.md) | Master checklist - work through top to bottom |
 | [SELF_HOSTING.md](SELF_HOSTING.md) | Path to self-hosting with milestones |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Compiler design and key decisions |
 | [REFERENCE.md](REFERENCE.md) | Technical reference (data structures, algorithms) |
+| [COT1_GAPS.md](COT1_GAPS.md) | Functional coverage analysis (95% complete) |
 
 ---
 
 ## The Anti-Pattern to Avoid
 
 ```
-1. Start working on COMPARISON.md systematically
+1. Start working on a feature/fix systematically
 2. A bug appears during testing
 3. Get fixated on the bug
 4. Invent creative solutions not from Zig/Go
-5. Go in circles, ignore COMPARISON.md progress
-6. Hours pass with no parity progress
+5. Go in circles, make no progress
+6. Hours pass with no results
 
 THIS IS WRONG. The task is TRANSLATION, not ENGINEERING.
 ```
@@ -394,9 +350,9 @@ THIS IS WRONG. The task is TRANSLATION, not ENGINEERING.
 
 ## When Stuck
 
-1. Check if the function is "Same" in COMPARISON.md
-2. Read the Zig code in `src/*.zig`
-3. Read the Go code if Zig is unclear
+1. Read the Zig code in `src/*.zig`
+2. Read the Go code if Zig is unclear
+3. Copy the pattern exactly
 4. Ask rather than guess
 
 > **Continue working without pausing for summaries. The user will stop you when done.**
