@@ -582,6 +582,16 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     var t_tmp: i64 = 0;
 
     // Process each function
+    // Defensive check: ensure g_ir_funcs is valid
+    if g_ir_funcs == null {
+        print("FATAL: g_ir_funcs is NULL! lowerer.ir_funcs=");
+        print(@ptrToInt(lowerer.ir_funcs));
+        print(" count=");
+        print(lowerer.ir_funcs_count);
+        print("\n");
+        return 1;
+    }
+
     var func_idx: i64 = 0;
     while func_idx < lowerer.ir_funcs_count {
         let ir_func: *IRFunc = g_ir_funcs + (func_idx);

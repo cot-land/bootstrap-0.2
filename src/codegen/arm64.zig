@@ -2804,8 +2804,71 @@ pub const ARM64CodeGen = struct {
                 try self.emitLoadImmediate(dest, imm);
             },
             .const_nil => try self.emitLoadImmediate(dest, 0),
+            .load => {
+                // BUG FIX: Handle load operations that aren't tracked by regalloc
+                // This happens in patterns like `base + ptr.*` where the dereference
+                // result needs to be regenerated.
+                if (value.args.len > 0) {
+                    const addr_val = value.args[0];
+                    // Get the address register - may need to recursively ensure it's loaded
+                    const addr_reg = self.getRegForValue(addr_val) orelse blk: {
+                        // Use a scratch register (x16) for the address
+                        try self.ensureInReg(addr_val, 16);
+                        break :blk @as(u5, 16);
+                    };
+                    // Emit load from the address
+                    // Determine load size from type
+                    const type_size = self.getTypeSize(value.type_idx);
+                    if (type_size == 1) {
+                        // LDRB for byte load
+                        try self.emit(asm_mod.encodeLDRB(dest, addr_reg, 0));
+                    } else if (type_size == 2) {
+                        // LDRH for halfword load
+                        try self.emit(asm_mod.encodeLDRH(dest, addr_reg, 0));
+                    } else if (type_size == 4) {
+                        // LDR W for word load (32-bit, zero-extended)
+                        try self.emit(asm_mod.encodeLdrStrSized(dest, addr_reg, 0, .word, true));
+                    } else {
+                        // LDR for 8-byte load (default)
+                        try self.emit(asm_mod.encodeLdrStr(dest, addr_reg, 0, true));
+                    }
+                    debug.log(.codegen, "      ensureInReg: regenerated load v{d} from x{d} to x{d}", .{ value.id, addr_reg, dest });
+                } else {
+                    // No address - this shouldn't happen, but log and emit 0 as fallback
+                    debug.log(.codegen, "      ensureInReg: load v{d} has no address arg!", .{value.id});
+                    try self.emit(asm_mod.encodeMOVZ(dest, 0, 0));
+                }
+            },
+            .const_string, .const_ptr => {
+                // String literal or constant pointer: emit ADRP + ADD to load address
+                // The string index is in aux_int
+                const string_index: usize = @intCast(value.aux_int);
+                const str_data = if (string_index < self.func.string_literals.len)
+                    self.func.string_literals[string_index]
+                else
+                    "";
+
+                // Record the offsets for relocation fixup
+                const adrp_offset = self.offset();
+                try self.emit(asm_mod.encodeADRP(dest, 0));
+
+                const add_offset = self.offset();
+                try self.emit(asm_mod.encodeADDImm(dest, dest, 0, 0));
+
+                // Record string reference for relocation during finalize()
+                const str_copy = try self.allocator.dupe(u8, str_data);
+                try self.string_refs.append(self.allocator, .{
+                    .adrp_offset = adrp_offset,
+                    .add_offset = add_offset,
+                    .string_data = str_copy,
+                });
+
+                debug.log(.codegen, "      ensureInReg: regenerated const_string v{d} -> x{d}", .{ value.id, dest });
+            },
             else => {
-                // Fallback: emit 0
+                // Fallback: log warning and emit 0
+                // This indicates a regalloc or codegen issue that should be investigated
+                debug.log(.codegen, "      ensureInReg: unhandled op {s} for v{d}, emitting 0", .{ @tagName(value.op), value.id });
                 try self.emit(asm_mod.encodeMOVZ(dest, 0, 0));
             },
         }
