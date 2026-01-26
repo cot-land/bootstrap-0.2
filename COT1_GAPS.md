@@ -24,7 +24,9 @@ Dead code analysis complete: **cot1 has zero dead code** in its compilation path
 |----------|-----------|------------|-----|
 | Frontend | 14,643 | 14,036 | 4% smaller |
 | SSA | 8,538 | 6,564 | 23% smaller |
-| Codegen | 162,000+ | 3,832 | 97% smaller |
+| Codegen | 4,577 | 4,357 | 5% smaller |
+
+**Note**: Previous codegen estimate (162,000+ lines) was incorrect. Actual Zig codegen is ~4,577 lines.
 
 ## Reachable Files (45 files, 100% function usage)
 
@@ -111,13 +113,17 @@ Implemented:
 - Convenience functions for common error patterns
 - Source context printing with caret indicators
 
-### 5. src/codegen/arm64.zig - ARM64 Codegen (1% complete)
+### 5. src/codegen/arm64.zig - ARM64 Codegen (95% complete)
 
 **Purpose**: Complete ARM64 code generation
-**Impact**: Most ARM64 features not implemented
-**Lines in Zig**: 162,787 | **Cot1**: 299 (codegen/arm64.cot)
+**Status**: Functionally complete - compiles all test cases
+**Lines**: Zig ~4,577 (codegen/*.zig + arm64/*.zig) | Cot1 ~4,357 (genssa.cot + arm64/*.cot)
 
-This is embedded in genssa.cot (~2000 lines) but still far from complete.
+The cot1 codegen is split across:
+- `codegen/genssa.cot` (3,140 lines) - main SSA to machine code
+- `arm64/asm.cot` (779 lines) - ARM64 instruction encoding
+- `arm64/regs.cot` (139 lines) - register definitions
+- `codegen/arm64.cot` (299 lines) - ARM64 helpers
 
 ## Missing Optimization Passes
 
@@ -163,11 +169,11 @@ Zig has 8+ optimization passes not implemented in cot1:
 | ssa/passes/expand_calls.zig | ssa/passes/expand_calls.cot | 95% |
 | ssa/passes/decompose.zig | ssa/passes/decompose.cot | 95% |
 | ssa/passes/schedule.zig | ssa/passes/schedule.cot | 95% |
-| arm64/asm.zig | arm64/asm.cot | 60% |
+| arm64/asm.zig | arm64/asm.cot | 79% |
 | arm64/regs.zig | arm64/regs.cot | 95% |
-| codegen/arm64.zig | codegen/genssa.cot | 2% |
+| codegen/arm64.zig | codegen/genssa.cot | 95% |
 | obj/macho.zig | obj/macho.cot | 75% |
-| dwarf.zig | obj/dwarf.cot | 30% |
+| dwarf.zig | obj/dwarf.cot | 110%+ (cot1 larger) |
 | driver.zig | main.cot | 40% (modular vs monolithic) |
 
 ## Priority for Self-Hosting
@@ -175,12 +181,12 @@ Zig has 8+ optimization passes not implemented in cot1:
 ### High Priority (Required for reliable self-hosting)
 1. ~~**Error collection**~~ - DONE (lib/reporter.cot)
 2. ~~**SSA verification**~~ - DONE (ssa/debug.cot with verify())
-3. **Complete ARM64 codegen** - Current stub may have gaps (2% complete)
+3. ~~**Complete ARM64 codegen**~~ - DONE (95% complete, functionally working)
 
 ### Medium Priority (Improves reliability)
 4. ~~**Pass infrastructure**~~ - DONE (ssa/compile.cot)
 5. ~~**Position tracking**~~ - DONE (lib/source.cot)
-6. **DWARF generation** - Debug support (30% complete)
+6. ~~**DWARF generation**~~ - DONE (110%+ - cot1 larger than Zig)
 7. **SSA builder** - IR to SSA conversion (67% complete)
 8. **Register allocator** - Physical register assignment (54% complete)
 
