@@ -2833,7 +2833,18 @@ fn Lowerer_inferExprType(l: *Lowerer, node: *Node) i64 {
 // Get the element size for pointer arithmetic
 // This matches C/Zig semantics where ptr+n advances by n*sizeof(*ptr)
 fn Lowerer_getPtrElemSize(l: *Lowerer, type_idx: i64) i64 {
-    // Get the pointee type and return its size
+    // Handle array types - get element type directly
+    if TypeInfo_isArray(l.type_pool, type_idx) {
+        let t: *Type = TypeRegistry_get(l.type_pool, type_idx);
+        if t.elem > 0 {
+            let elem_type: *Type = TypeRegistry_get(l.type_pool, t.elem);
+            if elem_type.size > 0 {
+                return elem_type.size;
+            }
+        }
+        return 8;  // Default for arrays with unknown element type
+    }
+    // Handle pointer types - get pointee type
     let pointee_idx: i64 = TypeInfo_getPointee(l.type_pool, type_idx);
     if pointee_idx <= 0 {
         // Not a valid pointer type, default to 8
@@ -2859,10 +2870,11 @@ fn Lowerer_lowerBinary(l: *Lowerer, node: *Node) i64 {
     let left_node: *Node = l.nodes + node.field0;
     let right_node: *Node = l.nodes + node.field1;
 
-    // Check if left operand is a pointer type (for pointer arithmetic scaling)
+    // Check if left operand is a pointer or array type (for pointer arithmetic scaling)
     // This matches C/Zig semantics: ptr + n = ptr + n * sizeof(*ptr)
+    // Arrays decay to pointers when used in arithmetic context
     let left_type: i64 = Lowerer_inferExprType(l, left_node);
-    let is_ptr_arith: bool = TypeInfo_isPointer(l.type_pool, left_type);
+    let is_ptr_arith: bool = TypeInfo_isPointer(l.type_pool, left_type) or TypeInfo_isArray(l.type_pool, left_type);
     let ast_op: i64 = node.field2;  // BinaryOp as integer
     // Only scale for Add (0) or Sub (1) operations
     let is_add_or_sub: bool = ast_op == 0 or ast_op == 1;
