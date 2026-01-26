@@ -3010,7 +3010,8 @@ fn GenState_finalize(
 
             let sym_idx: i64 = MachOWriter_addSymbol(writer, sym_name.items, ext_sym_len, 0, 0, true);
             let no_ptr: *i64 = writer.sym_name_offsets + sym_idx;
-            let name_ptr: *u8 = writer.strings + no_ptr.*;
+            let name_offset: i64 = no_ptr.*;
+            let name_ptr: *u8 = writer.strings + name_offset;
             MachOWriter_addReloc(writer, cs2.code_offset, name_ptr, ext_sym_len, ARM64_RELOC_BRANCH26, 1);
         }
 
@@ -3031,7 +3032,8 @@ fn GenState_finalize(
         (snc + 21).* = 114;
         let crash_sym_idx: i64 = MachOWriter_addSymbol(writer, sym_name.items, 22, 0, 0, true);
         let crash_no_ptr: *i64 = writer.sym_name_offsets + crash_sym_idx;
-        let crash_name_ptr: *u8 = writer.strings + crash_no_ptr.*;
+        let crash_name_offset: i64 = crash_no_ptr.*;
+        let crash_name_ptr: *u8 = writer.strings + crash_name_offset;
         MachOWriter_addReloc(writer, gs.crash_handler_offset, crash_name_ptr, 22, ARM64_RELOC_BRANCH26, 1);
     }
 
@@ -3089,7 +3091,8 @@ fn GenState_finalize(
         }
 
         let g_no_ptr: *i64 = writer.sym_name_offsets + g_sym_idx;
-        let g_name_ptr: *u8 = writer.strings + g_no_ptr.*;
+        let g_name_offset: i64 = g_no_ptr.*;
+        let g_name_ptr: *u8 = writer.strings + g_name_offset;
         var g_name_len: i64 = 0;
         while (g_name_ptr + g_name_len).* != 0 { g_name_len = g_name_len + 1; }
 
@@ -3154,7 +3157,8 @@ fn GenState_finalize(
         }
 
         let far_no_ptr: *i64 = writer.sym_name_offsets + found_sym_idx;
-        let far_name_ptr: *u8 = writer.strings + far_no_ptr.*;
+        let far_name_offset: i64 = far_no_ptr.*;
+        let far_name_ptr: *u8 = writer.strings + far_name_offset;
         var far_name_len2: i64 = 0;
         while (far_name_ptr + far_name_len2).* != 0 { far_name_len2 = far_name_len2 + 1; }
         MachOWriter_addReloc(writer, far_code_offset, far_name_ptr, far_name_len2, ARM64_RELOC_PAGE21, 1);
@@ -3246,7 +3250,8 @@ fn GenState_finalize(
         let str_sym_idx: i64 = MachOWriter_addSymbol(writer, sym_name.items, sym_name_len, str_data_offset, SECT_DATA, false);
 
         let str_no_ptr: *i64 = writer.sym_name_offsets + str_sym_idx;
-        let str_name_ptr: *u8 = writer.strings + str_no_ptr.*;
+        let str_name_offset: i64 = str_no_ptr.*;
+        let str_name_ptr: *u8 = writer.strings + str_name_offset;
         MachOWriter_addReloc(writer, sr2_code_offset, str_name_ptr, sym_name_len, ARM64_RELOC_PAGE21, 1);
         MachOWriter_addReloc(writer, sr2_code_offset + 4, str_name_ptr, sym_name_len, ARM64_RELOC_PAGEOFF12, 0);
 
