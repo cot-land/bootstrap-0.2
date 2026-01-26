@@ -677,8 +677,19 @@ fn SSABuilder_insertPhis(b: *SSABuilder) {
     var args: I64List = undefined;
     i64list_init(&args);
 
+    // Safety: limit iterations to prevent infinite loops
+    // Max iterations = initial FwdRefs * max_block_count (generous upper bound)
+    let max_iters: i64 = (fwd_refs.count + 1) * (b.func.blocks_count + 1) * 2;
+    var iter_count: i64 = 0;
+
     // Process FwdRefs iteratively until the work list is empty
     while fwd_refs.count > 0 {
+        iter_count = iter_count + 1;
+        if iter_count > max_iters {
+            // Bail out to prevent infinite loop
+            break;
+        }
+
         // Pop from work list
         let fwd_id: i64 = i64list_pop(&fwd_refs);
         let fwd: *Value = Func_getValue(b.func, fwd_id);
@@ -1781,11 +1792,11 @@ fn SSABuilder_convertCall(b: *SSABuilder, ir_node: *IRNode) i64 {
             if b.source != null and b.func.name_start >= 0 and b.func.name_len > 0 {
                 write(1, b.source + b.func.name_start, b.func.name_len);
             }
-            print(" calling ");
-            // Print callee name
-            if b.source != null and ir_node.func_name_start >= 0 and ir_node.func_name_len > 0 {
-                write(1, b.source + ir_node.func_name_start, ir_node.func_name_len);
-            }
+            print(" calling <callee>");
+            // Print callee name disabled for now to debug crash
+            // if ir_node.func_name_start != 0 and ir_node.func_name_len > 0 {
+            //     write(1, @intToPtr(*u8, ir_node.func_name_start), ir_node.func_name_len);
+            // }
             print("\n");
             arg_idx = arg_idx + 1;
             continue;

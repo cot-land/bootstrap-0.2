@@ -4,7 +4,7 @@
 
 **All 180 tests pass on cot1-stage1** (166 bootstrap + 14 feature tests).
 
-**Current blocker:** Stage 2 crashes at runtime (SIGBUS, likely stack overflow during SSA building at scale).
+**Current blocker:** Stage 2 links successfully but crashes at runtime (SIGSEGV at startup, likely struct size mismatches in generated code). Progress: fixed @sizeOf builtin, added generic sized allocation, fixed multiple struct sizes.
 
 ```bash
 # Test commands
@@ -49,22 +49,36 @@ Only after steps 1-3. Adapt Go's pattern to Zig.
 
 ## Open Bugs
 
-### BUG-063: cot1-stage2 linker error - corrupted symbol name
+### BUG-063: cot1-stage2 runtime crash
 
-**Status:** INVESTIGATING (source position tracking bug)
+**Status:** PARTIALLY FIXED - now links, crashes at runtime
 **Priority:** HIGH (blocks cot1 self-hosting chain)
 **Discovered:** 2026-01-25
 **Updated:** 2026-01-26
 
-**Current Findings:**
+**Progress (2026-01-26 evening):**
 
-The stage2 linker fails with:
+The linker error is FIXED. Stage2 now compiles and links successfully (~763KB). However, it crashes at runtime with SIGSEGV.
+
+**Fixes applied:**
+1. Fixed @sizeOf builtin to compute actual struct sizes (was returning constant 8)
+2. Added malloc_sized/realloc_sized generic allocation to runtime
+3. Updated func.cot to use @sizeOf(Block/Value/Local) for allocations
+4. Fixed CallSite size: 16→24 bytes (3 fields × 8)
+5. Fixed Reloc realloc size: 24→48 bytes (matching malloc)
+
+**Current issue:**
+Stage2 crashes immediately at startup with SIGSEGV. Likely more struct size mismatches in generated code. The mature path forward is to continue converting type-specific mallocs to use `malloc_sized` + `@sizeOf(T)` pattern.
+
+**Previous issue (now fixed):**
+
+The stage2 linker was failing with:
 ```
 error: undefined symbol: _rn false; }
    note: referenced by /tmp/cot1-stage2.o:_SSABuilder_cacheNode
 ```
 
-The expected symbol is `_realloc_VarDef` but it's being emitted as `_rn false; }`.
+The expected symbol was `_realloc_VarDef` but it was being emitted as `_rn false; }`.
 
 **Analysis:**
 - The corrupted symbol `_rn false; }` (11 chars) comes from "return false; }" in lower.cot
@@ -72,13 +86,43 @@ The expected symbol is `_realloc_VarDef` but it's being emitted as `_rn false; }
 - func_name_start is pointing into the wrong file's source buffer
 - Other calls to `realloc_VarDef` (lines 363, 495) appear to work correctly
 
-**Root Cause Hypothesis:**
-Multi-file source position tracking bug in stage1 when compiling the full cot1 codebase. The `func_name_start` for some call nodes is not being correctly adjusted when importing files, or is getting corrupted during lowering/SSA building.
+**Root Cause Identified (2026-01-26):**
+Architectural mismatch between Zig compiler and cot1 for function name storage in call IR nodes:
 
-**Key Files to Investigate:**
-1. `stages/cot1/lib/import.cot` - Import_adjustNodePositions function
-2. `stages/cot1/frontend/lower.cot` - Lowerer_lowerCall, func_name handling
-3. `stages/cot1/ssa/builder.cot` - SSABuilder_convertCall, v.aux_int/aux_ptr
+**Zig approach** (correct):
+```zig
+// ir.zig line 338: Store actual string slice
+func_name: []const u8,
+
+// lower.zig: Pass string directly
+return try fb.emitCall(func_name, args.items, false, return_type, call.span);
+```
+
+**cot1 approach** (fragile):
+```cot
+// ir.cot: Store source positions
+func_name_start: i64,  // Points into source buffer
+func_name_len: i64,    // Length of name
+
+// genssa.cot: Look up from source at codegen time
+(source + cs.func_name_start + ext_name_idx).*
+```
+
+The cot1 approach fails in multi-file compilation because:
+1. Each file has its own source buffer
+2. func_name_start points into ONE file's buffer
+3. When codegen runs, it may be using a different source buffer
+4. Result: reads garbage like "rn false; }" instead of "realloc_VarDef"
+
+**Fix Path:**
+To achieve parity with Zig, cot1 should copy the actual function name string at IR creation time rather than storing source positions. This requires adding a string table/pool to IR and updating all call site creation.
+
+**Decision:** Low priority for now - may self-resolve as we continue improving cot1 to match Zig patterns.
+
+**Key Files for Future Fix:**
+1. `stages/cot1/frontend/ir.cot` - Change IRNode to store string index or pointer
+2. `stages/cot1/frontend/lower.cot` - Copy string when creating call node
+3. `stages/cot1/codegen/genssa.cot` - Use stored string instead of source lookup
 
 **Previous Theory (field offset issue):**
 Earlier investigations focused on struct field offsets. This was a real bug (array pointer arithmetic not scaling correctly) and has been fixed. However, the root cause of stage2 failure is now identified as the symbol name corruption.

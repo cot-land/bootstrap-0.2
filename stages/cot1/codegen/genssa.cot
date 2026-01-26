@@ -2734,7 +2734,7 @@ fn GenState_finalize(
                 var name_i: i64 = 0;
                 while name_i < cs.func_name_len {
                     let src_char: *u8 = source + ir_func.name_start + name_i;
-                    let call_char: *u8 = source + cs.func_name_start + name_i;
+                    let call_char: *u8 = @intToPtr(*u8, cs.func_name_start) + name_i;
                     if src_char.* != call_char.* {
                         match = false;
                     }
@@ -2809,7 +2809,7 @@ fn GenState_finalize(
                     var match2: bool = true;
                     var name_i3: i64 = 0;
                     while name_i3 < cs2.func_name_len {
-                        if (source + ir_func2.name_start + name_i3).* != (source + cs2.func_name_start + name_i3).* {
+                        if (source + ir_func2.name_start + name_i3).* != (@intToPtr(*u8, cs2.func_name_start) + name_i3).* {
                             match2 = false;
                         }
                         name_i3 = name_i3 + 1;
@@ -2851,7 +2851,7 @@ fn GenState_finalize(
                 if copy_len < 0 { copy_len = 0; }
                 if copy_len > 126 { copy_len = 126; }
                 while ext_name_idx < copy_len {
-                    (sn2 + 1 + ext_name_idx).* = (source + cs2.func_name_start + ext_name_idx).*;
+                    (sn2 + 1 + ext_name_idx).* = (@intToPtr(*u8, cs2.func_name_start) + ext_name_idx).*;
                     ext_name_idx = ext_name_idx + 1;
                 }
                 ext_sym_len = 1 + copy_len;
@@ -2967,7 +2967,7 @@ fn GenState_finalize(
                 var name_match: bool = true;
                 var cmp_idx: i64 = 0;
                 while cmp_idx < far_func_name_len {
-                    if (source + ir_func.name_start + cmp_idx).* != (source + far_func_name_start + cmp_idx).* {
+                    if (source + ir_func.name_start + cmp_idx).* != (@intToPtr(*u8, far_func_name_start) + cmp_idx).* {
                         name_match = false;
                     }
                     cmp_idx = cmp_idx + 1;
@@ -2988,7 +2988,7 @@ fn GenState_finalize(
             if far_copy_len < 0 { far_copy_len = 0; }
             if far_copy_len > 126 { far_copy_len = 126; }
             while far_name_idx < far_copy_len {
-                (snf + 1 + far_name_idx).* = (source + far_func_name_start + far_name_idx).*;
+                (snf + 1 + far_name_idx).* = (@intToPtr(*u8, far_func_name_start) + far_name_idx).*;
                 far_name_idx = far_name_idx + 1;
             }
             let far_sym_len: i64 = 1 + far_copy_len;

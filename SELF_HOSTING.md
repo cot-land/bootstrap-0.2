@@ -6,10 +6,10 @@
 |-------|--------|-------------|
 | Stage 0 | Complete | Zig compiler (`src/*.zig`) - 166 tests pass |
 | Stage 1 | Complete | Zig compiles cot1 → `cot1-stage1` works, 180 tests pass |
-| Stage 2 | Partial | cot1-stage1 compiles cot1 → `cot1-stage2` compiles but crashes |
+| Stage 2 | Partial | cot1-stage1 compiles cot1 → `cot1-stage2` links but crashes at runtime |
 | Stage 3+ | Blocked | Self-hosting blocked by stage 2 crash |
 
-**Status**: cot1-stage1 works correctly (180 tests pass: 166 bootstrap + 14 feature tests). cot1-stage2 compiles successfully (459KB) but crashes at startup with SIGBUS (likely stack overflow during SSA building at scale).
+**Status**: cot1-stage1 works correctly (180 tests pass: 166 bootstrap + 14 feature tests). cot1-stage2 compiles and links successfully (~763KB Mach-O) but crashes at startup (SIGSEGV - likely remaining struct size mismatches in generated code).
 
 ## What Works
 
@@ -118,6 +118,14 @@ zig cc /tmp/cot1-stage2.o runtime/cot_runtime.o -o /tmp/cot1-stage2 -lSystem
 ```
 
 ## Recent Progress
+
+### 2026-01-26 (evening)
+- **@sizeOf builtin fixed**: Now computes actual struct sizes via TypeRegistry
+- **Generic sized allocation**: Added `malloc_sized`/`realloc_sized` to runtime
+- **func.cot uses @sizeOf**: Block, Value, Local allocations use computed sizes
+- **Struct size fixes**: CallSite (16→24), Reloc realloc (24→48)
+- **Stage2 now links**: Previously failed with corrupted symbols, now links successfully
+- **Stage2 crashes at runtime**: SIGSEGV at startup, likely more struct size mismatches
 
 ### 2026-01-26
 - main.cot reduced from 1751 to ~900 lines (48% reduction)

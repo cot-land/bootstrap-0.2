@@ -22,13 +22,9 @@ const FN_INIT_BLOCKS: i64 = 64;
 const FN_INIT_VALUES: i64 = 512;
 const FN_INIT_LOCALS: i64 = 64;
 
-// Malloc/realloc externs for self-allocation with dynamic growth
-extern fn malloc_Block(count: i64) *Block;
-extern fn malloc_Value(count: i64) *Value;
-extern fn malloc_Local(count: i64) *Local;
-extern fn realloc_Block(ptr: *Block, old_count: i64, new_count: i64) *Block;
-extern fn realloc_Value(ptr: *Value, old_count: i64, new_count: i64) *Value;
-extern fn realloc_Local(ptr: *Local, old_count: i64, new_count: i64) *Local;
+// Generic sized allocation - use @sizeOf(T) to avoid hardcoded sizes in runtime
+extern fn malloc_sized(count: i64, struct_size: i64) *u8;
+extern fn realloc_sized(ptr: *u8, old_count: i64, new_count: i64, struct_size: i64) *u8;
 
 // ============================================================================
 // Local Variable
@@ -149,20 +145,26 @@ fn Func_init(f: *Func, name_start: i64, name_len: i64, return_type: i64) {
     f.return_type = return_type;
     f.return_type_size = 8;  // Default to 8 bytes (i64), set larger for structs
 
-    // Allocate blocks array
+    // Allocate blocks array - use @sizeOf(Block) for correct size
     f.blocks_cap = FN_INIT_BLOCKS;
-    f.blocks = malloc_Block(f.blocks_cap);
+    let block_size: i64 = @sizeOf(Block);
+    let blocks_raw: *u8 = malloc_sized(f.blocks_cap, block_size);
+    f.blocks = @ptrCast(*Block, blocks_raw);
     f.blocks_count = 0;
     f.entry_block = INVALID_BLOCK;
 
-    // Allocate values array
+    // Allocate values array - use @sizeOf(Value) for correct size
     f.values_cap = FN_INIT_VALUES;
-    f.values = malloc_Value(f.values_cap);
+    let value_size: i64 = @sizeOf(Value);
+    let values_raw: *u8 = malloc_sized(f.values_cap, value_size);
+    f.values = @ptrCast(*Value, values_raw);
     f.values_count = 0;
 
-    // Allocate locals array
+    // Allocate locals array - use @sizeOf(Local) for correct size
     f.locals_cap = FN_INIT_LOCALS;
-    f.locals = malloc_Local(f.locals_cap);
+    let local_size: i64 = @sizeOf(Local);
+    let locals_raw: *u8 = malloc_sized(f.locals_cap, local_size);
+    f.locals = @ptrCast(*Local, locals_raw);
     f.locals_count = 0;
 
     f.frame_size = 0;
@@ -179,7 +181,10 @@ fn Func_newBlock(f: *Func, kind: BlockKind) i64 {
     // Grow blocks array if needed
     if f.blocks_count >= f.blocks_cap {
         let new_cap: i64 = f.blocks_cap * 2;
-        f.blocks = realloc_Block(f.blocks, f.blocks_cap, new_cap);
+        let block_size: i64 = @sizeOf(Block);
+        let old_ptr: *u8 = @ptrCast(*u8, f.blocks);
+        let new_ptr: *u8 = realloc_sized(old_ptr, f.blocks_cap, new_cap, block_size);
+        f.blocks = @ptrCast(*Block, new_ptr);
         f.blocks_cap = new_cap;
     }
 
@@ -221,7 +226,10 @@ fn Func_newValue(f: *Func, op: Op, type_idx: i64) *Value {
     // Grow values array if needed
     if f.values_count >= f.values_cap {
         let new_cap: i64 = f.values_cap * 2;
-        f.values = realloc_Value(f.values, f.values_cap, new_cap);
+        let value_size: i64 = @sizeOf(Value);
+        let old_ptr: *u8 = @ptrCast(*u8, f.values);
+        let new_ptr: *u8 = realloc_sized(old_ptr, f.values_cap, new_cap, value_size);
+        f.values = @ptrCast(*Value, new_ptr);
         f.values_cap = new_cap;
     }
     if f.current_block == INVALID_BLOCK {
@@ -260,7 +268,10 @@ fn Func_addLocal(f: *Func, name_start: i64, name_len: i64, type_idx: i64, is_mut
     // Grow locals array if needed
     if f.locals_count >= f.locals_cap {
         let new_cap: i64 = f.locals_cap * 2;
-        f.locals = realloc_Local(f.locals, f.locals_cap, new_cap);
+        let local_size: i64 = @sizeOf(Local);
+        let old_ptr: *u8 = @ptrCast(*u8, f.locals);
+        let new_ptr: *u8 = realloc_sized(old_ptr, f.locals_cap, new_cap, local_size);
+        f.locals = @ptrCast(*Local, new_ptr);
         f.locals_cap = new_cap;
     }
 
@@ -277,7 +288,10 @@ fn Func_addParam(f: *Func, name_start: i64, name_len: i64, type_idx: i64) i64 {
     // Grow locals array if needed
     if f.locals_count >= f.locals_cap {
         let new_cap: i64 = f.locals_cap * 2;
-        f.locals = realloc_Local(f.locals, f.locals_cap, new_cap);
+        let local_size: i64 = @sizeOf(Local);
+        let old_ptr: *u8 = @ptrCast(*u8, f.locals);
+        let new_ptr: *u8 = realloc_sized(old_ptr, f.locals_cap, new_cap, local_size);
+        f.locals = @ptrCast(*Local, new_ptr);
         f.locals_cap = new_cap;
     }
 
