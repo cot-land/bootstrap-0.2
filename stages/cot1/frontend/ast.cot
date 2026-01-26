@@ -11,6 +11,9 @@
 import "token.cot"
 import "../lib/list.cot"
 
+// Dynamic reallocation for growing NodePool
+extern fn realloc_Node(ptr: *Node, old_count: i64, new_count: i64) *Node;
+
 // ============================================================================
 // Type Aliases (cot1 feature: dogfooding our own language features)
 // ============================================================================
@@ -205,14 +208,28 @@ fn NodePool_get(pool: *NodePool, idx: i64) *Node {
     return pool.nodes + idx;
 }
 
+// Allocate a node with bounds checking and dynamic growth
+// Returns the index of the new node
+fn NodePool_alloc(pool: *NodePool) i64 {
+    // Grow if needed
+    if pool.count >= pool.capacity {
+        let new_cap: i64 = pool.capacity * 2;
+        pool.nodes = realloc_Node(pool.nodes, pool.capacity, new_cap);
+        pool.capacity = new_cap;
+    }
+
+    let idx: i64 = pool.count;
+    pool.count = pool.count + 1;
+    return idx;
+}
+
 // ============================================================================
 // Node Constructors
 // ============================================================================
 
 // Create an integer literal node
 fn Node_intLit(pool: *NodePool, value: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.IntLit;
@@ -228,8 +245,7 @@ fn Node_intLit(pool: *NodePool, value: i64, start: i64, end: i64) i64 {
 
 // Create an identifier node
 fn Node_ident(pool: *NodePool, name_start: i64, name_len: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.Ident;
@@ -245,8 +261,7 @@ fn Node_ident(pool: *NodePool, name_start: i64, name_len: i64, start: i64, end: 
 
 // Create a binary expression node
 fn Node_binary(pool: *NodePool, op: BinaryOp, left: i64, right: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.BinaryExpr;
@@ -284,8 +299,7 @@ fn Node_binary(pool: *NodePool, op: BinaryOp, left: i64, right: i64, start: i64,
 
 // Create a function call node
 fn Node_call(pool: *NodePool, callee: i64, args_start: i64, args_count: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.CallExpr;
@@ -301,8 +315,7 @@ fn Node_call(pool: *NodePool, callee: i64, args_start: i64, args_count: i64, sta
 
 // Create a return statement node
 fn Node_return(pool: *NodePool, value: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.ReturnStmt;
@@ -318,8 +331,7 @@ fn Node_return(pool: *NodePool, value: i64, start: i64, end: i64) i64 {
 
 // Create an expression statement node
 fn Node_exprStmt(pool: *NodePool, expr: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.ExprStmt;
@@ -335,8 +347,7 @@ fn Node_exprStmt(pool: *NodePool, expr: i64, start: i64, end: i64) i64 {
 
 // Create a block statement node
 fn Node_block(pool: *NodePool, stmts_start: i64, stmts_count: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.BlockStmt;
@@ -352,8 +363,7 @@ fn Node_block(pool: *NodePool, stmts_start: i64, stmts_count: i64, start: i64, e
 
 // Create a parameter declaration node
 fn Node_param(pool: *NodePool, name_start: i64, name_len: i64, type_start: i64, type_len: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.ParamDecl;
@@ -372,8 +382,7 @@ fn Node_fnDecl(pool: *NodePool, name_start: i64, name_len: i64,
                 params_start: i64, params_count: i64,
                 ret_type_start: i64, ret_type_len: i64,
                 body: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.FnDecl;
@@ -394,8 +403,7 @@ fn Node_externFnDecl(pool: *NodePool, name_start: i64, name_len: i64,
                        params_start: i64, params_count: i64,
                        ret_type_start: i64, ret_type_len: i64,
                        start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.ExternFnDecl;
@@ -420,8 +428,7 @@ fn Node_externFnDecl(pool: *NodePool, name_start: i64, name_len: i64,
 fn Node_varDecl(pool: *NodePool, is_let: i64, name_start: i64, name_len: i64,
                  type_start: i64, type_handle: i64, init_expr: i64,
                  start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.VarDecl;
@@ -442,8 +449,7 @@ fn Node_varDecl(pool: *NodePool, is_let: i64, name_start: i64, name_len: i64,
 fn Node_globalVarDecl(pool: *NodePool, name_start: i64, name_len: i64,
                       type_start: i64, type_handle: i64, init_expr: i64,
                       start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.GlobalVarDecl;
@@ -466,8 +472,7 @@ fn Node_globalVarDecl(pool: *NodePool, name_start: i64, name_len: i64,
 // field3: unused
 fn Node_ifStmt(pool: *NodePool, cond: i64, then_body: i64, else_body: i64,
                 start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.IfStmt;
@@ -488,8 +493,7 @@ fn Node_ifStmt(pool: *NodePool, cond: i64, then_body: i64, else_body: i64,
 // field3: label name len (0 if no label)
 fn Node_whileStmt(pool: *NodePool, cond: i64, body: i64,
                   label_start: i64, label_len: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.WhileStmt;
@@ -511,8 +515,7 @@ fn Node_whileStmt(pool: *NodePool, cond: i64, body: i64,
 // field3: body node index (block)
 fn Node_forStmt(pool: *NodePool, binding_start: i64, binding_len: i64,
                  iterable: i64, body: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.ForStmt;
@@ -531,8 +534,7 @@ fn Node_forStmt(pool: *NodePool, binding_start: i64, binding_len: i64,
 // field1: label name len (0 if no label)
 fn Node_breakStmt(pool: *NodePool, label_start: i64, label_len: i64,
                   start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.BreakStmt;
@@ -551,8 +553,7 @@ fn Node_breakStmt(pool: *NodePool, label_start: i64, label_len: i64,
 // field1: label name len (0 if no label)
 fn Node_continueStmt(pool: *NodePool, label_start: i64, label_len: i64,
                      start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.ContinueStmt;
@@ -570,8 +571,7 @@ fn Node_continueStmt(pool: *NodePool, label_start: i64, label_len: i64,
 // field0: expression node index to defer
 // Reference: Zig lower.zig defer_stmt handling
 fn Node_deferStmt(pool: *NodePool, expr_idx: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.DeferStmt;
@@ -589,8 +589,7 @@ fn Node_deferStmt(pool: *NodePool, expr_idx: i64, start: i64, end: i64) i64 {
 // field0: operand node index
 // field1: UnaryOp (as int)
 fn Node_unary(pool: *NodePool, op: UnaryOp, operand: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.UnaryExpr;
@@ -616,8 +615,7 @@ fn Node_unary(pool: *NodePool, op: UnaryOp, operand: i64, start: i64, end: i64) 
 // field0: string_start (offset in source, after opening quote)
 // field1: string_len (length of string content, excluding quotes)
 fn Node_stringLit(pool: *NodePool, str_start: i64, str_len: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.StringLit;
@@ -634,8 +632,7 @@ fn Node_stringLit(pool: *NodePool, str_start: i64, str_len: i64, start: i64, end
 // Create an address-of expression node: &expr
 // field0: operand node index
 fn Node_addressOf(pool: *NodePool, operand: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.AddressOf;
@@ -652,8 +649,7 @@ fn Node_addressOf(pool: *NodePool, operand: i64, start: i64, end: i64) i64 {
 // Create a dereference expression node: expr.*
 // field0: operand node index (the pointer expression)
 fn Node_deref(pool: *NodePool, operand: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.DerefExpr;
@@ -671,8 +667,7 @@ fn Node_deref(pool: *NodePool, operand: i64, start: i64, end: i64) i64 {
 // field0: target (identifier node index - the variable being assigned)
 // field1: value (expression node index - the value being assigned)
 fn Node_assign(pool: *NodePool, target: i64, value: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.AssignExpr;
@@ -695,8 +690,7 @@ fn Node_assign(pool: *NodePool, target: i64, value: i64, start: i64, end: i64) i
 // field0: path_start (offset in source, after opening quote)
 // field1: path_len (length of path string, excluding quotes)
 fn Node_importDecl(pool: *NodePool, path_start: i64, path_len: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.ImportDecl;
@@ -717,8 +711,7 @@ fn Node_importDecl(pool: *NodePool, path_start: i64, path_len: i64, start: i64, 
 // field3: init_expr node index
 fn Node_constDecl(pool: *NodePool, name_start: i64, name_len: i64,
                    type_handle: i64, init_expr: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.ConstDecl;
@@ -746,8 +739,7 @@ fn Node_constDecl(pool: *NodePool, name_start: i64, name_len: i64,
 fn Node_structDecl(pool: *NodePool, name_start: i64, name_len: i64,
                     fields_start: i64, fields_count: i64,
                     start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.StructDecl;
@@ -770,8 +762,7 @@ fn Node_structDecl(pool: *NodePool, name_start: i64, name_len: i64,
 fn Node_enumDecl(pool: *NodePool, name_start: i64, name_len: i64,
                   variants_start: i64, variants_count: i64,
                   start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.EnumDecl;
@@ -793,8 +784,7 @@ fn Node_enumDecl(pool: *NodePool, name_start: i64, name_len: i64,
 // Following Go's TypeDecl pattern from syntax/nodes.go
 fn Node_typeAliasDecl(pool: *NodePool, name_start: i64, name_len: i64,
                        type_node_idx: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.TypeAliasDecl;
@@ -817,8 +807,7 @@ fn Node_typeAliasDecl(pool: *NodePool, name_start: i64, name_len: i64,
 fn Node_fieldDecl(pool: *NodePool, name_start: i64, name_len: i64,
                    type_start: i64, type_len: i64,
                    start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.FieldDecl;
@@ -841,8 +830,7 @@ fn Node_fieldDecl(pool: *NodePool, name_start: i64, name_len: i64,
 fn Node_fieldAccess(pool: *NodePool, base: i64,
                      field_start: i64, field_len: i64,
                      start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.FieldAccess;
@@ -863,8 +851,7 @@ fn Node_fieldAccess(pool: *NodePool, base: i64,
 // field3: unused
 fn Node_index(pool: *NodePool, base: i64, index: i64,
               start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.IndexExpr;
@@ -886,8 +873,7 @@ fn Node_index(pool: *NodePool, base: i64, index: i64,
 // field3: unused
 fn Node_slice(pool: *NodePool, base: i64, slice_start: i64, slice_end: i64,
               start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.SliceExpr;
@@ -909,8 +895,7 @@ fn Node_slice(pool: *NodePool, base: i64, slice_start: i64, slice_end: i64,
 fn Node_structLit(pool: *NodePool, type_name_start: i64, type_name_len: i64,
                    fields_start: i64, fields_count: i64,
                    start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.StructLit;
@@ -958,8 +943,7 @@ fn Node_fieldInit(pool: *NodePool, field_name_start: i64, field_name_len: i64,
 // field3 = unused
 fn Node_arrayLit(pool: *NodePool, elements_start: i64, elements_count: i64,
                   start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.ArrayLit;
@@ -982,8 +966,7 @@ fn Node_arrayLit(pool: *NodePool, elements_start: i64, elements_count: i64,
 fn Node_builtinCall(pool: *NodePool, name_start: i64, name_len: i64,
                      type_arg: i64, arg1: i64, arg2: i64,
                      start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.BuiltinCall;
     n.start = start;
@@ -1007,8 +990,7 @@ fn Node_builtinCall(pool: *NodePool, name_start: i64, name_len: i64,
 // field3 = else_body (node index, -1 if no else)
 fn Node_switchExpr(pool: *NodePool, subject: i64, cases_start: i64, cases_count: i64,
                     else_body: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.SwitchExpr;
@@ -1028,8 +1010,7 @@ fn Node_switchExpr(pool: *NodePool, subject: i64, cases_start: i64, cases_count:
 // field2 = body (expression node index)
 fn Node_switchCase(pool: *NodePool, patterns_start: i64, patterns_count: i64,
                     body: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.SwitchCase;
@@ -1051,8 +1032,7 @@ fn Node_switchCase(pool: *NodePool, patterns_start: i64, patterns_count: i64,
 // Named type: Point, i64, bool, etc.
 // field0 = name_start (source position), field1 = name_len
 fn Node_typeExprNamed(pool: *NodePool, name_start: i64, name_len: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.TypeExprNamed;
@@ -1069,8 +1049,7 @@ fn Node_typeExprNamed(pool: *NodePool, name_start: i64, name_len: i64, start: i6
 // Pointer type: *T
 // field0 = inner type node index
 fn Node_typeExprPointer(pool: *NodePool, inner: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.TypeExprPointer;
@@ -1087,8 +1066,7 @@ fn Node_typeExprPointer(pool: *NodePool, inner: i64, start: i64, end: i64) i64 {
 // Array type: [N]T
 // field0 = size (integer literal node), field1 = element type node
 fn Node_typeExprArray(pool: *NodePool, size_node: i64, elem_node: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.TypeExprArray;
@@ -1105,8 +1083,7 @@ fn Node_typeExprArray(pool: *NodePool, size_node: i64, elem_node: i64, start: i6
 // Slice type: []T
 // field0 = element type node
 fn Node_typeExprSlice(pool: *NodePool, elem_node: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.TypeExprSlice;
@@ -1123,8 +1100,7 @@ fn Node_typeExprSlice(pool: *NodePool, elem_node: i64, start: i64, end: i64) i64
 // Optional type: ?T
 // field0 = inner type node
 fn Node_typeExprOptional(pool: *NodePool, inner: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.TypeExprOptional;
@@ -1142,8 +1118,7 @@ fn Node_typeExprOptional(pool: *NodePool, inner: i64, start: i64, end: i64) i64 
 // field0 = payload type node (the success type)
 // Reference: Zig's error_union_type in Type.zig
 fn Node_typeExprErrorUnion(pool: *NodePool, payload: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.TypeExprErrorUnion;
@@ -1160,8 +1135,7 @@ fn Node_typeExprErrorUnion(pool: *NodePool, payload: i64, start: i64, end: i64) 
 // Function type: fn(params) -> ret
 // field0 = return type node, field1 = resolved type_idx from TypeRegistry
 fn Node_typeExprFunc(pool: *NodePool, ret_type_node: i64, type_idx: i64, start: i64, end: i64) i64 {
-    let idx: i64 = pool.count;
-    pool.count = pool.count + 1;
+    let idx: i64 = NodePool_alloc(pool);
 
     let n: *Node = pool.nodes + idx;
     n.kind = NodeKind.TypeExprFunc;
