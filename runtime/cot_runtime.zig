@@ -1027,7 +1027,7 @@ export fn malloc_BlockLiveness(count: i64) ?*anyopaque { return malloc_struct(co
 // Type checker types
 export fn malloc_CheckerSymbol(count: i64) ?*anyopaque { return malloc_struct(count, 64); }  // CheckerSymbol: 8 * 8 = 64 (7 i64 + 2 bools padded)
 
-// Struct reallocation functions - reallocate with copy
+// Struct reallocation functions - reallocate with copy and free old memory
 fn realloc_struct(ptr: ?*anyopaque, old_count: i64, new_count: i64, struct_size: i64) ?*anyopaque {
     const allocator = std.heap.c_allocator;
     const new_total: usize = @intCast(new_count * struct_size);
@@ -1037,6 +1037,9 @@ fn realloc_struct(ptr: ?*anyopaque, old_count: i64, new_count: i64, struct_size:
         const copy_size = @min(old_total, new_total);
         const src: [*]u8 = @ptrCast(p);
         @memcpy(new_mem[0..copy_size], src[0..copy_size]);
+        // Free old memory to prevent memory leak
+        const old_slice: []u8 = src[0..old_total];
+        allocator.free(old_slice);
         return @ptrCast(new_mem.ptr);
     } else {
         return malloc_struct(new_count, struct_size);
@@ -1068,3 +1071,12 @@ export fn realloc_ValState(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*a
 export fn realloc_RegState(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 16); }
 export fn realloc_LiveInfo(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 24); }
 export fn realloc_BlockLiveness(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 48); }
+
+/// Timing function for performance measurement
+/// Returns current time in nanoseconds (monotonic clock)
+export fn get_time_ns() i64 {
+    var ts: std.c.timespec = undefined;
+    const result = std.c.clock_gettime(std.c.CLOCK.MONOTONIC, &ts);
+    if (result != 0) return 0;
+    return @as(i64, ts.sec) * 1_000_000_000 + @as(i64, ts.nsec);
+}
