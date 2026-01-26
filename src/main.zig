@@ -253,6 +253,9 @@ pub fn main() !void {
         try link_args.append(allocator, rp);
         std.debug.print("Auto-linking runtime: {s}\n", .{rp});
     }
+    // macOS: Set 256MB stack size to handle large compilation jobs
+    // Must come after object files, before -lSystem
+    try link_args.appendSlice(allocator, &.{ "-Wl,-stack_size,0x10000000", "-lSystem" });
 
     var child = std.process.Child.init(link_args.items, allocator);
     const result = child.spawnAndWait() catch |e| {
