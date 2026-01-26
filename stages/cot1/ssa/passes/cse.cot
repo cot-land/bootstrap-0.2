@@ -1,0 +1,169 @@
+// Common Subexpression Elimination (CSE) Pass
+// Reference: cmd/compile/internal/ssa/cse.go
+//
+// This pass finds duplicate computations within a block and replaces
+// later uses with the earlier value. This is a simplified local CSE
+// (within-block only) compared to Go's global CSE.
+//
+// Two values are equivalent if:
+// - Same op
+// - Same type (size)
+// - Same aux_int
+// - Same arguments (in order)
+// - Not a side-effecting operation
+//
+// Algorithm:
+// 1. For each block, scan values in order
+// 2. For each value, check if an earlier value in the same block is equivalent
+// 3. If found, replace all uses of the later value with the earlier one
+
+// Run the CSE pass on a function
+// Reference: cse.go cse()
+fn cse(f: *Func) {
+    var b: i64 = 0;
+    while b < f.blocks_count {
+        let block: *Block = Func_getBlock(f, b);
+        cseBlock(f, block);
+        b = b + 1;
+    }
+}
+
+// Process a single block for CSE
+fn cseBlock(f: *Func, block: *Block) {
+    // For each value, look for an earlier equivalent value
+    var vi: i64 = 0;
+    while vi < block.values_count {
+        let v: *Value = Func_getValue(f, block.values_start + vi);
+
+        // Skip values that can't be CSE'd
+        if not canCSE(v) {
+            vi = vi + 1;
+            continue;
+        }
+
+        // Look for an earlier equivalent value in this block
+        var wi: i64 = 0;
+        while wi < vi {
+            let w: *Value = Func_getValue(f, block.values_start + wi);
+
+            if valuesEquivalent(f, v, w) {
+                // Found a duplicate! Replace uses of v with w within this block only
+                let replaced: i64 = replaceUsesInBlock(f, block, v.id, w.id);
+
+                if replaced > 0 {
+                    // Update use counts
+                    w.uses = w.uses + replaced;
+                    v.uses = v.uses - replaced;
+                }
+
+                // Stop looking - we found a match
+                break;
+            }
+
+            wi = wi + 1;
+        }
+
+        vi = vi + 1;
+    }
+}
+
+// Check if a value can be subject to CSE
+// Conservative: only pure arithmetic and bitwise operations
+fn canCSE(v: *Value) bool {
+    // Can't CSE values with no uses or marked as processed
+    if v.uses <= 0 { return false; }
+
+    // Only CSE pure arithmetic and bitwise operations
+    if v.op == Op.Add64 { return true; }
+    if v.op == Op.Sub64 { return true; }
+    if v.op == Op.Mul64 { return true; }
+    if v.op == Op.And64 { return true; }
+    if v.op == Op.Or64 { return true; }
+    if v.op == Op.Xor64 { return true; }
+    if v.op == Op.Shl64 { return true; }
+    if v.op == Op.Shr64 { return true; }
+    if v.op == Op.Sar64 { return true; }
+
+    // Everything else cannot be CSE'd (conservative)
+    return false;
+}
+
+// Check if two values are equivalent for CSE purposes
+fn valuesEquivalent(f: *Func, v: *Value, w: *Value) bool {
+    // Must have same op
+    if v.op != w.op {
+        return false;
+    }
+
+    // Must have same type index
+    if v.type_idx != w.type_idx {
+        return false;
+    }
+
+    // Must have same aux_int (for constants, offsets, etc.)
+    if v.aux_int != w.aux_int {
+        return false;
+    }
+
+    // Must have same number of arguments
+    if v.args.count != w.args.count {
+        return false;
+    }
+
+    // Must have same aux_ptr (for symbol references)
+    if v.aux_ptr != w.aux_ptr {
+        return false;
+    }
+
+    // All arguments must be identical
+    var i: i64 = 0;
+    while i < v.args.count {
+        let v_arg: i64 = Value_getArg(v, i);
+        let w_arg: i64 = Value_getArg(w, i);
+        if v_arg != w_arg {
+            return false;
+        }
+        i = i + 1;
+    }
+
+    return true;
+}
+
+// Replace uses of old_id with new_id only within the same block
+// This is conservative but safe - cross-block CSE requires dominators
+// Returns the number of replacements made
+fn replaceUsesInBlock(f: *Func, block: *Block, old_id: i64, new_id: i64) i64 {
+    var count: i64 = 0;
+
+    // Only scan values within this block
+    var vi: i64 = 0;
+    while vi < block.values_count {
+        let v: *Value = Func_getValue(f, block.values_start + vi);
+
+        // Don't modify the value being replaced
+        if v.id == old_id {
+            vi = vi + 1;
+            continue;
+        }
+
+        // Check each argument
+        var ai: i64 = 0;
+        while ai < v.args.count {
+            if Value_getArg(v, ai) == old_id {
+                Value_setArgById(v, ai, new_id);
+                count = count + 1;
+            }
+            ai = ai + 1;
+        }
+
+        vi = vi + 1;
+    }
+
+    // Also check this block's control value
+    if block.control == old_id {
+        block.control = new_id;
+        count = count + 1;
+    }
+
+    return count;
+}

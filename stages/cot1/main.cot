@@ -81,6 +81,7 @@ import "ssa/passes/decompose.cot"
 import "ssa/passes/schedule.cot"
 import "ssa/passes/deadcode.cot"
 import "ssa/passes/copyelim.cot"
+import "ssa/passes/cse.cot"
 import "ssa/liveness.cot"
 import "ssa/regalloc.cot"
 
@@ -601,6 +602,11 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // Run copy elimination pass - replace uses of copy(x) with x
         // Reference: ssa/compile.zig earlyCopyElim
         copyelim(&ssa_func);
+
+        // Run CSE pass - eliminate common subexpressions within blocks
+        // Note: Conservative local CSE - only arithmetic/bitwise ops within same block
+        // Reference: cmd/compile/internal/ssa/cse.go
+        cse(&ssa_func);
 
         // Run lower pass - peephole optimizations (mul->shl, add 0->copy, etc.)
         // Reference: ssa/passes/lower.zig

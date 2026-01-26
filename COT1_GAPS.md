@@ -99,9 +99,11 @@ Note: Previous estimates based on line counts were misleading. cot1's more verbo
 
 ### Low Priority (Optimizations)
 
-5. **Optimization passes** (17%)
+5. **Optimization passes** (50%)
    - ✓ earlyDeadcode - Remove unused values (implemented)
-   - genericCSE - Common subexpression elimination
+   - ✓ copyelim - Eliminate trivial copies (implemented)
+   - ✓ constant folding - Fold compile-time constants (in lower pass)
+   - ✓ genericCSE - Common subexpression elimination (local, conservative)
    - prove - Branch proving
    - nilCheckElim - Redundant nil checks
    - critical - Critical edge splitting
