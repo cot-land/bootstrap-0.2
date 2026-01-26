@@ -18,9 +18,14 @@ const FUNC_MAX_LOCALS: i64 = 1024;
 // CRITICAL: These must be small because EACH function allocates its own storage.
 // With 1106 functions, 50000 values each = 5.5 GB heap exhaustion!
 // Start small and grow dynamically as needed.
-const FN_INIT_BLOCKS: i64 = 64;
-const FN_INIT_VALUES: i64 = 512;
-const FN_INIT_LOCALS: i64 = 64;
+// BUG FIX: Original values were too small. When Func_newValue returns *Value
+// and the values array is later reallocated, those pointers become dangling.
+// Increase initial capacities to avoid realloc during compilation of large functions.
+// With 128 if statements creating ~1000 values and ~400 blocks, need higher limits.
+// TODO: Proper fix is to use value IDs instead of pointers, or re-fetch after realloc.
+const FN_INIT_BLOCKS: i64 = 1024;
+const FN_INIT_VALUES: i64 = 10000;
+const FN_INIT_LOCALS: i64 = 256;
 
 // Generic sized allocation - use @sizeOf(T) to avoid hardcoded sizes in runtime
 extern fn malloc_sized(count: i64, struct_size: i64) *u8;

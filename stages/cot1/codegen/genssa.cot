@@ -2971,7 +2971,8 @@ fn GenState_finalize(
         if not is_internal {
             // Skip call sites with obviously invalid func_name_len
             // Valid function names should be 1-64 characters
-            if cs2.func_name_len <= 0 or cs2.func_name_len > 64 {
+            // EXCEPTION: func_name_start == -1 is special marker for __cot_str_concat
+            if cs2.func_name_start != -1 and (cs2.func_name_len <= 0 or cs2.func_name_len > 64) {
                 // DEBUG: Warn about invalid call site
                 print("  WARN: skipping call with invalid len="); print(cs2.func_name_len);
                 print(" start="); print(cs2.func_name_start); print("\n");

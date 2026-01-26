@@ -25,7 +25,12 @@ const MAX_BLOCK_DEFS: i64 = 500;   // Max blocks with definitions
 const SB_INIT_BLOCK_DEFS: i64 = 500;
 const SB_INIT_VAR_DEFS: i64 = 50000;
 const SB_INIT_BLOCK_MAP: i64 = 500;
-const SB_INIT_VAR_STORAGE: i64 = 100000;
+// BUG FIX: Was 100000, but with 400+ blocks * 1024 vars = 400k+ needed
+// When var_storage is reallocated, all BlockDefs.values pointers become dangling!
+// Increase to 1M to avoid realloc during compilation of large functions.
+// TODO: Proper fix is to store indices instead of pointers, or update all
+// BlockDefs.values pointers after realloc.
+const SB_INIT_VAR_STORAGE: i64 = 1000000;
 const SB_INIT_FWD_VARS: i64 = 1000;
 
 // Generic sized allocation - use @sizeOf(T) to compute struct sizes at compile time
