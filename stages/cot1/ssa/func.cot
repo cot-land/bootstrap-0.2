@@ -14,15 +14,21 @@ import "block.cot"
 const FUNC_MAX_PARAMS: i64 = 32;
 const FUNC_MAX_LOCALS: i64 = 1024;
 
-// Initial capacities for Func-owned storage (matches bootstrap Zig pattern)
-const FN_INIT_BLOCKS: i64 = 5000;
-const FN_INIT_VALUES: i64 = 50000;
-const FN_INIT_LOCALS: i64 = 2000;
+// Initial capacities for Func-owned storage
+// CRITICAL: These must be small because EACH function allocates its own storage.
+// With 1106 functions, 50000 values each = 5.5 GB heap exhaustion!
+// Start small and grow dynamically as needed.
+const FN_INIT_BLOCKS: i64 = 64;
+const FN_INIT_VALUES: i64 = 512;
+const FN_INIT_LOCALS: i64 = 64;
 
-// Malloc externs for self-allocation
+// Malloc/realloc externs for self-allocation with dynamic growth
 extern fn malloc_Block(count: i64) *Block;
 extern fn malloc_Value(count: i64) *Value;
 extern fn malloc_Local(count: i64) *Local;
+extern fn realloc_Block(ptr: *Block, old_count: i64, new_count: i64) *Block;
+extern fn realloc_Value(ptr: *Value, old_count: i64, new_count: i64) *Value;
+extern fn realloc_Local(ptr: *Local, old_count: i64, new_count: i64) *Local;
 
 // ============================================================================
 // Local Variable
@@ -170,7 +176,12 @@ fn Func_init(f: *Func, name_start: i64, name_len: i64, return_type: i64) {
 
 // Create a new block and add it to the function
 fn Func_newBlock(f: *Func, kind: BlockKind) i64 {
-    if f.blocks_count >= f.blocks_cap { return INVALID_BLOCK; }
+    // Grow blocks array if needed
+    if f.blocks_count >= f.blocks_cap {
+        let new_cap: i64 = f.blocks_cap * 2;
+        f.blocks = realloc_Block(f.blocks, f.blocks_cap, new_cap);
+        f.blocks_cap = new_cap;
+    }
 
     let id: i64 = f.blocks_count;
     let b: *Block = f.blocks + id;
@@ -207,8 +218,11 @@ fn Func_setBlock(f: *Func, block_id: i64) {
 
 // Create a new value in the current block
 fn Func_newValue(f: *Func, op: Op, type_idx: i64) *Value {
+    // Grow values array if needed
     if f.values_count >= f.values_cap {
-        return f.values;  // Return first as error placeholder
+        let new_cap: i64 = f.values_cap * 2;
+        f.values = realloc_Value(f.values, f.values_cap, new_cap);
+        f.values_cap = new_cap;
     }
     if f.current_block == INVALID_BLOCK {
         return f.values;
@@ -243,7 +257,12 @@ fn Func_getValue(f: *Func, id: i64) *Value {
 
 // Add a local variable
 fn Func_addLocal(f: *Func, name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) i64 {
-    if f.locals_count >= f.locals_cap { return -1; }
+    // Grow locals array if needed
+    if f.locals_count >= f.locals_cap {
+        let new_cap: i64 = f.locals_cap * 2;
+        f.locals = realloc_Local(f.locals, f.locals_cap, new_cap);
+        f.locals_cap = new_cap;
+    }
 
     let idx: i64 = f.locals_count;
     let local: *Local = f.locals + idx;
@@ -255,7 +274,12 @@ fn Func_addLocal(f: *Func, name_start: i64, name_len: i64, type_idx: i64, is_mut
 
 // Add a parameter (parameters come before other locals)
 fn Func_addParam(f: *Func, name_start: i64, name_len: i64, type_idx: i64) i64 {
-    if f.locals_count >= f.locals_cap { return -1; }
+    // Grow locals array if needed
+    if f.locals_count >= f.locals_cap {
+        let new_cap: i64 = f.locals_cap * 2;
+        f.locals = realloc_Local(f.locals, f.locals_cap, new_cap);
+        f.locals_cap = new_cap;
+    }
 
     let param_idx: i64 = f.locals_count;
     let idx: i64 = f.locals_count;

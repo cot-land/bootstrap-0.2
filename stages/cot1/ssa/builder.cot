@@ -28,10 +28,13 @@ const SB_INIT_BLOCK_MAP: i64 = 500;
 const SB_INIT_VAR_STORAGE: i64 = 100000;
 const SB_INIT_FWD_VARS: i64 = 1000;
 
-// Malloc externs for self-allocation
+// Malloc/realloc externs for self-allocation with dynamic growth
 extern fn malloc_BlockDefs(count: i64) *BlockDefs;
 extern fn malloc_BlockMapping(count: i64) *BlockMapping;
 extern fn malloc_VarDef(count: i64) *VarDef;
+extern fn realloc_BlockDefs(ptr: *BlockDefs, old_count: i64, new_count: i64) *BlockDefs;
+extern fn realloc_BlockMapping(ptr: *BlockMapping, old_count: i64, new_count: i64) *BlockMapping;
+extern fn realloc_VarDef(ptr: *VarDef, old_count: i64, new_count: i64) *VarDef;
 
 // ============================================================================
 // Module-Level Storage (self-allocated)
@@ -353,8 +356,14 @@ fn SSABuilder_setSource(b: *SSABuilder, source: *u8, source_len: i64) {
 
 // Allocate storage for a block's VarDefs
 fn SSABuilder_allocDefs(b: *SSABuilder, count: i64) *VarDef {
+    // Grow var_storage if needed
     if b.var_storage_used + count > b.var_storage_cap {
-        return b.var_storage;  // Return start as fallback
+        let new_cap: i64 = b.var_storage_cap * 2;
+        // Update both local and global pointers
+        sb_var_storage = realloc_VarDef(sb_var_storage, sb_var_storage_cap, new_cap);
+        sb_var_storage_cap = new_cap;
+        b.var_storage = sb_var_storage;
+        b.var_storage_cap = new_cap;
     }
     let result: *VarDef = b.var_storage + b.var_storage_used;
     b.var_storage_used = b.var_storage_used + count;
@@ -383,19 +392,33 @@ fn SSABuilder_setBlock(b: *SSABuilder, block_id: i64) {
     b.current_block = block_id;
     Func_setBlock(b.func, block_id);
 
-    // Create BlockDefs for this block
-    if b.all_defs_count < b.all_defs_cap {
-        let bd: *BlockDefs = b.all_defs + b.all_defs_count;
-        let storage: *VarDef = SSABuilder_allocDefs(b, MAX_VAR_DEFS);
-        BlockDefs_init(bd, block_id, storage, MAX_VAR_DEFS);
-        b.current_defs = bd;
-        b.all_defs_count = b.all_defs_count + 1;
+    // Grow all_defs if needed
+    if b.all_defs_count >= b.all_defs_cap {
+        let new_cap: i64 = b.all_defs_cap * 2;
+        sb_all_defs = realloc_BlockDefs(sb_all_defs, sb_all_defs_cap, new_cap);
+        sb_all_defs_cap = new_cap;
+        b.all_defs = sb_all_defs;
+        b.all_defs_cap = new_cap;
     }
+
+    // Create BlockDefs for this block
+    let bd: *BlockDefs = b.all_defs + b.all_defs_count;
+    let storage: *VarDef = SSABuilder_allocDefs(b, MAX_VAR_DEFS);
+    BlockDefs_init(bd, block_id, storage, MAX_VAR_DEFS);
+    b.current_defs = bd;
+    b.all_defs_count = b.all_defs_count + 1;
 }
 
 // Map IR block to SSA block
 fn SSABuilder_mapBlock(b: *SSABuilder, ir_block: i64, ssa_block: i64) {
-    if b.block_map_count >= b.block_map_cap { return; }
+    // Grow block_map if needed
+    if b.block_map_count >= b.block_map_cap {
+        let new_cap: i64 = b.block_map_cap * 2;
+        sb_block_map = realloc_BlockMapping(sb_block_map, sb_block_map_cap, new_cap);
+        sb_block_map_cap = new_cap;
+        b.block_map = sb_block_map;
+        b.block_map_cap = new_cap;
+    }
     let m: *BlockMapping = b.block_map + b.block_map_count;
     m.ir_block = ir_block;
     m.ssa_block = ssa_block;
@@ -466,7 +489,14 @@ fn SSABuilder_getFwdVar(b: *SSABuilder, var_idx: i64) i64 {
 
 // Cache FwdRef for variable in current block
 fn SSABuilder_setFwdVar(b: *SSABuilder, var_idx: i64, value_id: i64) {
-    if b.fwd_vars_count >= b.fwd_vars_cap { return; }
+    // Grow fwd_vars if needed
+    if b.fwd_vars_count >= b.fwd_vars_cap {
+        let new_cap: i64 = b.fwd_vars_cap * 2;
+        sb_fwd_vars = realloc_VarDef(sb_fwd_vars, sb_fwd_vars_cap, new_cap);
+        sb_fwd_vars_cap = new_cap;
+        b.fwd_vars = sb_fwd_vars;
+        b.fwd_vars_cap = new_cap;
+    }
     let fv: *VarDef = b.fwd_vars + b.fwd_vars_count;
     fv.var_idx = var_idx;
     fv.value_id = value_id;
@@ -751,7 +781,14 @@ fn SSABuilder_insertPhis(b: *SSABuilder) {
 
 // Cache IR node → SSA value mapping
 fn SSABuilder_cacheNode(b: *SSABuilder, node_idx: i64, value_id: i64) {
-    if b.node_values_count >= b.node_values_cap { return; }
+    // Grow node_values if needed
+    if b.node_values_count >= b.node_values_cap {
+        let new_cap: i64 = b.node_values_cap * 2;
+        sb_node_values = realloc_VarDef(sb_node_values, sb_node_values_cap, new_cap);
+        sb_node_values_cap = new_cap;
+        b.node_values = sb_node_values;
+        b.node_values_cap = new_cap;
+    }
     let nv: *VarDef = b.node_values + b.node_values_count;
     nv.var_idx = node_idx;
     nv.value_id = value_id;
@@ -915,6 +952,8 @@ fn SSABuilder_phiAddArg(b: *SSABuilder, phi: *Value, val: *Value, pred_block: i6
 // Returns 0 on success, error code otherwise
 // Reference: Zig's SSABuilder.build() at line 383
 fn SSABuilder_build(b: *SSABuilder) i64 {
+    // Step 1: Find max block_id
+
     // Step 1: Find max block_id in IR nodes to know how many blocks we need
     var max_block_id: i64 = 0;
     var ir_idx: i64 = b.ir_nodes_start;
@@ -925,6 +964,8 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
         }
         ir_idx = ir_idx + 1;
     }
+
+    // Step 2: Create SSA blocks
 
     // Step 2: Create SSA blocks
     // Entry block (block 0)
@@ -939,6 +980,8 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
         SSABuilder_mapBlock(b, block_idx, new_block);
         block_idx = block_idx + 1;
     }
+
+    // Step 3: Register locals
 
     // Step 3: Register locals (params first, then regular locals)
     // Copy from IR locals to SSA locals
@@ -960,6 +1003,7 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
         local_idx = local_idx + 1;
         ssa_local_idx = ssa_local_idx + 1;
     }
+    // Step 4: Handle parameters
     // Step 4: Handle parameters with 3-phase approach (BUG-056 fix)
     // Following Zig's ssa_builder.zig lines 111-242
     //
@@ -992,9 +1036,12 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
             if is_string_param {
                 // String param: create TWO Arg ops (ptr in reg N, len in reg N+1)
                 // Then combine them with StringMake
+                //
+                // CRITICAL: Use IDs, not pointers - Func_newValue can realloc!
 
                 // Arg for ptr
                 let ptr_arg_val: *Value = Func_newValue(b.func, Op.Arg, TYPE_I64);
+                let ptr_arg_id: i64 = ptr_arg_val.id;  // Save ID before potential realloc
                 ptr_arg_val.aux_int = phys_reg_idx;
                 if phys_reg_idx < 8 {
                     ptr_arg_val.reg = X0 + phys_reg_idx;
@@ -1003,6 +1050,7 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
 
                 // Arg for len
                 let len_arg_val: *Value = Func_newValue(b.func, Op.Arg, TYPE_I64);
+                let len_arg_id: i64 = len_arg_val.id;  // Save ID before potential realloc
                 len_arg_val.aux_int = phys_reg_idx;
                 if phys_reg_idx < 8 {
                     len_arg_val.reg = X0 + phys_reg_idx;
@@ -1010,9 +1058,12 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
                 phys_reg_idx = phys_reg_idx + 1;
 
                 // Create StringMake to combine ptr and len
+                // Re-fetch pointers since Func_newValue may have reallocated
                 let str_make_val: *Value = Func_newValue(b.func, Op.StringMake, TYPE_STRING);
-                Value_addArg(str_make_val, ptr_arg_val);
-                Value_addArg(str_make_val, len_arg_val);
+                let fresh_ptr_val: *Value = Func_getValue(b.func, ptr_arg_id);
+                let fresh_len_val: *Value = Func_getValue(b.func, len_arg_id);
+                Value_addArg(str_make_val, fresh_ptr_val);
+                Value_addArg(str_make_val, fresh_len_val);
 
                 // Save StringMake result for Phase 3 (not the raw Arg)
                 i64list_append(&arg_value_ids, str_make_val.id);
@@ -1044,32 +1095,47 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
     // This happens AFTER all Arg ops are created
     var i: i64 = 0;
     while i < arg_value_ids.count {
-        let arg_val: *Value = Func_getValue(b.func, i64list_get(&arg_value_ids, i));
+        // CRITICAL: Use IDs throughout to avoid stale pointers after realloc
+        let arg_val_id: i64 = i64list_get(&arg_value_ids, i);
         let local_idx: i64 = i64list_get(&arg_local_indices, i);
         let param_local: *Local = Func_getLocal(b.func, local_idx);
 
         // Create LocalAddr value for the stack slot
         let addr_val: *Value = Func_newValue(b.func, Op.LocalAddr, TYPE_I64);
+        let addr_val_id: i64 = addr_val.id;  // Save ID
         addr_val.aux_int = local_idx;
+
+        // Re-fetch arg_val after potential realloc
+        let arg_val: *Value = Func_getValue(b.func, arg_val_id);
 
         // Handle string params specially: store both ptr and len components
         if arg_val.op == Op.StringMake and arg_val.args.count >= 2 {
             // String param: store ptr at offset 0, len at offset 8
-            let ptr_val: *Value = Func_getValue(b.func, Value_getArg(arg_val, 0));
-            let len_val: *Value = Func_getValue(b.func, Value_getArg(arg_val, 1));
+            // Get the arg IDs from the StringMake value
+            let ptr_val_id: i64 = Value_getArg(arg_val, 0);
+            let len_val_id: i64 = Value_getArg(arg_val, 1);
 
             // Store ptr to base address
             let store_ptr: *Value = Func_newValue(b.func, Op.Store, TYPE_VOID);
-            Value_addArg2(store_ptr, addr_val, ptr_val);
+            // Re-fetch all needed values after Func_newValue
+            let fresh_addr: *Value = Func_getValue(b.func, addr_val_id);
+            let fresh_ptr: *Value = Func_getValue(b.func, ptr_val_id);
+            Value_addArg2(store_ptr, fresh_addr, fresh_ptr);
 
             // Create addr + 8 for len using OffPtr (offset pointer)
             let addr_plus_8: *Value = Func_newValue(b.func, Op.OffPtr, TYPE_I64);
+            let addr_plus_8_id: i64 = addr_plus_8.id;
             addr_plus_8.aux_int = 8;  // offset
-            Value_addArg(addr_plus_8, addr_val);  // base pointer
+            // Re-fetch addr after potential realloc
+            let fresh_addr2: *Value = Func_getValue(b.func, addr_val_id);
+            Value_addArg(addr_plus_8, fresh_addr2);  // base pointer
 
             // Store len at offset 8
             let store_len: *Value = Func_newValue(b.func, Op.Store, TYPE_VOID);
-            Value_addArg2(store_len, addr_plus_8, len_val);
+            // Re-fetch values after Func_newValue
+            let fresh_addr_plus_8: *Value = Func_getValue(b.func, addr_plus_8_id);
+            let fresh_len: *Value = Func_getValue(b.func, len_val_id);
+            Value_addArg2(store_len, fresh_addr_plus_8, fresh_len);
         } else {
             // BUG-019 FIX: >16B struct types are passed by reference
             // Following Zig ssa_builder.zig lines 222-238
@@ -1088,11 +1154,17 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
                 // OpMove: copy from arg_val (source ptr) to addr_val (dest)
                 let move_val: *Value = Func_newValue(b.func, Op.Move, TYPE_VOID);
                 move_val.aux_int = type_size;
-                Value_addArg2(move_val, addr_val, arg_val);
+                // Re-fetch values after Func_newValue
+                let fresh_addr: *Value = Func_getValue(b.func, addr_val_id);
+                let fresh_arg: *Value = Func_getValue(b.func, arg_val_id);
+                Value_addArg2(move_val, fresh_addr, fresh_arg);
             } else {
                 // Store Arg to stack slot
                 let store_val: *Value = Func_newValue(b.func, Op.Store, TYPE_VOID);
-                Value_addArg2(store_val, addr_val, arg_val);
+                // Re-fetch values after Func_newValue
+                let fresh_addr: *Value = Func_getValue(b.func, addr_val_id);
+                let fresh_arg: *Value = Func_getValue(b.func, arg_val_id);
+                Value_addArg2(store_val, fresh_addr, fresh_arg);
             }
         }
 
@@ -1123,10 +1195,12 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
         ir_idx = ir_idx + 1;
     }
 
+    // Step 6: Insert phi nodes
     // Step 6: Insert phi nodes for forward references
     // Reference: Zig ssa_builder.zig:455
     SSABuilder_insertPhis(b);
 
+    // Step 7: Emit return block
     // Step 7: Emit return block
     Func_emitReturnBlock(b.func);
 
