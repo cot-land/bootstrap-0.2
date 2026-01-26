@@ -148,6 +148,8 @@ struct Lowerer {
 
     // Function name → index map for O(1) lookup
     func_map: StrMap,
+    // Function name → return type handle map for O(1) return type lookup
+    func_ret_map: StrMap,
 }
 
 // ============================================================================
@@ -444,6 +446,8 @@ fn Lowerer_init(l: *Lowerer,
 
     // Initialize function map for O(1) lookup
     l.func_map = StrMap_init(256);
+    // Initialize function return type map for O(1) lookup
+    l.func_ret_map = StrMap_init(256);
 }
 
 // cot1: Register a type alias
@@ -867,25 +871,9 @@ fn Lowerer_addConst(l: *Lowerer, name_start: i64, name_len: i64, value: i64) {
 // Find a function's return type by name
 // Returns the parser type handle (PTYPE_*), or -1 if not found
 // Following src/frontend/lower.zig inferExprType pattern
+// Uses O(1) hash lookup via func_ret_map (populated in pass1.9)
 fn Lowerer_findFuncRetType(l: *Lowerer, name_start: i64, name_len: i64) i64 {
-    var i: i64 = 0;
-    while i < l.nodes_count {
-        let node: *Node = l.nodes + i;
-        // FnDecl: field0=name_start, field1=name_len, field4=ret_type_handle
-        if node.kind == NodeKind.FnDecl {
-            if names_equal(l.source, node.field0, node.field1, name_start, name_len) {
-                return node.field4;  // ret_type_handle
-            }
-        }
-        // ExternFnDecl: same field layout
-        if node.kind == NodeKind.ExternFnDecl {
-            if names_equal(l.source, node.field0, node.field1, name_start, name_len) {
-                return node.field4;  // ret_type_handle
-            }
-        }
-        i = i + 1;
-    }
-    return -1;  // Not found
+    return StrMap_get(&l.func_ret_map, l.source + name_start, name_len);
 }
 
 // Check if an expression returns a slice type
@@ -1137,15 +1125,21 @@ fn Lowerer_lowerAll(l: *Lowerer) i64 {
     print("    pass1.5 globals: "); print((t1 - t0) / 1000000); print("ms\n");
     t0 = t1;
 
-    // Pass 1.9: Pre-populate func_map with all function names for O(1) lookup
+    // Pass 1.9: Pre-populate func_map and func_ret_map with all function names for O(1) lookup
     // This must happen before lowering function bodies
+    // Also includes ExternFnDecl for return type lookups
     var func_idx: i64 = 0;
     i = 0;
     while i < l.nodes_count {
         let node: *Node = l.nodes + i;
         if node.kind == NodeKind.FnDecl {
             StrMap_put(&l.func_map, l.source + node.field0, node.field1, func_idx);
+            // Store return type handle for O(1) lookup (field4 = ret_type_handle)
+            StrMap_put(&l.func_ret_map, l.source + node.field0, node.field1, node.field4);
             func_idx = func_idx + 1;
+        } else if node.kind == NodeKind.ExternFnDecl {
+            // ExternFnDecl also needs return type in map for call type inference
+            StrMap_put(&l.func_ret_map, l.source + node.field0, node.field1, node.field4);
         }
         i = i + 1;
     }

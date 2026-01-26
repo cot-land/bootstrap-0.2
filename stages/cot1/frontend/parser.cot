@@ -757,6 +757,16 @@ fn Parser_parseUnary(p: *Parser) i64 {
             Parser_want(p, TokenType.Comma);
             arg1 = Parser_parseExpr(p);
         }
+        // @intToPtr(type, val) - type arg + expr arg (converts i64 to pointer)
+        else if name_len == 8 and p.source[name_start] == 105 and p.source[name_start + 1] == 110 and
+                p.source[name_start + 2] == 116 and p.source[name_start + 3] == 84 and
+                p.source[name_start + 4] == 111 and p.source[name_start + 5] == 80 and
+                p.source[name_start + 6] == 116 and p.source[name_start + 7] == 114 {
+            // "intToPtr" - parse type then expr
+            type_arg = Parser_parseType(p);
+            Parser_want(p, TokenType.Comma);
+            arg1 = Parser_parseExpr(p);
+        }
         // @sizeOf(type) - just type arg
         else if name_len == 6 and p.source[name_start] == 115 and p.source[name_start + 1] == 105 and
                 p.source[name_start + 2] == 122 and p.source[name_start + 3] == 101 and

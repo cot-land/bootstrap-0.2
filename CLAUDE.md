@@ -1,5 +1,53 @@
 # Claude Development Guidelines
 
+## NEVER UNDO CHANGES - FIX FORWARD
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   THIS PROJECT IS IN ITS INFANCY. STOP UNDOING CHANGES TO TROUBLESHOOT.       ║
+║                                                                               ║
+║   NEVER revert code to "investigate" or "troubleshoot"                        ║
+║   NEVER say "let me revert this and try again"                                ║
+║   NEVER undo a change just because something doesn't work immediately         ║
+║                                                                               ║
+║   Instead: FIX THE ISSUE AND MOVE FORWARD.                                    ║
+║                                                                               ║
+║   Reverting turns 5-minute tasks into hour-long disasters.                    ║
+║   Every change builds toward the goal. Keep moving forward.                   ║
+║                                                                               ║
+║   If something breaks after a change:                                         ║
+║   1. Understand WHY it broke                                                  ║
+║   2. Fix the specific issue                                                   ║
+║   3. Continue with the original task                                          ║
+║                                                                               ║
+║   DO NOT: Revert → Re-investigate → Re-implement → Repeat forever             ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+```
+
+---
+
+## COMMAND TIMEOUTS - CRITICAL
+
+```
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   NEVER USE LONG TIMEOUTS. Compilation should take SECONDS, not minutes.      ║
+║                                                                               ║
+║   DEFAULT: 10-20 second timeouts on ALL commands                              ║
+║                                                                               ║
+║   If a command exceeds 20 seconds, it's likely an INFINITE LOOP.              ║
+║   DO NOT wait - cancel and investigate the loop.                              ║
+║                                                                               ║
+║   If you genuinely need a longer timeout (e.g., downloading large files),     ║
+║   ASK THE USER for permission first.                                          ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+```
+
+---
+
 ## DEAD CODE INTEGRATION PATTERN - FOLLOW THIS EXACTLY
 
 ```
@@ -207,12 +255,14 @@ Verify ALL tests pass. Never use trivial "return 42" tests.
 
 ## Current Priority: Fix Stage 2 Crash
 
-cot1-stage2 compiles successfully but crashes at startup (SIGBUS). Suspected causes:
-1. Stack overflow during SSA building (8MB stack limit at scale)
-2. Performance: O(n) function lookup causing slowdown (1.6 seconds in lowering)
-3. Incorrect struct field offset calculations in codegen
+cot1-stage2 compiles in ~2 seconds (was 102 seconds before O(n²) fix). Crashes at startup (SIGSEGV).
 
-**Investigation approach:** Add timing instrumentation, replace linear scans with StrMap lookups.
+**Performance fix applied (2026-01-26):**
+- Fixed O(n²) `posToLine` in genssa.cot - was scanning from byte 0 for each SSA value
+- Added line offset table with binary search: 101s → 29ms codegen (3500x speedup)
+- Added `func_ret_map` for O(1) return type lookup (373M node comparisons eliminated)
+
+**Remaining crash:** Stage2 crashes in Phase 4/5 (SSA building). Accessing NULL struct pointer (offset 128 from NULL).
 
 ---
 

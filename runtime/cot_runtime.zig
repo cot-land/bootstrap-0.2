@@ -1020,9 +1020,9 @@ export fn malloc_FuncAddrReloc(count: i64) ?*anyopaque { return malloc_struct(co
 export fn malloc_StringReloc(count: i64) ?*anyopaque { return malloc_struct(count, 24); }  // StringReloc: 3 fields * 8 = 24
 export fn malloc_Symbol(count: i64) ?*anyopaque { return malloc_struct(count, 40); }
 export fn malloc_Reloc(count: i64) ?*anyopaque { return malloc_struct(count, 48); }  // Reloc: offset(8) + target_start(8) + target_len(8) + reloc_type(8) + is_pcrel(8) + length(8) = 48
-export fn malloc_BlockDefs(count: i64) ?*anyopaque { return malloc_struct(count, 24); }
+export fn malloc_BlockDefs(count: i64) ?*anyopaque { return malloc_struct(count, 40); }  // BlockDefs: block_id(8) + defs(8) + defs_count(8) + defs_cap(8) + initialized(bool->8) = 40
 export fn malloc_BlockMapping(count: i64) ?*anyopaque { return malloc_struct(count, 16); }
-export fn malloc_VarDef(count: i64) ?*anyopaque { return malloc_struct(count, 24); }
+export fn malloc_VarDef(count: i64) ?*anyopaque { return malloc_struct(count, 16); }  // VarDef: var_idx(8) + value_id(8) = 16
 export fn malloc_TypeAliasEntry(count: i64) ?*anyopaque { return malloc_struct(count, 24); }  // TypeAliasEntry: 3 * 8 = 24
 export fn malloc_StrMapEntry(count: i64) ?*anyopaque { return malloc_struct(count, 32); }  // StrMapEntry: 4 * 8 = 32
 export fn malloc_Scope(count: i64) ?*anyopaque { return malloc_struct(count, 24); }  // Scope: symbols(8) + count(8) + parent_idx(8) = 24
@@ -1088,4 +1088,38 @@ export fn get_time_ns() i64 {
     const result = std.c.clock_gettime(std.c.CLOCK.MONOTONIC, &ts);
     if (result != 0) return 0;
     return @as(i64, ts.sec) * 1_000_000_000 + @as(i64, ts.nsec);
+}
+
+/// Resolve a path to its canonical absolute pathname
+/// Resolves all symlinks and normalizes ".." and "." components
+/// Returns the length of the resolved path, or 0 on failure
+/// out_buf must be at least 1024 bytes
+export fn cot_realpath(path: [*]const u8, path_len: i64, out_buf: [*]u8, out_buf_cap: i64) i64 {
+    if (path_len <= 0 or out_buf_cap < 1024) return 0;
+
+    // Create null-terminated copy of input path
+    var path_buf: [1024:0]u8 = undefined;
+    const copy_len: usize = @min(@as(usize, @intCast(path_len)), 1023);
+    @memcpy(path_buf[0..copy_len], path[0..copy_len]);
+    path_buf[copy_len] = 0;
+
+    // Call OS realpath - it handles symlinks, "..", ".", etc.
+    var resolved_buf: [1024]u8 = undefined;
+    const resolved = std.c.realpath(@as([*:0]const u8, &path_buf), &resolved_buf);
+    if (resolved == null) {
+        // realpath failed - copy original path as fallback
+        const out_len: usize = @min(copy_len, @as(usize, @intCast(out_buf_cap - 1)));
+        @memcpy(out_buf[0..out_len], path[0..out_len]);
+        out_buf[out_len] = 0;
+        return @intCast(out_len);
+    }
+
+    // Copy result to output buffer
+    var result_len: usize = 0;
+    while (result_len < @as(usize, @intCast(out_buf_cap - 1)) and resolved_buf[result_len] != 0) {
+        out_buf[result_len] = resolved_buf[result_len];
+        result_len += 1;
+    }
+    out_buf[result_len] = 0;
+    return @intCast(result_len);
 }

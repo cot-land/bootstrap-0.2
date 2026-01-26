@@ -1094,6 +1094,27 @@ pub const Checker = struct {
             }
 
             return TypeRegistry.I64;
+        } else if (std.mem.eql(u8, bc.name, "intToPtr")) {
+            // @intToPtr(Type, value) - converts i64 to pointer
+            const target_type = try self.resolveTypeExpr(bc.type_arg);
+            if (target_type == invalid_type) {
+                self.err.errorWithCode(bc.span.start, .e300, "@intToPtr requires a valid type");
+                return invalid_type;
+            }
+
+            const target_info = self.types.get(target_type);
+            if (target_info != .pointer) {
+                self.err.errorWithCode(bc.span.start, .e300, "@intToPtr target type must be a pointer");
+                return invalid_type;
+            }
+
+            const source_type = try self.checkExpr(bc.args[0]);
+            if (!types.isInteger(self.types.get(source_type))) {
+                self.err.errorWithCode(bc.span.start, .e300, "@intToPtr source must be integer");
+                return invalid_type;
+            }
+
+            return target_type;
         } else {
             self.err.errorWithCode(bc.span.start, .e300, "unknown builtin");
             return invalid_type;

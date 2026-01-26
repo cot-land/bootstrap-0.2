@@ -22,12 +22,16 @@ import "../frontend/ast.cot"
 extern fn malloc_u8(count: i64) *u8;
 extern fn malloc_i64(count: i64) *i64;
 
+// OS realpath - resolves symlinks and normalizes ".." and "." components
+// Returns the length of the resolved path, or copies original path on failure
+extern fn cot_realpath(path: *u8, path_len: i64, out_buf: *u8, out_buf_cap: i64) i64;
+
 // ============================================================================
 // Constants
 // ============================================================================
 
 const IMPORT_MAX_PATHS: i64 = 100;
-const IMPORT_MAX_PATH_LEN: i64 = 256;
+const IMPORT_MAX_PATH_LEN: i64 = 1024;  // Increased to support realpath (requires 1024)
 
 // O_RDONLY is provided by safe_io.cot which is imported before this module
 
@@ -52,6 +56,9 @@ var im_importing_dir: *u8 = null;   // Directory of currently importing file
 var im_importing_dir_cap: i64 = 0;
 var im_importing_dir_len: i64 = 0;
 
+var im_realpath_buf: *u8 = null;    // Temp buffer for realpath canonicalization
+var im_realpath_buf_cap: i64 = 0;
+
 var im_storage_initialized: bool = false;
 
 // ============================================================================
@@ -65,18 +72,45 @@ fn Import_allocateStorage() {
 
     im_paths_cap = IMPORT_MAX_PATHS * IMPORT_MAX_PATH_LEN;
     im_paths = malloc_u8(im_paths_cap);
+    if im_paths == null {
+        print("Import_allocateStorage: malloc failed for im_paths\n");
+        return;
+    }
 
     im_path_lens_cap = IMPORT_MAX_PATHS;
     im_path_lens = malloc_i64(im_path_lens_cap);
+    if im_path_lens == null {
+        print("Import_allocateStorage: malloc failed for im_path_lens\n");
+        return;
+    }
 
     im_base_dir_cap = IMPORT_MAX_PATH_LEN;
     im_base_dir = malloc_u8(im_base_dir_cap);
+    if im_base_dir == null {
+        print("Import_allocateStorage: malloc failed for im_base_dir\n");
+        return;
+    }
 
     im_path_buf_cap = IMPORT_MAX_PATH_LEN;
     im_path_buf = malloc_u8(im_path_buf_cap);
+    if im_path_buf == null {
+        print("Import_allocateStorage: malloc failed for im_path_buf\n");
+        return;
+    }
 
     im_importing_dir_cap = IMPORT_MAX_PATH_LEN;
     im_importing_dir = malloc_u8(im_importing_dir_cap);
+    if im_importing_dir == null {
+        print("Import_allocateStorage: malloc failed for im_importing_dir\n");
+        return;
+    }
+
+    im_realpath_buf_cap = IMPORT_MAX_PATH_LEN;
+    im_realpath_buf = malloc_u8(im_realpath_buf_cap);
+    if im_realpath_buf == null {
+        print("Import_allocateStorage: malloc failed for im_realpath_buf\n");
+        return;
+    }
 
     im_storage_initialized = true;
 }
@@ -95,6 +129,11 @@ fn Import_init() {
 
 // Check if a path has already been imported
 fn Import_isPathImported(path: *u8, path_len: i64) bool {
+    // Null checks
+    if im_paths == null or im_path_lens == null or path == null {
+        return false;
+    }
+
     var i: i64 = 0;
     while i < im_count {
         let stored_len_ptr: *i64 = im_path_lens + i;
@@ -123,6 +162,10 @@ fn Import_isPathImported(path: *u8, path_len: i64) bool {
 
 // Add a path to the imported list
 fn Import_addPath(path: *u8, path_len: i64) {
+    // Null checks
+    if im_paths == null or im_path_lens == null or path == null {
+        return;
+    }
     if im_count >= IMPORT_MAX_PATHS {
         return;
     }
@@ -208,74 +251,72 @@ fn Import_buildPath(import_path: *u8, import_path_len: i64) i64 {
     return result_len;
 }
 
-// Resolve an import path relative to a base directory, handling ".." components
+// Resolve an import path relative to a base directory using OS realpath
+// This properly handles symlinks, "..", ".", and produces canonical absolute paths
 // Result stored in im_path_buf, returns length
 fn Import_resolvePath(base_dir: *u8, base_len: i64, rel_path: *u8, rel_len: i64) i64 {
-    // Copy base_dir to result buffer first
-    var result_len: i64 = 0;
+    // Null checks - critical for preventing crashes
+    if im_path_buf == null {
+        print("Import_resolvePath: im_path_buf is null\n");
+        return 0;
+    }
+    if base_dir == null {
+        print("Import_resolvePath: base_dir is null\n");
+        return 0;
+    }
+    if rel_path == null {
+        print("Import_resolvePath: rel_path is null\n");
+        return 0;
+    }
+
+    // Step 1: Build joined path (base_dir + rel_path) in im_path_buf
+    var joined_len: i64 = 0;
     var i: i64 = 0;
-    while i < base_len and result_len < IMPORT_MAX_PATH_LEN {
+
+    // Copy base_dir
+    while i < base_len and joined_len < IMPORT_MAX_PATH_LEN - 1 {
         let c: *u8 = base_dir + i;
-        (im_path_buf + result_len).* = c.*;
-        result_len = result_len + 1;
+        (im_path_buf + joined_len).* = c.*;
+        joined_len = joined_len + 1;
         i = i + 1;
     }
 
-    // Process rel_path, handling ".." by removing last directory component
+    // Copy rel_path
     i = 0;
-    while i < rel_len {
-        // Check for "../" at current position
-        if i + 2 < rel_len {
-            let c0: *u8 = rel_path + i;
-            let c1: *u8 = rel_path + i + 1;
-            let c2: *u8 = rel_path + i + 2;
-            if c0.* == 46 and c1.* == 46 and c2.* == 47 {  // "../"
-                // Go up one directory: remove trailing slash first
-                if result_len > 0 {
-                    result_len = result_len - 1;
-                }
-                // Remove chars back to previous '/'
-                while result_len > 0 {
-                    let rc: *u8 = im_path_buf + (result_len - 1);
-                    if rc.* == 47 {  // '/'
-                        break;
-                    }
-                    result_len = result_len - 1;
-                }
-                i = i + 3;  // Skip "../"
-                continue;
-            }
-        }
-        // Check for ".." at end (no trailing slash)
-        if i + 1 == rel_len - 1 {
-            let c0: *u8 = rel_path + i;
-            let c1: *u8 = rel_path + i + 1;
-            if c0.* == 46 and c1.* == 46 {  // ".."
-                if result_len > 0 {
-                    result_len = result_len - 1;
-                }
-                while result_len > 0 {
-                    let rc: *u8 = im_path_buf + (result_len - 1);
-                    if rc.* == 47 {
-                        break;
-                    }
-                    result_len = result_len - 1;
-                }
-                i = i + 2;
-                continue;
-            }
-        }
-        // Regular character, copy it
-        if result_len < IMPORT_MAX_PATH_LEN {
-            let c: *u8 = rel_path + i;
-            (im_path_buf + result_len).* = c.*;
-            result_len = result_len + 1;
-        }
+    while i < rel_len and joined_len < IMPORT_MAX_PATH_LEN - 1 {
+        let c: *u8 = rel_path + i;
+        (im_path_buf + joined_len).* = c.*;
+        joined_len = joined_len + 1;
         i = i + 1;
     }
 
-    (im_path_buf + result_len).* = 0;
-    return result_len;
+    // Null-terminate the joined path
+    (im_path_buf + joined_len).* = 0;
+
+    // Step 2: Use OS realpath to canonicalize (resolves symlinks, "..", ".", etc.)
+    // We need a temporary buffer since realpath writes to output
+    if im_realpath_buf == null {
+        // Fallback: return joined path without canonicalization
+        return joined_len;
+    }
+
+    // Call cot_realpath - it handles all edge cases via OS
+    let canonical_len: i64 = cot_realpath(im_path_buf, joined_len, im_realpath_buf, IMPORT_MAX_PATH_LEN);
+
+    if canonical_len <= 0 {
+        // realpath failed, return the joined path as-is
+        return joined_len;
+    }
+
+    // Copy canonical path back to im_path_buf
+    i = 0;
+    while i < canonical_len and i < IMPORT_MAX_PATH_LEN - 1 {
+        (im_path_buf + i).* = (im_realpath_buf + i).*;
+        i = i + 1;
+    }
+    (im_path_buf + canonical_len).* = 0;
+
+    return canonical_len;
 }
 
 // Get the resolved path buffer

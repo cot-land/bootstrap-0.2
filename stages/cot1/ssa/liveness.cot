@@ -50,14 +50,50 @@ struct LiveMap {
     entries: *LiveInfo,    // Dense storage (owned, dynamically grown)
     count: i64,
     cap: i64,
-    // Note: For full implementation, we'd have a sparse index.
-    // For simplicity, we do linear search (O(n) but n is small).
+    // Sparse index for O(1) lookup: index[value_id] = position in entries, or -1 if not present
+    index: *i64,           // Direct-indexed by value_id
+    index_cap: i64,
 }
 
 fn LiveMap_init(lm: *LiveMap) {
     lm.entries = null;
     lm.count = 0;
     lm.cap = 0;
+    lm.index = null;
+    lm.index_cap = 0;
+}
+
+// Ensure index has capacity for value_id
+fn LiveMap_ensureIndexCapacity(lm: *LiveMap, value_id: i64) {
+    let needed: i64 = value_id + 1;
+    if lm.index_cap >= needed { return; }
+
+    // Calculate new capacity
+    var new_cap: i64 = 256;
+    if lm.index_cap > 0 { new_cap = lm.index_cap * 2; }
+    while new_cap < needed { new_cap = new_cap * 2; }
+
+    // Allocate new index
+    let new_index: *i64 = malloc_i64(new_cap);
+
+    // Initialize new slots to -1
+    var i: i64 = 0;
+    while i < new_cap {
+        (new_index + i).* = -1;
+        i = i + 1;
+    }
+
+    // Copy old values if any
+    if lm.index != null {
+        i = 0;
+        while i < lm.index_cap {
+            (new_index + i).* = (lm.index + i).*;
+            i = i + 1;
+        }
+    }
+
+    lm.index = new_index;
+    lm.index_cap = new_cap;
 }
 
 fn LiveMap_ensureCapacity(lm: *LiveMap, needed: i64) {
@@ -78,20 +114,27 @@ fn LiveMap_ensureCapacity(lm: *LiveMap, needed: i64) {
 }
 
 fn LiveMap_clear(lm: *LiveMap) {
+    // Reset index entries for items being removed
+    if lm.index != null {
+        var i: i64 = 0;
+        while i < lm.count {
+            let entry: *LiveInfo = lm.entries + i;
+            let id: i64 = entry.id;
+            if id >= 0 and id < lm.index_cap {
+                (lm.index + id).* = -1;
+            }
+            i = i + 1;
+        }
+    }
     lm.count = 0;
 }
 
-// Find entry by ID (returns index or -1)
+// Find entry by ID (returns index or -1) - O(1) using sparse index
 fn LiveMap_find(lm: *LiveMap, id: i64) i64 {
-    var i: i64 = 0;
-    while i < lm.count {
-        let entry: *LiveInfo = lm.entries + i;
-        if entry.id == id {
-            return i;
-        }
-        i = i + 1;
+    if id < 0 or id >= lm.index_cap or lm.index == null {
+        return -1;
     }
-    return -1;
+    return (lm.index + id).*;
 }
 
 // Set value with distance. Updates if new distance is SMALLER (closer use).
@@ -109,10 +152,13 @@ fn LiveMap_set(lm: *LiveMap, id: i64, dist: i64, pos: i64) {
 
     // Add new entry - grow if needed
     LiveMap_ensureCapacity(lm, lm.count + 1);
+    LiveMap_ensureIndexCapacity(lm, id);  // Ensure index can hold this id
     let entry: *LiveInfo = lm.entries + lm.count;
     entry.id = id;
     entry.dist = dist;
     entry.pos = pos;
+    // Update index to point to this entry
+    (lm.index + id).* = lm.count;
     lm.count = lm.count + 1;
 }
 
@@ -128,10 +174,13 @@ fn LiveMap_setForce(lm: *LiveMap, id: i64, dist: i64, pos: i64) {
 
     // Add new entry - grow if needed
     LiveMap_ensureCapacity(lm, lm.count + 1);
+    LiveMap_ensureIndexCapacity(lm, id);  // Ensure index can hold this id
     let entry: *LiveInfo = lm.entries + lm.count;
     entry.id = id;
     entry.dist = dist;
     entry.pos = pos;
+    // Update index
+    (lm.index + id).* = lm.count;
     lm.count = lm.count + 1;
 }
 
@@ -155,13 +204,23 @@ fn LiveMap_remove(lm: *LiveMap, id: i64) {
     let idx: i64 = LiveMap_find(lm, id);
     if idx < 0 { return; }
 
+    // Clear index for removed element
+    if id >= 0 and id < lm.index_cap and lm.index != null {
+        (lm.index + id).* = -1;
+    }
+
     // Swap with last element
     if lm.count > 1 and idx < lm.count - 1 {
         let last: *LiveInfo = lm.entries + (lm.count - 1);
         let entry: *LiveInfo = lm.entries + idx;
-        entry.id = last.id;
+        let last_id: i64 = last.id;
+        entry.id = last_id;
         entry.dist = last.dist;
         entry.pos = last.pos;
+        // Update index for swapped element
+        if last_id >= 0 and last_id < lm.index_cap and lm.index != null {
+            (lm.index + last_id).* = idx;
+        }
     }
     lm.count = lm.count - 1;
 }
@@ -213,6 +272,8 @@ struct BlockLiveness {
     live_out: *LiveInfo,     // Values live at END of block (owned)
     live_out_count: i64,
     live_out_cap: i64,
+    live_out_index: *i64,    // Sparse index for O(1) lookup: index[value_id] = position, or -1
+    live_out_index_cap: i64,
     next_call: *i64,         // For each instruction, index of next call (owned)
     next_call_count: i64,
     next_call_cap: i64,
@@ -223,9 +284,45 @@ fn BlockLiveness_init(bl: *BlockLiveness, block_id: i64) {
     bl.live_out = null;
     bl.live_out_count = 0;
     bl.live_out_cap = 0;
+    bl.live_out_index = null;
+    bl.live_out_index_cap = 0;
     bl.next_call = null;
     bl.next_call_count = 0;
     bl.next_call_cap = 0;
+}
+
+// Ensure live_out_index has capacity for value_id
+fn BlockLiveness_ensureIndexCapacity(bl: *BlockLiveness, value_id: i64) {
+    let needed: i64 = value_id + 1;
+    if bl.live_out_index_cap >= needed { return; }
+
+    var new_cap: i64 = 256;
+    if bl.live_out_index_cap > 0 { new_cap = bl.live_out_index_cap * 2; }
+    while new_cap < needed { new_cap = new_cap * 2; }
+
+    let new_index: *i64 = malloc_i64(new_cap);
+    var i: i64 = 0;
+    while i < new_cap {
+        (new_index + i).* = -1;
+        i = i + 1;
+    }
+    if bl.live_out_index != null {
+        i = 0;
+        while i < bl.live_out_index_cap {
+            (new_index + i).* = (bl.live_out_index + i).*;
+            i = i + 1;
+        }
+    }
+    bl.live_out_index = new_index;
+    bl.live_out_index_cap = new_cap;
+}
+
+// O(1) lookup in live_out
+fn BlockLiveness_findLiveOut(bl: *BlockLiveness, id: i64) i64 {
+    if id < 0 or id >= bl.live_out_index_cap or bl.live_out_index == null {
+        return -1;
+    }
+    return (bl.live_out_index + id).*;
 }
 
 fn BlockLiveness_ensureLiveOutCapacity(bl: *BlockLiveness, needed: i64) {
@@ -551,30 +648,25 @@ fn Liveness_processBlockLiveness(lr: *LivenessResult, f: *Func, block: *Block,
                 new_dist = new_dist + delta;
             }
 
-            // Check if already in predecessor's live_out
-            var found: i64 = 0;
-            var k: i64 = 0;
-            while k < pred_bl.live_out_count {
+            // Check if already in predecessor's live_out using O(1) index lookup
+            let k: i64 = BlockLiveness_findLiveOut(pred_bl, entry.id);
+            if k >= 0 {
+                // Already present - update if better distance
                 let pe: *LiveInfo = pred_bl.live_out + k;
-                if pe.id == entry.id {
-                    found = 1;
-                    // Update if better distance
-                    if new_dist < pe.dist {
-                        pe.dist = new_dist;
-                        update = 1;
-                    }
-                    break;
+                if new_dist < pe.dist {
+                    pe.dist = new_dist;
+                    update = 1;
                 }
-                k = k + 1;
-            }
-
-            if found == 0 {
-                // Add new entry - grow array if needed
+            } else {
+                // Add new entry - grow array and index if needed
                 BlockLiveness_ensureLiveOutCapacity(pred_bl, pred_bl.live_out_count + 1);
+                BlockLiveness_ensureIndexCapacity(pred_bl, entry.id);
                 let dst: *LiveInfo = pred_bl.live_out + pred_bl.live_out_count;
                 dst.id = entry.id;
                 dst.dist = new_dist;
                 dst.pos = entry.pos;
+                // Update index
+                (pred_bl.live_out_index + entry.id).* = pred_bl.live_out_count;
                 pred_bl.live_out_count = pred_bl.live_out_count + 1;
                 update = 1;
             }

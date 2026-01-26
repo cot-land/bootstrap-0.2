@@ -306,6 +306,11 @@ fn parse_import_file_with_dir(import_path: *u8, import_path_len: i64, pool: *Nod
     // Get the directory of this imported file (for resolving its imports)
     var this_file_dir: U8List = undefined;
     u8list_init_cap(&this_file_dir, 256);
+    // Null check - malloc_u8 could fail
+    if this_file_dir.items == null {
+        print("  Warning: Failed to allocate directory buffer for import\n");
+        return 0;
+    }
     let this_file_dir_len: i64 = Import_getDirFromPath(path_buf, full_path_len,
                                                         this_file_dir.items, this_file_dir.capacity);
 
@@ -568,12 +573,17 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     var total_blocks: i64 = 0;
     var total_values: i64 = 0;
 
+    // Timing accumulators for Phase 4/5 breakdown
+    var t_build: i64 = 0;
+    var t_passes: i64 = 0;
+    var t_liveness: i64 = 0;
+    var t_regalloc: i64 = 0;
+    var t_codegen: i64 = 0;
+    var t_tmp: i64 = 0;
+
     // Process each function
     var func_idx: i64 = 0;
     while func_idx < lowerer.ir_funcs_count {
-        if func_idx >= 119 and func_idx < 125 {
-            print("  func "); print(func_idx); print("\n");
-        }
         let ir_func: *IRFunc = g_ir_funcs + (func_idx);
 
         // Record code offset for this function
@@ -606,51 +616,39 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         SSABuilder_setTypeRegistry(&builder, &g_type_pool);
 
         // Build SSA from IR (handles blocks, locals, params, conversion)
+        t_tmp = get_time_ns();
         let build_result: i64 = SSABuilder_build(&builder);
+        t_build = t_build + (get_time_ns() - t_tmp);
 
         // Run expand_calls pass - handle >16B struct args and decompose aggregates
         // Reference: driver.zig Phase 4a.5: expand_calls
+        t_tmp = get_time_ns();
         expandCalls(&ssa_func, &g_type_pool);
-
-        // Run decompose pass - split 16-byte values (strings, slices)
-        // Reference: ssa/passes/decompose.zig
         decompose(&ssa_func, &g_type_pool);
-
-        // Run early deadcode pass - decrement use counts for dead values
-        // Reference: ssa/compile.zig earlyDeadcode
         earlyDeadcode(&ssa_func);
-
-        // Run copy elimination pass - replace uses of copy(x) with x
-        // Reference: ssa/compile.zig earlyCopyElim
         copyelim(&ssa_func);
-
-        // Run CSE pass - eliminate common subexpressions within blocks
-        // Note: Conservative local CSE - only arithmetic/bitwise ops within same block
-        // Reference: cmd/compile/internal/ssa/cse.go
         cse(&ssa_func);
-
-        // Run lower pass - peephole optimizations (mul->shl, add 0->copy, etc.)
-        // Reference: ssa/passes/lower.zig
         lower(&ssa_func);
-
-        // Run schedule pass - order values within blocks for codegen
-        // Reference: ssa/passes/schedule.zig
         schedule(&ssa_func);
+        t_passes = t_passes + (get_time_ns() - t_tmp);
 
         // Run liveness analysis - compute use distances for regalloc spill selection
         // Reference: src/ssa/liveness.zig, driver.zig Phase 4c
-        // All storage is dynamically allocated - no external buffers needed
+        t_tmp = get_time_ns();
         var live_map: LiveMap = undefined;
         LiveMap_init(&live_map);
         var liveness_result: LivenessResult = undefined;
         LivenessResult_init(&liveness_result);
         Liveness_compute(&liveness_result, &ssa_func, &live_map);
+        t_liveness = t_liveness + (get_time_ns() - t_tmp);
 
         // Run register allocation - assign physical registers to SSA values
         // Reference: src/ssa/regalloc.zig, driver.zig Phase 4c
+        t_tmp = get_time_ns();
         var regalloc_state: RegAllocState = undefined;
         RegAlloc_init(&regalloc_state, &ssa_func, &liveness_result);
         RegAlloc_run(&regalloc_state, &ssa_func);
+        t_regalloc = t_regalloc + (get_time_ns() - t_tmp);
 
         // Compute stack layout using StackAlloc pass
         // This assigns offsets to locals and computes frame_size with 16-byte alignment
@@ -669,10 +667,12 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // Generate code for this function
         // Following Zig compiler pattern (src/codegen/arm64.zig:461-462):
         // Clear branch fixups at start of each function
+        t_tmp = get_time_ns();
         gs.func = &ssa_func;
         gs.branches_count = 0;  // Reset branches for this function
 
         let genssa_result: i64 = GenState_generate(&gs);
+        t_codegen = t_codegen + (get_time_ns() - t_tmp);
         if genssa_result != 0 {
             print("  FAIL: genssa error\n");
             return 2;
@@ -681,6 +681,15 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
         func_idx = func_idx + 1;
     }
+
+    // Print Phase 4/5 timing breakdown
+    print("  [Timing: build="); print(t_build / 1000000);
+    print("ms, passes="); print(t_passes / 1000000);
+    print("ms, liveness="); print(t_liveness / 1000000);
+    print("ms, regalloc="); print(t_regalloc / 1000000);
+    print("ms, codegen="); print(t_codegen / 1000000);
+    print("ms]\n");
+    GenState_printTiming();
 
     print("  Total blocks: ");
     print(total_blocks);

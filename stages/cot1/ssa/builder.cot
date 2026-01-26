@@ -31,6 +31,8 @@ const SB_INIT_FWD_VARS: i64 = 1000;
 // Generic sized allocation - use @sizeOf(T) to compute struct sizes at compile time
 extern fn malloc_sized(count: i64, struct_size: i64) *u8;
 extern fn realloc_sized(ptr: *u8, old_count: i64, new_count: i64, struct_size: i64) *u8;
+extern fn malloc_i64(count: i64) *i64;
+extern fn realloc_i64(ptr: *i64, old_count: i64, new_count: i64) *i64;
 
 // ============================================================================
 // Module-Level Storage (self-allocated)
@@ -41,12 +43,19 @@ var sb_all_defs: *BlockDefs = null;
 var sb_all_defs_cap: i64 = 0;
 var sb_block_map: *BlockMapping = null;
 var sb_block_map_cap: i64 = 0;
-var sb_node_values: *VarDef = null;
+// OPTIMIZED: node_values is now direct-indexed *i64 array for O(1) lookup
+// Index = ir_idx - ir_nodes_start, Value = SSA value_id (or INVALID_ID)
+var sb_node_values: *i64 = null;
 var sb_node_values_cap: i64 = 0;
-var sb_var_storage: *VarDef = null;
+var sb_var_storage: *i64 = null;  // Direct-indexed arrays for BlockDefs (values[var_idx] = value_id)
 var sb_var_storage_cap: i64 = 0;
 var sb_fwd_vars: *VarDef = null;
 var sb_fwd_vars_cap: i64 = 0;
+// OPTIMIZATION: Sparse indices for O(1) lookup (instead of O(n) linear scan)
+var sb_block_map_index: *i64 = null;   // index[ir_block] = position in block_map (or -1)
+var sb_block_map_index_cap: i64 = 0;
+var sb_fwd_vars_index: *i64 = null;    // index[var_idx] = value_id (or INVALID_ID)
+var sb_fwd_vars_index_cap: i64 = 0;
 var sb_storage_initialized: bool = false;
 
 // Allocate module storage if not already allocated
@@ -79,17 +88,35 @@ fn SSABuilder_allocateStorage() {
     // VarDef allocations - use @sizeOf for correct struct size
     let vardef_size: i64 = @sizeOf(VarDef);
 
+    // OPTIMIZED: node_values is direct-indexed i64 array (not VarDef)
     sb_node_values_cap = SB_INIT_VAR_DEFS;
-    let nodevals_raw: *u8 = malloc_sized(sb_node_values_cap, vardef_size);
-    sb_node_values = @ptrCast(*VarDef, nodevals_raw);
+    sb_node_values = malloc_i64(sb_node_values_cap);
 
     sb_var_storage_cap = SB_INIT_VAR_STORAGE;
-    let varstorage_raw: *u8 = malloc_sized(sb_var_storage_cap, vardef_size);
-    sb_var_storage = @ptrCast(*VarDef, varstorage_raw);
+    sb_var_storage = malloc_i64(sb_var_storage_cap);  // Direct-indexed i64 arrays for BlockDefs
 
     sb_fwd_vars_cap = SB_INIT_FWD_VARS;
     let fwdvars_raw: *u8 = malloc_sized(sb_fwd_vars_cap, vardef_size);
     sb_fwd_vars = @ptrCast(*VarDef, fwdvars_raw);
+
+    // OPTIMIZATION: Allocate sparse indices for O(1) lookup
+    // block_map_index: ir_block -> position in block_map
+    sb_block_map_index_cap = SB_INIT_BLOCK_MAP;
+    sb_block_map_index = malloc_i64(sb_block_map_index_cap);
+    var bmi: i64 = 0;
+    while bmi < sb_block_map_index_cap {
+        (sb_block_map_index + bmi).* = -1;  // -1 means not in block_map
+        bmi = bmi + 1;
+    }
+
+    // fwd_vars_index: var_idx -> value_id (direct values, not positions)
+    sb_fwd_vars_index_cap = SB_INIT_FWD_VARS;
+    sb_fwd_vars_index = malloc_i64(sb_fwd_vars_index_cap);
+    var fvi: i64 = 0;
+    while fvi < sb_fwd_vars_index_cap {
+        (sb_fwd_vars_index + fvi).* = INVALID_ID;  // INVALID_ID means no cached value
+        fvi = fvi + 1;
+    }
 
     sb_storage_initialized = true;
 }
@@ -145,63 +172,54 @@ struct VarDef {
 }
 
 // Variable definitions for one block
+// OPTIMIZED: Uses direct-indexed array for O(1) lookup (like Zig's HashMap)
+// Array is indexed by var_idx, stores value_id (-1 = not defined)
 struct BlockDefs {
     block_id: i64,
-    defs: *VarDef,        // Array of VarDef
-    defs_count: i64,
-    defs_cap: i64,
-    initialized: bool,    // True if this block has been visited (for O(1) direct indexing)
+    values: *i64,         // Direct-indexed array: values[var_idx] = value_id
+    values_cap: i64,      // Capacity (max var_idx + 1)
+    defs_count: i64,      // Number of defined variables (for stats/iteration)
+    initialized: bool,    // True if this block has been visited
 }
 
-fn BlockDefs_init(bd: *BlockDefs, block_id: i64, defs: *VarDef, cap: i64) {
+fn BlockDefs_init(bd: *BlockDefs, block_id: i64, values: *i64, cap: i64) {
     bd.block_id = block_id;
-    bd.defs = defs;
+    bd.values = values;
+    bd.values_cap = cap;
     bd.defs_count = 0;
-    bd.defs_cap = cap;
     bd.initialized = true;
+    // Initialize all slots to INVALID_ID (-1)
+    var i: i64 = 0;
+    while i < cap {
+        (values + i).* = INVALID_ID;
+        i = i + 1;
+    }
 }
 
 // Mark BlockDefs as uninitialized (used when pre-allocating the array)
 fn BlockDefs_clear(bd: *BlockDefs) {
     bd.block_id = -1;
-    bd.defs = null;
+    bd.values = null;
+    bd.values_cap = 0;
     bd.defs_count = 0;
-    bd.defs_cap = 0;
     bd.initialized = false;
 }
 
-// Set variable value (add or update)
+// Set variable value - O(1) direct array access
 fn BlockDefs_set(bd: *BlockDefs, var_idx: i64, value_id: i64) {
-    // Check if already exists
-    var i: i64 = 0;
-    while i < bd.defs_count {
-        let def: *VarDef = bd.defs + i;
-        if def.var_idx == var_idx {
-            def.value_id = value_id;
-            return;
-        }
-        i = i + 1;
+    if var_idx < 0 or var_idx >= bd.values_cap { return; }
+    let old_val: i64 = (bd.values + var_idx).*;
+    (bd.values + var_idx).* = value_id;
+    // Track count for stats
+    if old_val == INVALID_ID and value_id != INVALID_ID {
+        bd.defs_count = bd.defs_count + 1;
     }
-
-    // Add new
-    if bd.defs_count >= bd.defs_cap { return; }
-    let def: *VarDef = bd.defs + bd.defs_count;
-    def.var_idx = var_idx;
-    def.value_id = value_id;
-    bd.defs_count = bd.defs_count + 1;
 }
 
-// Get variable value (or -1 if not found)
+// Get variable value - O(1) direct array access
 fn BlockDefs_get(bd: *BlockDefs, var_idx: i64) i64 {
-    var i: i64 = 0;
-    while i < bd.defs_count {
-        let def: *VarDef = bd.defs + i;
-        if def.var_idx == var_idx {
-            return def.value_id;
-        }
-        i = i + 1;
-    }
-    return INVALID_ID;
+    if var_idx < 0 or var_idx >= bd.values_cap { return INVALID_ID; }
+    return (bd.values + var_idx).*;
 }
 
 // ============================================================================
@@ -236,14 +254,18 @@ struct SSABuilder {
     block_map: *BlockMapping,
     block_map_count: i64,
     block_map_cap: i64,
+    // OPTIMIZATION: Sparse index for O(1) lookup
+    block_map_index: *i64,      // index[ir_block] = position in block_map (or -1)
+    block_map_index_cap: i64,
 
     // IR node to SSA value mapping (prevents duplicate conversion)
-    node_values: *VarDef,     // Reuse VarDef for node→value
-    node_values_count: i64,
+    // OPTIMIZED: Direct-indexed i64 array for O(1) lookup
+    // Index = ir_idx - ir_nodes_start, Value = SSA value_id
+    node_values: *i64,
     node_values_cap: i64,
 
-    // Storage for per-block VarDefs (external)
-    var_storage: *VarDef,
+    // Storage for per-block i64 arrays (direct-indexed by var_idx)
+    var_storage: *i64,
     var_storage_used: i64,
     var_storage_cap: i64,
 
@@ -252,6 +274,9 @@ struct SSABuilder {
     fwd_vars: *VarDef,        // FwdRefs created in current block (var_idx→value_id)
     fwd_vars_count: i64,
     fwd_vars_cap: i64,
+    // OPTIMIZATION: Sparse index for O(1) lookup
+    fwd_vars_index: *i64,     // index[var_idx] = value_id (or INVALID_ID)
+    fwd_vars_index_cap: i64,
 
     // defvars: per-block variable→value mapping for phi insertion
     // Uses all_defs array (BlockDefs already tracks this)
@@ -298,9 +323,11 @@ fn SSABuilder_init(b: *SSABuilder, f: *Func) {
     b.block_map = sb_block_map;
     b.block_map_count = 0;
     b.block_map_cap = sb_block_map_cap;
+    // OPTIMIZATION: Sparse index for O(1) lookup
+    b.block_map_index = sb_block_map_index;
+    b.block_map_index_cap = sb_block_map_index_cap;
 
     b.node_values = sb_node_values;
-    b.node_values_count = 0;
     b.node_values_cap = sb_node_values_cap;
 
     b.var_storage = sb_var_storage;
@@ -311,6 +338,9 @@ fn SSABuilder_init(b: *SSABuilder, f: *Func) {
     b.fwd_vars = sb_fwd_vars;
     b.fwd_vars_count = 0;
     b.fwd_vars_cap = sb_fwd_vars_cap;
+    // OPTIMIZATION: Sparse index for O(1) lookup
+    b.fwd_vars_index = sb_fwd_vars_index;
+    b.fwd_vars_index_cap = sb_fwd_vars_index_cap;
 
     // IR references (set later via SSABuilder_setIRNodes/Locals/Source)
     b.ir_nodes = null;
@@ -382,21 +412,19 @@ fn SSABuilder_setSource(b: *SSABuilder, source: *u8, source_len: i64) {
     b.source_len = source_len;
 }
 
-// Allocate storage for a block's VarDefs
-fn SSABuilder_allocDefs(b: *SSABuilder, count: i64) *VarDef {
+// Allocate storage for a block's direct-indexed i64 array (values[var_idx] = value_id)
+fn SSABuilder_allocDefs(b: *SSABuilder, count: i64) *i64 {
     // Grow var_storage if needed
     if b.var_storage_used + count > b.var_storage_cap {
         let new_cap: i64 = b.var_storage_cap * 2;
-        // Update both local and global pointers - use @sizeOf for correct size
-        let vardef_size: i64 = @sizeOf(VarDef);
-        let old_ptr: *u8 = @ptrCast(*u8, sb_var_storage);
-        let new_ptr: *u8 = realloc_sized(old_ptr, sb_var_storage_cap, new_cap, vardef_size);
-        sb_var_storage = @ptrCast(*VarDef, new_ptr);
+        // Update both local and global pointers
+        let old_ptr: *i64 = sb_var_storage;
+        sb_var_storage = realloc_i64(old_ptr, sb_var_storage_cap, new_cap);
         sb_var_storage_cap = new_cap;
         b.var_storage = sb_var_storage;
         b.var_storage_cap = new_cap;
     }
-    let result: *VarDef = b.var_storage + b.var_storage_used;
+    let result: *i64 = b.var_storage + b.var_storage_used;
     b.var_storage_used = b.var_storage_used + count;
     return result;
 }
@@ -422,6 +450,10 @@ fn SSABuilder_currentBlock(b: *SSABuilder) i64 {
 // Reference: Zig uses getOrPut pattern - reuse existing BlockDefs if present
 // OPTIMIZED: Uses direct indexing by block_id for O(1) access
 fn SSABuilder_setBlock(b: *SSABuilder, block_id: i64) {
+    // Clear per-block fwd_vars (like Zig's startBlock clears fwd_vars)
+    // This prevents FwdRefs from accumulating across blocks
+    b.fwd_vars_count = 0;
+
     b.current_block = block_id;
     Func_setBlock(b.func, block_id);
 
@@ -456,8 +488,8 @@ fn SSABuilder_setBlock(b: *SSABuilder, block_id: i64) {
         return;
     }
 
-    // First visit to this block - initialize it
-    let storage: *VarDef = SSABuilder_allocDefs(b, MAX_VAR_DEFS);
+    // First visit to this block - initialize it with direct-indexed i64 array
+    let storage: *i64 = SSABuilder_allocDefs(b, MAX_VAR_DEFS);
     BlockDefs_init(bd, block_id, storage, MAX_VAR_DEFS);
     b.current_defs = bd;
     b.all_defs_count = b.all_defs_count + 1;
@@ -479,18 +511,40 @@ fn SSABuilder_mapBlock(b: *SSABuilder, ir_block: i64, ssa_block: i64) {
     let m: *BlockMapping = b.block_map + b.block_map_count;
     m.ir_block = ir_block;
     m.ssa_block = ssa_block;
+
+    // OPTIMIZATION: Update sparse index for O(1) lookup
+    // Grow index if needed
+    if ir_block >= b.block_map_index_cap {
+        let new_cap: i64 = ir_block * 2 + 16;
+        let old_ptr: *i64 = sb_block_map_index;
+        let new_ptr: *i64 = realloc_i64(old_ptr, sb_block_map_index_cap, new_cap);
+        // Initialize new entries to -1
+        var ni: i64 = sb_block_map_index_cap;
+        while ni < new_cap {
+            (new_ptr + ni).* = -1;
+            ni = ni + 1;
+        }
+        sb_block_map_index = new_ptr;
+        sb_block_map_index_cap = new_cap;
+        b.block_map_index = new_ptr;
+        b.block_map_index_cap = new_cap;
+    }
+    // Store position in block_map
+    (b.block_map_index + ir_block).* = b.block_map_count;
+
     b.block_map_count = b.block_map_count + 1;
 }
 
 // Get SSA block for IR block (or -1)
+// OPTIMIZED: O(1) lookup using sparse index
 fn SSABuilder_getSSABlock(b: *SSABuilder, ir_block: i64) i64 {
-    var i: i64 = 0;
-    while i < b.block_map_count {
-        let m: *BlockMapping = b.block_map + i;
-        if m.ir_block == ir_block {
+    // Use sparse index for O(1) lookup
+    if ir_block >= 0 and ir_block < b.block_map_index_cap and b.block_map_index != null {
+        let pos: i64 = (b.block_map_index + ir_block).*;
+        if pos >= 0 and pos < b.block_map_count {
+            let m: *BlockMapping = b.block_map + pos;
             return m.ssa_block;
         }
-        i = i + 1;
     }
     return INVALID_BLOCK;
 }
@@ -528,18 +582,26 @@ fn SSABuilder_initFwdVars(b: *SSABuilder, storage: *VarDef, cap: i64) {
 
 // Clear fwd_vars for a new block
 fn SSABuilder_clearFwdVars(b: *SSABuilder) {
+    // OPTIMIZATION: Clear sparse index entries for O(1) lookup reset
+    if b.fwd_vars_index != null {
+        var i: i64 = 0;
+        while i < b.fwd_vars_count {
+            let fv: *VarDef = b.fwd_vars + i;
+            if fv.var_idx >= 0 and fv.var_idx < b.fwd_vars_index_cap {
+                (b.fwd_vars_index + fv.var_idx).* = INVALID_ID;
+            }
+            i = i + 1;
+        }
+    }
     b.fwd_vars_count = 0;
 }
 
 // Get cached FwdRef for variable in current block (or INVALID_ID)
+// OPTIMIZED: O(1) lookup using sparse index
 fn SSABuilder_getFwdVar(b: *SSABuilder, var_idx: i64) i64 {
-    var i: i64 = 0;
-    while i < b.fwd_vars_count {
-        let fv: *VarDef = b.fwd_vars + i;
-        if fv.var_idx == var_idx {
-            return fv.value_id;
-        }
-        i = i + 1;
+    // Use sparse index for O(1) lookup
+    if var_idx >= 0 and var_idx < b.fwd_vars_index_cap and b.fwd_vars_index != null {
+        return (b.fwd_vars_index + var_idx).*;
     }
     return INVALID_ID;
 }
@@ -561,6 +623,26 @@ fn SSABuilder_setFwdVar(b: *SSABuilder, var_idx: i64, value_id: i64) {
     fv.var_idx = var_idx;
     fv.value_id = value_id;
     b.fwd_vars_count = b.fwd_vars_count + 1;
+
+    // OPTIMIZATION: Update sparse index for O(1) lookup
+    // Grow index if needed
+    if var_idx >= b.fwd_vars_index_cap {
+        let new_cap: i64 = var_idx * 2 + 16;
+        let old_ptr: *i64 = sb_fwd_vars_index;
+        let new_ptr: *i64 = realloc_i64(old_ptr, sb_fwd_vars_index_cap, new_cap);
+        // Initialize new entries to INVALID_ID
+        var ni: i64 = sb_fwd_vars_index_cap;
+        while ni < new_cap {
+            (new_ptr + ni).* = INVALID_ID;
+            ni = ni + 1;
+        }
+        sb_fwd_vars_index = new_ptr;
+        sb_fwd_vars_index_cap = new_cap;
+        b.fwd_vars_index = new_ptr;
+        b.fwd_vars_index_cap = new_cap;
+    }
+    // Store value directly in index (not position)
+    (b.fwd_vars_index + var_idx).* = value_id;
 }
 
 // Read current value of a variable - creates FwdRef if needed.
@@ -635,9 +717,14 @@ fn SSABuilder_lookupVarOutgoing(b: *SSABuilder, block_id: i64, local_idx: i64, t
         break;
     }
 
-    // Create a new FwdRef for this variable in the current block
+    // Create a new FwdRef in the block we walked back to (cur_id), NOT current block
+    // This matches Zig: self.func.newValue(.fwd_ref, type_idx, cur, self.cur_pos)
+    // Temporarily switch to cur_id block to create value there
+    let saved_block: i64 = b.func.current_block;
+    Func_setBlock(b.func, cur_id);
     let new_fwd: *Value = Func_newValue(b.func, Op.FwdRef, type_idx);
     new_fwd.aux_int = local_idx;
+    Func_setBlock(b.func, saved_block);  // Restore
 
     // Store in defvars so we don't create duplicate
     SSABuilder_ensureDefvar(b, cur_id, local_idx, new_fwd.id);
@@ -743,10 +830,7 @@ fn SSABuilder_insertPhis(b: *SSABuilder) {
     let max_iters: i64 = (fwd_refs.count + 1) * (b.func.blocks_count + 1) * 2;
     var iter_count: i64 = 0;
 
-    // DEBUG: Print phi insertion stats for large functions
-    if initial_fwd_refs > 10 or b.func.blocks_count > 20 {
-        print("  phi: fwd="); print(initial_fwd_refs); print(" blks="); print(b.func.blocks_count); print("\n");
-    }
+    // (Debug output removed for performance)
 
     // Process FwdRefs iteratively until the work list is empty
     while fwd_refs.count > 0 {
@@ -844,35 +928,23 @@ fn SSABuilder_insertPhis(b: *SSABuilder) {
 // ============================================================================
 
 // Cache IR node → SSA value mapping
+// OPTIMIZED: O(1) direct array access using relative index
 fn SSABuilder_cacheNode(b: *SSABuilder, node_idx: i64, value_id: i64) {
-    // Grow node_values if needed - use @sizeOf for correct size
-    if b.node_values_count >= b.node_values_cap {
-        let new_cap: i64 = b.node_values_cap * 2;
-        let vardef_size: i64 = @sizeOf(VarDef);
-        let old_ptr: *u8 = @ptrCast(*u8, sb_node_values);
-        let new_ptr: *u8 = realloc_sized(old_ptr, sb_node_values_cap, new_cap, vardef_size);
-        sb_node_values = @ptrCast(*VarDef, new_ptr);
-        sb_node_values_cap = new_cap;
-        b.node_values = sb_node_values;
-        b.node_values_cap = new_cap;
+    let rel_idx: i64 = node_idx - b.ir_nodes_start;
+    if rel_idx < 0 or rel_idx >= b.node_values_cap {
+        return;  // Out of bounds
     }
-    let nv: *VarDef = b.node_values + b.node_values_count;
-    nv.var_idx = node_idx;
-    nv.value_id = value_id;
-    b.node_values_count = b.node_values_count + 1;
+    (b.node_values + rel_idx).* = value_id;
 }
 
 // Get cached SSA value for IR node (or -1)
+// OPTIMIZED: O(1) direct array access using relative index
 fn SSABuilder_getCached(b: *SSABuilder, node_idx: i64) i64 {
-    var i: i64 = 0;
-    while i < b.node_values_count {
-        let nv: *VarDef = b.node_values + i;
-        if nv.var_idx == node_idx {
-            return nv.value_id;
-        }
-        i = i + 1;
+    let rel_idx: i64 = node_idx - b.ir_nodes_start;
+    if rel_idx < 0 or rel_idx >= b.node_values_cap {
+        return INVALID_ID;
     }
-    return INVALID_ID;
+    return (b.node_values + rel_idx).*;
 }
 
 // ============================================================================
@@ -1240,6 +1312,25 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
     i64list_deinit(&arg_value_ids);
     i64list_deinit(&arg_local_indices);
 
+    // Step 4.5: Initialize node_values cache for O(1) lookup
+    // Size needed = number of IR nodes for this function
+    let nodes_needed: i64 = b.ir_nodes_end - b.ir_nodes_start;
+    // Grow if needed
+    while nodes_needed > b.node_values_cap {
+        let new_cap: i64 = b.node_values_cap * 2;
+        let old_ptr: *i64 = sb_node_values;
+        sb_node_values = realloc_i64(old_ptr, sb_node_values_cap, new_cap);
+        sb_node_values_cap = new_cap;
+        b.node_values = sb_node_values;
+        b.node_values_cap = new_cap;
+    }
+    // Initialize all entries to INVALID_ID
+    var nv_idx: i64 = 0;
+    while nv_idx < nodes_needed {
+        (b.node_values + nv_idx).* = INVALID_ID;
+        nv_idx = nv_idx + 1;
+    }
+
     // Step 5: Convert IR nodes to SSA
     // Track current IR block for block transitions
     var current_ir_block: i64 = 0;
@@ -1262,12 +1353,14 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
         ir_idx = ir_idx + 1;
     }
 
-    // Step 6: Insert phi nodes
     // Step 6: Insert phi nodes for forward references
     // Reference: Zig ssa_builder.zig:455
     SSABuilder_insertPhis(b);
 
-    // Step 7: Emit return block
+    // Step 6.5: Verify SSA form
+    // Reference: Zig ssa_builder.zig:459
+    SSABuilder_verify(b);
+
     // Step 7: Emit return block
     Func_emitReturnBlock(b.func);
 
@@ -1987,11 +2080,14 @@ fn SSABuilder_copyDefs(b: *SSABuilder, from_block: i64, to_block: i64) {
 
     if from == null or to == null { return; }
 
-    var i: i64 = 0;
-    while i < from.defs_count {
-        let def: *VarDef = from.defs + i;
-        BlockDefs_set(to, def.var_idx, def.value_id);
-        i = i + 1;
+    // Copy all defined variables (iterate through all indices)
+    var var_idx: i64 = 0;
+    while var_idx < from.values_cap {
+        let value_id: i64 = (from.values + var_idx).*;
+        if value_id != INVALID_ID {
+            BlockDefs_set(to, var_idx, value_id);
+        }
+        var_idx = var_idx + 1;
     }
 }
 

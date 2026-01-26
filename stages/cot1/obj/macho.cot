@@ -826,7 +826,16 @@ fn MachOWriter_addReloc(w: *MachOWriter, offset: i64, target_ptr: *u8, target_le
 
     // Look up symbol index now instead of at write time
     var sym_idx: i64 = MachOWriter_findSymbol(w, target_ptr, target_len);
-    if sym_idx < 0 { sym_idx = 0; }
+    if sym_idx < 0 {
+        // DEBUG: Symbol not found - print warning with target name
+        print("  RELOC ERR: symbol not found, len="); print(target_len);
+        print(" name=");
+        if target_len > 0 and target_len < 64 {
+            write(1, target_ptr, target_len);
+        }
+        print("\n");
+        sym_idx = 0;  // Fallback (will create bad relocation)
+    }
 
     // Store in parallel arrays
     let idx: i64 = w.relocs_count;

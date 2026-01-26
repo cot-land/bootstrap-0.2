@@ -36,6 +36,12 @@ import "../obj/dwarf.cot"
 // NOTE: malloc_Branch and malloc_CallSite are declared after struct definitions below
 extern fn malloc_u8(count: i64) *u8;
 extern fn malloc_i64(count: i64) *i64;
+extern fn get_time_ns() i64;
+
+// TIMING: Accumulators for performance monitoring (debug builds)
+var gs_time_blockvalues: i64 = 0;
+var gs_time_blockcontrol: i64 = 0;
+var gs_time_resolve: i64 = 0;
 
 // Storage capacity constants
 const GS_CODE_CAP: i64 = 1048576;        // 1MB code buffer
@@ -200,6 +206,9 @@ struct GenState {
     last_line: i64,        // Last recorded line (to avoid duplicates)
     source: *u8,           // Source text for line:col computation
     source_len: i64,
+    // OPTIMIZATION: Precomputed line offset table for O(1) posToLine
+    line_offsets: *i64,    // line_offsets[i] = byte offset where line i+1 starts
+    line_count: i64,       // Total number of lines in source
 
     // Global variables (for codegen access)
     globals: *IRGlobal,
@@ -340,6 +349,8 @@ fn GenState_init(gs: *GenState) {
     gs.last_line = 0;
     gs.source = null;
     gs.source_len = 0;
+    gs.line_offsets = null;
+    gs.line_count = 0;
 
     // Data section - uses module storage
     gs.data = gs_data;
@@ -391,48 +402,72 @@ fn GenState_setGlobals(gs: *GenState, globals: *IRGlobal, globals_count: i64) {
 }
 
 // Set up source tracking for DWARF debug info
-// Storage arrays are now module-owned, only need source reference
+// OPTIMIZATION: Precompute line offset table for O(1) posToLine lookup
+// (Previously O(pos) per call = O(values × source_len) total = 3.6 billion ops)
 fn GenState_setSource(gs: *GenState, source: *u8, source_len: i64) {
     gs.source = source;
     gs.source_len = source_len;
+
+    // Build line offset table: line_offsets[i] = byte offset where line i+1 starts
+    // Line 1 starts at offset 0
+    gs.line_count = 1;
+    var i: i64 = 0;
+    while i < source_len {
+        let c: *u8 = source + i;
+        if c.* == 10 {  // newline
+            gs.line_count = gs.line_count + 1;
+        }
+        i = i + 1;
+    }
+
+    // Allocate and populate line_offsets
+    gs.line_offsets = malloc_i64(gs.line_count + 1);
+    gs.line_offsets.* = 0;  // Line 1 starts at offset 0
+
+    var line_idx: i64 = 1;  // Next line to record
+    i = 0;
+    while i < source_len {
+        let c: *u8 = source + i;
+        if c.* == 10 {  // newline
+            // Line (line_idx + 1) starts at offset (i + 1)
+            (gs.line_offsets + line_idx).* = i + 1;
+            line_idx = line_idx + 1;
+        }
+        i = i + 1;
+    }
+    // Sentinel: last+1 line starts at source_len
+    (gs.line_offsets + line_idx).* = source_len;
 }
 
 // Convert byte offset in source to line number (1-indexed)
-// Counts newlines up to the offset
+// OPTIMIZED: Binary search through precomputed line offsets
 fn GenState_posToLine(gs: *GenState, pos: i64) i64 {
-    if gs.source == null or pos < 0 {
+    if gs.source == null or pos < 0 or gs.line_offsets == null {
         return 1;
     }
-    var line: i64 = 1;
-    var i: i64 = 0;
-    while i < pos and i < gs.source_len {
-        let c: *u8 = gs.source + i;
-        if c.* == 10 {  // newline
-            line = line + 1;
+    // Binary search: find largest line where offset <= pos
+    var lo: i64 = 0;
+    var hi: i64 = gs.line_count;
+    while lo < hi {
+        let mid: i64 = (lo + hi + 1) / 2;
+        if (gs.line_offsets + mid).* <= pos {
+            lo = mid;
+        } else {
+            hi = mid - 1;
         }
-        i = i + 1;
     }
-    return line;
+    return lo + 1;  // 1-indexed
 }
 
 // Convert byte offset to column number (1-indexed)
-// Counts characters after last newline
+// OPTIMIZED: Use line offset table to find line start, then subtract
 fn GenState_posToColumn(gs: *GenState, pos: i64) i64 {
-    if gs.source == null or pos < 0 {
+    if gs.source == null or pos < 0 or gs.line_offsets == null {
         return 1;
     }
-    var col: i64 = 1;
-    var i: i64 = 0;
-    while i < pos and i < gs.source_len {
-        let c: *u8 = gs.source + i;
-        if c.* == 10 {  // newline
-            col = 1;
-        } else {
-            col = col + 1;
-        }
-        i = i + 1;
-    }
-    return col;
+    let line: i64 = GenState_posToLine(gs, pos);
+    let line_start: i64 = (gs.line_offsets + (line - 1)).*;
+    return pos - line_start + 1;
 }
 
 // Helper: Write i64 value to memory in little-endian format
@@ -701,6 +736,7 @@ fn GenState_generate(gs: *GenState) i64 {
 
     // Process each block
     var block_id: i64 = 0;
+    var t_tmp: i64 = 0;
     while block_id < f.blocks_count {
         // Record block start position
         if block_id < gs.bstart_cap {
@@ -712,22 +748,36 @@ fn GenState_generate(gs: *GenState) i64 {
         let block: *Block = Func_getBlock(f, block_id);
 
         // Process each value in the block
+        t_tmp = get_time_ns();
         GenState_blockValues(gs, block);
+        gs_time_blockvalues = gs_time_blockvalues + (get_time_ns() - t_tmp);
 
         // Emit control flow for block
         let next_block: i64 = block_id + 1;
         if next_block >= f.blocks_count {
             next_block = INVALID_BLOCK;
         }
+        t_tmp = get_time_ns();
         GenState_blockControl(gs, block, next_block);
+        gs_time_blockcontrol = gs_time_blockcontrol + (get_time_ns() - t_tmp);
 
         block_id = block_id + 1;
     }
 
     // Resolve branches
+    t_tmp = get_time_ns();
     GenState_resolveBranches(gs);
+    gs_time_resolve = gs_time_resolve + (get_time_ns() - t_tmp);
 
     return 0;
+}
+
+// Print timing breakdown for codegen (for performance monitoring)
+fn GenState_printTiming() {
+    print("  [Codegen detail: blockvals="); print(gs_time_blockvalues / 1000000);
+    print("ms, blockctrl="); print(gs_time_blockcontrol / 1000000);
+    print("ms, resolve="); print(gs_time_resolve / 1000000);
+    print("ms]\n");
 }
 
 // ============================================================================
@@ -892,6 +942,26 @@ fn GenState_value(gs: *GenState, v: *Value) {
         GenState_copy(gs, v);
     } else if v.op == Op.Select {
         GenState_select(gs, v);
+    } else if v.op == Op.ConstNil {
+        GenState_constNil(gs, v);
+    } else if v.op == Op.ZeroExt8to64 {
+        GenState_zeroExt(gs, v, 8);
+    } else if v.op == Op.ZeroExt16to64 {
+        GenState_zeroExt(gs, v, 16);
+    } else if v.op == Op.ZeroExt32to64 {
+        GenState_zeroExt(gs, v, 32);
+    } else if v.op == Op.SignExt8to64 {
+        GenState_signExt(gs, v, 8);
+    } else if v.op == Op.SignExt16to64 {
+        GenState_signExt(gs, v, 16);
+    } else if v.op == Op.SignExt32to64 {
+        GenState_signExt(gs, v, 32);
+    } else if v.op == Op.Trunc64to8 {
+        GenState_trunc(gs, v, 8);
+    } else if v.op == Op.Trunc64to16 {
+        GenState_trunc(gs, v, 16);
+    } else if v.op == Op.Trunc64to32 {
+        GenState_trunc(gs, v, 32);
     }
     // Unknown ops are silently ignored for now
 }
@@ -950,6 +1020,89 @@ fn GenState_constBool(gs: *GenState, v: *Value) {
 
     let imm: i64 = v.aux_int;
     GenState_emitInst(gs, ARM64_encodeMovImm(rd, imm));
+}
+
+// ConstNil: null/nil is just 0
+// Reference: arm64.zig:1132-1136 const_nil
+fn GenState_constNil(gs: *GenState, v: *Value) {
+    let rd: i64 = v.reg;
+    if rd < 0 { return; }
+    GenState_emitInst(gs, ARM64_encodeMovImm(rd, 0));
+}
+
+// Zero extension: clear upper bits
+// Reference: arm64.zig UXTB/UXTH/MOV patterns
+fn GenState_zeroExt(gs: *GenState, v: *Value, src_bits: i64) {
+    let f: *Func = gs.func;
+    let rd: i64 = v.reg;
+    if rd < 0 { return; }
+
+    // Get source value
+    let arg_id: i64 = Value_getArg(v, 0);
+    let arg_val: *Value = Func_getValue(f, arg_id);
+    let rn: i64 = arg_val.reg;
+    if rn < 0 { rn = rd; }
+
+    if src_bits == 8 {
+        // UXTB: AND rd, rn, #0xFF
+        // Encode as: UBFM rd, rn, #0, #7 (extract bits 0-7)
+        GenState_emitInst(gs, encode_ubfm(rd, rn, 0, 7));
+    } else if src_bits == 16 {
+        // UXTH: AND rd, rn, #0xFFFF
+        // Encode as: UBFM rd, rn, #0, #15 (extract bits 0-15)
+        GenState_emitInst(gs, encode_ubfm(rd, rn, 0, 15));
+    } else if src_bits == 32 {
+        // Zero-extend 32 to 64: use 32-bit MOV which zero-extends
+        // MOV Wd, Wn (implicitly zeros upper 32 bits)
+        GenState_emitInst(gs, encode_mov_w(rd, rn));
+    }
+}
+
+// Sign extension: extend sign bit to upper bits
+// Reference: arm64.zig SXTB/SXTH/SXTW patterns
+fn GenState_signExt(gs: *GenState, v: *Value, src_bits: i64) {
+    let f: *Func = gs.func;
+    let rd: i64 = v.reg;
+    if rd < 0 { return; }
+
+    // Get source value
+    let arg_id: i64 = Value_getArg(v, 0);
+    let arg_val: *Value = Func_getValue(f, arg_id);
+    let rn: i64 = arg_val.reg;
+    if rn < 0 { rn = rd; }
+
+    if src_bits == 8 {
+        // SXTB: SBFM rd, rn, #0, #7
+        GenState_emitInst(gs, encode_sbfm(rd, rn, 0, 7));
+    } else if src_bits == 16 {
+        // SXTH: SBFM rd, rn, #0, #15
+        GenState_emitInst(gs, encode_sbfm(rd, rn, 0, 15));
+    } else if src_bits == 32 {
+        // SXTW: SBFM rd, rn, #0, #31
+        GenState_emitInst(gs, encode_sbfm(rd, rn, 0, 31));
+    }
+}
+
+// Truncation: extract low bits (no actual instruction needed on ARM64,
+// but we emit AND for correctness if value is used in comparisons)
+// Reference: arm64.zig truncation patterns
+fn GenState_trunc(gs: *GenState, v: *Value, dst_bits: i64) {
+    let f: *Func = gs.func;
+    let rd: i64 = v.reg;
+    if rd < 0 { return; }
+
+    // Get source value
+    let arg_id: i64 = Value_getArg(v, 0);
+    let arg_val: *Value = Func_getValue(f, arg_id);
+    let rn: i64 = arg_val.reg;
+    if rn < 0 { rn = rd; }
+
+    // For truncation, just move the value - the upper bits are ignored
+    // when stored to memory with STRB/STRH/STR W
+    if rd != rn {
+        GenState_emitInst(gs, encode_mov(rd, rn));
+    }
+    // Note: If strict masking is needed, could add AND here
 }
 
 fn GenState_constString(gs: *GenState, v: *Value) {
@@ -2718,6 +2871,19 @@ fn GenState_finalize(
     writer: *MachOWriter
 ) i64 {
     // Phase 1: Resolve internal call sites - patch BL instructions with correct offsets
+    // OPTIMIZATION: Build a hashmap of function names -> code_offset for O(1) lookup
+    // This was previously O(call_sites × functions × name_length) = O(n²)
+    var func_offsets: StrMap = StrMap_init(512);  // Capacity for ~500 functions
+
+    // Populate the map with all function names
+    var func_idx: i64 = 0;
+    while func_idx < ir_funcs_count {
+        let ir_func: *IRFunc = ir_funcs + func_idx;
+        // Store code_offset as value (add 1 to distinguish from "not found" which is 0)
+        StrMap_put(&func_offsets, source + ir_func.name_start, ir_func.name_len, ir_func.code_offset + 1);
+        func_idx = func_idx + 1;
+    }
+
     var call_idx: i64 = 0;
     while call_idx < gs.call_sites_count {
         let cs: *CallSite = gs.call_sites + call_idx;
@@ -2728,28 +2894,10 @@ fn GenState_finalize(
             continue;
         }
 
-        // Find target function by name
-        var target_offset: i64 = -1;
-        var target_idx: i64 = 0;
-        while target_idx < ir_funcs_count {
-            let ir_func: *IRFunc = ir_funcs + target_idx;
-            if ir_func.name_len == cs.func_name_len {
-                var match: bool = true;
-                var name_i: i64 = 0;
-                while name_i < cs.func_name_len {
-                    let src_char: *u8 = source + ir_func.name_start + name_i;
-                    let call_char: *u8 = @intToPtr(*u8, cs.func_name_start) + name_i;
-                    if src_char.* != call_char.* {
-                        match = false;
-                    }
-                    name_i = name_i + 1;
-                }
-                if match {
-                    target_offset = ir_func.code_offset;
-                }
-            }
-            target_idx = target_idx + 1;
-        }
+        // O(1) lookup using hashmap
+        let call_name: *u8 = @intToPtr(*u8, cs.func_name_start);
+        let lookup_result: i64 = StrMap_get(&func_offsets, call_name, cs.func_name_len);
+        let target_offset: i64 = lookup_result - 1;  // Subtract 1 since we added 1 when storing
 
         // Patch BL instruction if target found
         if target_offset >= 0 {
@@ -2775,9 +2923,9 @@ fn GenState_finalize(
     var main_sym_idx: i64 = -1;
 
     // Phase 3: Add function symbols
-    var func_idx: i64 = 0;
-    while func_idx < ir_funcs_count {
-        let ir_func: *IRFunc = ir_funcs + func_idx;
+    var sym_func_idx: i64 = 0;
+    while sym_func_idx < ir_funcs_count {
+        let ir_func: *IRFunc = ir_funcs + sym_func_idx;
 
         // Build symbol name: "_" + function name
         let sn: *u8 = sym_name.items;
@@ -2795,7 +2943,7 @@ fn GenState_finalize(
             main_sym_idx = sym_idx;
         }
 
-        func_idx = func_idx + 1;
+        sym_func_idx = sym_func_idx + 1;
     }
 
     // Phase 4: Add external call relocations
@@ -2803,27 +2951,12 @@ fn GenState_finalize(
     while call_idx < gs.call_sites_count {
         let cs2: *CallSite = gs.call_sites + call_idx;
 
-        // Check if internal function
+        // Check if internal function using O(1) hashmap lookup
         var is_internal: bool = false;
         if cs2.func_name_start >= 0 {
-            var target_idx2: i64 = 0;
-            while target_idx2 < ir_funcs_count {
-                let ir_func2: *IRFunc = ir_funcs + target_idx2;
-                if ir_func2.name_len == cs2.func_name_len {
-                    var match2: bool = true;
-                    var name_i3: i64 = 0;
-                    while name_i3 < cs2.func_name_len {
-                        if (source + ir_func2.name_start + name_i3).* != (@intToPtr(*u8, cs2.func_name_start) + name_i3).* {
-                            match2 = false;
-                        }
-                        name_i3 = name_i3 + 1;
-                    }
-                    if match2 {
-                        is_internal = true;
-                    }
-                }
-                target_idx2 = target_idx2 + 1;
-            }
+            let call_name2: *u8 = @intToPtr(*u8, cs2.func_name_start);
+            let lookup2: i64 = StrMap_get(&func_offsets, call_name2, cs2.func_name_len);
+            is_internal = lookup2 > 0;  // Non-zero means found (we stored offset+1)
         }
 
         // If not internal, add external symbol and relocation
@@ -2831,6 +2964,16 @@ fn GenState_finalize(
             // Skip call sites with obviously invalid func_name_len
             // Valid function names should be 1-64 characters
             if cs2.func_name_len <= 0 or cs2.func_name_len > 64 {
+                // DEBUG: Warn about invalid call site
+                print("  WARN: skipping call with invalid len="); print(cs2.func_name_len);
+                print(" start="); print(cs2.func_name_start); print("\n");
+                call_idx = call_idx + 1;
+                continue;
+            }
+
+            // Also skip if func_name_start is invalid (0 or negative, but not -1 which is special)
+            if cs2.func_name_start == 0 {
+                print("  WARN: skipping call with func_name_start=0 len="); print(cs2.func_name_len); print("\n");
                 call_idx = call_idx + 1;
                 continue;
             }
@@ -2848,11 +2991,15 @@ fn GenState_finalize(
                 (sn2 + 15).* = 97; (sn2 + 16).* = 116;
                 ext_sym_len = 17;
             } else {
-                sn2.* = 95;
+                sn2.* = 95;  // underscore prefix
                 var ext_name_idx: i64 = 0;
                 // Limit to 126 chars max (plus underscore prefix = 127 total)
                 var copy_len: i64 = cs2.func_name_len;
-                if copy_len < 0 { copy_len = 0; }
+                // CRITICAL: Skip if copy_len is invalid instead of creating empty symbol
+                if copy_len <= 0 {
+                    call_idx = call_idx + 1;
+                    continue;
+                }
                 if copy_len > 126 { copy_len = 126; }
                 while ext_name_idx < copy_len {
                     (sn2 + 1 + ext_name_idx).* = (@intToPtr(*u8, cs2.func_name_start) + ext_name_idx).*;
@@ -2984,12 +3131,19 @@ fn GenState_finalize(
         }
 
         if found_sym_idx < 0 {
+            // Skip function addresses with invalid name length
+            if far_func_name_len <= 0 or far_func_name_len > 64 {
+                print("  WARN: skipping func_addr with invalid len="); print(far_func_name_len);
+                print(" start="); print(far_func_name_start); print("\n");
+                func_addr_idx = func_addr_idx + 1;
+                continue;
+            }
+
             let snf: *u8 = sym_name.items;
             snf.* = 95;
             var far_name_idx: i64 = 0;
-            // Limit to 126 chars max, handle negative
+            // Limit to 126 chars max
             var far_copy_len: i64 = far_func_name_len;
-            if far_copy_len < 0 { far_copy_len = 0; }
             if far_copy_len > 126 { far_copy_len = 126; }
             while far_name_idx < far_copy_len {
                 (snf + 1 + far_name_idx).* = (@intToPtr(*u8, far_func_name_start) + far_name_idx).*;

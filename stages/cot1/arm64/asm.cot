@@ -777,3 +777,23 @@ fn invert_cond(cond: i64) i64 {
     return cond ^ 1;
 }
 
+// ============================================================================
+// MOV (Register to Register)
+// ============================================================================
+
+// MOV Xd, Xn: encoded as ORR Xd, XZR, Xn
+fn encode_mov(rd: i64, rn: i64) i64 {
+    // ORR Xd, XZR, Xn  (XZR = 31)
+    return encode_orr_reg(rd, 31, rn);
+}
+
+// MOV Wd, Wn: 32-bit move (zero-extends to 64-bit)
+// Encoded as ORR Wd, WZR, Wn (32-bit variant)
+fn encode_mov_w(rd: i64, rn: i64) i64 {
+    // 32-bit ORR: sf=0 (bit 31), opc=01 (bits 29-30), N=0 (bit 22)
+    // 0x2A000000 | (rm << 16) | (rn << 5) | rd
+    let rm: i64 = rn;  // MOV Wd, Wn = ORR Wd, WZR, Wn
+    let base: i64 = 0x2A0003E0;  // ORR W, WZR, W (rn=WZR=31, shifted)
+    return base | (rm * 65536) | rd;
+}
+

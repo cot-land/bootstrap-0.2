@@ -2459,6 +2459,13 @@ pub const Lowerer = struct {
             const from_type = self.inferExprType(bc.args[0]);
             debug.log(.lower, "@ptrToInt(expr) from_type={d} to i64", .{from_type});
             return try fb.emitConvert(operand, from_type, TypeRegistry.I64, bc.span);
+        } else if (std.mem.eql(u8, bc.name, "intToPtr")) {
+            // @intToPtr(Type, value) - convert i64 to pointer
+            const target_type = self.resolveTypeNode(bc.type_arg);
+            const operand = try self.lowerExprNode(bc.args[0]);
+            const from_type = self.inferExprType(bc.args[0]);
+            debug.log(.lower, "@intToPtr({d}, expr) from_type={d} to_type={d}", .{ target_type, from_type, target_type });
+            return try fb.emitConvert(operand, from_type, target_type, bc.span);
         }
 
         return ir.null_node;
