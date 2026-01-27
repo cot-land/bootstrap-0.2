@@ -101,10 +101,12 @@ const TARGET_AMD64: i64 = 1;
 // ============================================================================
 
 // Branch kind constants
-const BRANCH_B: i64 = 0;        // Unconditional B
-const BRANCH_B_COND: i64 = 1;   // Conditional B.cond
-const BRANCH_CBZ: i64 = 2;      // Compare and Branch on Zero
-const BRANCH_CBNZ: i64 = 3;     // Compare and Branch on Non-Zero
+const BRANCH_B: i64 = 0;        // Unconditional B (ARM64)
+const BRANCH_B_COND: i64 = 1;   // Conditional B.cond (ARM64)
+const BRANCH_CBZ: i64 = 2;      // Compare and Branch on Zero (ARM64)
+const BRANCH_CBNZ: i64 = 3;     // Compare and Branch on Non-Zero (ARM64)
+const BRANCH_JMP: i64 = 4;      // Unconditional JMP (AMD64)
+const BRANCH_JCC: i64 = 5;      // Conditional Jcc (AMD64)
 
 struct Branch {
     code_offset: i64,      // Offset in code buffer where branch was emitted
@@ -655,6 +657,27 @@ fn addBranchCbz(self: *GenState, target_block: i64, reg: i64, is_nonzero: bool) 
         br.kind = BRANCH_CBZ;
     }
     br.reg = reg;
+    self.branches_count = self.branches_count + 1;
+}
+
+// Add a JMP or Jcc branch for AMD64
+fn addBranchAMD64(self: *GenState, target_block: i64, kind: i64, cond: i64) {
+    if self.branches_count >= self.branches_cap {
+        return;
+    }
+
+    let br: *Branch = self.branches + self.branches_count;
+    // AMD64: JMP rel32 is 5 bytes, Jcc rel32 is 6 bytes
+    if kind == BRANCH_JMP {
+        br.code_offset = self.code_count - 5;
+    } else {
+        br.code_offset = self.code_count - 6;  // Jcc rel32
+    }
+    br.target_block = target_block;
+    br.is_conditional = (kind == BRANCH_JCC);
+    br.cond = cond;
+    br.kind = kind;
+    br.reg = 0;
     self.branches_count = self.branches_count + 1;
 }
 
@@ -3206,32 +3229,52 @@ fn blockControl(self: *GenState, block: *Block, next_block: i64) {
         let then_block: i64 = block.succs[0];
         let else_block: i64 = block.succs[1];
 
-        if then_block == next_block {
-            // Fall through to then, branch to else if condition is false (zero)
-            // Emit phi moves for else (the branch target)
-            self.emitPhiMoves(block, else_block);
-            self.emitInst(encode_cbz(cond_reg, 0));  // CBZ - branch if zero
-            self.addBranchCbz(else_block, cond_reg, false);
-            // Emit phi moves for then (fallthrough)
-            self.emitPhiMoves(block, then_block);
-        } else if else_block == next_block {
-            // Fall through to else, branch to then if condition is true (non-zero)
-            // Emit phi moves for then (the branch target)
-            self.emitPhiMoves(block, then_block);
-            self.emitInst(encode_cbnz(cond_reg, 0));  // CBNZ - branch if non-zero
-            self.addBranchCbz(then_block, cond_reg, true);
-            // Emit phi moves for else (fallthrough)
-            self.emitPhiMoves(block, else_block);
+        if self.target == TARGET_AMD64 {
+            // AMD64: TEST reg, reg + conditional jump
+            if then_block == next_block {
+                self.emitPhiMoves(block, else_block);
+                self.emitInstPacked(AMD64_test(cond_reg, cond_reg));
+                self.emitInstPacked(AMD64_branchCond(0, AMD64_COND_E));  // JE - branch if zero
+                self.addBranchAMD64(else_block, BRANCH_JCC, AMD64_COND_E);
+                self.emitPhiMoves(block, then_block);
+            } else if else_block == next_block {
+                self.emitPhiMoves(block, then_block);
+                self.emitInstPacked(AMD64_test(cond_reg, cond_reg));
+                self.emitInstPacked(AMD64_branchCond(0, AMD64_COND_NE));  // JNE - branch if non-zero
+                self.addBranchAMD64(then_block, BRANCH_JCC, AMD64_COND_NE);
+                self.emitPhiMoves(block, else_block);
+            } else {
+                self.emitPhiMoves(block, then_block);
+                self.emitInstPacked(AMD64_test(cond_reg, cond_reg));
+                self.emitInstPacked(AMD64_branchCond(0, AMD64_COND_NE));  // JNE - branch to then
+                self.addBranchAMD64(then_block, BRANCH_JCC, AMD64_COND_NE);
+                self.emitPhiMoves(block, else_block);
+                self.emitInstPacked(AMD64_branch(0));  // JMP - unconditional to else
+                self.addBranchAMD64(else_block, BRANCH_JMP, 0);
+            }
         } else {
-            // Neither is next, emit both branches
-            // Emit phi moves for then
-            self.emitPhiMoves(block, then_block);
-            self.emitInst(encode_cbnz(cond_reg, 0));  // CBNZ - branch to then if true
-            self.addBranchCbz(then_block, cond_reg, true);
-            // Emit phi moves for else
-            self.emitPhiMoves(block, else_block);
-            self.emitInst(encode_b(0));  // Unconditional to else
-            self.addBranch(else_block, false, 0);
+            // ARM64: CBZ/CBNZ instructions
+            if then_block == next_block {
+                // Fall through to then, branch to else if condition is false (zero)
+                self.emitPhiMoves(block, else_block);
+                self.emitInst(encode_cbz(cond_reg, 0));  // CBZ - branch if zero
+                self.addBranchCbz(else_block, cond_reg, false);
+                self.emitPhiMoves(block, then_block);
+            } else if else_block == next_block {
+                // Fall through to else, branch to then if condition is true (non-zero)
+                self.emitPhiMoves(block, then_block);
+                self.emitInst(encode_cbnz(cond_reg, 0));  // CBNZ - branch if non-zero
+                self.addBranchCbz(then_block, cond_reg, true);
+                self.emitPhiMoves(block, else_block);
+            } else {
+                // Neither is next, emit both branches
+                self.emitPhiMoves(block, then_block);
+                self.emitInst(encode_cbnz(cond_reg, 0));  // CBNZ - branch to then if true
+                self.addBranchCbz(then_block, cond_reg, true);
+                self.emitPhiMoves(block, else_block);
+                self.emitInst(encode_b(0));  // Unconditional to else
+                self.addBranch(else_block, false, 0);
+            }
         }
         return;
     }
@@ -3269,6 +3312,14 @@ fn resolveBranches(self: *GenState) {
             self.patchCbz(branch_offset, rel_offset, br.reg, false);
         } else if br.kind == BRANCH_CBNZ {
             self.patchCbz(branch_offset, rel_offset, br.reg, true);
+        } else if br.kind == BRANCH_JMP {
+            // AMD64 JMP rel32 - offset is in bytes, not words
+            let byte_offset: i64 = target_offset - (branch_offset + 5);  // +5 for JMP instruction length
+            self.patchJmp(branch_offset, byte_offset);
+        } else if br.kind == BRANCH_JCC {
+            // AMD64 Jcc rel32 - offset is in bytes
+            let byte_offset: i64 = target_offset - (branch_offset + 6);  // +6 for Jcc instruction length
+            self.patchJcc(branch_offset, byte_offset, br.cond);
         }
 
         i = i + 1;
@@ -3312,6 +3363,37 @@ fn patchCbz(self: *GenState, offset: i64, rel_offset: i64, reg: i64, is_nonzero:
     p2.* = @intCast(u8, (inst >> 16) & 255);
     let p3: *u8 = p + 3;
     p3.* = @intCast(u8, (inst >> 24) & 255);
+}
+
+// AMD64: Patch JMP rel32 (5 bytes: E9 cd)
+fn patchJmp(self: *GenState, offset: i64, rel_offset: i64) {
+    let p: *u8 = self.code + offset;
+    p.* = 0xE9;  // JMP opcode
+    let p1: *u8 = p + 1;
+    p1.* = @intCast(u8, rel_offset & 255);
+    let p2: *u8 = p + 2;
+    p2.* = @intCast(u8, (rel_offset >> 8) & 255);
+    let p3: *u8 = p + 3;
+    p3.* = @intCast(u8, (rel_offset >> 16) & 255);
+    let p4: *u8 = p + 4;
+    p4.* = @intCast(u8, (rel_offset >> 24) & 255);
+}
+
+// AMD64: Patch Jcc rel32 (6 bytes: 0F 8x cd)
+fn patchJcc(self: *GenState, offset: i64, rel_offset: i64, cond: i64) {
+    let opcode: i64 = 0x80 + (cond & 0x0F);
+    let p: *u8 = self.code + offset;
+    p.* = 0x0F;  // Two-byte opcode prefix
+    let p1: *u8 = p + 1;
+    p1.* = @intCast(u8, opcode);
+    let p2: *u8 = p + 2;
+    p2.* = @intCast(u8, rel_offset & 255);
+    let p3: *u8 = p + 3;
+    p3.* = @intCast(u8, (rel_offset >> 8) & 255);
+    let p4: *u8 = p + 4;
+    p4.* = @intCast(u8, (rel_offset >> 16) & 255);
+    let p5: *u8 = p + 5;
+    p5.* = @intCast(u8, (rel_offset >> 24) & 255);
 }
 
 // ============================================================================
