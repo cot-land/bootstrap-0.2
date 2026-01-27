@@ -34,7 +34,7 @@ fn rex_w() i64 {
 // w: 1 for 64-bit operand
 // r: 1 if reg field uses R8-R15
 // b: 1 if r/m or base field uses R8-R15
-fn encode_rex(w: bool, r: bool, b: bool) i64 {
+fn amd64_encode_rex(w: bool, r: bool, b: bool) i64 {
     var rex: i64 = 0x40;
     if w { rex = rex | 0x08; }
     if r { rex = rex | 0x04; }
@@ -43,13 +43,13 @@ fn encode_rex(w: bool, r: bool, b: bool) i64 {
 }
 
 // Encode REX prefix for 64-bit reg-reg operation
-fn encode_rex_rr(reg: i64, rm: i64) i64 {
-    return encode_rex(true, needs_rex(reg), needs_rex(rm));
+fn amd64_encode_rex_rr(reg: i64, rm: i64) i64 {
+    return amd64_encode_rex(true, AMD64_needs_rex(reg), AMD64_needs_rex(rm));
 }
 
 // Encode REX prefix for 64-bit single register operation
-fn encode_rex_rm(rm: i64) i64 {
-    return encode_rex(true, false, needs_rex(rm));
+fn amd64_encode_rex_rm(rm: i64) i64 {
+    return amd64_encode_rex(true, false, AMD64_needs_rex(rm));
 }
 
 // ============================================================================
@@ -57,28 +57,28 @@ fn encode_rex_rm(rm: i64) i64 {
 // ============================================================================
 
 // Encode ModR/M for register-direct addressing (mod=11)
-fn encode_modrm_rr(reg: i64, rm: i64) i64 {
-    return 0xC0 | ((reg_enc3(reg) & 7) << 3) | (reg_enc3(rm) & 7);
+fn amd64_encode_modrm_rr(reg: i64, rm: i64) i64 {
+    return 0xC0 | ((AMD64_reg_enc3(reg) & 7) << 3) | (AMD64_reg_enc3(rm) & 7);
 }
 
 // Encode ModR/M for [base] indirect addressing (mod=00)
-fn encode_modrm_indirect(reg: i64, base: i64) i64 {
-    return ((reg_enc3(reg) & 7) << 3) | (reg_enc3(base) & 7);
+fn amd64_encode_modrm_indirect(reg: i64, base: i64) i64 {
+    return ((AMD64_reg_enc3(reg) & 7) << 3) | (AMD64_reg_enc3(base) & 7);
 }
 
 // Encode ModR/M for [base+disp8] addressing (mod=01)
-fn encode_modrm_disp8(reg: i64, base: i64) i64 {
-    return 0x40 | ((reg_enc3(reg) & 7) << 3) | (reg_enc3(base) & 7);
+fn amd64_encode_modrm_disp8(reg: i64, base: i64) i64 {
+    return 0x40 | ((AMD64_reg_enc3(reg) & 7) << 3) | (AMD64_reg_enc3(base) & 7);
 }
 
 // Encode ModR/M for [base+disp32] addressing (mod=10)
-fn encode_modrm_disp32(reg: i64, base: i64) i64 {
-    return 0x80 | ((reg_enc3(reg) & 7) << 3) | (reg_enc3(base) & 7);
+fn amd64_encode_modrm_disp32(reg: i64, base: i64) i64 {
+    return 0x80 | ((AMD64_reg_enc3(reg) & 7) << 3) | (AMD64_reg_enc3(base) & 7);
 }
 
 // Encode ModR/M with opcode extension in reg field (mod=11)
-fn encode_modrm_ext(ext: i64, rm: i64) i64 {
-    return 0xC0 | ((ext & 7) << 3) | (reg_enc3(rm) & 7);
+fn amd64_encode_modrm_ext(ext: i64, rm: i64) i64 {
+    return 0xC0 | ((ext & 7) << 3) | (AMD64_reg_enc3(rm) & 7);
 }
 
 // ============================================================================
@@ -89,8 +89,8 @@ fn encode_modrm_ext(ext: i64, rm: i64) i64 {
 const SIB_RSP_BASE: i64 = 0x24;
 
 // Encode SIB byte: scale=0, index=100 (none), base
-fn encode_sib_base_only(base: i64) i64 {
-    return 0x20 | (reg_enc3(base) & 7);  // scale=0, index=100, base
+fn amd64_encode_sib_base_only(base: i64) i64 {
+    return 0x20 | (AMD64_reg_enc3(base) & 7);  // scale=0, index=100, base
 }
 
 // ============================================================================
@@ -135,21 +135,21 @@ fn enc_byte(enc: i64, n: i64) i64 {
 // ============================================================================
 
 // MOV r64, r64 (3 bytes: REX.W 89 /r)
-fn encode_mov_rr(dst: i64, src: i64) i64 {
-    return pack3(encode_rex_rr(src, dst), 0x89, encode_modrm_rr(src, dst));
+fn amd64_encode_mov_rr(dst: i64, src: i64) i64 {
+    return pack3(amd64_encode_rex_rr(src, dst), 0x89, amd64_encode_modrm_rr(src, dst));
 }
 
 // MOV r64, imm32 (sign-extended) - 7 bytes: REX.W C7 /0 id
-fn encode_mov_ri32(dst: i64, imm: i64) i64 {
-    var rex: i64 = encode_rex_rm(dst);
-    var modrm: i64 = encode_modrm_ext(0, dst);
+fn amd64_encode_mov_ri32(dst: i64, imm: i64) i64 {
+    var rex: i64 = amd64_encode_rex_rm(dst);
+    var modrm: i64 = amd64_encode_modrm_ext(0, dst);
     return pack7(rex, 0xC7, modrm, imm & 0xFF, (imm >> 8) & 0xFF, (imm >> 16) & 0xFF, (imm >> 24) & 0xFF);
 }
 
 // MOV r32, imm32 (5 bytes: B8+rd id) - clears upper 32 bits
-fn encode_mov_r32_i32(dst: i64, imm: i64) i64 {
-    var opcode: i64 = 0xB8 + reg_enc3(dst);
-    if needs_rex(dst) {
+fn amd64_encode_mov_r32_i32(dst: i64, imm: i64) i64 {
+    var opcode: i64 = 0xB8 + AMD64_reg_enc3(dst);
+    if AMD64_needs_rex(dst) {
         return pack7(0x41, opcode, imm & 0xFF, (imm >> 8) & 0xFF, (imm >> 16) & 0xFF, (imm >> 24) & 0xFF, 0);
     }
     return pack5(opcode, imm & 0xFF, (imm >> 8) & 0xFF, (imm >> 16) & 0xFF, (imm >> 24) & 0xFF);
@@ -160,47 +160,47 @@ fn encode_mov_r32_i32(dst: i64, imm: i64) i64 {
 // ============================================================================
 
 // ADD r64, r64 (3 bytes: REX.W 01 /r)
-fn encode_add_rr(dst: i64, src: i64) i64 {
-    return pack3(encode_rex_rr(src, dst), 0x01, encode_modrm_rr(src, dst));
+fn amd64_encode_add_rr(dst: i64, src: i64) i64 {
+    return pack3(amd64_encode_rex_rr(src, dst), 0x01, amd64_encode_modrm_rr(src, dst));
 }
 
 // ADD r64, imm32 (7 bytes: REX.W 81 /0 id)
-fn encode_add_ri32(dst: i64, imm: i64) i64 {
-    var rex: i64 = encode_rex_rm(dst);
-    var modrm: i64 = encode_modrm_ext(0, dst);
+fn amd64_encode_add_ri32(dst: i64, imm: i64) i64 {
+    var rex: i64 = amd64_encode_rex_rm(dst);
+    var modrm: i64 = amd64_encode_modrm_ext(0, dst);
     return pack7(rex, 0x81, modrm, imm & 0xFF, (imm >> 8) & 0xFF, (imm >> 16) & 0xFF, (imm >> 24) & 0xFF);
 }
 
 // ADD r64, imm8 (4 bytes: REX.W 83 /0 ib)
-fn encode_add_ri8(dst: i64, imm: i64) i64 {
-    return pack4(encode_rex_rm(dst), 0x83, encode_modrm_ext(0, dst), imm & 0xFF);
+fn amd64_encode_add_ri8(dst: i64, imm: i64) i64 {
+    return pack4(amd64_encode_rex_rm(dst), 0x83, amd64_encode_modrm_ext(0, dst), imm & 0xFF);
 }
 
 // SUB r64, r64 (3 bytes: REX.W 29 /r)
-fn encode_sub_rr(dst: i64, src: i64) i64 {
-    return pack3(encode_rex_rr(src, dst), 0x29, encode_modrm_rr(src, dst));
+fn amd64_encode_sub_rr(dst: i64, src: i64) i64 {
+    return pack3(amd64_encode_rex_rr(src, dst), 0x29, amd64_encode_modrm_rr(src, dst));
 }
 
 // SUB r64, imm32 (7 bytes: REX.W 81 /5 id)
-fn encode_sub_ri32(dst: i64, imm: i64) i64 {
-    var rex: i64 = encode_rex_rm(dst);
-    var modrm: i64 = encode_modrm_ext(5, dst);
+fn amd64_encode_sub_ri32(dst: i64, imm: i64) i64 {
+    var rex: i64 = amd64_encode_rex_rm(dst);
+    var modrm: i64 = amd64_encode_modrm_ext(5, dst);
     return pack7(rex, 0x81, modrm, imm & 0xFF, (imm >> 8) & 0xFF, (imm >> 16) & 0xFF, (imm >> 24) & 0xFF);
 }
 
 // SUB r64, imm8 (4 bytes: REX.W 83 /5 ib)
-fn encode_sub_ri8(dst: i64, imm: i64) i64 {
-    return pack4(encode_rex_rm(dst), 0x83, encode_modrm_ext(5, dst), imm & 0xFF);
+fn amd64_encode_sub_ri8(dst: i64, imm: i64) i64 {
+    return pack4(amd64_encode_rex_rm(dst), 0x83, amd64_encode_modrm_ext(5, dst), imm & 0xFF);
 }
 
 // IMUL r64, r64 (4 bytes: REX.W 0F AF /r)
-fn encode_imul_rr(dst: i64, src: i64) i64 {
-    return pack4(encode_rex_rr(dst, src), 0x0F, 0xAF, encode_modrm_rr(dst, src));
+fn amd64_encode_imul_rr(dst: i64, src: i64) i64 {
+    return pack4(amd64_encode_rex_rr(dst, src), 0x0F, 0xAF, amd64_encode_modrm_rr(dst, src));
 }
 
 // NEG r64 (3 bytes: REX.W F7 /3)
-fn encode_neg(dst: i64) i64 {
-    return pack3(encode_rex_rm(dst), 0xF7, encode_modrm_ext(3, dst));
+fn amd64_encode_neg(dst: i64) i64 {
+    return pack3(amd64_encode_rex_rm(dst), 0xF7, amd64_encode_modrm_ext(3, dst));
 }
 
 // ============================================================================
@@ -208,14 +208,14 @@ fn encode_neg(dst: i64) i64 {
 // ============================================================================
 
 // CQO - sign extend RAX into RDX:RAX (2 bytes: REX.W 99)
-fn encode_cqo() i64 {
+fn amd64_encode_cqo() i64 {
     return pack2(0x48, 0x99);
 }
 
 // IDIV r64 - signed divide RDX:RAX by r64, quotient in RAX, remainder in RDX
 // 3 bytes: REX.W F7 /7
-fn encode_idiv(src: i64) i64 {
-    return pack3(encode_rex_rm(src), 0xF7, encode_modrm_ext(7, src));
+fn amd64_encode_idiv(src: i64) i64 {
+    return pack3(amd64_encode_rex_rm(src), 0xF7, amd64_encode_modrm_ext(7, src));
 }
 
 // ============================================================================
@@ -223,23 +223,23 @@ fn encode_idiv(src: i64) i64 {
 // ============================================================================
 
 // AND r64, r64 (3 bytes: REX.W 21 /r)
-fn encode_and_rr(dst: i64, src: i64) i64 {
-    return pack3(encode_rex_rr(src, dst), 0x21, encode_modrm_rr(src, dst));
+fn amd64_encode_and_rr(dst: i64, src: i64) i64 {
+    return pack3(amd64_encode_rex_rr(src, dst), 0x21, amd64_encode_modrm_rr(src, dst));
 }
 
 // OR r64, r64 (3 bytes: REX.W 09 /r)
-fn encode_or_rr(dst: i64, src: i64) i64 {
-    return pack3(encode_rex_rr(src, dst), 0x09, encode_modrm_rr(src, dst));
+fn amd64_encode_or_rr(dst: i64, src: i64) i64 {
+    return pack3(amd64_encode_rex_rr(src, dst), 0x09, amd64_encode_modrm_rr(src, dst));
 }
 
 // XOR r64, r64 (3 bytes: REX.W 31 /r)
-fn encode_xor_rr(dst: i64, src: i64) i64 {
-    return pack3(encode_rex_rr(src, dst), 0x31, encode_modrm_rr(src, dst));
+fn amd64_encode_xor_rr(dst: i64, src: i64) i64 {
+    return pack3(amd64_encode_rex_rr(src, dst), 0x31, amd64_encode_modrm_rr(src, dst));
 }
 
 // NOT r64 (3 bytes: REX.W F7 /2)
-fn encode_not(dst: i64) i64 {
-    return pack3(encode_rex_rm(dst), 0xF7, encode_modrm_ext(2, dst));
+fn amd64_encode_not(dst: i64) i64 {
+    return pack3(amd64_encode_rex_rm(dst), 0xF7, amd64_encode_modrm_ext(2, dst));
 }
 
 // ============================================================================
@@ -247,33 +247,33 @@ fn encode_not(dst: i64) i64 {
 // ============================================================================
 
 // SHL r64, CL (3 bytes: REX.W D3 /4)
-fn encode_shl_cl(dst: i64) i64 {
-    return pack3(encode_rex_rm(dst), 0xD3, encode_modrm_ext(4, dst));
+fn amd64_encode_shl_cl(dst: i64) i64 {
+    return pack3(amd64_encode_rex_rm(dst), 0xD3, amd64_encode_modrm_ext(4, dst));
 }
 
 // SHL r64, imm8 (4 bytes: REX.W C1 /4 ib)
-fn encode_shl_i8(dst: i64, imm: i64) i64 {
-    return pack4(encode_rex_rm(dst), 0xC1, encode_modrm_ext(4, dst), imm & 0x3F);
+fn amd64_encode_shl_i8(dst: i64, imm: i64) i64 {
+    return pack4(amd64_encode_rex_rm(dst), 0xC1, amd64_encode_modrm_ext(4, dst), imm & 0x3F);
 }
 
 // SHR r64, CL (3 bytes: REX.W D3 /5) - logical right shift
-fn encode_shr_cl(dst: i64) i64 {
-    return pack3(encode_rex_rm(dst), 0xD3, encode_modrm_ext(5, dst));
+fn amd64_encode_shr_cl(dst: i64) i64 {
+    return pack3(amd64_encode_rex_rm(dst), 0xD3, amd64_encode_modrm_ext(5, dst));
 }
 
 // SHR r64, imm8 (4 bytes: REX.W C1 /5 ib)
-fn encode_shr_i8(dst: i64, imm: i64) i64 {
-    return pack4(encode_rex_rm(dst), 0xC1, encode_modrm_ext(5, dst), imm & 0x3F);
+fn amd64_encode_shr_i8(dst: i64, imm: i64) i64 {
+    return pack4(amd64_encode_rex_rm(dst), 0xC1, amd64_encode_modrm_ext(5, dst), imm & 0x3F);
 }
 
 // SAR r64, CL (3 bytes: REX.W D3 /7) - arithmetic right shift
-fn encode_sar_cl(dst: i64) i64 {
-    return pack3(encode_rex_rm(dst), 0xD3, encode_modrm_ext(7, dst));
+fn amd64_encode_sar_cl(dst: i64) i64 {
+    return pack3(amd64_encode_rex_rm(dst), 0xD3, amd64_encode_modrm_ext(7, dst));
 }
 
 // SAR r64, imm8 (4 bytes: REX.W C1 /7 ib)
-fn encode_sar_i8(dst: i64, imm: i64) i64 {
-    return pack4(encode_rex_rm(dst), 0xC1, encode_modrm_ext(7, dst), imm & 0x3F);
+fn amd64_encode_sar_i8(dst: i64, imm: i64) i64 {
+    return pack4(amd64_encode_rex_rm(dst), 0xC1, amd64_encode_modrm_ext(7, dst), imm & 0x3F);
 }
 
 // ============================================================================
@@ -281,25 +281,25 @@ fn encode_sar_i8(dst: i64, imm: i64) i64 {
 // ============================================================================
 
 // CMP r64, r64 (3 bytes: REX.W 39 /r)
-fn encode_cmp_rr(op1: i64, op2: i64) i64 {
-    return pack3(encode_rex_rr(op2, op1), 0x39, encode_modrm_rr(op2, op1));
+fn amd64_encode_cmp_rr(op1: i64, op2: i64) i64 {
+    return pack3(amd64_encode_rex_rr(op2, op1), 0x39, amd64_encode_modrm_rr(op2, op1));
 }
 
 // CMP r64, imm32 (7 bytes: REX.W 81 /7 id)
-fn encode_cmp_ri32(op1: i64, imm: i64) i64 {
-    var rex: i64 = encode_rex_rm(op1);
-    var modrm: i64 = encode_modrm_ext(7, op1);
+fn amd64_encode_cmp_ri32(op1: i64, imm: i64) i64 {
+    var rex: i64 = amd64_encode_rex_rm(op1);
+    var modrm: i64 = amd64_encode_modrm_ext(7, op1);
     return pack7(rex, 0x81, modrm, imm & 0xFF, (imm >> 8) & 0xFF, (imm >> 16) & 0xFF, (imm >> 24) & 0xFF);
 }
 
 // CMP r64, imm8 (4 bytes: REX.W 83 /7 ib)
-fn encode_cmp_ri8(op1: i64, imm: i64) i64 {
-    return pack4(encode_rex_rm(op1), 0x83, encode_modrm_ext(7, op1), imm & 0xFF);
+fn amd64_encode_cmp_ri8(op1: i64, imm: i64) i64 {
+    return pack4(amd64_encode_rex_rm(op1), 0x83, amd64_encode_modrm_ext(7, op1), imm & 0xFF);
 }
 
 // TEST r64, r64 (3 bytes: REX.W 85 /r)
-fn encode_test_rr(op1: i64, op2: i64) i64 {
-    return pack3(encode_rex_rr(op2, op1), 0x85, encode_modrm_rr(op2, op1));
+fn amd64_encode_test_rr(op1: i64, op2: i64) i64 {
+    return pack3(amd64_encode_rex_rr(op2, op1), 0x85, amd64_encode_modrm_rr(op2, op1));
 }
 
 // ============================================================================
@@ -307,34 +307,34 @@ fn encode_test_rr(op1: i64, op2: i64) i64 {
 // ============================================================================
 
 // Condition codes
-const COND_O: i64 = 0;   // Overflow
-const COND_NO: i64 = 1;  // Not overflow
-const COND_B: i64 = 2;   // Below (unsigned <)
-const COND_AE: i64 = 3;  // Above or equal (unsigned >=)
-const COND_E: i64 = 4;   // Equal
-const COND_NE: i64 = 5;  // Not equal
-const COND_BE: i64 = 6;  // Below or equal (unsigned <=)
-const COND_A: i64 = 7;   // Above (unsigned >)
-const COND_S: i64 = 8;   // Sign (negative)
-const COND_NS: i64 = 9;  // Not sign
-const COND_L: i64 = 12;  // Less (signed <)
-const COND_GE: i64 = 13; // Greater or equal (signed >=)
-const COND_LE: i64 = 14; // Less or equal (signed <=)
-const COND_G: i64 = 15;  // Greater (signed >)
+const AMD64_COND_O: i64 = 0;   // Overflow
+const AMD64_COND_NO: i64 = 1;  // Not overflow
+const AMD64_COND_B: i64 = 2;   // Below (unsigned <)
+const AMD64_COND_AE: i64 = 3;  // Above or equal (unsigned >=)
+const AMD64_COND_E: i64 = 4;   // Equal
+const AMD64_COND_NE: i64 = 5;  // Not equal
+const AMD64_COND_BE: i64 = 6;  // Below or equal (unsigned <=)
+const AMD64_COND_A: i64 = 7;   // Above (unsigned >)
+const AMD64_COND_S: i64 = 8;   // Sign (negative)
+const AMD64_COND_NS: i64 = 9;  // Not sign
+const AMD64_COND_L: i64 = 12;  // Less (signed <)
+const AMD64_COND_GE: i64 = 13; // Greater or equal (signed >=)
+const AMD64_COND_LE: i64 = 14; // Less or equal (signed <=)
+const AMD64_COND_G: i64 = 15;  // Greater (signed >)
 
 // SETcc r8 (3-4 bytes: [REX] 0F 9x /0)
 // Sets byte register to 1 if condition true, 0 otherwise
-fn encode_setcc(cond: i64, dst: i64) i64 {
+fn amd64_encode_setcc(cond: i64, dst: i64) i64 {
     var opcode: i64 = 0x90 + (cond & 0x0F);
-    if needs_rex(dst) {
-        return pack4(0x41, 0x0F, opcode, encode_modrm_ext(0, dst));
+    if AMD64_needs_rex(dst) {
+        return pack4(0x41, 0x0F, opcode, amd64_encode_modrm_ext(0, dst));
     }
-    return pack3(0x0F, opcode, encode_modrm_ext(0, dst));
+    return pack3(0x0F, opcode, amd64_encode_modrm_ext(0, dst));
 }
 
 // MOVZX r64, r8 - zero extend byte to 64-bit (4 bytes: REX.W 0F B6 /r)
-fn encode_movzx_r64_r8(dst: i64, src: i64) i64 {
-    return pack4(encode_rex_rr(dst, src), 0x0F, 0xB6, encode_modrm_rr(dst, src));
+fn amd64_encode_movzx_r64_r8(dst: i64, src: i64) i64 {
+    return pack4(amd64_encode_rex_rr(dst, src), 0x0F, 0xB6, amd64_encode_modrm_rr(dst, src));
 }
 
 // ============================================================================
@@ -342,24 +342,24 @@ fn encode_movzx_r64_r8(dst: i64, src: i64) i64 {
 // ============================================================================
 
 // JMP rel32 (5 bytes: E9 cd)
-fn encode_jmp_rel32(offset: i64) i64 {
+fn amd64_encode_jmp_rel32(offset: i64) i64 {
     return pack5(0xE9, offset & 0xFF, (offset >> 8) & 0xFF, (offset >> 16) & 0xFF, (offset >> 24) & 0xFF);
 }
 
 // JMP rel8 (2 bytes: EB cb)
-fn encode_jmp_rel8(offset: i64) i64 {
+fn amd64_encode_jmp_rel8(offset: i64) i64 {
     return pack2(0xEB, offset & 0xFF);
 }
 
 // Jcc rel32 (6 bytes: 0F 8x cd) - conditional jump
-fn encode_jcc_rel32(cond: i64, offset: i64) i64 {
+fn amd64_encode_jcc_rel32(cond: i64, offset: i64) i64 {
     var opcode: i64 = 0x80 + (cond & 0x0F);
     // Pack as 6 bytes - we'll need special handling
     return (6 << 56) | (0x0F) | (opcode << 8) | ((offset & 0xFF) << 16) | (((offset >> 8) & 0xFF) << 24) | (((offset >> 16) & 0xFF) << 32) | (((offset >> 24) & 0xFF) << 40);
 }
 
 // Jcc rel8 (2 bytes: 7x cb) - short conditional jump
-fn encode_jcc_rel8(cond: i64, offset: i64) i64 {
+fn amd64_encode_jcc_rel8(cond: i64, offset: i64) i64 {
     var opcode: i64 = 0x70 + (cond & 0x0F);
     return pack2(opcode, offset & 0xFF);
 }
@@ -369,12 +369,12 @@ fn encode_jcc_rel8(cond: i64, offset: i64) i64 {
 // ============================================================================
 
 // CALL rel32 (5 bytes: E8 cd)
-fn encode_call_rel32(offset: i64) i64 {
+fn amd64_encode_call_rel32(offset: i64) i64 {
     return pack5(0xE8, offset & 0xFF, (offset >> 8) & 0xFF, (offset >> 16) & 0xFF, (offset >> 24) & 0xFF);
 }
 
 // RET (1 byte: C3)
-fn encode_ret() i64 {
+fn amd64_encode_ret() i64 {
     return (1 << 56) | 0xC3;
 }
 
@@ -383,19 +383,19 @@ fn encode_ret() i64 {
 // ============================================================================
 
 // PUSH r64 (1-2 bytes: [REX.B] 50+rd)
-fn encode_push(reg: i64) i64 {
-    if needs_rex(reg) {
-        return pack2(0x41, 0x50 + reg_enc3(reg));
+fn amd64_encode_push(reg: i64) i64 {
+    if AMD64_needs_rex(reg) {
+        return pack2(0x41, 0x50 + AMD64_reg_enc3(reg));
     }
-    return (1 << 56) | (0x50 + reg_enc3(reg));
+    return (1 << 56) | (0x50 + AMD64_reg_enc3(reg));
 }
 
 // POP r64 (1-2 bytes: [REX.B] 58+rd)
-fn encode_pop(reg: i64) i64 {
-    if needs_rex(reg) {
-        return pack2(0x41, 0x58 + reg_enc3(reg));
+fn amd64_encode_pop(reg: i64) i64 {
+    if AMD64_needs_rex(reg) {
+        return pack2(0x41, 0x58 + AMD64_reg_enc3(reg));
     }
-    return (1 << 56) | (0x58 + reg_enc3(reg));
+    return (1 << 56) | (0x58 + AMD64_reg_enc3(reg));
 }
 
 // ============================================================================
@@ -405,23 +405,23 @@ fn encode_pop(reg: i64) i64 {
 // MOV r64, [base+disp32] (7+ bytes)
 // This is complex due to SIB/displacement handling
 // For simplicity, assume base is not RSP/R12 (would need SIB)
-fn encode_load_disp32(dst: i64, base: i64, disp: i64) i64 {
-    var rex: i64 = encode_rex_rr(dst, base);
-    var modrm: i64 = encode_modrm_disp32(dst, base);
+fn amd64_encode_load_disp32(dst: i64, base: i64, disp: i64) i64 {
+    var rex: i64 = amd64_encode_rex_rr(dst, base);
+    var modrm: i64 = amd64_encode_modrm_disp32(dst, base);
     return pack7(rex, 0x8B, modrm, disp & 0xFF, (disp >> 8) & 0xFF, (disp >> 16) & 0xFF, (disp >> 24) & 0xFF);
 }
 
 // MOV [base+disp32], r64 (7+ bytes)
-fn encode_store_disp32(base: i64, disp: i64, src: i64) i64 {
-    var rex: i64 = encode_rex_rr(src, base);
-    var modrm: i64 = encode_modrm_disp32(src, base);
+fn amd64_encode_store_disp32(base: i64, disp: i64, src: i64) i64 {
+    var rex: i64 = amd64_encode_rex_rr(src, base);
+    var modrm: i64 = amd64_encode_modrm_disp32(src, base);
     return pack7(rex, 0x89, modrm, disp & 0xFF, (disp >> 8) & 0xFF, (disp >> 16) & 0xFF, (disp >> 24) & 0xFF);
 }
 
 // LEA r64, [base+disp32] (7 bytes: REX.W 8D /r)
-fn encode_lea_disp32(dst: i64, base: i64, disp: i64) i64 {
-    var rex: i64 = encode_rex_rr(dst, base);
-    var modrm: i64 = encode_modrm_disp32(dst, base);
+fn amd64_encode_lea_disp32(dst: i64, base: i64, disp: i64) i64 {
+    var rex: i64 = amd64_encode_rex_rr(dst, base);
+    var modrm: i64 = amd64_encode_modrm_disp32(dst, base);
     return pack7(rex, 0x8D, modrm, disp & 0xFF, (disp >> 8) & 0xFF, (disp >> 16) & 0xFF, (disp >> 24) & 0xFF);
 }
 
@@ -430,16 +430,16 @@ fn encode_lea_disp32(dst: i64, base: i64, disp: i64) i64 {
 // ============================================================================
 
 // NOP (1 byte: 90)
-fn encode_nop() i64 {
+fn amd64_encode_nop() i64 {
     return (1 << 56) | 0x90;
 }
 
 // INT3 - breakpoint (1 byte: CC)
-fn encode_int3() i64 {
+fn amd64_encode_int3() i64 {
     return (1 << 56) | 0xCC;
 }
 
 // SYSCALL (2 bytes: 0F 05)
-fn encode_syscall() i64 {
+fn amd64_encode_syscall() i64 {
     return pack2(0x0F, 0x05);
 }

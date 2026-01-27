@@ -16,7 +16,9 @@ import "../ssa/dom.cot"
 import "../ssa/abi.cot"
 import "../ssa/stackalloc.cot"
 import "arm64.cot"
+import "amd64.cot"
 import "../obj/macho.cot"
+import "../obj/elf.cot"
 import "../obj/dwarf.cot"
 
 // NOTE: print() and print_int() are defined in main.cot and available to all imported files
@@ -668,14 +670,20 @@ fn emitReload(self: *GenState, v: *Value) {
     if v.reg < 0 { return; }  // No register assigned
 
     // Check if we need byte-sized load (TYPE_U8 = 6, TYPE_I8 = 2)
-    // Following GenState_load pattern: use ldrb for byte types
     let is_byte: bool = v.type_idx == 6 or v.type_idx == 2;
 
-    // spill_slot is the actual SP offset (stackalloc converted slot number to offset)
-    if is_byte {
-        self.emitInst( encode_ldrb(v.reg, SP, v.spill_slot));
+    if self.target == TARGET_AMD64 {
+        // AMD64: spill slots are RBP-relative, negative offset
+        let disp: i64 = 0 - v.spill_slot - 8;
+        // TODO: handle byte-sized loads for AMD64
+        self.emitInstPacked( AMD64_load64(v.reg, RBP, disp));
     } else {
-        self.emitInst( encode_ldr(v.reg, SP, v.spill_slot));
+        // ARM64: spill_slot is the actual SP offset
+        if is_byte {
+            self.emitInst( encode_ldrb(v.reg, SP, v.spill_slot));
+        } else {
+            self.emitInst( encode_ldr(v.reg, SP, v.spill_slot));
+        }
     }
 }
 
@@ -687,14 +695,20 @@ fn emitSpill(self: *GenState, v: *Value) {
     if v.reg < 0 { return; }  // No register assigned
 
     // Check if we need byte-sized store (TYPE_U8 = 6, TYPE_I8 = 2)
-    // Following GenState_store pattern: use strb for byte types
     let is_byte: bool = v.type_idx == 6 or v.type_idx == 2;
 
-    // spill_slot is the actual SP offset (stackalloc converted slot number to offset)
-    if is_byte {
-        self.emitInst( encode_strb(v.reg, SP, v.spill_slot));
+    if self.target == TARGET_AMD64 {
+        // AMD64: spill slots are RBP-relative, negative offset
+        let disp: i64 = 0 - v.spill_slot - 8;
+        // TODO: handle byte-sized stores for AMD64
+        self.emitInstPacked( AMD64_store64(v.reg, RBP, disp));
     } else {
-        self.emitInst( encode_str(v.reg, SP, v.spill_slot));
+        // ARM64: spill_slot is the actual SP offset
+        if is_byte {
+            self.emitInst( encode_strb(v.reg, SP, v.spill_slot));
+        } else {
+            self.emitInst( encode_str(v.reg, SP, v.spill_slot));
+        }
     }
 }
 
@@ -730,16 +744,9 @@ fn generate(self: *GenState) i64 {
         self.has_hidden_return = false;
     }
 
-    // Emit function prologue: save X29/X30 and allocate frame
-    // Always save LR (X30) in case of calls, and FP (X29) for debugging
-    // STP X29, X30, [SP, #-16]!  (pre-indexed store pair)
-    // Note: imm7 is offset in 8-byte units, so -16 bytes = -2
-    self.emitInst( encode_stp_pre(X29, X30, SP, -2));
-
     var frame_size: i64 = f.frame_size;
 
-    // BUG-054: If hidden return, reserve 8 bytes on stack to save x8
-    // Following Zig: src/codegen/arm64.zig:568-571
+    // BUG-054: If hidden return, reserve 8 bytes on stack to save hidden return pointer
     if self.has_hidden_return {
         self.hidden_ret_ptr_offset = frame_size;
         frame_size = frame_size + 8;
@@ -750,15 +757,35 @@ fn generate(self: *GenState) i64 {
     // Store frame_size for stack arg access in Op.Arg handling
     self.frame_size = frame_size;
 
-    if frame_size > 0 {
-        self.emitInst( encode_sub_imm(SP, SP, frame_size));
-    }
-
-    // BUG-054: Save hidden return pointer (x8) to stack
-    // Following Zig: src/codegen/arm64.zig:677-683
-    if self.has_hidden_return {
-        // STR x8, [sp, #hidden_ret_ptr_offset]
-        self.emitInst( encode_str(X8, SP, self.hidden_ret_ptr_offset));
+    // Emit function prologue based on target architecture
+    if self.target == TARGET_AMD64 {
+        // AMD64 prologue:
+        // PUSH RBP
+        // MOV RBP, RSP
+        // SUB RSP, frame_size (if needed)
+        self.emitInstPacked( AMD64_encodePushRbp());
+        self.emitInstPacked( AMD64_encodeMovRbpRsp());
+        if frame_size > 0 {
+            self.emitInstPacked( AMD64_encodeSubRspImm(frame_size));
+        }
+        // Save hidden return pointer (RDI on AMD64) to stack
+        if self.has_hidden_return {
+            self.emitInstPacked( AMD64_store64(RDI, RBP, 0 - self.hidden_ret_ptr_offset - 8));
+        }
+    } else {
+        // ARM64 prologue:
+        // STP X29, X30, [SP, #-16]!  (pre-indexed store pair)
+        // Note: imm7 is offset in 8-byte units, so -16 bytes = -2
+        self.emitInst( encode_stp_pre(X29, X30, SP, -2));
+        if frame_size > 0 {
+            self.emitInst( encode_sub_imm(SP, SP, frame_size));
+        }
+        // BUG-054: Save hidden return pointer (x8) to stack
+        // Following Zig: src/codegen/arm64.zig:677-683
+        if self.has_hidden_return {
+            // STR x8, [sp, #hidden_ret_ptr_offset]
+            self.emitInst( encode_str(X8, SP, self.hidden_ret_ptr_offset));
+        }
     }
 
     // Check if this is the main function (for crash handler insertion)
