@@ -325,6 +325,14 @@ fn SSABuilder_init(b: *SSABuilder, f: *Func) {
     b.all_defs_count = 0;
     b.all_defs_cap = sb_all_defs_cap;
 
+    // CRITICAL: Reset all_defs for new function (stale initialized flags cause crashes)
+    var bd_idx: i64 = 0;
+    while bd_idx < sb_all_defs_cap {
+        let bd: *BlockDefs = sb_all_defs + bd_idx;
+        BlockDefs_clear(bd);
+        bd_idx = bd_idx + 1;
+    }
+
     b.block_map = sb_block_map;
     b.block_map_count = 0;
     b.block_map_cap = sb_block_map_cap;
@@ -332,12 +340,33 @@ fn SSABuilder_init(b: *SSABuilder, f: *Func) {
     b.block_map_index = sb_block_map_index;
     b.block_map_index_cap = sb_block_map_index_cap;
 
+    // CRITICAL: Reset block_map_index for new function (stale entries cause crashes)
+    var bmi: i64 = 0;
+    while bmi < sb_block_map_index_cap {
+        (sb_block_map_index + bmi).* = -1;
+        bmi = bmi + 1;
+    }
+
     b.node_values = sb_node_values;
     b.node_values_cap = sb_node_values_cap;
+
+    // CRITICAL: Reset node_values for new function (stale entries cause crashes)
+    var nvi: i64 = 0;
+    while nvi < sb_node_values_cap {
+        (sb_node_values + nvi).* = INVALID_ID;
+        nvi = nvi + 1;
+    }
 
     b.var_storage = sb_var_storage;
     b.var_storage_used = 0;
     b.var_storage_cap = sb_var_storage_cap;
+
+    // CRITICAL: Reset var_storage for new function (stale entries cause crashes)
+    var vsi: i64 = 0;
+    while vsi < sb_var_storage_cap {
+        (sb_var_storage + vsi).* = INVALID_ID;
+        vsi = vsi + 1;
+    }
 
     // FwdRef pattern state
     b.fwd_vars = sb_fwd_vars;
@@ -346,6 +375,13 @@ fn SSABuilder_init(b: *SSABuilder, f: *Func) {
     // OPTIMIZATION: Sparse index for O(1) lookup
     b.fwd_vars_index = sb_fwd_vars_index;
     b.fwd_vars_index_cap = sb_fwd_vars_index_cap;
+
+    // CRITICAL: Reset fwd_vars_index for new function (stale entries cause crashes)
+    var fvi: i64 = 0;
+    while fvi < sb_fwd_vars_index_cap {
+        (sb_fwd_vars_index + fvi).* = INVALID_ID;
+        fvi = fvi + 1;
+    }
 
     // IR references (set later via SSABuilder_setIRNodes/Locals/Source)
     b.ir_nodes = null;
