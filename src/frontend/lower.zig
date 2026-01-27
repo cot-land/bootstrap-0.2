@@ -472,6 +472,21 @@ pub const Lowerer = struct {
             const value_expr = if (value_node_ast) |n| n.asExpr() else null;
             const is_struct_literal = if (value_expr) |e| e == .struct_init else false;
 
+            // Go-style: zero memory for `= undefined` regardless of type
+            // This prevents non-deterministic behavior from uninitialized stack memory
+            const is_undefined = if (value_expr) |e| switch (e) {
+                .literal => |lit| lit.kind == .undefined_lit,
+                else => false,
+            } else false;
+            if (is_undefined) {
+                const ptr_type = self.type_reg.makePointer(TypeRegistry.U8) catch TypeRegistry.VOID;
+                const local_addr = try fb.emitAddrLocal(local_idx, ptr_type, var_stmt.span);
+                const size_node = try fb.emitConstInt(@intCast(size), TypeRegistry.I64, var_stmt.span);
+                var args = [_]NodeIndex{ local_addr, size_node };
+                _ = try fb.emitCall("memset_zero", &args, false, TypeRegistry.VOID, var_stmt.span);
+                return;
+            }
+
             // Special handling for string type: store (ptr, len) pair
             if (type_idx == TypeRegistry.STRING) {
                 debug.log(.lower, "  -> string path", .{});
@@ -531,9 +546,19 @@ pub const Lowerer = struct {
                     _ = try fb.emitStoreIndexLocal(local_idx, idx_node, elem_node, elem_size, span);
                 }
             },
-            // undefined: Leave memory uninitialized (following Go/Zig semantics)
+            // undefined: Zero memory (Go-style) to prevent non-deterministic behavior
             .literal => |lit| {
-                if (lit.kind == .undefined_lit) return;
+                if (lit.kind == .undefined_lit) {
+                    // Get local's size and emit memset_zero call
+                    const local = fb.locals.items[local_idx];
+                    const type_size = self.type_reg.sizeOf(local.type_idx);
+                    const ptr_type = self.type_reg.makePointer(TypeRegistry.U8) catch TypeRegistry.VOID;
+                    const local_addr = try fb.emitAddrLocal(local_idx, ptr_type, span);
+                    const size_node = try fb.emitConstInt(@intCast(type_size), TypeRegistry.I64, span);
+                    var args = [_]NodeIndex{ local_addr, size_node };
+                    _ = try fb.emitCall("memset_zero", &args, false, TypeRegistry.VOID, span);
+                    return;
+                }
                 // Other literals fall through to default handling
                 const value_node_ir = try self.lowerExprNode(value_idx);
                 _ = try fb.emitStoreLocal(local_idx, value_node_ir, span);

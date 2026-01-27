@@ -1011,6 +1011,12 @@ fn printIntToFd(n: i64, fd: std.posix.fd_t) void {
     _ = std.posix.write(fd, buf[i + 1 .. 20]) catch {};
 }
 
+/// Memory utilities for Cot
+export fn memset_zero(ptr: [*]u8, size: i64) void {
+    const usize_size: usize = @intCast(size);
+    @memset(ptr[0..usize_size], 0);
+}
+
 /// Memory allocation wrappers for Cot
 /// These provide typed versions of malloc/realloc/free for use in Cot code
 

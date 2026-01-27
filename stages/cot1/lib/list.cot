@@ -4,13 +4,10 @@
 // - Functions take list pointer
 // - Growth via realloc when needed
 
-// Memory allocation functions
-// Each type that needs malloc should declare its own typed version
-// e.g., extern fn malloc_irnode(size: i64) *IRNode;
-// For now, use *i64 as the "generic" pointer type for i64 lists
-extern fn malloc(size: i64) *i64;
-extern fn realloc(ptr: *i64, size: i64) *i64;
-extern fn free(ptr: *i64);
+// Memory allocation functions that zero memory (prevents non-deterministic behavior)
+extern fn malloc_i64(count: i64) *i64;
+extern fn realloc_i64(ptr: *i64, old_count: i64, new_count: i64) *i64;
+extern fn free_i64(ptr: *i64);
 
 // ============================================================================
 // i64 List (for node indices, children, etc.)
@@ -30,7 +27,7 @@ fn i64list_init(list: *I64List) {
 
 fn i64list_deinit(list: *I64List) {
     if list.items != null {
-        free(list.items);
+        free_i64(list.items);
     }
     list.items = null;
     list.count = 0;
@@ -51,14 +48,11 @@ fn i64list_ensure_capacity(list: *I64List, needed: i64) {
         new_cap = new_cap * 2;
     }
 
-    // Each i64 is 8 bytes
-    let new_size: i64 = new_cap * 8;
-
-    // Allocate or reallocate
+    // Allocate or reallocate (using zeroing allocators)
     if list.items == null {
-        list.items = malloc(new_size);
+        list.items = malloc_i64(new_cap);
     } else {
-        list.items = realloc(list.items, new_size);
+        list.items = realloc_i64(list.items, list.capacity, new_cap);
     }
     list.capacity = new_cap;
 }

@@ -422,6 +422,18 @@ fn Import_adjustNodePositions(pool: *NodePool, start_idx: i64, end_idx: i64, off
         } else if node.kind == NodeKind.BuiltinCall {
             // field0 = name_start (source position after @)
             node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.ImplBlock {
+            // field0 = type_name_start (source position - needs adjustment!)
+            // field1 = type_name_len (not a position)
+            // field2 = methods_start (children index - not a position)
+            // field3 = methods_count (not a position)
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.ForStmt {
+            // field0 = binding_start (loop variable name - source position)
+            node.field0 = node.field0 + offset;
+        } else if node.kind == NodeKind.TypeAliasDecl {
+            // field0 = name_start (alias name - source position)
+            node.field0 = node.field0 + offset;
         }
 
         i = i + 1;
