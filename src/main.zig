@@ -12,6 +12,10 @@ pub const Driver = driver.Driver;
 // Debug infrastructure
 pub const pipeline_debug = @import("pipeline_debug.zig");
 
+// Target configuration
+pub const target = @import("core/target.zig");
+pub const Target = target.Target;
+
 // Core modules
 pub const core = struct {
     pub const types = @import("core/types.zig");
@@ -194,16 +198,36 @@ pub fn main() !void {
     _ = args.skip(); // Skip program name
 
     const input_file = args.next() orelse {
-        std.debug.print("Usage: cot <input.cot> [-o <output>]\n", .{});
+        std.debug.print("Usage: cot <input.cot> [-o <output>] [--target=<arch-os>]\n", .{});
+        std.debug.print("Targets: arm64-macos, amd64-linux\n", .{});
         return;
     };
 
-    // Parse output file option
+    // Parse command-line options
     var output_name: []const u8 = "a.out";
+    var compile_target: Target = Target.native();
+
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "-o")) {
             output_name = args.next() orelse {
                 std.debug.print("Error: -o requires an argument\n", .{});
+                return;
+            };
+        } else if (std.mem.startsWith(u8, arg, "--target=")) {
+            const target_str = arg[9..]; // Skip "--target="
+            compile_target = Target.parse(target_str) orelse {
+                std.debug.print("Error: Unknown target '{s}'\n", .{target_str});
+                std.debug.print("Supported targets: arm64-macos, amd64-linux\n", .{});
+                return;
+            };
+        } else if (std.mem.eql(u8, arg, "--target")) {
+            const target_str = args.next() orelse {
+                std.debug.print("Error: --target requires an argument\n", .{});
+                return;
+            };
+            compile_target = Target.parse(target_str) orelse {
+                std.debug.print("Error: Unknown target '{s}'\n", .{target_str});
+                std.debug.print("Supported targets: arm64-macos, amd64-linux\n", .{});
                 return;
             };
         }
@@ -212,9 +236,11 @@ pub fn main() !void {
     std.debug.print("Cot 0.2 Bootstrap Compiler\n", .{});
     std.debug.print("Input: {s}\n", .{input_file});
     std.debug.print("Output: {s}\n", .{output_name});
+    std.debug.print("Target: {s}\n", .{compile_target.name()});
 
     // Compile the file
     var compile_driver = Driver.init(allocator);
+    compile_driver.setTarget(compile_target);
     const obj_code = compile_driver.compileFile(input_file) catch |e| {
         std.debug.print("Compilation failed: {any}\n", .{e});
         return;
@@ -248,14 +274,38 @@ pub fn main() !void {
     // Build link command
     var link_args = std.ArrayListUnmanaged([]const u8){};
     defer link_args.deinit(allocator);
-    try link_args.appendSlice(allocator, &.{ "zig", "cc", "-o", output_name, obj_path });
+
+    // Cross-compilation: add target triple for zig cc
+    if (compile_target.arch != Target.native().arch or compile_target.os != Target.native().os) {
+        const target_triple: []const u8 = switch (compile_target.os) {
+            .linux => switch (compile_target.arch) {
+                .amd64 => "x86_64-linux-gnu",
+                .arm64 => "aarch64-linux-gnu",
+            },
+            .macos => switch (compile_target.arch) {
+                .arm64 => "aarch64-macos",
+                .amd64 => "x86_64-macos",
+            },
+        };
+        try link_args.appendSlice(allocator, &.{ "zig", "cc", "-target", target_triple, "-o", output_name, obj_path });
+    } else {
+        try link_args.appendSlice(allocator, &.{ "zig", "cc", "-o", output_name, obj_path });
+    }
+
     if (runtime_path) |rp| {
         try link_args.append(allocator, rp);
         std.debug.print("Auto-linking runtime: {s}\n", .{rp});
     }
-    // macOS: Set 256MB stack size to handle large compilation jobs
-    // Must come after object files, before -lSystem
-    try link_args.appendSlice(allocator, &.{ "-Wl,-stack_size,0x10000000", "-lSystem" });
+
+    // Platform-specific linker flags
+    if (compile_target.os == .macos) {
+        // macOS: Set 256MB stack size to handle large compilation jobs
+        // Must come after object files, before -lSystem
+        try link_args.appendSlice(allocator, &.{ "-Wl,-stack_size,0x10000000", "-lSystem" });
+    } else {
+        // Linux: Link with libc
+        try link_args.append(allocator, "-lc");
+    }
 
     var child = std.process.Child.init(link_args.items, allocator);
     const result = child.spawnAndWait() catch |e| {
@@ -289,6 +339,7 @@ test {
     _ = @import("core/types.zig");
     _ = @import("core/errors.zig");
     _ = @import("core/testing.zig");
+    _ = @import("core/target.zig");
 
     // SSA modules
     _ = @import("ssa/value.zig");
@@ -308,12 +359,18 @@ test {
     // Code generation
     _ = @import("codegen/generic.zig");
     _ = @import("codegen/arm64.zig");
+    _ = @import("codegen/amd64.zig");
 
     // ARM64 encoding
     _ = @import("arm64/asm.zig");
 
+    // AMD64 encoding
+    _ = @import("amd64/asm.zig");
+    _ = @import("amd64/regs.zig");
+
     // Object output
     _ = @import("obj/macho.zig");
+    _ = @import("obj/elf.zig");
 
     // Frontend modules
     _ = @import("frontend/token.zig");

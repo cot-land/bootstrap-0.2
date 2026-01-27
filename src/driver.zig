@@ -26,11 +26,16 @@ const source_mod = @import("frontend/source.zig");
 
 // Backend modules
 const arm64_codegen = @import("codegen/arm64.zig");
+const amd64_codegen = @import("codegen/amd64.zig");
 const regalloc_mod = @import("ssa/regalloc.zig");
 const stackalloc_mod = @import("ssa/stackalloc.zig");
 const expand_calls = @import("ssa/passes/expand_calls.zig");
 const decompose = @import("ssa/passes/decompose.zig");
 const schedule = @import("ssa/passes/schedule.zig");
+
+// Target configuration
+const target_mod = @import("core/target.zig");
+const Target = target_mod.Target;
 
 // Debug infrastructure
 const pipeline_debug = @import("pipeline_debug.zig");
@@ -58,12 +63,19 @@ const ParsedFile = struct {
 pub const Driver = struct {
     allocator: Allocator,
     debug: pipeline_debug.PipelineDebug,
+    target: Target = Target.native(),
 
     pub fn init(allocator: Allocator) Driver {
         return .{
             .allocator = allocator,
             .debug = pipeline_debug.PipelineDebug.init(allocator),
+            .target = Target.native(),
         };
+    }
+
+    /// Set the compilation target (architecture + OS).
+    pub fn setTarget(self: *Driver, t: Target) void {
+        self.target = t;
     }
 
     /// Compile source code to machine code bytes (single file, no imports).
@@ -373,6 +385,15 @@ pub const Driver = struct {
 
     /// Generate machine code for all IR functions.
     fn generateCode(self: *Driver, funcs: []const ir_mod.Func, globals: []const ir_mod.Global, type_reg: *types_mod.TypeRegistry, source_file: []const u8, source_text: []const u8) ![]u8 {
+        // Dispatch based on target architecture
+        if (self.target.arch == .amd64) {
+            return self.generateCodeAMD64(funcs, globals, type_reg, source_file, source_text);
+        }
+        return self.generateCodeARM64(funcs, globals, type_reg, source_file, source_text);
+    }
+
+    /// Generate ARM64 machine code.
+    fn generateCodeARM64(self: *Driver, funcs: []const ir_mod.Func, globals: []const ir_mod.Global, type_reg: *types_mod.TypeRegistry, source_file: []const u8, source_text: []const u8) ![]u8 {
         var codegen = arm64_codegen.ARM64CodeGen.init(self.allocator);
         defer codegen.deinit();
 
@@ -492,6 +513,113 @@ pub const Driver = struct {
         }
 
         // Phase 5: Finalize and return machine code
+        return try codegen.finalize();
+    }
+
+    /// Generate AMD64 machine code.
+    fn generateCodeAMD64(self: *Driver, funcs: []const ir_mod.Func, globals: []const ir_mod.Global, type_reg: *types_mod.TypeRegistry, source_file: []const u8, source_text: []const u8) ![]u8 {
+        var codegen = amd64_codegen.AMD64CodeGen.init(self.allocator);
+        defer codegen.deinit();
+
+        // Pass globals to codegen for data section emission
+        codegen.setGlobals(globals);
+
+        // Pass type registry for composite type sizing
+        codegen.setTypeRegistry(type_reg);
+
+        // Pass debug info
+        codegen.setDebugInfo(source_file, source_text);
+
+        for (funcs, 0..) |*ir_func, func_idx| {
+            debug.log(.ssa, "=== Processing function {} '{s}' (AMD64) ===", .{ func_idx, ir_func.name });
+
+            // Phase 4a: Convert IR to SSA
+            debug.log(.ssa, "Building SSA...", .{});
+            var ssa_builder = try ssa_builder_mod.SSABuilder.init(self.allocator, ir_func, type_reg);
+            errdefer ssa_builder.deinit();
+
+            const ssa_func = ssa_builder.build() catch |e| {
+                debug.log(.ssa, "SSA build failed: {}", .{e});
+                return e;
+            };
+
+            debug.log(.ssa, "SSA build complete: {} blocks", .{ssa_func.numBlocks()});
+            self.debug.afterSSA(ssa_func, "build");
+
+            // Phase 4a.5: Expand calls
+            debug.log(.ssa, "Running expand_calls...", .{});
+            expand_calls.expandCalls(ssa_func, type_reg) catch |e| {
+                debug.log(.ssa, "expand_calls failed: {}", .{e});
+                return e;
+            };
+            debug.log(.ssa, "expand_calls complete", .{});
+            self.debug.afterSSA(ssa_func, "expand_calls");
+
+            // Phase 4a.6: Decompose
+            debug.log(.ssa, "Running decompose...", .{});
+            decompose.decompose(ssa_func, type_reg) catch |e| {
+                debug.log(.ssa, "decompose failed: {}", .{e});
+                return e;
+            };
+            debug.log(.ssa, "decompose complete", .{});
+            self.debug.afterSSA(ssa_func, "decompose");
+
+            // Phase 4b: Schedule pass
+            debug.log(.schedule, "Starting schedule pass...", .{});
+            schedule.schedule(ssa_func) catch |e| {
+                debug.log(.schedule, "Schedule failed: {}", .{e});
+                ssa_func.deinit();
+                self.allocator.destroy(ssa_func);
+                ssa_builder.deinit();
+                return e;
+            };
+            debug.log(.schedule, "Schedule complete", .{});
+            self.debug.afterSSA(ssa_func, "schedule");
+
+            // Phase 4c: Register allocation
+            debug.log(.regalloc, "Starting register allocation...", .{});
+            var regalloc_state = regalloc_mod.regalloc(self.allocator, ssa_func) catch |e| {
+                debug.log(.regalloc, "Regalloc failed: {}", .{e});
+                ssa_func.deinit();
+                self.allocator.destroy(ssa_func);
+                ssa_builder.deinit();
+                return e;
+            };
+            defer regalloc_state.deinit();
+
+            debug.log(.regalloc, "Regalloc complete: {} spills", .{regalloc_state.num_spills});
+            self.debug.afterSSA(ssa_func, "regalloc");
+
+            // Phase 4b.5: Stack allocation
+            const stack_result = stackalloc_mod.stackalloc(ssa_func, regalloc_state.getSpillLive()) catch |e| {
+                debug.log(.regalloc, "Stackalloc failed: {}", .{e});
+                ssa_func.deinit();
+                self.allocator.destroy(ssa_func);
+                ssa_builder.deinit();
+                return e;
+            };
+            debug.log(.regalloc, "Stackalloc complete: frame_size={} bytes", .{stack_result.frame_size});
+
+            // Phase 4c: Code generation (AMD64)
+            debug.log(.codegen, "Generating AMD64 machine code for '{s}'...", .{ir_func.name});
+            codegen.setRegAllocState(&regalloc_state);
+            codegen.setFrameSize(stack_result.frame_size);
+            codegen.generateBinary(ssa_func, ir_func.name) catch |e| {
+                debug.log(.codegen, "AMD64 Codegen failed: {}", .{e});
+                ssa_func.deinit();
+                self.allocator.destroy(ssa_func);
+                ssa_builder.deinit();
+                return e;
+            };
+            debug.log(.codegen, "AMD64 Codegen complete for '{s}'", .{ir_func.name});
+
+            // Clean up SSA func
+            ssa_func.deinit();
+            self.allocator.destroy(ssa_func);
+            ssa_builder.deinit();
+        }
+
+        // Phase 5: Finalize and return machine code (ELF format)
         return try codegen.finalize();
     }
 
