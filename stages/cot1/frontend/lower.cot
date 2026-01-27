@@ -1425,6 +1425,12 @@ fn Lowerer_lowerStmt(l: *Lowerer, node: *Node) {
         // Track defer depth for block scope
         let defer_depth: i64 = l.defer_stack_count;
 
+        // Enter new scope for variable shadowing
+        let fb: *FuncBuilder = l.current_func;
+        if fb != null {
+            FuncBuilder_enterScope(fb);
+        }
+
         // Process block statements
         let stmts_start: i64 = node.field0;
         let stmts_count: i64 = node.field1;
@@ -1441,6 +1447,11 @@ fn Lowerer_lowerStmt(l: *Lowerer, node: *Node) {
 
         // Emit block-scoped defers on normal exit
         Lowerer_emitDeferredExprs(l, defer_depth);
+
+        // Exit scope for variable shadowing
+        if fb != null {
+            FuncBuilder_exitScope(fb);
+        }
     }
 }
 
@@ -2665,20 +2676,24 @@ fn Lowerer_lowerIdent(l: *Lowerer, node: *Node) i64 {
         return FuncBuilder_emitConstInt(fb, const_value);
     }
 
-    // Look up local variable by name - compare actual source content
-    var i: i64 = 0;
-    while i < fb.locals_count {
+    // Look up local variable by name - iterate BACKWARD for proper shadowing
+    // Only consider locals whose scope_depth <= current scope
+    var i: i64 = fb.locals_count - 1;
+    while i >= 0 {
         let local: *IRLocal = fb.locals + i;
-        if names_equal(l.source, local.name_start, local.name_len, node.field0, node.field1) {
-            let local_type: i64 = local.type_idx;
-            // Arrays are passed by reference - emit address instead of load
-            // Following src/frontend/lower.zig:1438-1442
-            if TypeInfo_isArray(l.type_pool, local_type) {
-                return FuncBuilder_emitAddrLocal(fb, i, local_type);
+        // Skip locals from inner scopes that are no longer active
+        if local.scope_depth <= fb.current_scope {
+            if names_equal(l.source, local.name_start, local.name_len, node.field0, node.field1) {
+                let local_type: i64 = local.type_idx;
+                // Arrays are passed by reference - emit address instead of load
+                // Following src/frontend/lower.zig:1438-1442
+                if TypeInfo_isArray(l.type_pool, local_type) {
+                    return FuncBuilder_emitAddrLocal(fb, i, local_type);
+                }
+                return FuncBuilder_emitLoadLocal(fb, i);
             }
-            return FuncBuilder_emitLoadLocal(fb, i);
         }
-        i = i + 1;
+        i = i - 1;
     }
 
     // Check for global variable
@@ -2881,6 +2896,13 @@ fn Lowerer_lowerBinary(l: *Lowerer, node: *Node) i64 {
         return Lowerer_lowerStrConcat(l, left_node, right_node);
     }
 
+    // Short-circuit evaluation for logical and/or
+    // AST BinaryOp: And=11, Or=12
+    // Must generate control flow to avoid evaluating right when unnecessary
+    if ast_op == 11 or ast_op == 12 {
+        return Lowerer_lowerLogicalBinary(l, left_node, right_node, ast_op);
+    }
+
     // BUG-049 FIX: If right operand is a call, the left operand must be spilled
     // to stack before the call and loaded after. This is because function calls
     // clobber caller-saved registers (X0-X18), so any value in those registers
@@ -2935,6 +2957,60 @@ fn Lowerer_lowerBinary(l: *Lowerer, node: *Node) i64 {
     }
 
     return FuncBuilder_emitBinary(fb, ir_op, final_left_idx, right_idx, result_type);
+}
+
+// Short-circuit evaluation for logical and/or operators
+// Following Zig pattern: src/frontend/ssa_builder.zig:2117-2207
+// For `a and b`: if a is false, result is false (don't evaluate b)
+// For `a or b`: if a is true, result is true (don't evaluate b)
+fn Lowerer_lowerLogicalBinary(l: *Lowerer, left_node: *Node, right_node: *Node, ast_op: i64) i64 {
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return NULL_NODE; }
+
+    let is_and: bool = ast_op == 11;  // And=11, Or=12
+
+    // Step 1: Lower left operand
+    let left_idx: i64 = Lowerer_lowerExpr(l, left_node);
+
+    // Step 2: Create blocks for control flow
+    let eval_right_block: i64 = FuncBuilder_newBlock(fb);
+    let short_circuit_block: i64 = FuncBuilder_newBlock(fb);
+    let merge_block: i64 = FuncBuilder_newBlock(fb);
+
+    // Step 3: Create temp local to store result (survives across blocks)
+    let result_local: i64 = FuncBuilder_addLocal(fb, 0, 0, TYPE_BOOL, true);
+
+    // Step 4: Emit conditional branch based on left value
+    if is_and {
+        // For AND: if left is true, evaluate right; if false, short-circuit to false
+        FuncBuilder_emitBranch(fb, left_idx, eval_right_block, short_circuit_block);
+    } else {
+        // For OR: if left is true, short-circuit to true; if false, evaluate right
+        FuncBuilder_emitBranch(fb, left_idx, short_circuit_block, eval_right_block);
+    }
+
+    // Step 5: eval_right block - evaluate right operand
+    FuncBuilder_setBlock(fb, eval_right_block);
+    let right_idx: i64 = Lowerer_lowerExpr(l, right_node);
+    FuncBuilder_emitStoreLocal(fb, result_local, right_idx);
+    FuncBuilder_emitJump(fb, merge_block);
+
+    // Step 6: short_circuit block - use constant value
+    FuncBuilder_setBlock(fb, short_circuit_block);
+    var short_val: i64 = 0;
+    if is_and {
+        short_val = FuncBuilder_emitConstBool(fb, false);  // AND short-circuits to false
+    } else {
+        short_val = FuncBuilder_emitConstBool(fb, true);   // OR short-circuits to true
+    }
+    FuncBuilder_emitStoreLocal(fb, result_local, short_val);
+    FuncBuilder_emitJump(fb, merge_block);
+
+    // Step 7: merge block - load result from temp local
+    FuncBuilder_setBlock(fb, merge_block);
+    let result_idx: i64 = FuncBuilder_emitLoadLocal(fb, result_local);
+
+    return result_idx;
 }
 
 // String concatenation: s1 + s2 -> StringConcat(ptr1, len1, ptr2, len2)
@@ -3584,27 +3660,9 @@ fn Lowerer_lowerDeref(l: *Lowerer, node: *Node) i64 {
     let operand_node: *Node = l.nodes + node.field0;
     let ptr_idx: i64 = Lowerer_lowerExpr(l, operand_node);
 
-    // Try to determine the pointee type from the pointer expression
-    // Default to TYPE_I64 if we can't determine it
-    var result_type: i64 = TYPE_I64;
-
-    // If operand is an identifier, look up its type and get pointee type
-    if operand_node.kind == NodeKind.Ident {
-        var i: i64 = 0;
-        while i < fb.locals_count {
-            let local: *IRLocal = fb.locals + i;
-            if names_equal(l.source, local.name_start, local.name_len,
-                          operand_node.field0, operand_node.field1) {
-                // Found the local - get its type
-                let ptr_type: *Type = TypeRegistry_get(l.type_pool, local.type_idx);
-                if ptr_type.kind == TypeKind.Pointer {
-                    // Use the pointee type for the load
-                    result_type = ptr_type.elem;
-                }
-            }
-            i = i + 1;
-        }
-    }
+    // Use Lowerer_inferExprType to get the pointee type
+    // This handles all cases: simple identifiers, pointer arithmetic, etc.
+    let result_type: i64 = Lowerer_inferExprType(l, node);
 
     // Emit load from pointer with the correct pointee type
     return FuncBuilder_emitLoad(fb, ptr_idx, result_type);

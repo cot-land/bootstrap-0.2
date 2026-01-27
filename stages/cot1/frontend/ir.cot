@@ -354,9 +354,10 @@ struct IRLocal {
     offset: i64,          // Stack frame offset
     struct_type_start: i64,  // Struct type name offset (-1 if not struct)
     struct_type_len: i64,    // Struct type name length
+    scope_depth: i64,     // Scope depth at declaration (for variable shadowing)
 }
 
-fn IRLocal_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) IRLocal {
+fn IRLocal_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool, scope_depth: i64) IRLocal {
     return IRLocal{
         .name_start = name_start,
         .name_len = name_len,
@@ -368,6 +369,7 @@ fn IRLocal_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) 
         .offset = 0,
         .struct_type_start = -1,
         .struct_type_len = 0,
+        .scope_depth = scope_depth,
     };
 }
 
@@ -383,6 +385,7 @@ fn IRLocal_newParam(name_start: i64, name_len: i64, type_idx: i64, param_idx: i6
         .offset = 0,
         .struct_type_start = -1,
         .struct_type_len = 0,
+        .scope_depth = 0,  // Parameters are always at function scope
     };
 }
 
@@ -474,6 +477,9 @@ struct FuncBuilder {
 
     // Position tracking for debug info
     current_pos: i64,         // Source position to tag emitted nodes with
+
+    // Scope tracking for variable shadowing
+    current_scope: i64,       // Current scope depth (0 = function scope)
 }
 
 fn FuncBuilder_init(fb: *FuncBuilder, name_start: i64, name_len: i64, return_type: i64,
@@ -491,6 +497,7 @@ fn FuncBuilder_init(fb: *FuncBuilder, name_start: i64, name_len: i64, return_typ
     fb.current_block = 0;
     fb.next_block_id = 1;  // Block 0 is the entry block
     fb.current_pos = 0;
+    fb.current_scope = 0;  // Function scope
 }
 
 // Set the current source position for subsequent emits
@@ -510,6 +517,18 @@ fn FuncBuilder_setBlock(fb: *FuncBuilder, block_id: i64) {
     fb.current_block = block_id;
 }
 
+// Enter a new scope (increment scope depth)
+fn FuncBuilder_enterScope(fb: *FuncBuilder) {
+    fb.current_scope = fb.current_scope + 1;
+}
+
+// Exit current scope (decrement scope depth)
+fn FuncBuilder_exitScope(fb: *FuncBuilder) {
+    if fb.current_scope > 0 {
+        fb.current_scope = fb.current_scope - 1;
+    }
+}
+
 fn FuncBuilder_addLocal(fb: *FuncBuilder, name_start: i64, name_len: i64,
                           type_idx: i64, is_mutable: bool) i64 {
     if fb.locals_count >= fb.locals_cap {
@@ -517,7 +536,7 @@ fn FuncBuilder_addLocal(fb: *FuncBuilder, name_start: i64, name_len: i64,
     }
     let idx: i64 = fb.locals_count;
     let ptr: *IRLocal = fb.locals + idx;
-    ptr.* = IRLocal_new(name_start, name_len, type_idx, is_mutable);
+    ptr.* = IRLocal_new(name_start, name_len, type_idx, is_mutable, fb.current_scope);
     fb.locals_count = fb.locals_count + 1;
     return idx;
 }
