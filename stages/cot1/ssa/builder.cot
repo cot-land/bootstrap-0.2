@@ -463,7 +463,7 @@ impl SSABuilder {
     }
 
     fn newBlock(self: *SSABuilder, kind: BlockKind) i64 {
-        let block_id: i64 = self.func.newBlock( kind);
+        let block_id: i64 = self.func.newBlock(kind);
         self.setBlock(block_id);
         return block_id;
     }
@@ -478,7 +478,7 @@ impl SSABuilder {
         self.fwd_vars_count = 0;
     
         self.current_block = block_id;
-        self.func.setBlock( block_id);
+        self.func.setBlock(block_id);
     
         // Grow all_defs if block_id is beyond capacity
         // This ensures we can use direct indexing: all_defs[block_id]
@@ -653,17 +653,17 @@ impl SSABuilder {
         // 1. Check current block's definitions
         let val_id: i64 = self.getVar(local_idx);
         if val_id != INVALID_ID {
-            return self.func.getValue( val_id);
+            return self.func.getValue(val_id);
         }
     
         // 2. Check if we already created a FwdRef for this
         let fwd_id: i64 = self.getFwdVar(local_idx);
         if fwd_id != INVALID_ID {
-            return self.func.getValue( fwd_id);
+            return self.func.getValue(fwd_id);
         }
     
         // 3. Create forward reference - will be resolved later by insertPhis
-        let fwd_ref: *Value = self.func.newValue( Op.FwdRef, type_idx);
+        let fwd_ref: *Value = self.func.newValue(Op.FwdRef, type_idx);
         fwd_ref.aux_int = local_idx;  // Remember which variable
     
         // 4. Cache to coalesce multiple uses in same block
@@ -699,12 +699,12 @@ impl SSABuilder {
             }
     
             // Get block to check predecessors
-            let blk: *Block = self.func.getBlock( cur_id);
+            let blk: *Block = self.func.getBlock(cur_id);
             if blk == null { break; }
     
             // Single predecessor? Keep walking back
             if blk.preds.count == 1 {
-                cur_id = blk.getPred( 0);
+                cur_id = blk.getPred(0);
                 continue;
             }
     
@@ -716,10 +716,10 @@ impl SSABuilder {
         // This matches Zig: self.func.newValue(.fwd_ref, type_idx, cur, self.cur_pos)
         // Temporarily switch to cur_id block to create value there
         let saved_block: i64 = self.func.current_block;
-        self.func.setBlock( cur_id);
-        let new_fwd: *Value = self.func.newValue( Op.FwdRef, type_idx);
+        self.func.setBlock(cur_id);
+        let new_fwd: *Value = self.func.newValue(Op.FwdRef, type_idx);
         new_fwd.aux_int = local_idx;
-        self.func.setBlock( saved_block);  // Restore
+        self.func.setBlock(saved_block);  // Restore
     
         // Store in defvars so we don't create duplicate
         self.ensureDefvar(cur_id, local_idx, new_fwd.id);
@@ -733,13 +733,13 @@ impl SSABuilder {
     fn reorderPhis(self: *SSABuilder) {
         var block_idx: i64 = 0;
         while block_idx < self.func.blocks_count {
-            let blk: *Block = self.func.getBlock( block_idx);
+            let blk: *Block = self.func.getBlock(block_idx);
     
             // Count phis and non-phis
             var phi_count: i64 = 0;
             var i: i64 = 0;
             while i < blk.values_count {
-                let v: *Value = self.func.getValue( blk.values_start + i);
+                let v: *Value = self.func.getValue(blk.values_start + i);
                 if v.op == Op.Phi {
                     phi_count = phi_count + 1;
                 }
@@ -759,7 +759,7 @@ impl SSABuilder {
             // First pass: collect phis
             i = 0;
             while i < blk.values_count {
-                let v: *Value = self.func.getValue( blk.values_start + i);
+                let v: *Value = self.func.getValue(blk.values_start + i);
                 if v.op == Op.Phi {
                     i64list_append(&temp_ids, blk.values_start + i);
                 }
@@ -769,7 +769,7 @@ impl SSABuilder {
             // Second pass: collect non-phis
             i = 0;
             while i < blk.values_count {
-                let v: *Value = self.func.getValue( blk.values_start + i);
+                let v: *Value = self.func.getValue(blk.values_start + i);
                 if v.op != Op.Phi {
                     i64list_append(&temp_ids, blk.values_start + i);
                 }
@@ -793,11 +793,11 @@ impl SSABuilder {
         // Collect initial FwdRef values and treat them as definitions
         var block_idx: i64 = 0;
         while block_idx < self.func.blocks_count {
-            let blk: *Block = self.func.getBlock( block_idx);
+            let blk: *Block = self.func.getBlock(block_idx);
             var i: i64 = 0;
             while i < blk.values_count {
                 let val_id: i64 = blk.values_start + i;
-                let v: *Value = self.func.getValue( val_id);
+                let v: *Value = self.func.getValue(val_id);
                 if v.op == Op.FwdRef {
                     // Add to work list
                     i64list_append(&fwd_refs, val_id);
@@ -833,14 +833,14 @@ impl SSABuilder {
     
             // Pop from work list
             let fwd_id: i64 = i64list_pop(&fwd_refs);
-            let fwd: *Value = self.func.getValue( fwd_id);
+            let fwd: *Value = self.func.getValue(fwd_id);
     
             // Get block directly from Value's block_id field (O(1) instead of O(n*m) search)
             // This matches Zig: const block = fwd.block orelse continue;
             let fwd_block_id: i64 = fwd.block_id;
             if fwd_block_id < 0 { continue; }
     
-            let blk: *Block = self.func.getBlock( fwd_block_id);
+            let blk: *Block = self.func.getBlock(fwd_block_id);
     
             // Entry block should never have FwdRef (variable used before defined)
             if fwd_block_id == 0 {
@@ -858,7 +858,7 @@ impl SSABuilder {
             i64list_clear(&args);
             var pred_idx: i64 = 0;
             while pred_idx < blk.preds.count {
-                let pred_block_id: i64 = blk.getPred( pred_idx);
+                let pred_block_id: i64 = blk.getPred(pred_idx);
                 let val_id: i64 = self.lookupVarOutgoing(pred_block_id, local_idx, fwd.type_idx,
                                                                &fwd_refs);
                 i64list_append(&args, val_id);
@@ -891,15 +891,15 @@ impl SSABuilder {
                 fwd.op = Op.Phi;
                 ai = 0;
                 while ai < args.count {
-                    let arg_val: *Value = self.func.getValue( i64list_get(&args, ai));
-                    fwd.addArg( arg_val);
+                    let arg_val: *Value = self.func.getValue(i64list_get(&args, ai));
+                    fwd.addArg(arg_val);
                     ai = ai + 1;
                 }
             } else if witness != INVALID_ID {
                 // One witness (excluding self). Make it a copy.
                 fwd.op = Op.Copy;
-                let witness_val: *Value = self.func.getValue( witness);
-                fwd.addArg( witness_val);
+                let witness_val: *Value = self.func.getValue(witness);
+                fwd.addArg(witness_val);
             }
             // If no witness at all (all self-references), leave as FwdRef
             // This is an error but will be caught later
@@ -930,42 +930,42 @@ impl SSABuilder {
     }
 
     fn emitConstInt(self: *SSABuilder, value: i64, type_idx: i64) *Value {
-        return self.func.emitConstInt( value, type_idx);
+        return self.func.emitConstInt(value, type_idx);
     }
 
     fn emitConstBool(self: *SSABuilder, value: bool) *Value {
-        return self.func.emitConstBool( value);
+        return self.func.emitConstBool(value);
     }
 
     fn emitBinary(self: *SSABuilder, op: Op, left: *Value, right: *Value, type_idx: i64) *Value {
-        return self.func.emitBinary( op, left, right, type_idx);
+        return self.func.emitBinary(op, left, right, type_idx);
     }
 
     fn emitUnary(self: *SSABuilder, op: Op, operand: *Value, type_idx: i64) *Value {
-        return self.func.emitUnary( op, operand, type_idx);
+        return self.func.emitUnary(op, operand, type_idx);
     }
 
     fn emitLoadLocal(self: *SSABuilder, local_idx: i64) *Value {
-        return self.func.emitLoadLocal( local_idx);
+        return self.func.emitLoadLocal(local_idx);
     }
 
     fn emitStoreLocal(self: *SSABuilder, local_idx: i64, val: *Value) *Value {
-        return self.func.emitStoreLocal( local_idx, val);
+        return self.func.emitStoreLocal(local_idx, val);
     }
 
     fn emitReturn(self: *SSABuilder, val: *Value) *Value {
-        return self.func.emitReturn( val);
+        return self.func.emitReturn(val);
     }
 
     fn emitAlloca(self: *SSABuilder, size: i64, align: i64, type_idx: i64) *Value {
         // In cot0, we use LocalAddr to get address of a local variable
         // Add a new local to the function and return its address
-        let local_idx: i64 = self.func.addLocal( 0, 0, type_idx, true);
-        let local: *Local = self.func.getLocal( local_idx);
+        let local_idx: i64 = self.func.addLocal(0, 0, type_idx, true);
+        let local: *Local = self.func.getLocal(local_idx);
         local.size = size;
         local.align = align;
     
-        let addr: *Value = self.func.newValue( Op.LocalAddr, type_idx);
+        let addr: *Value = self.func.newValue(Op.LocalAddr, type_idx);
         addr.aux_int = local_idx;
         return addr;
     }
@@ -996,7 +996,7 @@ impl SSABuilder {
                     op = Op.ZeroExt32to64;
                 }
             }
-            return self.func.emitUnary( op, val, dst_type);
+            return self.func.emitUnary(op, val, dst_type);
         }
     
         // Truncation (larger to smaller)
@@ -1008,15 +1008,15 @@ impl SSABuilder {
         } else if dst_size == 4 {
             op = Op.Trunc64to32;
         }
-        return self.func.emitUnary( op, val, dst_type);
+        return self.func.emitUnary(op, val, dst_type);
     }
 
     fn emitIf(self: *SSABuilder, cond: *Value, then_block: i64, else_block: i64) {
-        self.func.emitIf( cond, then_block, else_block);
+        self.func.emitIf(cond, then_block, else_block);
     }
 
     fn emitJump(self: *SSABuilder, target: i64) {
-        self.func.emitJump( target);
+        self.func.emitJump(target);
     }
 
     fn emitReturn_block(self: *SSABuilder) {
@@ -1024,14 +1024,14 @@ impl SSABuilder {
     }
 
     fn emitPhi(self: *SSABuilder, type_idx: i64) *Value {
-        let v: *Value = self.func.newValue( Op.Phi, type_idx);
+        let v: *Value = self.func.newValue(Op.Phi, type_idx);
         return v;
     }
 
     fn phiAddArg(self: *SSABuilder, phi: *Value, val: *Value, pred_block: i64) {
         // For simplicity, store args directly
         // In full implementation, args are ordered by predecessor
-        phi.addArg( val);
+        phi.addArg(val);
     }
 
     fn build(self: *SSABuilder) i64 {
@@ -1059,7 +1059,7 @@ impl SSABuilder {
         // Create additional blocks (1 through max_block_id)
         var block_idx: i64 = 1;
         while block_idx <= max_block_id {
-            let new_block: i64 = self.func.newBlock( BlockKind.Plain);
+            let new_block: i64 = self.func.newBlock(BlockKind.Plain);
             self.mapBlock(block_idx, new_block);
             block_idx = block_idx + 1;
         }
@@ -1074,14 +1074,14 @@ impl SSABuilder {
         while local_idx < locals_end {
             let ir_local: *IRLocal = self.ir_locals + local_idx;
             if ir_local.is_param {
-                self.func.addParam( ir_local.name_start, ir_local.name_len,
+                self.func.addParam(ir_local.name_start, ir_local.name_len,
                               ir_local.type_idx);
             } else {
-                self.func.addLocal( ir_local.name_start, ir_local.name_len,
+                self.func.addLocal(ir_local.name_start, ir_local.name_len,
                               ir_local.type_idx, ir_local.is_mutable);
             }
             // Copy size from IR local to SSA local
-            let ssa_local: *Local = self.func.getLocal( ssa_local_idx);
+            let ssa_local: *Local = self.func.getLocal(ssa_local_idx);
             ssa_local.size = ir_local.size;
             local_idx = local_idx + 1;
             ssa_local_idx = ssa_local_idx + 1;
@@ -1111,7 +1111,7 @@ impl SSABuilder {
         var phys_reg_idx: i64 = 0;
         var param_local_idx: i64 = 0;
         while param_local_idx < self.func.locals_count {
-            let param_local: *Local = self.func.getLocal( param_local_idx);
+            let param_local: *Local = self.func.getLocal(param_local_idx);
             if param_local.is_param {
                 // Check if this is a string parameter (needs 2 registers: ptr, len)
                 let is_string_param: bool = param_local.type_idx == TYPE_STRING;
@@ -1123,7 +1123,7 @@ impl SSABuilder {
                     // CRITICAL: Use IDs, not pointers - Func_newValue can realloc!
     
                     // Arg for ptr
-                    let ptr_arg_val: *Value = self.func.newValue( Op.Arg, TYPE_I64);
+                    let ptr_arg_val: *Value = self.func.newValue(Op.Arg, TYPE_I64);
                     let ptr_arg_id: i64 = ptr_arg_val.id;  // Save ID before potential realloc
                     ptr_arg_val.aux_int = phys_reg_idx;
                     if phys_reg_idx < 8 {
@@ -1132,7 +1132,7 @@ impl SSABuilder {
                     phys_reg_idx = phys_reg_idx + 1;
     
                     // Arg for len
-                    let len_arg_val: *Value = self.func.newValue( Op.Arg, TYPE_I64);
+                    let len_arg_val: *Value = self.func.newValue(Op.Arg, TYPE_I64);
                     let len_arg_id: i64 = len_arg_val.id;  // Save ID before potential realloc
                     len_arg_val.aux_int = phys_reg_idx;
                     if phys_reg_idx < 8 {
@@ -1142,11 +1142,11 @@ impl SSABuilder {
     
                     // Create StringMake to combine ptr and len
                     // Re-fetch pointers since Func_newValue may have reallocated
-                    let str_make_val: *Value = self.func.newValue( Op.StringMake, TYPE_STRING);
-                    let fresh_ptr_val: *Value = self.func.getValue( ptr_arg_id);
-                    let fresh_len_val: *Value = self.func.getValue( len_arg_id);
-                    str_make_val.addArg( fresh_ptr_val);
-                    str_make_val.addArg( fresh_len_val);
+                    let str_make_val: *Value = self.func.newValue(Op.StringMake, TYPE_STRING);
+                    let fresh_ptr_val: *Value = self.func.getValue(ptr_arg_id);
+                    let fresh_len_val: *Value = self.func.getValue(len_arg_id);
+                    str_make_val.addArg(fresh_ptr_val);
+                    str_make_val.addArg(fresh_len_val);
     
                     // Save StringMake result for Phase 3 (not the raw Arg)
                     i64list_append(&arg_value_ids, str_make_val.id);
@@ -1154,7 +1154,7 @@ impl SSABuilder {
                 } else {
                     // Non-string param: create single Arg op
                     // ARM64 ABI: x0-x7 for first 8 args, stack for rest
-                    let arg_val: *Value = self.func.newValue( Op.Arg, TYPE_I64);
+                    let arg_val: *Value = self.func.newValue(Op.Arg, TYPE_I64);
                     arg_val.aux_int = phys_reg_idx;  // Physical register index, not logical param index
                     if phys_reg_idx < 8 {
                         // Register argument - pre-assign to X0-X7
@@ -1181,44 +1181,44 @@ impl SSABuilder {
             // CRITICAL: Use IDs throughout to avoid stale pointers after realloc
             let arg_val_id: i64 = i64list_get(&arg_value_ids, i);
             let local_idx: i64 = i64list_get(&arg_local_indices, i);
-            let param_local: *Local = self.func.getLocal( local_idx);
+            let param_local: *Local = self.func.getLocal(local_idx);
     
             // Create LocalAddr value for the stack slot
-            let addr_val: *Value = self.func.newValue( Op.LocalAddr, TYPE_I64);
+            let addr_val: *Value = self.func.newValue(Op.LocalAddr, TYPE_I64);
             let addr_val_id: i64 = addr_val.id;  // Save ID
             addr_val.aux_int = local_idx;
     
             // Re-fetch arg_val after potential realloc
-            let arg_val: *Value = self.func.getValue( arg_val_id);
+            let arg_val: *Value = self.func.getValue(arg_val_id);
     
             // Handle string params specially: store both ptr and len components
             if arg_val.op == Op.StringMake and arg_val.args.count >= 2 {
                 // String param: store ptr at offset 0, len at offset 8
                 // Get the arg IDs from the StringMake value
-                let ptr_val_id: i64 = arg_val.getArg( 0);
-                let len_val_id: i64 = arg_val.getArg( 1);
+                let ptr_val_id: i64 = arg_val.getArg(0);
+                let len_val_id: i64 = arg_val.getArg(1);
     
                 // Store ptr to base address
-                let store_ptr: *Value = self.func.newValue( Op.Store, TYPE_VOID);
+                let store_ptr: *Value = self.func.newValue(Op.Store, TYPE_VOID);
                 // Re-fetch all needed values after Func_newValue
-                let fresh_addr: *Value = self.func.getValue( addr_val_id);
-                let fresh_ptr: *Value = self.func.getValue( ptr_val_id);
-                store_ptr.addArg2( fresh_addr, fresh_ptr);
+                let fresh_addr: *Value = self.func.getValue(addr_val_id);
+                let fresh_ptr: *Value = self.func.getValue(ptr_val_id);
+                store_ptr.addArg2(fresh_addr, fresh_ptr);
     
                 // Create addr + 8 for len using OffPtr (offset pointer)
-                let addr_plus_8: *Value = self.func.newValue( Op.OffPtr, TYPE_I64);
+                let addr_plus_8: *Value = self.func.newValue(Op.OffPtr, TYPE_I64);
                 let addr_plus_8_id: i64 = addr_plus_8.id;
                 addr_plus_8.aux_int = 8;  // offset
                 // Re-fetch addr after potential realloc
-                let fresh_addr2: *Value = self.func.getValue( addr_val_id);
-                addr_plus_8.addArg( fresh_addr2);  // base pointer
+                let fresh_addr2: *Value = self.func.getValue(addr_val_id);
+                addr_plus_8.addArg(fresh_addr2);  // base pointer
     
                 // Store len at offset 8
-                let store_len: *Value = self.func.newValue( Op.Store, TYPE_VOID);
+                let store_len: *Value = self.func.newValue(Op.Store, TYPE_VOID);
                 // Re-fetch values after Func_newValue
-                let fresh_addr_plus_8: *Value = self.func.getValue( addr_plus_8_id);
-                let fresh_len: *Value = self.func.getValue( len_val_id);
-                store_len.addArg2( fresh_addr_plus_8, fresh_len);
+                let fresh_addr_plus_8: *Value = self.func.getValue(addr_plus_8_id);
+                let fresh_len: *Value = self.func.getValue(len_val_id);
+                store_len.addArg2(fresh_addr_plus_8, fresh_len);
             } else {
                 // BUG-019 FIX: >16B struct types are passed by reference
                 // Following Zig ssa_builder.zig lines 222-238
@@ -1226,7 +1226,7 @@ impl SSABuilder {
                 var is_large_struct: bool = false;
                 var type_size: i64 = 8;
                 if self.type_registry != null {
-                    type_size = self.type_registry.sizeof( param_local.type_idx);
+                    type_size = self.type_registry.sizeof(param_local.type_idx);
                     let is_struct: bool = TypeInfo_isStruct(self.type_registry, param_local.type_idx);
                     if is_struct and type_size > 16 {
                         is_large_struct = true;
@@ -1235,19 +1235,19 @@ impl SSABuilder {
     
                 if is_large_struct {
                     // OpMove: copy from arg_val (source ptr) to addr_val (dest)
-                    let move_val: *Value = self.func.newValue( Op.Move, TYPE_VOID);
+                    let move_val: *Value = self.func.newValue(Op.Move, TYPE_VOID);
                     move_val.aux_int = type_size;
                     // Re-fetch values after Func_newValue
-                    let fresh_addr: *Value = self.func.getValue( addr_val_id);
-                    let fresh_arg: *Value = self.func.getValue( arg_val_id);
-                    move_val.addArg2( fresh_addr, fresh_arg);
+                    let fresh_addr: *Value = self.func.getValue(addr_val_id);
+                    let fresh_arg: *Value = self.func.getValue(arg_val_id);
+                    move_val.addArg2(fresh_addr, fresh_arg);
                 } else {
                     // Store Arg to stack slot
-                    let store_val: *Value = self.func.newValue( Op.Store, TYPE_VOID);
+                    let store_val: *Value = self.func.newValue(Op.Store, TYPE_VOID);
                     // Re-fetch values after Func_newValue
-                    let fresh_addr: *Value = self.func.getValue( addr_val_id);
-                    let fresh_arg: *Value = self.func.getValue( arg_val_id);
-                    store_val.addArg2( fresh_addr, fresh_arg);
+                    let fresh_addr: *Value = self.func.getValue(addr_val_id);
+                    let fresh_arg: *Value = self.func.getValue(arg_val_id);
+                    store_val.addArg2(fresh_addr, fresh_arg);
                 }
             }
     
@@ -1396,7 +1396,7 @@ impl SSABuilder {
         if result_id != INVALID_ID {
             self.cacheNode(ir_idx, result_id);
             // Copy source position from IR node to SSA value for DWARF line tables
-            let result_val: *Value = self.func.getValue( result_id);
+            let result_val: *Value = self.func.getValue(result_id);
             result_val.pos = ir_node.pos;
         }
     
@@ -1404,30 +1404,30 @@ impl SSABuilder {
     }
 
     fn getValue(self: *SSABuilder, value_id: i64) *Value {
-        return self.func.getValue( value_id);
+        return self.func.getValue(value_id);
     }
 
     fn getOperandValue(self: *SSABuilder, relative_ir_idx: i64) *Value {
         let abs_idx: i64 = self.ir_nodes_start + relative_ir_idx;
         let value_id: i64 = self.getCached(abs_idx);
-        return self.func.getValue( value_id);
+        return self.func.getValue(value_id);
     }
 
     fn convertConstInt(self: *SSABuilder, ir_node: *IRNode) i64 {
-        let val: *Value = self.func.emitConstInt( ir_node.value, TYPE_I64);
+        let val: *Value = self.func.emitConstInt(ir_node.value, TYPE_I64);
         self.assignReg(val);
         return val.id;
     }
 
     fn convertConstString(self: *SSABuilder, ir_node: *IRNode) i64 {
         // String literal: left=str_start, right=str_len in source
-        let val: *Value = self.func.emitConstString( ir_node.left, ir_node.right);
+        let val: *Value = self.func.emitConstString(ir_node.left, ir_node.right);
         self.assignReg(val);
         return val.id;
     }
 
     fn convertConstBool(self: *SSABuilder, ir_node: *IRNode) i64 {
-        let val: *Value = self.func.emitConstBool( ir_node.value != 0);
+        let val: *Value = self.func.emitConstBool(ir_node.value != 0);
         self.assignReg(val);
         return val.id;
     }
@@ -1437,7 +1437,7 @@ impl SSABuilder {
         let left_val: *Value = self.getOperandValue(ir_node.left);
         let right_val: *Value = self.getOperandValue(ir_node.right);
         let ssa_op: Op = Op_fromIRBinaryOp(ir_node.op);
-        let val: *Value = self.func.emitBinary( ssa_op, left_val, right_val, TYPE_I64);
+        let val: *Value = self.func.emitBinary(ssa_op, left_val, right_val, TYPE_I64);
         self.assignReg(val);
         return val.id;
     }
@@ -1446,15 +1446,15 @@ impl SSABuilder {
         // Unary op: left is operand (relative IR index), op is the operator
         let operand_val: *Value = self.getOperandValue(ir_node.left);
         let ssa_op: Op = Op_fromIRUnaryOp(ir_node.op);
-        let val: *Value = self.func.newValue( ssa_op, TYPE_I64);
-        val.addArg( operand_val);
+        let val: *Value = self.func.newValue(ssa_op, TYPE_I64);
+        val.addArg(operand_val);
         self.assignReg(val);
         return val.id;
     }
 
     fn convertLoadLocal(self: *SSABuilder, ir_node: *IRNode) i64 {
         let loc_idx: i64 = ir_node.left;
-        let load_val: *Value = self.func.emitLoadLocal( loc_idx);
+        let load_val: *Value = self.func.emitLoadLocal(loc_idx);
         self.assignReg(load_val);
         return load_val.id;
     }
@@ -1471,11 +1471,11 @@ impl SSABuilder {
         //
         // When the value is an address of a struct (from index_value, field_value, etc.),
         // we need to copy the struct data to the local, not just store the address.
-        let local: *Local = self.func.getLocal( loc_idx);
+        let local: *Local = self.func.getLocal(loc_idx);
         var is_struct: bool = false;
         var struct_size: i64 = 0;
         if self.type_registry != null and local.type_idx > 0 {
-            let local_type: *Type = self.type_registry.get( local.type_idx);
+            let local_type: *Type = self.type_registry.get(local.type_idx);
             if local_type.kind == TypeKind.Struct {
                 is_struct = true;
                 struct_size = local.size;
@@ -1485,20 +1485,20 @@ impl SSABuilder {
         if is_struct and struct_size > 8 {
             // Struct type: emit Op.Move to copy data from source to dest
             // dest = address of local
-            let dest_addr: *Value = self.func.newValue( Op.LocalAddr, TYPE_I64);
+            let dest_addr: *Value = self.func.newValue(Op.LocalAddr, TYPE_I64);
             dest_addr.aux_int = loc_idx;
             self.assignReg(dest_addr);
     
             // source = value_val (which should be an address for struct types)
             // Move: (dest, source) with aux_int = size
-            let move_val: *Value = self.func.newValue( Op.Move, TYPE_VOID);
+            let move_val: *Value = self.func.newValue(Op.Move, TYPE_VOID);
             move_val.aux_int = struct_size;
-            move_val.addArg2( dest_addr, value_val);
+            move_val.addArg2(dest_addr, value_val);
             return move_val.id;
         }
     
         // Non-struct: use normal store
-        let store_val: *Value = self.func.emitStoreLocal( loc_idx, value_val);
+        let store_val: *Value = self.func.emitStoreLocal(loc_idx, value_val);
         // Stores don't need registers (they write to memory)
         return store_val.id;
     }
@@ -1506,7 +1506,7 @@ impl SSABuilder {
     fn convertAddrLocal(self: *SSABuilder, ir_node: *IRNode) i64 {
         // Address of local variable: left = local index
         let loc_idx: i64 = ir_node.left;
-        let addr_val: *Value = self.func.newValue( Op.LocalAddr, TYPE_I64);
+        let addr_val: *Value = self.func.newValue(Op.LocalAddr, TYPE_I64);
         addr_val.aux_int = loc_idx;
         self.assignReg(addr_val);
         return addr_val.id;
@@ -1515,7 +1515,7 @@ impl SSABuilder {
     fn convertLoadGlobal(self: *SSABuilder, ir_node: *IRNode) i64 {
         // Load global variable: left = global index
         let global_idx: i64 = ir_node.left;
-        let load_val: *Value = self.func.newValue( Op.GlobalLoad, ir_node.type_idx);
+        let load_val: *Value = self.func.newValue(Op.GlobalLoad, ir_node.type_idx);
         load_val.aux_int = global_idx;
         self.assignReg(load_val);
         return load_val.id;
@@ -1525,9 +1525,9 @@ impl SSABuilder {
         // Store to global variable: left = global index, right = value expr
         let global_idx: i64 = ir_node.left;
         let val: *Value = self.getOperandValue(ir_node.right);
-        let store_val: *Value = self.func.newValue( Op.GlobalStore, TYPE_I64);
+        let store_val: *Value = self.func.newValue(Op.GlobalStore, TYPE_I64);
         store_val.aux_int = global_idx;
-        store_val.addArg( val);
+        store_val.addArg(val);
         self.assignReg(store_val);
         return store_val.id;
     }
@@ -1535,7 +1535,7 @@ impl SSABuilder {
     fn convertAddrGlobal(self: *SSABuilder, ir_node: *IRNode) i64 {
         // Address of global variable: left = global index
         let global_idx: i64 = ir_node.left;
-        let addr_val: *Value = self.func.newValue( Op.GlobalAddr, TYPE_I64);
+        let addr_val: *Value = self.func.newValue(Op.GlobalAddr, TYPE_I64);
         addr_val.aux_int = global_idx;
         self.assignReg(addr_val);
         return addr_val.id;
@@ -1543,7 +1543,7 @@ impl SSABuilder {
 
     fn convertFuncAddr(self: *SSABuilder, ir_node: *IRNode) i64 {
         // Address of function: func_name_start, func_name_len
-        let addr_val: *Value = self.func.newValue( Op.Addr, TYPE_I64);
+        let addr_val: *Value = self.func.newValue(Op.Addr, TYPE_I64);
         // Store function name position in aux fields (same as Call)
         addr_val.aux_int = ir_node.func_name_start;
         addr_val.aux_ptr = ir_node.func_name_len;
@@ -1555,8 +1555,8 @@ impl SSABuilder {
         // Load from pointer: left = ptr expr (relative IR index)
         // Use the IR node's type_idx to preserve byte types (u8, i8)
         let ptr_val: *Value = self.getOperandValue(ir_node.left);
-        let load_val: *Value = self.func.newValue( Op.Load, ir_node.type_idx);
-        load_val.addArg( ptr_val);
+        let load_val: *Value = self.func.newValue(Op.Load, ir_node.type_idx);
+        load_val.addArg(ptr_val);
         self.assignReg(load_val);
         return load_val.id;
     }
@@ -1565,8 +1565,8 @@ impl SSABuilder {
         // Store to pointer: left = ptr expr, right = value expr (relative)
         let ptr_val: *Value = self.getOperandValue(ir_node.left);
         let val_val: *Value = self.getOperandValue(ir_node.right);
-        let store_val: *Value = self.func.newValue( Op.Store, TYPE_VOID);
-        store_val.addArg2( ptr_val, val_val);
+        let store_val: *Value = self.func.newValue(Op.Store, TYPE_VOID);
+        store_val.addArg2(ptr_val, val_val);
         // Stores don't need registers
         return store_val.id;
     }
@@ -1578,12 +1578,12 @@ impl SSABuilder {
         let offset: i64 = ir_node.right;
     
         // 1. Get address of local
-        let addr_val: *Value = self.func.newValue( Op.LocalAddr, TYPE_I64);
+        let addr_val: *Value = self.func.newValue(Op.LocalAddr, TYPE_I64);
         addr_val.aux_int = loc_idx;
     
         // 2. Add offset to get field address
-        let off_val: *Value = self.func.newValue( Op.OffPtr, TYPE_I64);
-        off_val.addArg( addr_val);
+        let off_val: *Value = self.func.newValue(Op.OffPtr, TYPE_I64);
+        off_val.addArg(addr_val);
         off_val.aux_int = offset;
     
         // Check if result is a struct or array - if so, return address (no load)
@@ -1591,7 +1591,7 @@ impl SSABuilder {
         // the address for further field access or indexing.
         // Following Zig ssa_builder.zig:1042-1051
         if self.type_registry != null and ir_node.type_idx > 0 {
-            let field_type: *Type = self.type_registry.get( ir_node.type_idx);
+            let field_type: *Type = self.type_registry.get(ir_node.type_idx);
             if field_type != null {
                 if field_type.kind == TypeKind.Struct or field_type.kind == TypeKind.Array {
                     // Nested struct or array - return address for further access
@@ -1602,8 +1602,8 @@ impl SSABuilder {
         }
     
         // 3. Primitive type - load the field value
-        let load_val: *Value = self.func.newValue( Op.Load, ir_node.type_idx);
-        load_val.addArg( off_val);
+        let load_val: *Value = self.func.newValue(Op.Load, ir_node.type_idx);
+        load_val.addArg(off_val);
         self.assignReg(load_val);
         return load_val.id;
     }
@@ -1615,8 +1615,8 @@ impl SSABuilder {
         let offset: i64 = ir_node.right;
     
         // 1. Add offset to base to get field address
-        let off_val: *Value = self.func.newValue( Op.OffPtr, TYPE_I64);
-        off_val.addArg( base_val);
+        let off_val: *Value = self.func.newValue(Op.OffPtr, TYPE_I64);
+        off_val.addArg(base_val);
         off_val.aux_int = offset;
     
         // Check if result is a struct or array - if so, return address (no load)
@@ -1624,7 +1624,7 @@ impl SSABuilder {
         // the address for further field access or indexing.
         // Following Zig ssa_builder.zig:1118-1126
         if self.type_registry != null and ir_node.type_idx > 0 {
-            let field_type: *Type = self.type_registry.get( ir_node.type_idx);
+            let field_type: *Type = self.type_registry.get(ir_node.type_idx);
             if field_type != null {
                 if field_type.kind == TypeKind.Struct or field_type.kind == TypeKind.Array {
                     // Nested struct or array - return address for further access
@@ -1635,8 +1635,8 @@ impl SSABuilder {
         }
     
         // 2. Primitive type - load the field value
-        let load_val: *Value = self.func.newValue( Op.Load, ir_node.type_idx);
-        load_val.addArg( off_val);
+        let load_val: *Value = self.func.newValue(Op.Load, ir_node.type_idx);
+        load_val.addArg(off_val);
         self.assignReg(load_val);
         return load_val.id;
     }
@@ -1648,19 +1648,19 @@ impl SSABuilder {
         let val_val: *Value = self.getOperandValue(ir_node.value);
     
         // 1. Get address of local
-        let addr_val: *Value = self.func.newValue( Op.LocalAddr, TYPE_I64);
+        let addr_val: *Value = self.func.newValue(Op.LocalAddr, TYPE_I64);
         addr_val.aux_int = loc_idx;
         self.assignReg(addr_val);
     
         // 2. Add offset to get field address
-        let off_val: *Value = self.func.newValue( Op.OffPtr, TYPE_I64);
-        off_val.addArg( addr_val);
+        let off_val: *Value = self.func.newValue(Op.OffPtr, TYPE_I64);
+        off_val.addArg(addr_val);
         off_val.aux_int = offset;
         self.assignReg(off_val);
     
         // 3. Store the value
-        let store_val: *Value = self.func.newValue( Op.Store, TYPE_VOID);
-        store_val.addArg2( off_val, val_val);
+        let store_val: *Value = self.func.newValue(Op.Store, TYPE_VOID);
+        store_val.addArg2(off_val, val_val);
         return store_val.id;
     }
 
@@ -1671,14 +1671,14 @@ impl SSABuilder {
         let val_val: *Value = self.getOperandValue(ir_node.value);
     
         // 1. Add offset to base to get field address
-        let off_val: *Value = self.func.newValue( Op.OffPtr, TYPE_I64);
-        off_val.addArg( base_val);
+        let off_val: *Value = self.func.newValue(Op.OffPtr, TYPE_I64);
+        off_val.addArg(base_val);
         off_val.aux_int = offset;
         self.assignReg(off_val);
     
         // 2. Store the value
-        let store_val: *Value = self.func.newValue( Op.Store, TYPE_VOID);
-        store_val.addArg2( off_val, val_val);
+        let store_val: *Value = self.func.newValue(Op.Store, TYPE_VOID);
+        store_val.addArg2(off_val, val_val);
         return store_val.id;
     }
 
@@ -1689,23 +1689,23 @@ impl SSABuilder {
         let elem_size: i64 = ir_node.value;
     
         // 1. Get address of local array
-        let addr_val: *Value = self.func.newValue( Op.LocalAddr, TYPE_I64);
+        let addr_val: *Value = self.func.newValue(Op.LocalAddr, TYPE_I64);
         addr_val.aux_int = loc_idx;
         self.assignReg(addr_val);
     
         // 2. Compute byte offset: index * elem_size
-        let size_val: *Value = self.func.emitConstInt( elem_size, TYPE_I64);
+        let size_val: *Value = self.func.emitConstInt(elem_size, TYPE_I64);
         self.assignReg(size_val);
-        let offset_val: *Value = self.func.emitBinary( Op.Mul64, idx_val, size_val, TYPE_I64);
+        let offset_val: *Value = self.func.emitBinary(Op.Mul64, idx_val, size_val, TYPE_I64);
         self.assignReg(offset_val);
     
         // 3. Add offset to base address
-        let ptr_val: *Value = self.func.emitBinary( Op.AddPtr, addr_val, offset_val, TYPE_I64);
+        let ptr_val: *Value = self.func.emitBinary(Op.AddPtr, addr_val, offset_val, TYPE_I64);
         self.assignReg(ptr_val);
     
         // 4. Load the element value
-        let load_val: *Value = self.func.newValue( Op.Load, ir_node.type_idx);
-        load_val.addArg( ptr_val);
+        let load_val: *Value = self.func.newValue(Op.Load, ir_node.type_idx);
+        load_val.addArg(ptr_val);
         self.assignReg(load_val);
         return load_val.id;
     }
@@ -1718,13 +1718,13 @@ impl SSABuilder {
         let elem_size: i64 = ir_node.value;
     
         // 1. Compute byte offset: index * elem_size
-        let size_val: *Value = self.func.emitConstInt( elem_size, TYPE_I64);
+        let size_val: *Value = self.func.emitConstInt(elem_size, TYPE_I64);
         self.assignReg(size_val);
-        let offset_val: *Value = self.func.emitBinary( Op.Mul64, idx_val, size_val, TYPE_I64);
+        let offset_val: *Value = self.func.emitBinary(Op.Mul64, idx_val, size_val, TYPE_I64);
         self.assignReg(offset_val);
     
         // 2. Add offset to base address
-        let ptr_val: *Value = self.func.emitBinary( Op.AddPtr, base_val, offset_val, TYPE_I64);
+        let ptr_val: *Value = self.func.emitBinary(Op.AddPtr, base_val, offset_val, TYPE_I64);
         self.assignReg(ptr_val);
     
         // 3. For struct types, return address without loading
@@ -1733,15 +1733,15 @@ impl SSABuilder {
         //   if (elem_type == .struct_type) { break :blk elem_addr; }
         // Structs need address for field access, not loaded value
         if self.type_registry != null and ir_node.type_idx > 0 {
-            let elem_type: *Type = self.type_registry.get( ir_node.type_idx);
+            let elem_type: *Type = self.type_registry.get(ir_node.type_idx);
             if elem_type.kind == TypeKind.Struct {
                 return ptr_val.id;
             }
         }
     
         // 4. Load the element value for primitives
-        let load_val: *Value = self.func.newValue( Op.Load, ir_node.type_idx);
-        load_val.addArg( ptr_val);
+        let load_val: *Value = self.func.newValue(Op.Load, ir_node.type_idx);
+        load_val.addArg(ptr_val);
         self.assignReg(load_val);
         return load_val.id;
     }
@@ -1754,25 +1754,25 @@ impl SSABuilder {
         let elem_size: i64 = ir_node.op;
     
         // 1. Get address of local array
-        let addr_val: *Value = self.func.newValue( Op.LocalAddr, TYPE_I64);
+        let addr_val: *Value = self.func.newValue(Op.LocalAddr, TYPE_I64);
         addr_val.aux_int = loc_idx;
         self.assignReg(addr_val);
     
         // 2. Compute byte offset: index * elem_size
-        let size_val: *Value = self.func.emitConstInt( elem_size, TYPE_I64);
+        let size_val: *Value = self.func.emitConstInt(elem_size, TYPE_I64);
         self.assignReg(size_val);
-        let offset_val: *Value = self.func.emitBinary( Op.Mul64, idx_val, size_val, TYPE_I64);
+        let offset_val: *Value = self.func.emitBinary(Op.Mul64, idx_val, size_val, TYPE_I64);
         self.assignReg(offset_val);
     
         // 3. Add offset to base address
-        let ptr_val: *Value = self.func.emitBinary( Op.AddPtr, addr_val, offset_val, TYPE_I64);
+        let ptr_val: *Value = self.func.emitBinary(Op.AddPtr, addr_val, offset_val, TYPE_I64);
         self.assignReg(ptr_val);
     
         // 4. Store the value
         // BUG FIX: Propagate elem_size to Store for correct sized store instruction
         // Without this, codegen uses 64-bit STR for byte arrays, corrupting stack
-        let store_val: *Value = self.func.newValue( Op.Store, TYPE_VOID);
-        store_val.addArg2( ptr_val, val_val);
+        let store_val: *Value = self.func.newValue(Op.Store, TYPE_VOID);
+        store_val.addArg2(ptr_val, val_val);
         store_val.aux_int = elem_size;  // Store element size for codegen
         return store_val.id;
     }
@@ -1785,19 +1785,19 @@ impl SSABuilder {
         let elem_size: i64 = ir_node.op;
     
         // 1. Compute byte offset: index * elem_size
-        let size_val: *Value = self.func.emitConstInt( elem_size, TYPE_I64);
+        let size_val: *Value = self.func.emitConstInt(elem_size, TYPE_I64);
         self.assignReg(size_val);
-        let offset_val: *Value = self.func.emitBinary( Op.Mul64, idx_val, size_val, TYPE_I64);
+        let offset_val: *Value = self.func.emitBinary(Op.Mul64, idx_val, size_val, TYPE_I64);
         self.assignReg(offset_val);
     
         // 2. Add offset to base address
-        let ptr_val: *Value = self.func.emitBinary( Op.AddPtr, base_val, offset_val, TYPE_I64);
+        let ptr_val: *Value = self.func.emitBinary(Op.AddPtr, base_val, offset_val, TYPE_I64);
         self.assignReg(ptr_val);
     
         // 3. Store the value
         // BUG FIX: Propagate elem_size to Store for correct sized store instruction
-        let store_val: *Value = self.func.newValue( Op.Store, TYPE_VOID);
-        store_val.addArg2( ptr_val, val_val);
+        let store_val: *Value = self.func.newValue(Op.Store, TYPE_VOID);
+        store_val.addArg2(ptr_val, val_val);
         store_val.aux_int = elem_size;  // Store element size for codegen
         return store_val.id;
     }
@@ -1806,8 +1806,8 @@ impl SSABuilder {
         // @string(ptr, len): left=ptr_expr, right=len_expr (relative IR indices)
         let ptr_val: *Value = self.getOperandValue(ir_node.left);
         let len_val: *Value = self.getOperandValue(ir_node.right);
-        let make_val: *Value = self.func.newValue( Op.StringMake, TYPE_STRING);
-        make_val.addArg2( ptr_val, len_val);
+        let make_val: *Value = self.func.newValue(Op.StringMake, TYPE_STRING);
+        make_val.addArg2(ptr_val, len_val);
         self.assignReg(make_val);
         return make_val.id;
     }
@@ -1816,8 +1816,8 @@ impl SSABuilder {
         // Slice creation: left=ptr_expr, right=len_expr (relative IR indices)
         let ptr_val: *Value = self.getOperandValue(ir_node.left);
         let len_val: *Value = self.getOperandValue(ir_node.right);
-        let make_val: *Value = self.func.newValue( Op.SliceMake, TYPE_I64);
-        make_val.addArg2( ptr_val, len_val);
+        let make_val: *Value = self.func.newValue(Op.SliceMake, TYPE_I64);
+        make_val.addArg2(ptr_val, len_val);
         self.assignReg(make_val);
         return make_val.id;
     }
@@ -1825,8 +1825,8 @@ impl SSABuilder {
     fn convertSlicePtr(self: *SSABuilder, ir_node: *IRNode) i64 {
         // Extract pointer from slice: left=slice_expr (relative IR index)
         let slice_val: *Value = self.getOperandValue(ir_node.left);
-        let ptr_val: *Value = self.func.newValue( Op.SlicePtr, TYPE_I64);
-        ptr_val.addArg( slice_val);
+        let ptr_val: *Value = self.func.newValue(Op.SlicePtr, TYPE_I64);
+        ptr_val.addArg(slice_val);
         self.assignReg(ptr_val);
         return ptr_val.id;
     }
@@ -1834,8 +1834,8 @@ impl SSABuilder {
     fn convertSliceLen(self: *SSABuilder, ir_node: *IRNode) i64 {
         // Extract length from slice: left=slice_expr (relative IR index)
         let slice_val: *Value = self.getOperandValue(ir_node.left);
-        let len_val: *Value = self.func.newValue( Op.SliceLen, TYPE_I64);
-        len_val.addArg( slice_val);
+        let len_val: *Value = self.func.newValue(Op.SliceLen, TYPE_I64);
+        len_val.addArg(slice_val);
         self.assignReg(len_val);
         return len_val.id;
     }
@@ -1871,8 +1871,8 @@ impl SSABuilder {
             let abs_idx: i64 = self.ir_nodes_start + arg_ir_rel;
             let arg_ir_node: *IRNode = self.ir_nodes + abs_idx;
             let arg_value_id: i64 = self.convertNode(arg_ir_node, abs_idx);
-            let arg_val: *Value = self.func.getValue( arg_value_id);
-            val.addArg( arg_val);
+            let arg_val: *Value = self.func.getValue(arg_value_id);
+            val.addArg(arg_val);
             arg_idx = arg_idx + 1;
         }
         self.assignReg(val);
@@ -1881,15 +1881,15 @@ impl SSABuilder {
 
     fn convertCallIndirect(self: *SSABuilder, ir_node: *IRNode) i64 {
         // Create ClosureCall value
-        let val: *Value = self.func.emitCallIndirect( TYPE_I64);
+        let val: *Value = self.func.emitCallIndirect(TYPE_I64);
     
         // First argument is the function pointer (ir_node.left)
         // Use convertNode pattern like Zig
         let fn_ptr_abs_idx: i64 = self.ir_nodes_start + ir_node.left;
         let fn_ptr_ir_node: *IRNode = self.ir_nodes + fn_ptr_abs_idx;
         let fn_ptr_value_id: i64 = self.convertNode(fn_ptr_ir_node, fn_ptr_abs_idx);
-        let fn_ptr_val: *Value = self.func.getValue( fn_ptr_value_id);
-        val.addArg( fn_ptr_val);
+        let fn_ptr_val: *Value = self.func.getValue(fn_ptr_value_id);
+        val.addArg(fn_ptr_val);
     
         // Add remaining arguments - call convertNode for each arg (matches Zig)
         var arg_idx: i64 = 0;
@@ -1898,8 +1898,8 @@ impl SSABuilder {
             let abs_idx: i64 = self.ir_nodes_start + arg_ir_rel;
             let arg_ir_node: *IRNode = self.ir_nodes + abs_idx;
             let arg_value_id: i64 = self.convertNode(arg_ir_node, abs_idx);
-            let arg_val: *Value = self.func.getValue( arg_value_id);
-            val.addArg( arg_val);
+            let arg_val: *Value = self.func.getValue(arg_value_id);
+            val.addArg(arg_val);
             arg_idx = arg_idx + 1;
         }
         self.assignReg(val);
@@ -1908,7 +1908,7 @@ impl SSABuilder {
 
     fn convertStrConcat(self: *SSABuilder, ir_node: *IRNode) i64 {
         // Create StringConcat value (returns string type)
-        let val: *Value = self.func.newValue( Op.StringConcat, TYPE_STRING);
+        let val: *Value = self.func.newValue(Op.StringConcat, TYPE_STRING);
     
         // Convert and add the 4 args: ptr1, len1, ptr2, len2
         var arg_idx: i64 = 0;
@@ -1921,8 +1921,8 @@ impl SSABuilder {
             let abs_idx: i64 = self.ir_nodes_start + arg_ir_rel;
             let arg_ir_node: *IRNode = self.ir_nodes + abs_idx;
             let arg_value_id: i64 = self.convertNode(arg_ir_node, abs_idx);
-            let arg_val: *Value = self.func.getValue( arg_value_id);
-            val.addArg( arg_val);
+            let arg_val: *Value = self.func.getValue(arg_value_id);
+            val.addArg(arg_val);
             arg_idx = arg_idx + 1;
         }
     
@@ -1935,7 +1935,7 @@ impl SSABuilder {
         let cond_val: *Value = self.getOperandValue(ir_node.left);
         let true_val: *Value = self.getOperandValue(ir_node.right);
         let false_val: *Value = self.getOperandValue(ir_node.value);
-        let val: *Value = self.func.emitSelect( cond_val, true_val, false_val, TYPE_I64);
+        let val: *Value = self.func.emitSelect(cond_val, true_val, false_val, TYPE_I64);
         self.assignReg(val);
         return val.id;
     }
@@ -1945,21 +1945,21 @@ impl SSABuilder {
         let cond_val: *Value = self.getOperandValue(ir_node.left);
         let then_block: i64 = ir_node.right;
         let else_block: i64 = ir_node.value;
-        self.func.emitIf( cond_val, then_block, else_block);
+        self.func.emitIf(cond_val, then_block, else_block);
     }
 
     fn convertJump(self: *SSABuilder, ir_node: *IRNode) {
         let target_block: i64 = ir_node.left;
-        self.func.emitJump( target_block);
+        self.func.emitJump(target_block);
     }
 
     fn convertReturn(self: *SSABuilder, ir_node: *IRNode) {
         if ir_node.left >= 0 {
             let ret_val: *Value = self.getOperandValue(ir_node.left);
-            self.func.emitReturn( ret_val);
+            self.func.emitReturn(ret_val);
         } else {
             // Void return - emit return with no value
-            let void_ret: *Value = self.func.newValue( Op.Return, TYPE_VOID);
+            let void_ret: *Value = self.func.newValue(Op.Return, TYPE_VOID);
         }
     }
 

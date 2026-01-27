@@ -121,7 +121,7 @@ impl DomTree {
         self.setVisited(block_id, true);
     
         // Visit successors first
-        let b: *Block = f.getBlock( block_id);
+        let b: *Block = f.getBlock(block_id);
         var i: i64 = 0;
         while i < b.succs_count {
             let succ_id: i64 = b.succs[i];
@@ -177,7 +177,7 @@ impl DomTree {
     
         while finger1 != finger2 {
             while self.getRPONum(finger1, entry) > self.getRPONum(finger2, entry) {
-                let b: *Block = f.getBlock( finger1);
+                let b: *Block = f.getBlock(finger1);
                 if b.dom < 0 {
                     finger1 = entry;
                 } else {
@@ -185,7 +185,7 @@ impl DomTree {
                 }
             }
             while self.getRPONum(finger2, entry) > self.getRPONum(finger1, entry) {
-                let b: *Block = f.getBlock( finger2);
+                let b: *Block = f.getBlock(finger2);
                 if b.dom < 0 {
                     finger2 = entry;
                 } else {
@@ -208,7 +208,7 @@ impl DomTree {
         // Initialize all dom fields to INVALID_BLOCK
         var i: i64 = 0;
         while i < f.blocks_count {
-            let b: *Block = f.getBlock( i);
+            let b: *Block = f.getBlock(i);
             b.dom = INVALID_BLOCK;
             b.dom_level = 0;
             i = i + 1;
@@ -218,7 +218,7 @@ impl DomTree {
         self.computeRPO(f);
     
         let entry: i64 = f.entry_block;
-        let entry_b: *Block = f.getBlock( entry);
+        let entry_b: *Block = f.getBlock(entry);
         entry_b.dom = INVALID_BLOCK;
         entry_b.dom_level = 0;
     
@@ -235,19 +235,19 @@ impl DomTree {
                     continue;
                 }
     
-                let b: *Block = f.getBlock( bid);
+                let b: *Block = f.getBlock(bid);
                 var new_idom: i64 = INVALID_BLOCK;
                 var first_pred: bool = true;
     
                 var p: i64 = 0;
                 while p < b.preds.count {
-                    let pred_id: i64 = b.getPred( p);
+                    let pred_id: i64 = b.getPred(p);
                     if pred_id < 0 {
                         p = p + 1;
                         continue;
                     }
     
-                    let pred: *Block = f.getBlock( pred_id);
+                    let pred: *Block = f.getBlock(pred_id);
                     if pred.dom < 0 and pred_id != entry {
                         p = p + 1;
                         continue;
@@ -284,7 +284,7 @@ impl DomTree {
     
         var i: i64 = 0;
         while i < f.blocks_count {
-            let b: *Block = f.getBlock( i);
+            let b: *Block = f.getBlock(i);
             if b.dom >= 0 and b.dom < f.blocks_count {
                 // Store (parent_id, child_id) pair
                 i64list_append(&self.children, b.dom);
@@ -303,7 +303,7 @@ impl DomTree {
         var worklist: I64List = undefined;
         i64list_init(&worklist);
     
-        let entry_b: *Block = f.getBlock( f.entry_block);
+        let entry_b: *Block = f.getBlock(f.entry_block);
         entry_b.dom_level = 0;
         i64list_append(&worklist, f.entry_block);
     
@@ -312,7 +312,7 @@ impl DomTree {
             let bid: i64 = i64list_get(&worklist, idx);
             idx = idx + 1;
     
-            let b: *Block = f.getBlock( bid);
+            let b: *Block = f.getBlock(bid);
             let parent_depth: i64 = b.dom_level;
     
             // Find children of bid
@@ -322,7 +322,7 @@ impl DomTree {
                 let child_id: i64 = i64list_get(&self.children, i + 1);
     
                 if parent_id == bid {
-                    let child: *Block = f.getBlock( child_id);
+                    let child: *Block = f.getBlock(child_id);
                     child.dom_level = parent_depth + 1;
                     i64list_append(&worklist, child_id);
                 }
@@ -339,7 +339,7 @@ impl DomTree {
     
         var i: i64 = 0;
         while i < f.blocks_count {
-            let b: *Block = f.getBlock( i);
+            let b: *Block = f.getBlock(i);
     
             if b.preds.count < 2 {
                 i = i + 1;
@@ -348,7 +348,7 @@ impl DomTree {
     
             var p: i64 = 0;
             while p < b.preds.count {
-                let pred_id: i64 = b.getPred( p);
+                let pred_id: i64 = b.getPred(p);
                 if pred_id < 0 {
                     p = p + 1;
                     continue;
@@ -360,7 +360,7 @@ impl DomTree {
                     i64list_append(&self.frontier, runner);
                     i64list_append(&self.frontier, i);
     
-                    let r: *Block = f.getBlock( runner);
+                    let r: *Block = f.getBlock(runner);
                     runner = r.dom;
                 }
     
@@ -391,7 +391,7 @@ fn DomTree_getIdom(f: *Func, block_id: i64) i64 {
     if block_id < 0 or block_id >= f.blocks_count {
         return INVALID_BLOCK;
     }
-    let b: *Block = f.getBlock( block_id);
+    let b: *Block = f.getBlock(block_id);
     return b.dom;
 }
 
@@ -399,7 +399,7 @@ fn DomTree_getDepth(f: *Func, block_id: i64) i64 {
     if block_id < 0 or block_id >= f.blocks_count {
         return 0;
     }
-    let b: *Block = f.getBlock( block_id);
+    let b: *Block = f.getBlock(block_id);
     return b.dom_level;
 }
 
@@ -413,7 +413,7 @@ fn DomTree_dominates(f: *Func, a_id: i64, b_id: i64) bool {
         if current == a_id {
             return true;
         }
-        let b: *Block = f.getBlock( current);
+        let b: *Block = f.getBlock(current);
         current = b.dom;
     }
     return false;

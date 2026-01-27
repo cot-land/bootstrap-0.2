@@ -204,7 +204,7 @@ impl RegAllocState {
         }
     
         // Must spill - find register with farthest next use
-        let bl: *BlockLiveness = self.liveness.getBlock( block_id);
+        let bl: *BlockLiveness = self.liveness.getBlock(block_id);
     
         var best_reg: i64 = -1;
         var best_dist: i64 = -1;
@@ -216,7 +216,7 @@ impl RegAllocState {
                 let rs: *RegState = self.reg_states + reg;
                 if not RegState_isFree(rs) {
                     // Get distance to next use
-                    let dist: i64 = bl.get( rs.value_id);
+                    let dist: i64 = bl.get(rs.value_id);
                     if dist > best_dist {
                         best_dist = dist;
                         best_reg = reg;
@@ -265,7 +265,7 @@ impl RegAllocState {
         vs.spill_used = true;
     
         // CRITICAL: Set the Value's spill_slot so genssa knows to emit store/load
-        let v: *Value = self.func.getValue( value_id);
+        let v: *Value = self.func.getValue(value_id);
         v.spill_slot = vs.spill;
     
         // Clear register - value is now only on stack
@@ -285,7 +285,7 @@ impl RegAllocState {
         vs.regs = vs.regs | (1 << reg);
     
         // CRITICAL: Also set the Value's reg field so genssa can use it
-        let v: *Value = self.func.getValue( value_id);
+        let v: *Value = self.func.getValue(value_id);
         v.reg = reg;
     
         // Mark register as used for current instruction
@@ -338,7 +338,7 @@ impl RegAllocState {
     
         var vi: i64 = 0;
         while vi < block.values_count {
-            let v: *Value = f.getValue( block.values_start + vi);
+            let v: *Value = f.getValue(block.values_start + vi);
             if v.op == Op.Phi {
                 i64list_append(&phi_ids, v.id);
             } else {
@@ -367,9 +367,9 @@ impl RegAllocState {
         // Pass 1: Try to reuse primary predecessor's register
         i = 0;
         while i < phi_ids.count {
-            let phi: *Value = f.getValue( i64list_get(&phi_ids, i));
+            let phi: *Value = f.getValue(i64list_get(&phi_ids, i));
             if primary_pred_idx >= 0 and primary_pred_idx < phi.args.count {
-                let arg_id: i64 = phi.getArg( primary_pred_idx);
+                let arg_id: i64 = phi.getArg(primary_pred_idx);
                 if arg_id >= 0 and arg_id < self.val_states_count {
                     let arg_vs: *ValState = self.val_states + arg_id;
                     // Check if arg has a register that's not already used by a phi
@@ -461,7 +461,7 @@ impl RegAllocState {
         // Process arguments - ensure they're in registers
         var i: i64 = 0;
         while i < v.args.count {
-            let arg_id: i64 = v.getArg( i);
+            let arg_id: i64 = v.getArg(i);
             if arg_id != INVALID_ID and arg_id < self.val_states_count {
                 let arg_vs: *ValState = self.val_states + arg_id;
                 if arg_vs.needs_reg and not ValState_inReg(arg_vs) {
@@ -509,7 +509,7 @@ impl RegAllocState {
         // Process remaining values in order
         var vi: i64 = 0;
         while vi < block.values_count {
-            let v: *Value = f.getValue( block.values_start + vi);
+            let v: *Value = f.getValue(block.values_start + vi);
             // Skip phis - already processed by allocatePhis
             if v.op == Op.Phi {
                 vi = vi + 1;
@@ -524,7 +524,7 @@ impl RegAllocState {
         // Process blocks in order
         var b: i64 = 0;
         while b < f.blocks_count {
-            let block: *Block = f.getBlock( b);
+            let block: *Block = f.getBlock(b);
             self.processBlock(f, block);
             b = b + 1;
         }

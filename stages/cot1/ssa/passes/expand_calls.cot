@@ -15,7 +15,7 @@ const MAX_SSA_SIZE: i64 = 32;
 // Check if a type can be held in SSA registers
 // Reference: value.zig canSSA
 fn canSSA(pool: *TypeRegistry, type_idx: i64) bool {
-    let size: i64 = pool.sizeof( type_idx);
+    let size: i64 = pool.sizeof(type_idx);
     if size <= 0 { return true; }
     if size > MAX_SSA_SIZE { return false; }
     return true;
@@ -33,22 +33,22 @@ fn expandCalls(f: *Func, type_pool: *TypeRegistry) {
     // Pass 1: Find and handle wide stores (Store of !canSSA type → Move)
     var b: i64 = 0;
     while b < f.blocks_count {
-        let block: *Block = f.getBlock( b);
+        let block: *Block = f.getBlock(b);
 
         var vi: i64 = 0;
         while vi < block.values_count {
-            let v: *Value = f.getValue( block.values_start + vi);
+            let v: *Value = f.getValue(block.values_start + vi);
 
             // Check for Store of non-SSA type
             if v.op == Op.Store and v.args.count >= 2 {
-                let stored_id: i64 = v.getArg( 1);
+                let stored_id: i64 = v.getArg(1);
                 if stored_id >= 0 {
-                    let stored_val: *Value = f.getValue( stored_id);
+                    let stored_val: *Value = f.getValue(stored_id);
 
                     // Check if stored value is from a call returning large type
                     // Note: SelectN not implemented in cot0 yet
                     if stored_val.op == Op.Call {
-                        let type_size: i64 = type_pool.sizeof( stored_val.type_idx);
+                        let type_size: i64 = type_pool.sizeof(stored_val.type_idx);
 
                         // If type > 16 bytes, it uses hidden return pointer
                         // Convert Store to Move for bulk memory copy
@@ -78,11 +78,11 @@ fn expandCalls(f: *Func, type_pool: *TypeRegistry) {
 fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
     var b: i64 = 0;
     while b < f.blocks_count {
-        let block: *Block = f.getBlock( b);
+        let block: *Block = f.getBlock(b);
 
         var vi: i64 = 0;
         while vi < block.values_count {
-            let v: *Value = f.getValue( block.values_start + vi);
+            let v: *Value = f.getValue(block.values_start + vi);
 
             // Only process Call and ClosureCall values
             if v.op != Op.Call and v.op != Op.ClosureCall {
@@ -102,14 +102,14 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
 
             var arg_idx: i64 = start_idx;
             while arg_idx < v.args.count {
-                let arg_id: i64 = v.getArg( arg_idx);
+                let arg_id: i64 = v.getArg(arg_idx);
                 if arg_id < 0 {
                     i64list_append(&new_args, arg_id);
                     arg_idx = arg_idx + 1;
                     continue;
                 }
 
-                let arg: *Value = f.getValue( arg_id);
+                let arg: *Value = f.getValue(arg_id);
 
                 // STRING: Decompose string arguments into ptr and len
                 // Reference: expand_calls.zig:361-406
@@ -119,15 +119,15 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
                     // Check if arg is already string_make with available components
                     if arg.op == Op.StringMake and arg.args.count >= 2 {
                         // Directly use the ptr and len components
-                        let ptr_id: i64 = arg.getArg( 0);
-                        let len_id: i64 = arg.getArg( 1);
+                        let ptr_id: i64 = arg.getArg(0);
+                        let len_id: i64 = arg.getArg(1);
                         i64list_append(&new_args, ptr_id);
                         i64list_append(&new_args, len_id);
 
                         // Update use counts
                         arg.uses = arg.uses - 1;
-                        let ptr_val: *Value = f.getValue( ptr_id);
-                        let len_val: *Value = f.getValue( len_id);
+                        let ptr_val: *Value = f.getValue(ptr_id);
+                        let len_val: *Value = f.getValue(len_id);
                         ptr_val.uses = ptr_val.uses + 1;
                         len_val.uses = len_val.uses + 1;
                     } else {
@@ -136,12 +136,12 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
                         let saved_block: i64 = f.current_block;
                         f.current_block = block.id;
 
-                        let ptr_val: *Value = f.newValue( Op.StringPtr, TYPE_I64);
-                        ptr_val.addArg( arg);  // arg is the string value
+                        let ptr_val: *Value = f.newValue(Op.StringPtr, TYPE_I64);
+                        ptr_val.addArg(arg);  // arg is the string value
                         let ptr_val_id: i64 = ptr_val.id;
 
-                        let len_val: *Value = f.newValue( Op.StringLen, TYPE_I64);
-                        len_val.addArg( arg);  // arg is the string value
+                        let len_val: *Value = f.newValue(Op.StringLen, TYPE_I64);
+                        len_val.addArg(arg);  // arg is the string value
                         let len_val_id: i64 = len_val.id;
 
                         f.current_block = saved_block;
@@ -162,16 +162,16 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
                 // Only applies to struct types loaded from memory
                 let is_struct: bool = TypeInfo_isStruct(type_pool, arg.type_idx);
                 if is_struct {
-                    let arg_size: i64 = type_pool.sizeof( arg.type_idx);
+                    let arg_size: i64 = type_pool.sizeof(arg.type_idx);
                     if arg_size > 16 and arg.op == Op.Load and arg.args.count >= 1 {
                         needs_rewrite = true;
                         // Pass the source address instead of the loaded value
                         // Go reference: expand_calls.go line 379 - use arg.Args[0]
-                        let source_addr_id: i64 = arg.getArg( 0);
+                        let source_addr_id: i64 = arg.getArg(0);
 
                         // Update use counts
                         arg.uses = arg.uses - 1;
-                        let source_addr: *Value = f.getValue( source_addr_id);
+                        let source_addr: *Value = f.getValue(source_addr_id);
                         source_addr.uses = source_addr.uses + 1;
 
                         i64list_append(&new_args, source_addr_id);
@@ -193,7 +193,7 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
                 var i: i64 = 0;
                 while i < new_args.count {
                     let new_arg_id: i64 = i64list_get(&new_args, i);
-                    let new_arg: *Value = f.getValue( new_arg_id);
+                    let new_arg: *Value = f.getValue(new_arg_id);
                     // Don't increment use count - already handled above
                     i64list_append(&v.args, new_arg_id);
                     i = i + 1;
@@ -213,33 +213,33 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
 fn applyDecRules(f: *Func) {
     var b: i64 = 0;
     while b < f.blocks_count {
-        let block: *Block = f.getBlock( b);
+        let block: *Block = f.getBlock(b);
 
         var vi: i64 = 0;
         while vi < block.values_count {
-            let v: *Value = f.getValue( block.values_start + vi);
+            let v: *Value = f.getValue(block.values_start + vi);
 
             // string_ptr(string_make(ptr, len)) → copy(ptr)
             // slice_ptr(slice_make(ptr, len)) → copy(ptr)
             if v.op == Op.StringPtr or v.op == Op.SlicePtr {
                 if v.args.count >= 1 {
-                    let arg_id: i64 = v.getArg( 0);
+                    let arg_id: i64 = v.getArg(0);
                     if arg_id >= 0 {
-                        let arg: *Value = f.getValue( arg_id);
+                        let arg: *Value = f.getValue(arg_id);
                         if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args.count >= 1 {
-                            let ptr_id: i64 = arg.getArg( 0);
+                            let ptr_id: i64 = arg.getArg(0);
 
                             // Decrement old arg's use count
                             arg.uses = arg.uses - 1;
 
                             // Transform to copy
                             v.op = Op.Copy;
-                            v.setArgById( 0, ptr_id);
-                            v.truncateArgs( 1);
+                            v.setArgById(0, ptr_id);
+                            v.truncateArgs(1);
 
                             // Increment new arg's use count
                             if ptr_id >= 0 {
-                                let ptr_val: *Value = f.getValue( ptr_id);
+                                let ptr_val: *Value = f.getValue(ptr_id);
                                 ptr_val.uses = ptr_val.uses + 1;
                             }
                         }
@@ -251,23 +251,23 @@ fn applyDecRules(f: *Func) {
             // slice_len(slice_make(ptr, len)) → copy(len)
             if v.op == Op.StringLen or v.op == Op.SliceLen {
                 if v.args.count >= 1 {
-                    let arg_id: i64 = v.getArg( 0);
+                    let arg_id: i64 = v.getArg(0);
                     if arg_id >= 0 {
-                        let arg: *Value = f.getValue( arg_id);
+                        let arg: *Value = f.getValue(arg_id);
                         if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args.count >= 2 {
-                            let len_id: i64 = arg.getArg( 1);
+                            let len_id: i64 = arg.getArg(1);
 
                             // Decrement old arg's use count
                             arg.uses = arg.uses - 1;
 
                             // Transform to copy
                             v.op = Op.Copy;
-                            v.setArgById( 0, len_id);
-                            v.truncateArgs( 1);
+                            v.setArgById(0, len_id);
+                            v.truncateArgs(1);
 
                             // Increment new arg's use count
                             if len_id >= 0 {
-                                let len_val: *Value = f.getValue( len_id);
+                                let len_val: *Value = f.getValue(len_id);
                                 len_val.uses = len_val.uses + 1;
                             }
                         }

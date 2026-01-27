@@ -337,6 +337,45 @@ fn amd64_encode_movzx_r64_r8(dst: i64, src: i64) i64 {
     return pack4(amd64_encode_rex_rr(dst, src), 0x0F, 0xB6, amd64_encode_modrm_rr(dst, src));
 }
 
+// MOVZX r64, r16 - zero extend word to 64-bit (4 bytes: REX.W 0F B7 /r)
+fn amd64_encode_movzx_r64_r16(dst: i64, src: i64) i64 {
+    return pack4(amd64_encode_rex_rr(dst, src), 0x0F, 0xB7, amd64_encode_modrm_rr(dst, src));
+}
+
+// MOV r32, r32 - zero extend 32 to 64 (implicitly zeros upper 32 bits)
+// Uses 32-bit operand size (no REX.W)
+fn amd64_encode_mov_r32_r32(dst: i64, src: i64) i64 {
+    var rex: i64 = 0x40;
+    if AMD64_needs_rex(dst) { rex = rex | 0x04; }
+    if AMD64_needs_rex(src) { rex = rex | 0x01; }
+    if rex == 0x40 {
+        // No REX needed for low registers
+        return pack2(0x89, amd64_encode_modrm_rr(src, dst));
+    }
+    return pack3(rex, 0x89, amd64_encode_modrm_rr(src, dst));
+}
+
+// MOVSX r64, r8 - sign extend byte to 64-bit (4 bytes: REX.W 0F BE /r)
+fn amd64_encode_movsx_r64_r8(dst: i64, src: i64) i64 {
+    return pack4(amd64_encode_rex_rr(dst, src), 0x0F, 0xBE, amd64_encode_modrm_rr(dst, src));
+}
+
+// MOVSX r64, r16 - sign extend word to 64-bit (4 bytes: REX.W 0F BF /r)
+fn amd64_encode_movsx_r64_r16(dst: i64, src: i64) i64 {
+    return pack4(amd64_encode_rex_rr(dst, src), 0x0F, 0xBF, amd64_encode_modrm_rr(dst, src));
+}
+
+// MOVSXD r64, r32 - sign extend dword to 64-bit (3 bytes: REX.W 63 /r)
+fn amd64_encode_movsxd(dst: i64, src: i64) i64 {
+    return pack3(amd64_encode_rex_rr(dst, src), 0x63, amd64_encode_modrm_rr(dst, src));
+}
+
+// CMOVcc r64, r64 - conditional move (4 bytes: REX.W 0F 4x /r)
+fn amd64_encode_cmov(cond: i64, dst: i64, src: i64) i64 {
+    let opcode: i64 = 0x40 + (cond & 0x0F);
+    return pack4(amd64_encode_rex_rr(dst, src), 0x0F, opcode, amd64_encode_modrm_rr(dst, src));
+}
+
 // ============================================================================
 // Branch Instructions
 // ============================================================================
@@ -416,6 +455,27 @@ fn amd64_encode_store_disp32(base: i64, disp: i64, src: i64) i64 {
     var rex: i64 = amd64_encode_rex_rr(src, base);
     var modrm: i64 = amd64_encode_modrm_disp32(src, base);
     return pack7(rex, 0x89, modrm, disp & 0xFF, (disp >> 8) & 0xFF, (disp >> 16) & 0xFF, (disp >> 24) & 0xFF);
+}
+
+// MOVZX r64, byte [base+disp32] - zero-extend byte load
+// REX.W 0F B6 /r with disp32
+fn amd64_encode_load_byte_disp32(dst: i64, base: i64, disp: i64) i64 {
+    var rex: i64 = amd64_encode_rex_rr(dst, base);
+    var modrm: i64 = amd64_encode_modrm_disp32(dst, base);
+    // 8 bytes: rex 0f b6 modrm disp32
+    return (8 << 56) | (rex) | (0x0F << 8) | (0xB6 << 16) | (modrm << 24) | ((disp & 0xFF) << 32) | (((disp >> 8) & 0xFF) << 40) | (((disp >> 16) & 0xFF) << 48);
+}
+
+// MOV byte [base+disp32], r8 - byte store
+// [REX] 88 /r with disp32
+fn amd64_encode_store_byte_disp32(base: i64, disp: i64, src: i64) i64 {
+    // For byte operations, we need to handle low-byte registers
+    // REX prefix is needed for R8-R15 and to access SIL/DIL/BPL/SPL
+    var rex: i64 = 0x40;  // Base REX for byte access to low regs
+    if AMD64_needs_rex(src) { rex = rex | 0x04; }  // REX.R
+    if AMD64_needs_rex(base) { rex = rex | 0x01; }  // REX.B
+    var modrm: i64 = amd64_encode_modrm_disp32(src, base);
+    return pack7(rex, 0x88, modrm, disp & 0xFF, (disp >> 8) & 0xFF, (disp >> 16) & 0xFF, (disp >> 24) & 0xFF);
 }
 
 // LEA r64, [base+disp32] (7 bytes: REX.W 8D /r)

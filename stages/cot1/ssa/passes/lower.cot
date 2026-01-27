@@ -37,7 +37,7 @@ fn fitsImm12(n: i64) bool {
 fn lower(f: *Func) {
     var b: i64 = 0;
     while b < f.blocks_count {
-        let block: *Block = f.getBlock( b);
+        let block: *Block = f.getBlock(b);
         lowerBlock(f, block);
         b = b + 1;
     }
@@ -47,14 +47,14 @@ fn lower(f: *Func) {
 fn lowerBlock(f: *Func, block: *Block) {
     var vi: i64 = 0;
     while vi < block.values_count {
-        let v: *Value = f.getValue( block.values_start + vi);
+        let v: *Value = f.getValue(block.values_start + vi);
 
         // Pattern 1: Mul by power of 2 → Shl
         // x * 2^n → x << n
         if v.op == Op.Mul64 and v.args.count == 2 {
-            let right_id: i64 = v.getArg( 1);
+            let right_id: i64 = v.getArg(1);
             if right_id >= 0 {
-                let right: *Value = f.getValue( right_id);
+                let right: *Value = f.getValue(right_id);
                 if right.op == Op.ConstInt and isPowerOf2(right.aux_int) {
                     let shift_amount: i64 = log2(right.aux_int);
 
@@ -75,14 +75,14 @@ fn lowerBlock(f: *Func, block: *Block) {
 
         // Pattern 2: Mul by 0 → ConstInt 0
         if v.op == Op.Mul64 and v.args.count == 2 {
-            let right_id: i64 = v.getArg( 1);
+            let right_id: i64 = v.getArg(1);
             if right_id >= 0 {
-                let right: *Value = f.getValue( right_id);
+                let right: *Value = f.getValue(right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
                     // Decrement use counts on args
-                    let left_id: i64 = v.getArg( 0);
+                    let left_id: i64 = v.getArg(0);
                     if left_id >= 0 {
-                        let left: *Value = f.getValue( left_id);
+                        let left: *Value = f.getValue(left_id);
                         left.uses = left.uses - 1;
                     }
                     right.uses = right.uses - 1;
@@ -97,121 +97,121 @@ fn lowerBlock(f: *Func, block: *Block) {
 
         // Pattern 5: Mul by 1 → Copy
         if v.op == Op.Mul64 and v.args.count == 2 {
-            let right_id: i64 = v.getArg( 1);
+            let right_id: i64 = v.getArg(1);
             if right_id >= 0 {
-                let right: *Value = f.getValue( right_id);
+                let right: *Value = f.getValue(right_id);
                 if right.op == Op.ConstInt and right.aux_int == 1 {
-                    let left_id: i64 = v.getArg( 0);
+                    let left_id: i64 = v.getArg(0);
 
                     // Decrement use on right (the constant 1)
                     right.uses = right.uses - 1;
 
                     // Transform to Copy of left
                     v.op = Op.Copy;
-                    v.setArgById( 0, left_id);
-                    v.truncateArgs( 1);
+                    v.setArgById(0, left_id);
+                    v.truncateArgs(1);
                 }
             }
         }
 
         // Pattern 6: Add 0 → Copy
         if v.op == Op.Add64 and v.args.count == 2 {
-            let right_id: i64 = v.getArg( 1);
+            let right_id: i64 = v.getArg(1);
             if right_id >= 0 {
-                let right: *Value = f.getValue( right_id);
+                let right: *Value = f.getValue(right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
-                    let left_id: i64 = v.getArg( 0);
+                    let left_id: i64 = v.getArg(0);
 
                     right.uses = right.uses - 1;
 
                     v.op = Op.Copy;
-                    v.setArgById( 0, left_id);
-                    v.truncateArgs( 1);
+                    v.setArgById(0, left_id);
+                    v.truncateArgs(1);
                 }
             }
         }
 
         // Pattern 7: Sub 0 → Copy
         if v.op == Op.Sub64 and v.args.count == 2 {
-            let right_id: i64 = v.getArg( 1);
+            let right_id: i64 = v.getArg(1);
             if right_id >= 0 {
-                let right: *Value = f.getValue( right_id);
+                let right: *Value = f.getValue(right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
-                    let left_id: i64 = v.getArg( 0);
+                    let left_id: i64 = v.getArg(0);
 
                     right.uses = right.uses - 1;
 
                     v.op = Op.Copy;
-                    v.setArgById( 0, left_id);
-                    v.truncateArgs( 1);
+                    v.setArgById(0, left_id);
+                    v.truncateArgs(1);
                 }
             }
         }
 
         // Pattern 8: And with all 1s → Copy
         if v.op == Op.And64 and v.args.count == 2 {
-            let right_id: i64 = v.getArg( 1);
+            let right_id: i64 = v.getArg(1);
             if right_id >= 0 {
-                let right: *Value = f.getValue( right_id);
+                let right: *Value = f.getValue(right_id);
                 if right.op == Op.ConstInt and right.aux_int == -1 {
-                    let left_id: i64 = v.getArg( 0);
+                    let left_id: i64 = v.getArg(0);
 
                     right.uses = right.uses - 1;
 
                     v.op = Op.Copy;
-                    v.setArgById( 0, left_id);
-                    v.truncateArgs( 1);
+                    v.setArgById(0, left_id);
+                    v.truncateArgs(1);
                 }
             }
         }
 
         // Pattern 9: Or with 0 → Copy
         if v.op == Op.Or64 and v.args.count == 2 {
-            let right_id: i64 = v.getArg( 1);
+            let right_id: i64 = v.getArg(1);
             if right_id >= 0 {
-                let right: *Value = f.getValue( right_id);
+                let right: *Value = f.getValue(right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
-                    let left_id: i64 = v.getArg( 0);
+                    let left_id: i64 = v.getArg(0);
 
                     right.uses = right.uses - 1;
 
                     v.op = Op.Copy;
-                    v.setArgById( 0, left_id);
-                    v.truncateArgs( 1);
+                    v.setArgById(0, left_id);
+                    v.truncateArgs(1);
                 }
             }
         }
 
         // Pattern 10: Xor with 0 → Copy
         if v.op == Op.Xor64 and v.args.count == 2 {
-            let right_id: i64 = v.getArg( 1);
+            let right_id: i64 = v.getArg(1);
             if right_id >= 0 {
-                let right: *Value = f.getValue( right_id);
+                let right: *Value = f.getValue(right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
-                    let left_id: i64 = v.getArg( 0);
+                    let left_id: i64 = v.getArg(0);
 
                     right.uses = right.uses - 1;
 
                     v.op = Op.Copy;
-                    v.setArgById( 0, left_id);
-                    v.truncateArgs( 1);
+                    v.setArgById(0, left_id);
+                    v.truncateArgs(1);
                 }
             }
         }
 
         // Pattern 11: Shift by 0 → Copy
         if (v.op == Op.Shl64 or v.op == Op.Shr64 or v.op == Op.Sar64) and v.args.count == 2 {
-            let right_id: i64 = v.getArg( 1);
+            let right_id: i64 = v.getArg(1);
             if right_id >= 0 {
-                let right: *Value = f.getValue( right_id);
+                let right: *Value = f.getValue(right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
-                    let left_id: i64 = v.getArg( 0);
+                    let left_id: i64 = v.getArg(0);
 
                     right.uses = right.uses - 1;
 
                     v.op = Op.Copy;
-                    v.setArgById( 0, left_id);
-                    v.truncateArgs( 1);
+                    v.setArgById(0, left_id);
+                    v.truncateArgs(1);
                 }
             }
         }
@@ -219,11 +219,11 @@ fn lowerBlock(f: *Func, block: *Block) {
         // Pattern 12: Constant folding - Add/Sub/Mul of two constants
         // Reference: compile.zig opt() - constant folding
         if (v.op == Op.Add64 or v.op == Op.Sub64 or v.op == Op.Mul64) and v.args.count == 2 {
-            let left_id: i64 = v.getArg( 0);
-            let right_id: i64 = v.getArg( 1);
+            let left_id: i64 = v.getArg(0);
+            let right_id: i64 = v.getArg(1);
             if left_id >= 0 and right_id >= 0 {
-                let left: *Value = f.getValue( left_id);
-                let right: *Value = f.getValue( right_id);
+                let left: *Value = f.getValue(left_id);
+                let right: *Value = f.getValue(right_id);
                 if left.op == Op.ConstInt and right.op == Op.ConstInt {
                     // Both are constants - fold
                     var result: i64 = 0;
@@ -249,11 +249,11 @@ fn lowerBlock(f: *Func, block: *Block) {
 
         // Pattern 13: Constant folding - bitwise operations on constants
         if (v.op == Op.And64 or v.op == Op.Or64 or v.op == Op.Xor64) and v.args.count == 2 {
-            let left_id: i64 = v.getArg( 0);
-            let right_id: i64 = v.getArg( 1);
+            let left_id: i64 = v.getArg(0);
+            let right_id: i64 = v.getArg(1);
             if left_id >= 0 and right_id >= 0 {
-                let left: *Value = f.getValue( left_id);
-                let right: *Value = f.getValue( right_id);
+                let left: *Value = f.getValue(left_id);
+                let right: *Value = f.getValue(right_id);
                 if left.op == Op.ConstInt and right.op == Op.ConstInt {
                     var result: i64 = 0;
                     if v.op == Op.And64 {
@@ -276,11 +276,11 @@ fn lowerBlock(f: *Func, block: *Block) {
 
         // Pattern 14: Constant folding - shift operations on constants
         if (v.op == Op.Shl64 or v.op == Op.Shr64) and v.args.count == 2 {
-            let left_id: i64 = v.getArg( 0);
-            let right_id: i64 = v.getArg( 1);
+            let left_id: i64 = v.getArg(0);
+            let right_id: i64 = v.getArg(1);
             if left_id >= 0 and right_id >= 0 {
-                let left: *Value = f.getValue( left_id);
-                let right: *Value = f.getValue( right_id);
+                let left: *Value = f.getValue(left_id);
+                let right: *Value = f.getValue(right_id);
                 if left.op == Op.ConstInt and right.op == Op.ConstInt {
                     // Only fold if shift amount is reasonable
                     if right.aux_int >= 0 and right.aux_int < 64 {
@@ -306,11 +306,11 @@ fn lowerBlock(f: *Func, block: *Block) {
         // Pattern 15: Constant comparison folding
         if (v.op == Op.Eq64 or v.op == Op.Ne64 or v.op == Op.Lt64 or
             v.op == Op.Le64 or v.op == Op.Gt64 or v.op == Op.Ge64) and v.args.count == 2 {
-            let left_id: i64 = v.getArg( 0);
-            let right_id: i64 = v.getArg( 1);
+            let left_id: i64 = v.getArg(0);
+            let right_id: i64 = v.getArg(1);
             if left_id >= 0 and right_id >= 0 {
-                let left: *Value = f.getValue( left_id);
-                let right: *Value = f.getValue( right_id);
+                let left: *Value = f.getValue(left_id);
+                let right: *Value = f.getValue(right_id);
                 if left.op == Op.ConstInt and right.op == Op.ConstInt {
                     var result: i64 = 0;
                     if v.op == Op.Eq64 {
@@ -340,10 +340,10 @@ fn lowerBlock(f: *Func, block: *Block) {
         // Pattern 16: Sub of same value → ConstInt 0
         // x - x → 0
         if v.op == Op.Sub64 and v.args.count == 2 {
-            let left_id: i64 = v.getArg( 0);
-            let right_id: i64 = v.getArg( 1);
+            let left_id: i64 = v.getArg(0);
+            let right_id: i64 = v.getArg(1);
             if left_id == right_id and left_id >= 0 {
-                let arg: *Value = f.getValue( left_id);
+                let arg: *Value = f.getValue(left_id);
                 // Decrement uses by 2 (both args point to same value)
                 arg.uses = arg.uses - 2;
 
@@ -356,10 +356,10 @@ fn lowerBlock(f: *Func, block: *Block) {
         // Pattern 17: Xor of same value → ConstInt 0
         // x ^ x → 0
         if v.op == Op.Xor64 and v.args.count == 2 {
-            let left_id: i64 = v.getArg( 0);
-            let right_id: i64 = v.getArg( 1);
+            let left_id: i64 = v.getArg(0);
+            let right_id: i64 = v.getArg(1);
             if left_id == right_id and left_id >= 0 {
-                let arg: *Value = f.getValue( left_id);
+                let arg: *Value = f.getValue(left_id);
                 arg.uses = arg.uses - 2;
 
                 v.op = Op.ConstInt;
@@ -371,48 +371,48 @@ fn lowerBlock(f: *Func, block: *Block) {
         // Pattern 18: And of same value → Copy
         // x & x → x
         if v.op == Op.And64 and v.args.count == 2 {
-            let left_id: i64 = v.getArg( 0);
-            let right_id: i64 = v.getArg( 1);
+            let left_id: i64 = v.getArg(0);
+            let right_id: i64 = v.getArg(1);
             if left_id == right_id and left_id >= 0 {
-                let arg: *Value = f.getValue( left_id);
+                let arg: *Value = f.getValue(left_id);
                 // One use remains (for Copy), one removed
                 arg.uses = arg.uses - 1;
 
                 v.op = Op.Copy;
-                v.truncateArgs( 1);
+                v.truncateArgs(1);
             }
         }
 
         // Pattern 19: Or of same value → Copy
         // x | x → x
         if v.op == Op.Or64 and v.args.count == 2 {
-            let left_id: i64 = v.getArg( 0);
-            let right_id: i64 = v.getArg( 1);
+            let left_id: i64 = v.getArg(0);
+            let right_id: i64 = v.getArg(1);
             if left_id == right_id and left_id >= 0 {
-                let arg: *Value = f.getValue( left_id);
+                let arg: *Value = f.getValue(left_id);
                 arg.uses = arg.uses - 1;
 
                 v.op = Op.Copy;
-                v.truncateArgs( 1);
+                v.truncateArgs(1);
             }
         }
 
         // Pattern 20: Neg64 of Neg64 → Copy
         // -(-x) → x
         if v.op == Op.Neg64 and v.args.count == 1 {
-            let arg_id: i64 = v.getArg( 0);
+            let arg_id: i64 = v.getArg(0);
             if arg_id >= 0 {
-                let arg: *Value = f.getValue( arg_id);
+                let arg: *Value = f.getValue(arg_id);
                 if arg.op == Op.Neg64 and arg.args.count == 1 {
-                    let inner_id: i64 = arg.getArg( 0);
+                    let inner_id: i64 = arg.getArg(0);
                     if inner_id >= 0 {
-                        let inner: *Value = f.getValue( inner_id);
+                        let inner: *Value = f.getValue(inner_id);
                         // v now directly uses inner instead of arg
                         arg.uses = arg.uses - 1;
                         inner.uses = inner.uses + 1;
 
                         v.op = Op.Copy;
-                        v.setArgById( 0, inner_id);
+                        v.setArgById(0, inner_id);
                     }
                 }
             }

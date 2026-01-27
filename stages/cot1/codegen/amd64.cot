@@ -273,6 +273,31 @@ fn AMD64_movzx_r64_r8(rd: i64, rs: i64) i64 {
     return amd64_encode_movzx_r64_r8(rd, rs);
 }
 
+// Zero-extend word to 64-bit
+fn AMD64_movzx_r64_r16(rd: i64, rs: i64) i64 {
+    return amd64_encode_movzx_r64_r16(rd, rs);
+}
+
+// Zero-extend dword to 64-bit (32-bit MOV implicitly zeros upper bits)
+fn AMD64_mov_r32_r32(rd: i64, rs: i64) i64 {
+    return amd64_encode_mov_r32_r32(rd, rs);
+}
+
+// Sign-extend byte to 64-bit
+fn AMD64_movsx_r64_r8(rd: i64, rs: i64) i64 {
+    return amd64_encode_movsx_r64_r8(rd, rs);
+}
+
+// Sign-extend word to 64-bit
+fn AMD64_movsx_r64_r16(rd: i64, rs: i64) i64 {
+    return amd64_encode_movsx_r64_r16(rd, rs);
+}
+
+// Sign-extend dword to 64-bit
+fn AMD64_movsxd(rd: i64, rs: i64) i64 {
+    return amd64_encode_movsxd(rd, rs);
+}
+
 // ============================================================================
 // Division Operations (special handling for RAX/RDX)
 // ============================================================================
@@ -372,9 +397,19 @@ fn AMD64_load64(rd: i64, base: i64, disp: i64) i64 {
     return amd64_encode_load_disp32(rd, base, disp);
 }
 
+// Load byte from memory [base+disp32] - zero-extends to 64-bit
+fn AMD64_load8(rd: i64, base: i64, disp: i64) i64 {
+    return amd64_encode_load_byte_disp32(rd, base, disp);
+}
+
 // Store to memory [base+disp32] (64-bit)
 fn AMD64_store64(rs: i64, base: i64, disp: i64) i64 {
     return amd64_encode_store_disp32(base, disp, rs);
+}
+
+// Store byte to memory [base+disp32]
+fn AMD64_store8(rs: i64, base: i64, disp: i64) i64 {
+    return amd64_encode_store_byte_disp32(base, disp, rs);
 }
 
 // Load effective address: LEA rd, [base+disp32]
@@ -413,4 +448,9 @@ fn AMD64_int3() i64 {
 // Test register against itself (for zero check)
 fn AMD64_test(r1: i64, r2: i64) i64 {
     return amd64_encode_test_rr(r1, r2);
+}
+
+// Conditional move: rd = cond ? rm : rd
+fn AMD64_cmov(rd: i64, rm: i64, cond: i64) i64 {
+    return amd64_encode_cmov(cond, rd, rm);
 }

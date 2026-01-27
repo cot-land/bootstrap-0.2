@@ -389,11 +389,11 @@ impl TypeRegistry {
     }
 
     fn findByName(self: *TypeRegistry, name_ptr: *u8, name_len: i64) i64 {
-        return self.name_map.get( name_ptr, name_len);
+        return self.name_map.get(name_ptr, name_len);
     }
 
     fn lookupByName(self: *TypeRegistry, source: *u8, name_start: i64, name_len: i64) i64 {
-        return self.name_map.get( source + name_start, name_len);
+        return self.name_map.get(source + name_start, name_len);
     }
 
     fn makePointer(self: *TypeRegistry, elem: i64) i64 {
@@ -508,7 +508,7 @@ impl TypeRegistry {
     
         // Register in name map for fast lookup
         if name_len > 0 and self.source != null {
-            self.name_map.put( self.source + name_start, name_len, idx);
+            self.name_map.put(self.source + name_start, name_len, idx);
         }
     
         return idx;
@@ -534,7 +534,7 @@ impl TypeRegistry {
     
         // Register in name map for fast lookup
         if name_len > 0 and self.source != null {
-            self.name_map.put( self.source + name_start, name_len, idx);
+            self.name_map.put(self.source + name_start, name_len, idx);
         }
     
         return idx;
@@ -672,12 +672,12 @@ fn TypeInfo_isInvalid(pool: *TypeRegistry, idx: i64) bool {
     if idx == INVALID_TYPE or idx < 0 {
         return true;
     }
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.kind == TypeKind.Invalid;
 }
 
 fn TypeInfo_isInteger(pool: *TypeRegistry, idx: i64) bool {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.kind == TypeKind.I8 or t.kind == TypeKind.I16 or
            t.kind == TypeKind.I32 or t.kind == TypeKind.I64 or
            t.kind == TypeKind.U8 or t.kind == TypeKind.U16 or
@@ -685,19 +685,19 @@ fn TypeInfo_isInteger(pool: *TypeRegistry, idx: i64) bool {
 }
 
 fn TypeInfo_isSigned(pool: *TypeRegistry, idx: i64) bool {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.kind == TypeKind.I8 or t.kind == TypeKind.I16 or
            t.kind == TypeKind.I32 or t.kind == TypeKind.I64;
 }
 
 fn TypeInfo_isUnsigned(pool: *TypeRegistry, idx: i64) bool {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.kind == TypeKind.U8 or t.kind == TypeKind.U16 or
            t.kind == TypeKind.U32 or t.kind == TypeKind.U64;
 }
 
 fn TypeInfo_isFloat(pool: *TypeRegistry, idx: i64) bool {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.kind == TypeKind.F32 or t.kind == TypeKind.F64;
 }
 
@@ -706,77 +706,77 @@ fn TypeInfo_isNumeric(pool: *TypeRegistry, idx: i64) bool {
 }
 
 fn TypeInfo_isBool(pool: *TypeRegistry, idx: i64) bool {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.kind == TypeKind.Bool;
 }
 
 fn TypeInfo_isVoid(pool: *TypeRegistry, idx: i64) bool {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.kind == TypeKind.Void;
 }
 
 fn TypeInfo_isPointer(pool: *TypeRegistry, idx: i64) bool {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.kind == TypeKind.Pointer;
 }
 
 fn TypeInfo_isSlice(pool: *TypeRegistry, idx: i64) bool {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.kind == TypeKind.Slice;
 }
 
 fn TypeInfo_isArray(pool: *TypeRegistry, idx: i64) bool {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.kind == TypeKind.Array;
 }
 
 fn TypeInfo_isFunc(pool: *TypeRegistry, idx: i64) bool {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.kind == TypeKind.Func;
 }
 
 fn TypeInfo_isString(pool: *TypeRegistry, idx: i64) bool {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.kind == TypeKind.String;
 }
 
 fn TypeInfo_isStruct(pool: *TypeRegistry, idx: i64) bool {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.kind == TypeKind.Struct;
 }
 
 fn TypeInfo_isEnum(pool: *TypeRegistry, idx: i64) bool {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.kind == TypeKind.Enum;
 }
 
 fn TypeInfo_elem(pool: *TypeRegistry, idx: i64) i64 {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.elem;
 }
 
 fn TypeInfo_arrayLen(pool: *TypeRegistry, idx: i64) i64 {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.len;
 }
 
 fn TypeInfo_ret(pool: *TypeRegistry, idx: i64) i64 {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.ret_type;
 }
 
 fn TypeInfo_paramCount(pool: *TypeRegistry, idx: i64) i64 {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.params_count;
 }
 
 fn TypeInfo_size(pool: *TypeRegistry, idx: i64) i64 {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.size;
 }
 
 fn TypeInfo_alignment(pool: *TypeRegistry, idx: i64) i64 {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.align;
 }
 
@@ -784,8 +784,8 @@ fn TypeInfo_equal(pool: *TypeRegistry, a: i64, b: i64) bool {
     if a == b { return true; }
     if a < 0 or b < 0 { return false; }
 
-    let ta: *Type = pool.get( a);
-    let tb: *Type = pool.get( b);
+    let ta: *Type = pool.get(a);
+    let tb: *Type = pool.get(b);
 
     // Different kinds are never equal
     if ta.kind != tb.kind { return false; }
@@ -818,8 +818,8 @@ fn TypeInfo_equal(pool: *TypeRegistry, a: i64, b: i64) bool {
 
         var i: i64 = 0;
         while i < ta.params_count {
-            let pa: i64 = pool.getParam( ta.params_start, i);
-            let pb: i64 = pool.getParam( tb.params_start, i);
+            let pa: i64 = pool.getParam(ta.params_start, i);
+            let pb: i64 = pool.getParam(tb.params_start, i);
             if not TypeInfo_equal(pool, pa, pb) { return false; }
             i = i + 1;
         }
@@ -900,8 +900,8 @@ fn TypeInfo_isAssignable(pool: *TypeRegistry, from: i64, to: i64) bool {
     // Error types are assignable (for error recovery)
     if from < 0 or to < 0 { return true; }
 
-    let from_t: *Type = pool.get( from);
-    let to_t: *Type = pool.get( to);
+    let from_t: *Type = pool.get(from);
+    let to_t: *Type = pool.get(to);
 
     // Same basic types are assignable
     if from_t.kind == to_t.kind {
@@ -952,7 +952,7 @@ fn names_equal_ptr(source: *u8, start: i64, len1: i64, ptr: *u8, len2: i64) bool
 }
 
 fn TypeInfo_getPointee(pool: *TypeRegistry, ptr_type_idx: i64) i64 {
-    let t: *Type = pool.get( ptr_type_idx);
+    let t: *Type = pool.get(ptr_type_idx);
     if t.kind == TypeKind.Pointer {
         return t.elem;
     }
@@ -960,7 +960,7 @@ fn TypeInfo_getPointee(pool: *TypeRegistry, ptr_type_idx: i64) i64 {
 }
 
 fn TypeInfo_isPrimitive(pool: *TypeRegistry, idx: i64) bool {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     if t.kind == TypeKind.Bool { return true; }
     if t.kind == TypeKind.I8 { return true; }
     if t.kind == TypeKind.I16 { return true; }
@@ -977,19 +977,19 @@ fn TypeInfo_isPrimitive(pool: *TypeRegistry, idx: i64) bool {
 }
 
 fn TypeInfo_fitsInRegs(pool: *TypeRegistry, idx: i64) bool {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     return t.size <= 16;
 }
 
 fn TypeInfo_needsReg(pool: *TypeRegistry, idx: i64) bool {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     if t.kind == TypeKind.Void { return false; }
     if t.kind == TypeKind.Invalid { return false; }
     return true;
 }
 
 fn TypeInfo_registerCount(pool: *TypeRegistry, idx: i64) i64 {
-    let t: *Type = pool.get( idx);
+    let t: *Type = pool.get(idx);
     if t.kind == TypeKind.Void { return 0; }
     if t.kind == TypeKind.Invalid { return 0; }
     // String/Slice need 2 registers (ptr + len)

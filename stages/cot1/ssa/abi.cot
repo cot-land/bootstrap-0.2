@@ -359,7 +359,7 @@ fn ABI_analyzeFunc(info: *ABIParamResultInfo,
 
         var r0: i64 = -1;
         var r1: i64 = -1;
-        let num_regs: i64 = state.tryAllocRegs( param_size, &r0, &r1);
+        let num_regs: i64 = state.tryAllocRegs(param_size, &r0, &r1);
 
         if num_regs > 0 {
             assignment.location = ParamLocation.Register;
@@ -368,10 +368,10 @@ fn ABI_analyzeFunc(info: *ABIParamResultInfo,
             assignment.regs_count = num_regs;
         } else {
             assignment.location = ParamLocation.Stack;
-            assignment.offset = state.allocStack( param_size, param_align);
+            assignment.offset = state.allocStack(param_size, param_align);
         }
 
-        info.addInParam( &assignment);
+        info.addInParam(&assignment);
         i = i + 1;
     }
 
@@ -395,7 +395,7 @@ fn ABI_analyzeFunc(info: *ABIParamResultInfo,
             assignment.type_idx = return_type;
             assignment.location = ParamLocation.HiddenPtr;
             assignment.size = ret_size;
-            info.addOutParam( &assignment);
+            info.addOutParam(&assignment);
         } else {
             var assignment: ABIParamAssignment = ABIParamAssignment_init();
             assignment.type_idx = return_type;
@@ -403,7 +403,7 @@ fn ABI_analyzeFunc(info: *ABIParamResultInfo,
 
             var r0: i64 = -1;
             var r1: i64 = -1;
-            let num_regs: i64 = state.tryAllocRegs( ret_size, &r0, &r1);
+            let num_regs: i64 = state.tryAllocRegs(ret_size, &r0, &r1);
 
             if num_regs > 0 {
                 assignment.location = ParamLocation.Register;
@@ -412,7 +412,7 @@ fn ABI_analyzeFunc(info: *ABIParamResultInfo,
                 assignment.regs_count = num_regs;
             }
 
-            info.addOutParam( &assignment);
+            info.addOutParam(&assignment);
         }
     }
 

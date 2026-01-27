@@ -1021,7 +1021,7 @@ impl MachOWriter {
         }
     
         var dw: DebugLineWriter = undefined;
-        dw.init( self.debug_line, self.debug_line_cap);
+        dw.init(self.debug_line, self.debug_line_cap);
     
         // We need to calculate the header length before writing it
         // For DWARF v4, the structure is:
@@ -1060,57 +1060,57 @@ impl MachOWriter {
     
         // Placeholder for unit_length (we'll patch this at the end)
         let unit_length_pos: i64 = dw.count;
-        dw.writeU32( 0);  // Placeholder
+        dw.writeU32(0);  // Placeholder
     
         // Version
-        dw.writeU16( DWARF_VERSION);
+        dw.writeU16(DWARF_VERSION);
     
         // Header length
-        dw.writeU32( header_length);
+        dw.writeU32(header_length);
     
         // Minimum instruction length
-        dw.writeByte( MIN_INST_LENGTH);
+        dw.writeByte(MIN_INST_LENGTH);
     
         // Maximum operations per instruction (DWARF v4+)
-        dw.writeByte( MAX_OPS_PER_INST);
+        dw.writeByte(MAX_OPS_PER_INST);
     
         // Default is_stmt
-        dw.writeByte( DEFAULT_IS_STMT);
+        dw.writeByte(DEFAULT_IS_STMT);
     
         // Line base
-        dw.writeByte( LINE_BASE & 255);  // Signed, so -5 = 251
+        dw.writeByte(LINE_BASE & 255);  // Signed, so -5 = 251
     
         // Line range
-        dw.writeByte( LINE_RANGE);
+        dw.writeByte(LINE_RANGE);
     
         // Opcode base
-        dw.writeByte( OPCODE_BASE);
+        dw.writeByte(OPCODE_BASE);
     
         // Standard opcode lengths (for opcodes 1 through opcode_base-1)
-        dw.writeByte( 0);  // DW_LNS_copy
-        dw.writeByte( 1);  // DW_LNS_advance_pc
-        dw.writeByte( 1);  // DW_LNS_advance_line
-        dw.writeByte( 1);  // DW_LNS_set_file
-        dw.writeByte( 1);  // DW_LNS_set_column
-        dw.writeByte( 0);  // DW_LNS_negate_stmt
-        dw.writeByte( 0);  // DW_LNS_set_basic_block
-        dw.writeByte( 0);  // DW_LNS_const_add_pc
-        dw.writeByte( 1);  // DW_LNS_fixed_advance_pc
-        dw.writeByte( 0);  // DW_LNS_set_prologue_end
-        dw.writeByte( 0);  // DW_LNS_set_epilogue_begin
-        dw.writeByte( 1);  // DW_LNS_set_isa
+        dw.writeByte(0);  // DW_LNS_copy
+        dw.writeByte(1);  // DW_LNS_advance_pc
+        dw.writeByte(1);  // DW_LNS_advance_line
+        dw.writeByte(1);  // DW_LNS_set_file
+        dw.writeByte(1);  // DW_LNS_set_column
+        dw.writeByte(0);  // DW_LNS_negate_stmt
+        dw.writeByte(0);  // DW_LNS_set_basic_block
+        dw.writeByte(0);  // DW_LNS_const_add_pc
+        dw.writeByte(1);  // DW_LNS_fixed_advance_pc
+        dw.writeByte(0);  // DW_LNS_set_prologue_end
+        dw.writeByte(0);  // DW_LNS_set_epilogue_begin
+        dw.writeByte(1);  // DW_LNS_set_isa
     
         // Include directories (empty list - just null terminator)
-        dw.writeByte( 0);
+        dw.writeByte(0);
     
         // File names
         // Entry format: filename (null-term), directory index (ULEB128), mtime (ULEB128), length (ULEB128)
-        dw.writeString( filename, filename_len);
-        dw.writeULEB128( 0);  // Directory index 0
-        dw.writeULEB128( 0);  // Modification time (unknown)
-        dw.writeULEB128( 0);  // File length (unknown)
+        dw.writeString(filename, filename_len);
+        dw.writeULEB128(0);  // Directory index 0
+        dw.writeULEB128(0);  // Modification time (unknown)
+        dw.writeULEB128(0);  // File length (unknown)
         // Terminate file name list
-        dw.writeByte( 0);
+        dw.writeByte(0);
     
         // Line number program
         // We need to emit the program that maps addresses to lines
@@ -1126,7 +1126,7 @@ impl MachOWriter {
             // Record position where address will be written (after 3 bytes of opcode prefix)
             // DW_LNE_set_address format: 0 (1) + length ULEB (1) + opcode (1) + address (8)
             let addr_reloc_offset: i64 = dw.count + 3;
-            dw.writeSetAddress( first_addr);
+            dw.writeSetAddress(first_addr);
     
             // Add relocation for the address (symbol 0 is typically _main)
             self.addDebugLineReloc(addr_reloc_offset, main_sym_idx);
@@ -1136,12 +1136,12 @@ impl MachOWriter {
     
             // Advance line from 1 to first_line
             if first_line > 1 {
-                dw.writeByte( DW_LNS_advance_line);
-                dw.writeSLEB128( first_line - 1);
+                dw.writeByte(DW_LNS_advance_line);
+                dw.writeSLEB128(first_line - 1);
             }
     
             // Copy (emit row)
-            dw.writeByte( DW_LNS_copy);
+            dw.writeByte(DW_LNS_copy);
     
             // Process remaining entries
             var prev_addr: i64 = first_addr;
@@ -1161,18 +1161,18 @@ impl MachOWriter {
                 // Try special opcode if possible
                 if DWARF_canUseSpecialOpcode(line_delta, addr_delta) {
                     let opcode: i64 = DWARF_specialOpcode(line_delta, addr_delta);
-                    dw.writeByte( opcode);
+                    dw.writeByte(opcode);
                 } else {
                     // Use standard opcodes
                     if addr_delta > 0 {
-                        dw.writeByte( DW_LNS_advance_pc);
-                        dw.writeULEB128( addr_delta / MIN_INST_LENGTH);
+                        dw.writeByte(DW_LNS_advance_pc);
+                        dw.writeULEB128(addr_delta / MIN_INST_LENGTH);
                     }
                     if line_delta != 0 {
-                        dw.writeByte( DW_LNS_advance_line);
-                        dw.writeSLEB128( line_delta);
+                        dw.writeByte(DW_LNS_advance_line);
+                        dw.writeSLEB128(line_delta);
                     }
-                    dw.writeByte( DW_LNS_copy);
+                    dw.writeByte(DW_LNS_copy);
                 }
     
                 prev_addr = cur_addr;
@@ -1183,8 +1183,8 @@ impl MachOWriter {
             // Advance to end of code
             if code_size > prev_addr {
                 let final_delta: i64 = code_size - prev_addr;
-                dw.writeByte( DW_LNS_advance_pc);
-                dw.writeULEB128( final_delta / MIN_INST_LENGTH);
+                dw.writeByte(DW_LNS_advance_pc);
+                dw.writeULEB128(final_delta / MIN_INST_LENGTH);
             }
         }
     

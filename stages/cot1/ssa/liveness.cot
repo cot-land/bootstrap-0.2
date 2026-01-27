@@ -391,7 +391,7 @@ impl BlockLiveness {
         var i: i64 = count;
         while i > 0 {
             i = i - 1;
-            let v: *Value = f.getValue( start + i);
+            let v: *Value = f.getValue(start + i);
     
             // Check if this is a call
             if Op_isCallOp(v.op) {
@@ -435,7 +435,7 @@ impl LivenessResult {
     fn addBlock(self: *LivenessResult, block_id: i64) *BlockLiveness {
         self.ensureCapacity(self.blocks_count + 1);
         let bl: *BlockLiveness = self.blocks + self.blocks_count;
-        bl.init( block_id);
+        bl.init(block_id);
         self.blocks_count = self.blocks_count + 1;
         return bl;
     }
@@ -459,12 +459,12 @@ impl LivenessResult {
 
     fn getDistance(self: *LivenessResult, block_id: i64, value_id: i64) i64 {
         let bl: *BlockLiveness = self.getBlock(block_id);
-        return bl.get( value_id);
+        return bl.get(value_id);
     }
 
     fn isLiveOut(self: *LivenessResult, block_id: i64, value_id: i64) bool {
         let bl: *BlockLiveness = self.getBlock(block_id);
-        return bl.contains( value_id);
+        return bl.contains(value_id);
     }
 
     fn getNextCall(self: *LivenessResult, block_id: i64, inst_idx: i64) i64 {
@@ -523,24 +523,24 @@ fn Liveness_processSuccessorPhis(lm: *LiveMap, f: *Func, block: *Block) {
         let succ_id: i64 = block.succs[s];
         if succ_id == INVALID_BLOCK { s = s + 1; continue; }
 
-        let succ: *Block = f.getBlock( succ_id);
+        let succ: *Block = f.getBlock(succ_id);
         let delta: i64 = Block_branchDistance(block, succ_id);
 
         // Find phi nodes in successor
         var vi: i64 = 0;
         while vi < succ.values_count {
-            let v: *Value = f.getValue( succ.values_start + vi);
+            let v: *Value = f.getValue(succ.values_start + vi);
             if v.op != Op.Phi { vi = vi + 1; continue; }
 
             // Phi input from this edge
             // For simplicity, assume edge_idx matches predecessor order
             // In full impl, we'd track edge indices
             if s < v.args.count {
-                let arg_id: i64 = v.getArg( s);
+                let arg_id: i64 = v.getArg(s);
                 if arg_id != INVALID_ID {
-                    let arg: *Value = f.getValue( arg_id);
+                    let arg: *Value = f.getValue(arg_id);
                     if Value_needsRegister(arg) {
-                        lm.set( arg_id, delta, 0);
+                        lm.set(arg_id, delta, 0);
                     }
                 }
             }
@@ -552,14 +552,14 @@ fn Liveness_processSuccessorPhis(lm: *LiveMap, f: *Func, block: *Block) {
 
 fn Liveness_processBlockLiveness(lr: *LivenessResult, f: *Func, block: *Block,
                            lm: *LiveMap) i64 {
-    let bl: *BlockLiveness = lr.getBlock( block.id);
+    let bl: *BlockLiveness = lr.getBlock(block.id);
 
     // Initialize live set from known live_out
     lm.clear();
     var i: i64 = 0;
     while i < bl.live_out_count {
         let entry: *LiveInfo = bl.live_out + i;
-        lm.setForce( entry.id, entry.dist, entry.pos);
+        lm.setForce(entry.id, entry.dist, entry.pos);
         i = i + 1;
     }
 
@@ -571,46 +571,46 @@ fn Liveness_processBlockLiveness(lr: *LivenessResult, f: *Func, block: *Block,
     // If phi args were added, update live_out
     var changed: i64 = 0;
     if lm.count > old_count {
-        bl.update( lm);
+        bl.update(lm);
         changed = 1;
     }
 
     // Adjust distances for block length
     let block_len: i64 = block.values_count;
-    lm.addDistanceAll( block_len);
+    lm.addDistanceAll(block_len);
 
     // Add control value to live set
     if block.control != INVALID_ID {
-        let ctrl: *Value = f.getValue( block.control);
+        let ctrl: *Value = f.getValue(block.control);
         if Value_needsRegister(ctrl) {
-            lm.set( block.control, block_len, 0);
+            lm.set(block.control, block_len, 0);
         }
     }
 
     // Process values in reverse order (bottom to top)
     i = block_len - 1;
     while i >= 0 {
-        let v: *Value = f.getValue( block.values_start + i);
+        let v: *Value = f.getValue(block.values_start + i);
 
         // Value is defined here - remove from live set
-        lm.remove( v.id);
+        lm.remove(v.id);
 
         // Skip phi nodes (handled separately)
         if v.op == Op.Phi { i = i - 1; continue; }
 
         // Handle calls: add unlikely_distance penalty
         if Op_isCallOp(v.op) {
-            lm.addDistanceAll( UNLIKELY_DISTANCE);
+            lm.addDistanceAll(UNLIKELY_DISTANCE);
         }
 
         // Add arguments to live set
         var a: i64 = 0;
         while a < v.args.count {
-            let arg_id: i64 = v.getArg( a);
+            let arg_id: i64 = v.getArg(a);
             if arg_id != INVALID_ID {
-                let arg: *Value = f.getValue( arg_id);
+                let arg: *Value = f.getValue(arg_id);
                 if Value_needsRegister(arg) {
-                    lm.set( arg_id, i, 0);
+                    lm.set(arg_id, i, 0);
                 }
             }
             a = a + 1;
@@ -621,11 +621,11 @@ fn Liveness_processBlockLiveness(lr: *LivenessResult, f: *Func, block: *Block,
     // Propagate to predecessors
     var p: i64 = 0;
     while p < block.preds.count {
-        let pred_id: i64 = block.getPred( p);
+        let pred_id: i64 = block.getPred(p);
         if pred_id == INVALID_BLOCK { p = p + 1; continue; }
 
-        let pred: *Block = f.getBlock( pred_id);
-        let pred_bl: *BlockLiveness = lr.getBlock( pred_id);
+        let pred: *Block = f.getBlock(pred_id);
+        let pred_bl: *BlockLiveness = lr.getBlock(pred_id);
         let delta: i64 = Block_branchDistance(pred, block.id);
 
         // Add values from current block's live (with delta)
@@ -639,7 +639,7 @@ fn Liveness_processBlockLiveness(lr: *LivenessResult, f: *Func, block: *Block,
             }
 
             // Check if already in predecessor's live_out using O(1) index lookup
-            let k: i64 = pred_bl.findLiveOut( entry.id);
+            let k: i64 = pred_bl.findLiveOut(entry.id);
             if k >= 0 {
                 // Already present - update if better distance
                 let pe: *LiveInfo = pred_bl.live_out + k;
@@ -649,8 +649,8 @@ fn Liveness_processBlockLiveness(lr: *LivenessResult, f: *Func, block: *Block,
                 }
             } else {
                 // Add new entry - grow array and index if needed
-                pred_bl.ensureLiveOutCapacity( pred_bl.live_out_count + 1);
-                pred_bl.ensureIndexCapacity( entry.id);
+                pred_bl.ensureLiveOutCapacity(pred_bl.live_out_count + 1);
+                pred_bl.ensureIndexCapacity(entry.id);
                 let dst: *LiveInfo = pred_bl.live_out + pred_bl.live_out_count;
                 dst.id = entry.id;
                 dst.dist = new_dist;
@@ -677,11 +677,11 @@ fn Liveness_compute(lr: *LivenessResult, f: *Func, lm: *LiveMap) i64 {
     var b: i64 = 0;
     while b < f.blocks_count {
         // Add block with dynamic allocation
-        let bl: *BlockLiveness = lr.addBlock( b);
+        let bl: *BlockLiveness = lr.addBlock(b);
 
         // Compute nextCall array (allocates dynamically)
-        let block: *Block = f.getBlock( b);
-        bl.computeNextCall( f, block);
+        let block: *Block = f.getBlock(b);
+        bl.computeNextCall(f, block);
 
         b = b + 1;
     }
@@ -699,7 +699,7 @@ fn Liveness_compute(lr: *LivenessResult, f: *Func, lm: *LiveMap) i64 {
         // Process blocks in reverse order (postorder-ish)
         b = f.blocks_count - 1;
         while b >= 0 {
-            let block: *Block = f.getBlock( b);
+            let block: *Block = f.getBlock(b);
             let result: i64 = Liveness_processBlockLiveness(lr, f, block, lm);
             if result != 0 {
                 changed = 1;
