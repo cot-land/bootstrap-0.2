@@ -40,6 +40,10 @@ extern fn malloc_u8(count: i64) *u8;
 extern fn malloc_i64(count: i64) *i64;
 extern fn get_time_ns() i64;
 
+// Platform detection (provided by runtime)
+// Returns: 0 = TARGET_ARM64, 1 = TARGET_AMD64
+extern fn get_target_arch() i64;
+
 // TIMING: Accumulators for performance monitoring (debug builds)
 var gs_time_blockvalues: i64 = 0;
 var gs_time_blockcontrol: i64 = 0;
@@ -388,7 +392,7 @@ fn init(self: *GenState) {
 
     // Wire up GenState to use module storage
     self.func = null;
-    self.target = TARGET_ARM64;  // Default to ARM64 (current target)
+    self.target = get_target_arch();  // Auto-detect platform from runtime
     self.code = gs_code;
     self.code_count = 0;
     self.code_cap = gs_code_cap;

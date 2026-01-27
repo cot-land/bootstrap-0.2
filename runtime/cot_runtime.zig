@@ -1200,6 +1200,22 @@ export fn realloc_RegState(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*a
 export fn realloc_LiveInfo(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 24); }
 export fn realloc_BlockLiveness(ptr: ?*anyopaque, old_count: i64, new_count: i64) ?*anyopaque { return realloc_struct(ptr, old_count, new_count, 56); }
 
+// ============================================================================
+// Platform Detection
+// ============================================================================
+
+/// Returns the target architecture at compile time.
+/// This is the most portable and professional way to detect the platform
+/// since the runtime is compiled separately for each target.
+/// Returns: 0 = ARM64, 1 = AMD64
+export fn get_target_arch() i64 {
+    if (is_x86_64) {
+        return 1;  // TARGET_AMD64
+    } else {
+        return 0;  // TARGET_ARM64
+    }
+}
+
 /// Timing function for performance measurement
 /// Returns current time in nanoseconds (monotonic clock)
 export fn get_time_ns() i64 {
