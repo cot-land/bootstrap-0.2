@@ -4,11 +4,15 @@
 //! It must be compiled and linked with any Cot program that uses
 //! the features below.
 //!
-//! Build:
+//! Build for macOS (ARM64):
 //!   zig build-obj -OReleaseFast runtime/cot_runtime.zig -femit-bin=runtime/cot_runtime.o
 //!
+//! Build for Linux (AMD64):
+//!   zig build-obj -OReleaseFast runtime/cot_runtime.zig -femit-bin=runtime/cot_runtime_linux.o -target x86_64-linux-gnu
+//!
 //! Link with Cot program:
-//!   zig cc program.o runtime/cot_runtime.o -o program -lSystem
+//!   macOS: zig cc program.o runtime/cot_runtime.o -o program -lSystem
+//!   Linux: zig cc program.o runtime/cot_runtime_linux.o -o program
 //!
 //! Functions provided:
 //!   __cot_str_concat      - String concatenation (s1 + s2)
@@ -19,6 +23,11 @@
 const std = @import("std");
 const posix = std.posix;
 const c = std.c;
+const builtin = @import("builtin");
+const is_macos = builtin.os.tag == .macos;
+const is_linux = builtin.os.tag == .linux;
+const is_arm64 = builtin.cpu.arch == .aarch64;
+const is_x86_64 = builtin.cpu.arch == .x86_64;
 
 // ============================================================================
 // Crash Handler - Signal-based crash diagnostics
@@ -36,7 +45,9 @@ var symbol_count: usize = 0;
 var symbols_sorted: bool = false;
 
 // Alternate stack for handling stack overflow
-var alt_stack_mem: [c.SIGSTKSZ]u8 align(16) = undefined;
+// SIGSTKSZ is 8192 on macOS/ARM64 and Linux/x86_64
+const ALT_STACK_SIZE: usize = 16384;
+var alt_stack_mem: [ALT_STACK_SIZE]u8 align(16) = undefined;
 
 /// Write string to stderr (signal-safe, uses raw write syscall)
 fn crashWrite(s: []const u8) void {
@@ -132,11 +143,15 @@ fn signalDescription(sig: i32) []const u8 {
 // DWARF Source Location Lookup
 // ============================================================================
 
-// Mach-O constants
+// ============================================================================
+// Platform-Specific Crash Handler Code
+// ============================================================================
+
+// Mach-O constants (macOS only)
 const MH_MAGIC_64: u32 = 0xfeedfacf;
 const LC_SEGMENT_64: u32 = 0x19;
 
-// Mach-O structures
+// Mach-O structures (macOS only)
 const MachHeader64 = extern struct {
     magic: u32,
     cputype: i32,
@@ -485,29 +500,32 @@ fn lookupLineFromDwarf(debug_line: [*]const u8, size: u64, target_addr: u64) Lin
     return info;
 }
 
-// Get Mach-O header of main executable
+// Get Mach-O header of main executable (macOS only)
 extern "c" fn _dyld_get_image_header(image_index: u32) ?*const MachHeader64;
 
 // Print source location for crash address
 fn printSourceLocation(pc: u64) void {
-    const header = _dyld_get_image_header(0) orelse return;
-    const sections = findDwarfSections(header);
+    if (is_macos) {
+        const header = _dyld_get_image_header(0) orelse return;
+        const sections = findDwarfSections(header);
 
-    if (sections.debug_line) |debug_line| {
-        const info = lookupLineFromDwarf(debug_line, sections.debug_line_size, pc);
-        if (info.found) {
-            crashWrite("\nSource Location:\n");
-            crashWrite("  ");
-            if (info.file) |file| {
-                crashPuts(file);
-            } else {
-                crashWrite("<unknown>");
+        if (sections.debug_line) |debug_line| {
+            const info = lookupLineFromDwarf(debug_line, sections.debug_line_size, pc);
+            if (info.found) {
+                crashWrite("\nSource Location:\n");
+                crashWrite("  ");
+                if (info.file) |file| {
+                    crashPuts(file);
+                } else {
+                    crashWrite("<unknown>");
+                }
+                crashWrite(":");
+                crashPutDec(info.line);
+                crashNewline();
             }
-            crashWrite(":");
-            crashPutDec(info.line);
-            crashNewline();
         }
     }
+    // On Linux: TODO: ELF DWARF parsing. For now, no source location.
 }
 
 fn analyzeFaultAddress(addr: u64) void {
@@ -595,28 +613,35 @@ fn walkStack(fp: u64, pc: u64, lr: u64) void {
     // Frame 0: Current PC (crash location)
     printFrame(0, pc, true);
 
-    // Frame 1: Link register (immediate caller)
-    if (isValidPtr(lr) and lr != pc) {
-        printFrame(1, lr, false);
+    // Frame 1: Link register (immediate caller) - ARM64 only
+    var start_depth: usize = 1;
+    if (is_arm64) {
+        if (isValidPtr(lr) and lr != pc) {
+            printFrame(1, lr, false);
+            start_depth = 2;
+        }
     }
 
     // Walk frame pointer chain
     var frame: [*]const u64 = @ptrFromInt(fp);
-    var depth: usize = 2;
+    var depth: usize = start_depth;
     const max_depth: usize = 50;
 
     while (depth < max_depth) {
         const frame_addr = @intFromPtr(frame);
         if (!isValidFramePtr(frame_addr)) break;
 
-        // On ARM64: frame[0] = previous FP, frame[1] = return address (LR)
+        // Frame layout:
+        // ARM64: frame[0] = previous FP, frame[1] = return address (LR)
+        // x86_64: frame[0] = previous RBP, frame[1] = return address
         const prev_fp = frame[0];
         const ret_addr = frame[1];
 
         if (!isValidPtr(ret_addr)) break;
 
-        // Skip if same as LR (already printed)
-        if (ret_addr != lr) {
+        // Skip if same as LR (already printed) - ARM64 only
+        const should_print = if (is_arm64) (ret_addr != lr) else true;
+        if (should_print) {
             printFrame(depth, ret_addr, false);
             depth += 1;
         }
@@ -635,96 +660,150 @@ fn walkStack(fp: u64, pc: u64, lr: u64) void {
     crashWrite("------------------------------------------------------------------------\n");
 }
 
+// Platform-specific context offsets
+// These vary by OS and architecture
+
 // Darwin/macOS ARM64 context offsets (verified against C headers)
 // ucontext_t: uc_mcontext is at offset 48 (pointer to mcontext)
 // mcontext: __es at 0 (16 bytes), __ss at 16
 // __ss: __x[29] at 0, __fp at 232, __lr at 240, __sp at 248, __pc at 256
 
-const UC_MCONTEXT_OFFSET: usize = 48;
-const MC_ES_FAR_OFFSET: usize = 0;  // __far in exception state
-const MC_SS_OFFSET: usize = 16;     // thread state offset in mcontext
+const UC_MCONTEXT_OFFSET: usize = if (is_macos) 48 else if (is_linux and is_x86_64) 0 else 0;
+const MC_ES_FAR_OFFSET: usize = 0;  // __far in exception state (macOS)
+const MC_SS_OFFSET: usize = if (is_macos) 16 else 0;
+
+// ARM64 macOS offsets
 const SS_X_OFFSET: usize = 0;       // __x[0] offset in thread state
-const SS_FP_OFFSET: usize = 232;    // __fp offset in thread state
-const SS_LR_OFFSET: usize = 240;    // __lr offset in thread state
-const SS_SP_OFFSET: usize = 248;    // __sp offset in thread state
-const SS_PC_OFFSET: usize = 256;    // __pc offset in thread state
+const SS_FP_OFFSET: usize = if (is_macos and is_arm64) 232 else 0;
+const SS_LR_OFFSET: usize = if (is_macos and is_arm64) 240 else 0;
+const SS_SP_OFFSET: usize = if (is_macos and is_arm64) 248 else 0;
+const SS_PC_OFFSET: usize = if (is_macos and is_arm64) 256 else 0;
+
+// Linux x86_64 register offsets in ucontext_t->uc_mcontext.gregs[]
+// These are indices into the gregs array (each element is 8 bytes)
+const REG_RIP: usize = 16;  // Instruction pointer
+const REG_RSP: usize = 15;  // Stack pointer
+const REG_RBP: usize = 10;  // Frame pointer
+const REG_RAX: usize = 13;  // Return value
 
 fn getRegFromContext(ctx: *anyopaque, ss_offset: usize) u64 {
-    // Get pointer to mcontext from ucontext
     const uc_bytes: [*]const u8 = @ptrCast(ctx);
-    const mc_ptr_ptr: *const usize = @ptrCast(@alignCast(uc_bytes + UC_MCONTEXT_OFFSET));
-    const mc_bytes: [*]const u8 = @ptrFromInt(mc_ptr_ptr.*);
+    if (is_macos and is_arm64) {
+        // macOS ARM64: Get pointer to mcontext from ucontext
+        const mc_ptr_ptr: *const usize = @ptrCast(@alignCast(uc_bytes + UC_MCONTEXT_OFFSET));
+        const mc_bytes: [*]const u8 = @ptrFromInt(mc_ptr_ptr.*);
 
-    // Get value from thread state (__ss) section
-    const val_ptr: *const u64 = @ptrCast(@alignCast(mc_bytes + MC_SS_OFFSET + ss_offset));
-    return val_ptr.*;
+        // Get value from thread state (__ss) section
+        const val_ptr: *const u64 = @ptrCast(@alignCast(mc_bytes + MC_SS_OFFSET + ss_offset));
+        return val_ptr.*;
+    } else if (is_linux and is_x86_64) {
+        // Linux x86_64: gregs array is at offset 40 in uc_mcontext
+        const gregs_base = uc_bytes + 40; // offset to uc_mcontext.gregs
+        const val_ptr: *const u64 = @ptrCast(@alignCast(gregs_base + ss_offset * 8));
+        return val_ptr.*;
+    } else {
+        return 0;
+    }
 }
 
 fn getFarFromContext(ctx: *anyopaque) u64 {
-    // Get fault address from exception state (__es.__far)
     const uc_bytes: [*]const u8 = @ptrCast(ctx);
-    const mc_ptr_ptr: *const usize = @ptrCast(@alignCast(uc_bytes + UC_MCONTEXT_OFFSET));
-    const mc_bytes: [*]const u8 = @ptrFromInt(mc_ptr_ptr.*);
+    if (is_macos) {
+        // macOS: Get fault address from exception state (__es.__far)
+        const mc_ptr_ptr: *const usize = @ptrCast(@alignCast(uc_bytes + UC_MCONTEXT_OFFSET));
+        const mc_bytes: [*]const u8 = @ptrFromInt(mc_ptr_ptr.*);
 
-    const far_ptr: *const u64 = @ptrCast(@alignCast(mc_bytes + MC_ES_FAR_OFFSET));
-    return far_ptr.*;
+        const far_ptr: *const u64 = @ptrCast(@alignCast(mc_bytes + MC_ES_FAR_OFFSET));
+        return far_ptr.*;
+    } else {
+        // Linux: fault address is in si_addr of siginfo_t (passed separately to handler)
+        // For now, return 0 - we'd need to change the handler signature
+        return 0;
+    }
 }
 
 fn getXRegFromContext(ctx: *anyopaque, reg: usize) u64 {
-    return getRegFromContext(ctx, SS_X_OFFSET + reg * 8);
+    if (is_arm64) {
+        return getRegFromContext(ctx, SS_X_OFFSET + reg * 8);
+    }
+    // x86_64 doesn't have x registers
+    return 0;
 }
 
-fn dumpRegistersArm64(ctx: *anyopaque) void {
+fn dumpRegisters(ctx: *anyopaque) void {
     crashWrite("\nRegisters:\n");
     crashWrite("------------------------------------------------------------------------\n");
 
-    const pc = getRegFromContext(ctx, SS_PC_OFFSET);
-    const lr = getRegFromContext(ctx, SS_LR_OFFSET);
-    const sp = getRegFromContext(ctx, SS_SP_OFFSET);
-    const fp = getRegFromContext(ctx, SS_FP_OFFSET);
+    if (is_arm64) {
+        const pc = getRegFromContext(ctx, SS_PC_OFFSET);
+        const lr = getRegFromContext(ctx, SS_LR_OFFSET);
+        const sp = getRegFromContext(ctx, SS_SP_OFFSET);
+        const fp = getRegFromContext(ctx, SS_FP_OFFSET);
 
-    crashWrite("  PC   ");
-    crashPutHexPtr(pc);
-    crashWrite("  (program counter - crash location)\n");
+        crashWrite("  PC   ");
+        crashPutHexPtr(pc);
+        crashWrite("  (program counter - crash location)\n");
 
-    crashWrite("  LR   ");
-    crashPutHexPtr(lr);
-    crashWrite("  (link register - return address)\n");
+        crashWrite("  LR   ");
+        crashPutHexPtr(lr);
+        crashWrite("  (link register - return address)\n");
 
-    crashWrite("  SP   ");
-    crashPutHexPtr(sp);
-    crashWrite("  (stack pointer)\n");
+        crashWrite("  SP   ");
+        crashPutHexPtr(sp);
+        crashWrite("  (stack pointer)\n");
 
-    crashWrite("  FP   ");
-    crashPutHexPtr(fp);
-    crashWrite("  (frame pointer)\n");
+        crashWrite("  FP   ");
+        crashPutHexPtr(fp);
+        crashWrite("  (frame pointer)\n");
 
-    crashNewline();
+        crashNewline();
 
-    // General purpose registers x0-x28 in rows of 4
-    var i: usize = 0;
-    while (i < 29) : (i += 1) {
-        if (i % 4 == 0) crashWrite("  ");
+        // General purpose registers x0-x28 in rows of 4
+        var i: usize = 0;
+        while (i < 29) : (i += 1) {
+            if (i % 4 == 0) crashWrite("  ");
 
-        crashPutChar('x');
-        if (i < 10) crashPutChar('0');
-        crashPutDec(@intCast(i));
-        crashPutChar('=');
-        crashPutHexPtr(getXRegFromContext(ctx, i));
+            crashPutChar('x');
+            if (i < 10) crashPutChar('0');
+            crashPutDec(@intCast(i));
+            crashPutChar('=');
+            crashPutHexPtr(getXRegFromContext(ctx, i));
 
-        if (i % 4 == 3 or i == 28) {
-            crashNewline();
-        } else {
-            crashPutChar(' ');
+            if (i % 4 == 3 or i == 28) {
+                crashNewline();
+            } else {
+                crashPutChar(' ');
+            }
         }
+    } else if (is_x86_64) {
+        const rip = getRegFromContext(ctx, REG_RIP);
+        const rsp = getRegFromContext(ctx, REG_RSP);
+        const rbp = getRegFromContext(ctx, REG_RBP);
+        const rax = getRegFromContext(ctx, REG_RAX);
+
+        crashWrite("  RIP  ");
+        crashPutHexPtr(rip);
+        crashWrite("  (instruction pointer - crash location)\n");
+
+        crashWrite("  RSP  ");
+        crashPutHexPtr(rsp);
+        crashWrite("  (stack pointer)\n");
+
+        crashWrite("  RBP  ");
+        crashPutHexPtr(rbp);
+        crashWrite("  (frame pointer)\n");
+
+        crashWrite("  RAX  ");
+        crashPutHexPtr(rax);
+        crashWrite("  (return value register)\n");
+    } else {
+        crashWrite("  (register dump not available for this architecture)\n");
     }
 
     crashWrite("------------------------------------------------------------------------\n");
 }
 
 fn crashHandler(sig: i32, info: *const std.posix.siginfo_t, ctx: ?*anyopaque) callconv(.c) void {
-    _ = info;
-
     crashNewline();
     crashWrite("========================================================================\n");
     crashWrite("                           CRASH DETECTED                               \n");
@@ -744,10 +823,23 @@ fn crashHandler(sig: i32, info: *const std.posix.siginfo_t, ctx: ?*anyopaque) ca
 
     // Get context for register/stack info
     if (ctx) |context| {
-        const pc = getRegFromContext(context, SS_PC_OFFSET);
-        const fp = getRegFromContext(context, SS_FP_OFFSET);
-        const lr = getRegFromContext(context, SS_LR_OFFSET);
-        const far = getFarFromContext(context);
+        var pc: u64 = 0;
+        var fp: u64 = 0;
+        var lr: u64 = 0;
+        var far: u64 = 0;
+
+        if (is_arm64) {
+            pc = getRegFromContext(context, SS_PC_OFFSET);
+            fp = getRegFromContext(context, SS_FP_OFFSET);
+            lr = getRegFromContext(context, SS_LR_OFFSET);
+            far = getFarFromContext(context);
+        } else if (is_x86_64) {
+            pc = getRegFromContext(context, REG_RIP);
+            fp = getRegFromContext(context, REG_RBP);
+            lr = 0; // x86_64 doesn't have a link register
+            // On Linux, fault address is in siginfo_t->si_addr
+            far = @intFromPtr(info.fields.sigfault.addr);
+        }
 
         // Fault address for memory errors
         if (sig == std.posix.SIG.SEGV or sig == std.posix.SIG.BUS) {
@@ -758,7 +850,7 @@ fn crashHandler(sig: i32, info: *const std.posix.siginfo_t, ctx: ?*anyopaque) ca
         }
 
         // Registers
-        dumpRegistersArm64(context);
+        dumpRegisters(context);
 
         // Stack trace
         walkStack(fp, pc, lr);
@@ -768,11 +860,13 @@ fn crashHandler(sig: i32, info: *const std.posix.siginfo_t, ctx: ?*anyopaque) ca
 
         // Debugging hints
         crashWrite("\nTo investigate further:\n");
-        crashWrite("  lldb <executable>\n");
-        crashWrite("  (lldb) image lookup -a ");
-        crashPutHexPtr(pc);
-        crashNewline();
-        crashWrite("  (lldb) disassemble -a ");
+        if (is_macos) {
+            crashWrite("  lldb <executable>\n");
+            crashWrite("  (lldb) image lookup -a ");
+        } else {
+            crashWrite("  gdb <executable>\n");
+            crashWrite("  (gdb) info symbol ");
+        }
         crashPutHexPtr(pc);
         crashNewline();
     }
@@ -794,7 +888,7 @@ export fn install_crash_handler() void {
     var alt_stack = std.posix.stack_t{
         .sp = &alt_stack_mem,
         .flags = 0,
-        .size = c.SIGSTKSZ,
+        .size = ALT_STACK_SIZE,
     };
     std.posix.sigaltstack(&alt_stack, null) catch {};
 

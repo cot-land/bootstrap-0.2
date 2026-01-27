@@ -467,7 +467,7 @@ pub const Driver = struct {
 
             // Phase 4c: Register allocation (includes liveness)
             debug.log(.regalloc, "Starting register allocation...", .{});
-            var regalloc_state = regalloc_mod.regalloc(self.allocator, ssa_func) catch |e| {
+            var regalloc_state = regalloc_mod.regalloc(self.allocator, ssa_func, self.target) catch |e| {
                 debug.log(.regalloc, "Regalloc failed: {}", .{e});
                 ssa_func.deinit();
                 self.allocator.destroy(ssa_func);
@@ -578,7 +578,7 @@ pub const Driver = struct {
 
             // Phase 4c: Register allocation
             debug.log(.regalloc, "Starting register allocation...", .{});
-            var regalloc_state = regalloc_mod.regalloc(self.allocator, ssa_func) catch |e| {
+            var regalloc_state = regalloc_mod.regalloc(self.allocator, ssa_func, self.target) catch |e| {
                 debug.log(.regalloc, "Regalloc failed: {}", .{e});
                 ssa_func.deinit();
                 self.allocator.destroy(ssa_func);

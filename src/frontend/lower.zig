@@ -2315,7 +2315,7 @@ pub const Lowerer = struct {
         const arg_type = self.inferExprType(call.args[0]);
         const ptr_type = try self.type_reg.makePointer(TypeRegistry.U8);
 
-        // Check if argument is an integer type
+        // Check if argument is an integer type (includes UNTYPED_INT for literals like 42)
         const is_integer = arg_type == TypeRegistry.I8 or
             arg_type == TypeRegistry.I16 or
             arg_type == TypeRegistry.I32 or
@@ -2324,7 +2324,8 @@ pub const Lowerer = struct {
             arg_type == TypeRegistry.U8 or
             arg_type == TypeRegistry.U16 or
             arg_type == TypeRegistry.U32 or
-            arg_type == TypeRegistry.U64;
+            arg_type == TypeRegistry.U64 or
+            arg_type == TypeRegistry.UNTYPED_INT;
 
         if (is_integer) {
             // Integer: call runtime __print_int(n) or __eprint_int(n)

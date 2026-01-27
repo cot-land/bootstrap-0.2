@@ -507,6 +507,290 @@ pub fn encodeStoreDisp32(base: Reg, disp: i32, src: Reg) struct { data: [8]u8, l
 }
 
 // =========================================
+// Sized Load/Store Operations
+// =========================================
+
+/// MOVZX r64, BYTE PTR [base + disp32] - Load byte with zero-extension
+/// 0F B6 /r with mod=10 (disp32)
+pub fn encodeLoadByteDisp32(dst: Reg, base: Reg, disp: i32) struct { data: [9]u8, len: u8 } {
+    var buf: [9]u8 = .{0} ** 9;
+    var len: u8 = 0;
+
+    // REX prefix (need REX.W for 64-bit dest, REX.R/B for extended regs)
+    buf[len] = encodeREX64(dst, base);
+    len += 1;
+
+    // Opcode: 0F B6
+    buf[len] = 0x0F;
+    len += 1;
+    buf[len] = 0xB6;
+    len += 1;
+
+    // ModR/M
+    if (base == .rsp or base == .r12) {
+        buf[len] = encodeModRM_Disp32(dst, .rsp);
+        len += 1;
+        buf[len] = SIB_RSP_BASE;
+        len += 1;
+    } else {
+        buf[len] = encodeModRM_Disp32(dst, base);
+        len += 1;
+    }
+
+    // Displacement
+    std.mem.writeInt(i32, buf[len..][0..4], disp, .little);
+    len += 4;
+
+    return .{ .data = buf, .len = len };
+}
+
+/// MOV BYTE PTR [base + disp32], r8 - Store byte to memory
+/// 88 /r with mod=10 (disp32)
+pub fn encodeStoreByteDisp32(base: Reg, disp: i32, src: Reg) struct { data: [8]u8, len: u8 } {
+    var buf: [8]u8 = .{0} ** 8;
+    var len: u8 = 0;
+
+    // REX prefix (needed for R8-R15, also gives access to SIL, DIL, etc.)
+    const need_rex = src.needsRex() or base.needsRex() or
+        src == .rsp or src == .rbp or src == .rsi or src == .rdi;
+    if (need_rex) {
+        buf[len] = 0x40 |
+            (@as(u8, @intFromBool(src.needsRex())) << 2) |
+            @as(u8, @intFromBool(base.needsRex()));
+        len += 1;
+    }
+
+    // Opcode
+    buf[len] = 0x88;
+    len += 1;
+
+    // ModR/M
+    if (base == .rsp or base == .r12) {
+        buf[len] = encodeModRM_Disp32(src, .rsp);
+        len += 1;
+        buf[len] = SIB_RSP_BASE;
+        len += 1;
+    } else {
+        buf[len] = encodeModRM_Disp32(src, base);
+        len += 1;
+    }
+
+    // Displacement
+    std.mem.writeInt(i32, buf[len..][0..4], disp, .little);
+    len += 4;
+
+    return .{ .data = buf, .len = len };
+}
+
+/// MOVZX r64, WORD PTR [base + disp32] - Load 16-bit with zero-extension
+/// 0F B7 /r with mod=10 (disp32)
+pub fn encodeLoadWordDisp32(dst: Reg, base: Reg, disp: i32) struct { data: [9]u8, len: u8 } {
+    var buf: [9]u8 = .{0} ** 9;
+    var len: u8 = 0;
+
+    // REX prefix
+    buf[len] = encodeREX64(dst, base);
+    len += 1;
+
+    // Opcode: 0F B7
+    buf[len] = 0x0F;
+    len += 1;
+    buf[len] = 0xB7;
+    len += 1;
+
+    // ModR/M
+    if (base == .rsp or base == .r12) {
+        buf[len] = encodeModRM_Disp32(dst, .rsp);
+        len += 1;
+        buf[len] = SIB_RSP_BASE;
+        len += 1;
+    } else {
+        buf[len] = encodeModRM_Disp32(dst, base);
+        len += 1;
+    }
+
+    // Displacement
+    std.mem.writeInt(i32, buf[len..][0..4], disp, .little);
+    len += 4;
+
+    return .{ .data = buf, .len = len };
+}
+
+/// MOV WORD PTR [base + disp32], r16 - Store 16-bit to memory
+/// 66 89 /r with mod=10 (disp32)
+pub fn encodeStoreWordDisp32(base: Reg, disp: i32, src: Reg) struct { data: [9]u8, len: u8 } {
+    var buf: [9]u8 = .{0} ** 9;
+    var len: u8 = 0;
+
+    // Operand size prefix for 16-bit
+    buf[len] = 0x66;
+    len += 1;
+
+    // REX prefix (if needed for R8-R15)
+    if (src.needsRex() or base.needsRex()) {
+        buf[len] = 0x40 |
+            (@as(u8, @intFromBool(src.needsRex())) << 2) |
+            @as(u8, @intFromBool(base.needsRex()));
+        len += 1;
+    }
+
+    // Opcode
+    buf[len] = 0x89;
+    len += 1;
+
+    // ModR/M
+    if (base == .rsp or base == .r12) {
+        buf[len] = encodeModRM_Disp32(src, .rsp);
+        len += 1;
+        buf[len] = SIB_RSP_BASE;
+        len += 1;
+    } else {
+        buf[len] = encodeModRM_Disp32(src, base);
+        len += 1;
+    }
+
+    // Displacement
+    std.mem.writeInt(i32, buf[len..][0..4], disp, .little);
+    len += 4;
+
+    return .{ .data = buf, .len = len };
+}
+
+/// MOV r32, [base + disp32] - Load 32-bit with implicit zero-extension to 64-bit
+/// 8B /r with mod=10 (disp32), no REX.W
+pub fn encodeLoadDwordDisp32(dst: Reg, base: Reg, disp: i32) struct { data: [8]u8, len: u8 } {
+    var buf: [8]u8 = .{0} ** 8;
+    var len: u8 = 0;
+
+    // REX prefix (only if extended regs, no W bit for 32-bit operation)
+    if (dst.needsRex() or base.needsRex()) {
+        buf[len] = 0x40 |
+            (@as(u8, @intFromBool(dst.needsRex())) << 2) |
+            @as(u8, @intFromBool(base.needsRex()));
+        len += 1;
+    }
+
+    // Opcode
+    buf[len] = 0x8B;
+    len += 1;
+
+    // ModR/M
+    if (base == .rsp or base == .r12) {
+        buf[len] = encodeModRM_Disp32(dst, .rsp);
+        len += 1;
+        buf[len] = SIB_RSP_BASE;
+        len += 1;
+    } else {
+        buf[len] = encodeModRM_Disp32(dst, base);
+        len += 1;
+    }
+
+    // Displacement
+    std.mem.writeInt(i32, buf[len..][0..4], disp, .little);
+    len += 4;
+
+    return .{ .data = buf, .len = len };
+}
+
+/// MOV [base + disp32], r32 - Store 32-bit to memory
+/// 89 /r with mod=10 (disp32), no REX.W
+pub fn encodeStoreDwordDisp32(base: Reg, disp: i32, src: Reg) struct { data: [8]u8, len: u8 } {
+    var buf: [8]u8 = .{0} ** 8;
+    var len: u8 = 0;
+
+    // REX prefix (only if extended regs, no W bit for 32-bit operation)
+    if (src.needsRex() or base.needsRex()) {
+        buf[len] = 0x40 |
+            (@as(u8, @intFromBool(src.needsRex())) << 2) |
+            @as(u8, @intFromBool(base.needsRex()));
+        len += 1;
+    }
+
+    // Opcode
+    buf[len] = 0x89;
+    len += 1;
+
+    // ModR/M
+    if (base == .rsp or base == .r12) {
+        buf[len] = encodeModRM_Disp32(src, .rsp);
+        len += 1;
+        buf[len] = SIB_RSP_BASE;
+        len += 1;
+    } else {
+        buf[len] = encodeModRM_Disp32(src, base);
+        len += 1;
+    }
+
+    // Displacement
+    std.mem.writeInt(i32, buf[len..][0..4], disp, .little);
+    len += 4;
+
+    return .{ .data = buf, .len = len };
+}
+
+// =========================================
+// RIP-Relative Addressing (for globals/strings)
+// =========================================
+
+/// LEA r64, [RIP + disp32] - Load address using RIP-relative addressing
+/// 8D /r with mod=00 and r/m=101 (RIP-relative)
+pub fn encodeLeaRipRel32(dst: Reg, disp: i32) [7]u8 {
+    var buf: [7]u8 = undefined;
+
+    // REX.W (always 64-bit), REX.R if dst is R8-R15
+    buf[0] = 0x48 | (@as(u8, @intFromBool(dst.needsRex())) << 2);
+
+    // LEA opcode
+    buf[1] = 0x8D;
+
+    // ModR/M: mod=00, reg=dst, r/m=101 (RIP-relative)
+    buf[2] = (@as(u8, dst.enc3()) << 3) | 0x05;
+
+    // disp32
+    std.mem.writeInt(i32, buf[3..7], disp, .little);
+
+    return buf;
+}
+
+/// MOV r64, [RIP + disp32] - Load 64-bit from RIP-relative address
+pub fn encodeLoadRipRel32(dst: Reg, disp: i32) [7]u8 {
+    var buf: [7]u8 = undefined;
+
+    // REX.W, REX.R if needed
+    buf[0] = 0x48 | (@as(u8, @intFromBool(dst.needsRex())) << 2);
+
+    // MOV opcode
+    buf[1] = 0x8B;
+
+    // ModR/M: mod=00, reg=dst, r/m=101 (RIP-relative)
+    buf[2] = (@as(u8, dst.enc3()) << 3) | 0x05;
+
+    // disp32
+    std.mem.writeInt(i32, buf[3..7], disp, .little);
+
+    return buf;
+}
+
+/// MOV [RIP + disp32], r64 - Store 64-bit to RIP-relative address
+pub fn encodeStoreRipRel32(disp: i32, src: Reg) [7]u8 {
+    var buf: [7]u8 = undefined;
+
+    // REX.W, REX.R if needed
+    buf[0] = 0x48 | (@as(u8, @intFromBool(src.needsRex())) << 2);
+
+    // MOV opcode
+    buf[1] = 0x89;
+
+    // ModR/M: mod=00, reg=src, r/m=101 (RIP-relative)
+    buf[2] = (@as(u8, src.enc3()) << 3) | 0x05;
+
+    // disp32
+    std.mem.writeInt(i32, buf[3..7], disp, .little);
+
+    return buf;
+}
+
+// =========================================
 // Logical Operations
 // =========================================
 
@@ -633,6 +917,24 @@ pub fn encodeSetcc(cond: Cond, dst: Reg) [4]u8 {
     };
 }
 
+/// MOVZX r64, r8 - Zero-extend byte to 64-bit
+/// Clears upper 56 bits of destination register
+/// 4 bytes: REX.W + 0F B6 /r
+pub fn encodeMovzxRegReg8(dst: Reg, src: Reg) [4]u8 {
+    // REX.W is required for 64-bit destination
+    // REX.R extends ModR/M.reg (dst)
+    // REX.B extends ModR/M.r/m (src) for accessing SIL, DIL, BPL, SPL
+    const rex: u8 = 0x48 | // REX.W
+        (if (dst.needsRex()) @as(u8, 0x04) else 0) | // REX.R
+        (if (src.needsRex()) @as(u8, 0x01) else 0); // REX.B
+    return .{
+        rex,
+        0x0F,
+        0xB6, // MOVZX r64, r/m8
+        encodeModRM_RR(dst, src),
+    };
+}
+
 // =========================================
 // LEA (Load Effective Address)
 // =========================================
@@ -661,6 +963,47 @@ pub fn encodeLeaDisp32(dst: Reg, base: Reg, disp: i32) struct { data: [8]u8, len
 
     std.mem.writeInt(i32, buf[len..][0..4], disp, .little);
     len += 4;
+
+    return .{ .data = buf, .len = len };
+}
+
+/// LEA dst, [base + index] - compute base + index address
+/// Uses SIB byte with scale=1, no displacement
+pub fn encodeLeaBaseIndex(dst: Reg, base: Reg, index: Reg) struct { data: [5]u8, len: u8 } {
+    var buf: [5]u8 = .{0} ** 5;
+    var len: u8 = 0;
+
+    // REX prefix: W=1 (64-bit), R if dst needs, X if index needs, B if base needs
+    buf[len] = 0x48 |
+        (@as(u8, @intFromBool(dst.needsRex())) << 2) |
+        (@as(u8, @intFromBool(index.needsRex())) << 1) |
+        @as(u8, @intFromBool(base.needsRex()));
+    len += 1;
+
+    // LEA opcode
+    buf[len] = 0x8D;
+    len += 1;
+
+    // Special case: if base is RBP or R13, we need mod=01 with disp8=0
+    // because mod=00 with base=101 means disp32 only, no base register
+    if (base == .rbp or base == .r13) {
+        // ModR/M: mod=01 (disp8), reg=dst, r/m=100 (SIB follows)
+        buf[len] = 0x44 | (@as(u8, dst.enc3()) << 3);
+        len += 1;
+        // SIB: scale=00 (1), index=index, base=base
+        buf[len] = (@as(u8, index.enc3()) << 3) | base.enc3();
+        len += 1;
+        // disp8 = 0
+        buf[len] = 0;
+        len += 1;
+    } else {
+        // ModR/M: mod=00, reg=dst, r/m=100 (SIB follows)
+        buf[len] = 0x04 | (@as(u8, dst.enc3()) << 3);
+        len += 1;
+        // SIB: scale=00 (1), index=index, base=base
+        buf[len] = (@as(u8, index.enc3()) << 3) | base.enc3();
+        len += 1;
+    }
 
     return .{ .data = buf, .len = len };
 }

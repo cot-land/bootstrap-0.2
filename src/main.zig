@@ -152,15 +152,24 @@ pub const frontend = struct {
 
 /// Find the runtime library (cot_runtime.o) in known locations.
 /// Searches: 1) relative to executable, 2) relative to cwd
-fn findRuntimePath(allocator: std.mem.Allocator) ![]const u8 {
+/// Selects appropriate runtime based on target platform.
+fn findRuntimePath(allocator: std.mem.Allocator, tgt: Target) ![]const u8 {
+    // Select runtime filename based on target
+    const runtime_name: []const u8 = if (tgt.os == .linux)
+        "cot_runtime_linux.o"
+    else
+        "cot_runtime.o";
+
     // Try locations in order of preference
     const search_paths = [_][]const u8{
-        "runtime/cot_runtime.o", // Relative to cwd (development)
-        "../runtime/cot_runtime.o", // One level up from cwd
+        "runtime/", // Relative to cwd (development)
+        "../runtime/", // One level up from cwd
     };
 
     // First try relative to cwd
-    for (search_paths) |rel_path| {
+    for (search_paths) |dir_path| {
+        const rel_path = try std.fmt.allocPrint(allocator, "{s}{s}", .{ dir_path, runtime_name });
+        defer allocator.free(rel_path);
         if (std.fs.cwd().access(rel_path, .{})) |_| {
             return try allocator.dupe(u8, rel_path);
         } else |_| {}
@@ -171,9 +180,10 @@ fn findRuntimePath(allocator: std.mem.Allocator) ![]const u8 {
     const exe_dir = std.fs.selfExeDirPath(&exe_dir_buf) catch null;
 
     if (exe_dir) |dir| {
-        // exe is at zig-out/bin/cot, runtime is at runtime/cot_runtime.o
-        // So from exe dir, go up two levels: ../../runtime/cot_runtime.o
-        const runtime_rel = "../../runtime/cot_runtime.o";
+        // exe is at zig-out/bin/cot, runtime is at runtime/cot_runtime*.o
+        // So from exe dir, go up two levels: ../../runtime/cot_runtime*.o
+        const runtime_rel = try std.fmt.allocPrint(allocator, "../../runtime/{s}", .{runtime_name});
+        defer allocator.free(runtime_rel);
         const full_path = try std.fs.path.join(allocator, &.{ dir, runtime_rel });
         defer allocator.free(full_path);
 
@@ -197,13 +207,8 @@ pub fn main() !void {
     var args = std.process.args();
     _ = args.skip(); // Skip program name
 
-    const input_file = args.next() orelse {
-        std.debug.print("Usage: cot <input.cot> [-o <output>] [--target=<arch-os>]\n", .{});
-        std.debug.print("Targets: arm64-macos, amd64-linux\n", .{});
-        return;
-    };
-
-    // Parse command-line options
+    // Parse all arguments, collecting input file and options
+    var input_file: ?[]const u8 = null;
     var output_name: []const u8 = "a.out";
     var compile_target: Target = Target.native();
 
@@ -230,25 +235,41 @@ pub fn main() !void {
                 std.debug.print("Supported targets: arm64-macos, amd64-linux\n", .{});
                 return;
             };
+        } else if (!std.mem.startsWith(u8, arg, "-")) {
+            // Positional argument: input file
+            input_file = arg;
+        } else {
+            std.debug.print("Error: Unknown option '{s}'\n", .{arg});
+            return;
         }
     }
 
+    const actual_input = input_file orelse {
+        std.debug.print("Usage: cot [--target=<arch-os>] <input.cot> [-o <output>]\n", .{});
+        std.debug.print("Targets: arm64-macos, amd64-linux\n", .{});
+        return;
+    };
+
     std.debug.print("Cot 0.2 Bootstrap Compiler\n", .{});
-    std.debug.print("Input: {s}\n", .{input_file});
+    std.debug.print("Input: {s}\n", .{actual_input});
     std.debug.print("Output: {s}\n", .{output_name});
     std.debug.print("Target: {s}\n", .{compile_target.name()});
 
     // Compile the file
     var compile_driver = Driver.init(allocator);
     compile_driver.setTarget(compile_target);
-    const obj_code = compile_driver.compileFile(input_file) catch |e| {
+    const obj_code = compile_driver.compileFile(actual_input) catch |e| {
         std.debug.print("Compilation failed: {any}\n", .{e});
         return;
     };
     defer allocator.free(obj_code);
 
     // Write object file
-    const obj_path = try std.fmt.allocPrint(allocator, "{s}.o", .{output_name});
+    // Don't append .o if output_name already ends with .o
+    const obj_path = if (std.mem.endsWith(u8, output_name, ".o"))
+        try allocator.dupe(u8, output_name)
+    else
+        try std.fmt.allocPrint(allocator, "{s}.o", .{output_name});
     defer allocator.free(obj_path);
 
     std.fs.cwd().writeFile(.{ .sub_path = obj_path, .data = obj_code }) catch |e| {
@@ -263,10 +284,15 @@ pub fn main() !void {
 
     // Find runtime library (like Go's unconditional runtime loading)
     // Try multiple locations: relative to exe, relative to cwd
-    const runtime_path = findRuntimePath(allocator) catch |e| blk: {
-        std.debug.print("Warning: Could not find cot_runtime.o: {any}\n", .{e});
+    const runtime_path = findRuntimePath(allocator, compile_target) catch |e| blk: {
+        const runtime_name: []const u8 = if (compile_target.os == .linux) "cot_runtime_linux.o" else "cot_runtime.o";
+        std.debug.print("Warning: Could not find {s}: {any}\n", .{ runtime_name, e });
         std.debug.print("  String operations may fail. Build runtime with:\n", .{});
-        std.debug.print("  zig build-obj -OReleaseFast runtime/cot_runtime.zig -femit-bin=runtime/cot_runtime.o\n", .{});
+        if (compile_target.os == .linux) {
+            std.debug.print("  zig build-obj -OReleaseFast runtime/cot_runtime.zig -femit-bin=runtime/cot_runtime_linux.o -target x86_64-linux-gnu\n", .{});
+        } else {
+            std.debug.print("  zig build-obj -OReleaseFast runtime/cot_runtime.zig -femit-bin=runtime/cot_runtime.o\n", .{});
+        }
         break :blk null;
     };
     defer if (runtime_path) |p| allocator.free(p);

@@ -328,13 +328,23 @@ pub const ElfWriter = struct {
         });
     }
 
-    /// Add a relocation for .text section
+    /// Add a relocation for .text section (function call via PLT)
     pub fn addRelocation(self: *ElfWriter, offset: u32, target: []const u8) !void {
         try self.relocations.append(self.allocator, .{
             .offset = offset,
             .target = target,
             .rel_type = R_X86_64_PLT32,
             .addend = -4, // CALL instruction: target - (rip + 4)
+        });
+    }
+
+    /// Add a PC-relative relocation for data references (LEA with RIP-relative)
+    pub fn addDataRelocation(self: *ElfWriter, offset: u32, target: []const u8) !void {
+        try self.relocations.append(self.allocator, .{
+            .offset = offset,
+            .target = target,
+            .rel_type = R_X86_64_PC32, // PC-relative 32-bit
+            .addend = -4, // Compensates for the 4-byte displacement
         });
     }
 
@@ -413,23 +423,42 @@ pub const ElfWriter = struct {
 
     /// Write the complete object file
     pub fn write(self: *ElfWriter, writer: anytype) !void {
-        // Build symbol name -> index map
+        // Separate local and global symbols (ELF requires locals before globals)
+        var local_symbols = std.ArrayListUnmanaged(Symbol){};
+        defer local_symbols.deinit(self.allocator);
+        var global_symbols = std.ArrayListUnmanaged(Symbol){};
+        defer global_symbols.deinit(self.allocator);
+
+        for (self.symbols.items) |sym| {
+            if (sym.binding == STB_LOCAL) {
+                try local_symbols.append(self.allocator, sym);
+            } else {
+                try global_symbols.append(self.allocator, sym);
+            }
+        }
+
+        // Build symbol name -> index map (locals first, then globals)
         var sym_name_to_idx = std.StringHashMap(u32).init(self.allocator);
         defer sym_name_to_idx.deinit();
 
-        // Add all defined symbols first
-        for (self.symbols.items, 0..) |sym, i| {
-            try sym_name_to_idx.put(sym.name, @intCast(i + 1)); // +1 for null symbol
+        var next_sym_idx: u32 = 1; // Start at 1 (0 is null symbol)
+        for (local_symbols.items) |sym| {
+            try sym_name_to_idx.put(sym.name, next_sym_idx);
+            next_sym_idx += 1;
+        }
+        for (global_symbols.items) |sym| {
+            try sym_name_to_idx.put(sym.name, next_sym_idx);
+            next_sym_idx += 1;
         }
 
-        // Add undefined symbols from relocations
+        // Add undefined symbols from relocations (always global)
         var extern_symbols = std.ArrayListUnmanaged(Symbol){};
         defer extern_symbols.deinit(self.allocator);
 
         for (self.relocations.items) |reloc| {
             if (!sym_name_to_idx.contains(reloc.target)) {
-                const idx: u32 = @intCast(self.symbols.items.len + extern_symbols.items.len + 1);
-                try sym_name_to_idx.put(reloc.target, idx);
+                try sym_name_to_idx.put(reloc.target, next_sym_idx);
+                next_sym_idx += 1;
                 try extern_symbols.append(self.allocator, .{
                     .name = reloc.target,
                     .value = 0,
@@ -440,11 +469,15 @@ pub const ElfWriter = struct {
             }
         }
 
-        // Pre-add symbol names to strtab
+        // Pre-add symbol names to strtab (in same order: locals, globals, externs)
         var symbol_strx = std.ArrayListUnmanaged(u32){};
         defer symbol_strx.deinit(self.allocator);
 
-        for (self.symbols.items) |sym| {
+        for (local_symbols.items) |sym| {
+            const strx = try self.addStrtab(sym.name);
+            try symbol_strx.append(self.allocator, strx);
+        }
+        for (global_symbols.items) |sym| {
             const strx = try self.addStrtab(sym.name);
             try symbol_strx.append(self.allocator, strx);
         }
@@ -488,7 +521,7 @@ pub const ElfWriter = struct {
 
         // .symtab section
         const symtab_offset = offset;
-        const total_syms = 1 + self.symbols.items.len + extern_symbols.items.len; // +1 for null
+        const total_syms = 1 + local_symbols.items.len + global_symbols.items.len + extern_symbols.items.len; // +1 for null
         const symtab_size = total_syms * @sizeOf(Elf64_Sym);
         offset += symtab_size;
         offset = alignTo(offset, 8);
@@ -540,12 +573,11 @@ pub const ElfWriter = struct {
         var null_sym = Elf64_Sym{};
         try writer.writeAll(std.mem.asBytes(&null_sym));
 
-        // Local symbols (including section symbols)
-        // Count local symbols for sh_info
-        var num_local: u32 = 1; // null symbol
+        // sh_info = number of local symbols (including null symbol)
+        const num_local: u32 = @intCast(1 + local_symbols.items.len);
 
-        // Write defined symbols
-        for (self.symbols.items, 0..) |sym, i| {
+        // Write local symbols first (ELF requires locals before globals)
+        for (local_symbols.items, 0..) |sym, i| {
             var elf_sym = Elf64_Sym{
                 .st_name = symbol_strx.items[i],
                 .st_info = Elf64_Sym.makeInfo(sym.binding, sym.sym_type),
@@ -554,12 +586,24 @@ pub const ElfWriter = struct {
                 .st_size = sym.size,
             };
             try writer.writeAll(std.mem.asBytes(&elf_sym));
-            if (sym.binding == STB_LOCAL) num_local += 1;
+        }
+
+        // Write global symbols
+        for (global_symbols.items, 0..) |sym, i| {
+            const strx_idx = local_symbols.items.len + i;
+            var elf_sym = Elf64_Sym{
+                .st_name = symbol_strx.items[strx_idx],
+                .st_info = Elf64_Sym.makeInfo(sym.binding, sym.sym_type),
+                .st_shndx = sym.section,
+                .st_value = sym.value,
+                .st_size = sym.size,
+            };
+            try writer.writeAll(std.mem.asBytes(&elf_sym));
         }
 
         // Write external (undefined) symbols
         for (extern_symbols.items, 0..) |sym, i| {
-            const strx_idx = self.symbols.items.len + i;
+            const strx_idx = local_symbols.items.len + global_symbols.items.len + i;
             var elf_sym = Elf64_Sym{
                 .st_name = symbol_strx.items[strx_idx],
                 .st_info = Elf64_Sym.makeInfo(sym.binding, sym.sym_type),

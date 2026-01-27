@@ -33,6 +33,7 @@ const Block = @import("block.zig").Block;
 const Func = @import("func.zig").Func;
 const Op = @import("op.zig").Op;
 const debug = @import("../pipeline_debug.zig");
+const Target = @import("../core/target.zig").Target;
 
 const ID = types.ID;
 const Pos = types.Pos;
@@ -84,6 +85,71 @@ pub const ARM64Regs = struct {
     };
 
     pub const arg_regs = [_]RegNum{ 0, 1, 2, 3, 4, 5, 6, 7 };
+};
+
+/// AMD64 register constraints (System V ABI)
+/// Register mapping: 0=RAX, 1=RCX, 2=RDX, 3=RBX, 4=RSP, 5=RBP, 6=RSI, 7=RDI, 8-15=R8-R15
+pub const AMD64Regs = struct {
+    pub const rax: RegNum = 0;
+    pub const rcx: RegNum = 1;
+    pub const rdx: RegNum = 2;
+    pub const rbx: RegNum = 3;
+    pub const rsp: RegNum = 4; // Stack pointer - NEVER allocate
+    pub const rbp: RegNum = 5; // Frame pointer - NEVER allocate
+    pub const rsi: RegNum = 6;
+    pub const rdi: RegNum = 7;
+    pub const r8: RegNum = 8;
+    pub const r9: RegNum = 9;
+    pub const r10: RegNum = 10;
+    pub const r11: RegNum = 11;
+    pub const r12: RegNum = 12;
+    pub const r13: RegNum = 13;
+    pub const r14: RegNum = 14;
+    pub const r15: RegNum = 15;
+
+    /// Registers available for allocation (all except RSP=4 and RBP=5)
+    pub const allocatable: RegMask = blk: {
+        var mask: RegMask = 0;
+        // 0-3: RAX, RCX, RDX, RBX
+        for (0..4) |i| {
+            mask |= @as(RegMask, 1) << i;
+        }
+        // Skip 4 (RSP) and 5 (RBP)
+        // 6-15: RSI, RDI, R8-R15
+        for (6..16) |i| {
+            mask |= @as(RegMask, 1) << i;
+        }
+        break :blk mask;
+    };
+
+    /// Caller-saved registers (clobbered by calls): RAX, RCX, RDX, RSI, RDI, R8-R11
+    pub const caller_saved: RegMask = blk: {
+        var mask: RegMask = 0;
+        mask |= @as(RegMask, 1) << 0; // RAX
+        mask |= @as(RegMask, 1) << 1; // RCX
+        mask |= @as(RegMask, 1) << 2; // RDX
+        mask |= @as(RegMask, 1) << 6; // RSI
+        mask |= @as(RegMask, 1) << 7; // RDI
+        mask |= @as(RegMask, 1) << 8; // R8
+        mask |= @as(RegMask, 1) << 9; // R9
+        mask |= @as(RegMask, 1) << 10; // R10
+        mask |= @as(RegMask, 1) << 11; // R11
+        break :blk mask;
+    };
+
+    /// Callee-saved registers: RBX, R12-R15
+    pub const callee_saved: RegMask = blk: {
+        var mask: RegMask = 0;
+        mask |= @as(RegMask, 1) << 3; // RBX
+        mask |= @as(RegMask, 1) << 12; // R12
+        mask |= @as(RegMask, 1) << 13; // R13
+        mask |= @as(RegMask, 1) << 14; // R14
+        mask |= @as(RegMask, 1) << 15; // R15
+        break :blk mask;
+    };
+
+    /// Argument registers (System V ABI): RDI, RSI, RDX, RCX, R8, R9
+    pub const arg_regs = [_]RegNum{ 7, 6, 2, 1, 8, 9 };
 };
 
 // =========================================
@@ -196,9 +262,15 @@ pub const RegAllocState = struct {
     // Stats
     num_spills: u32 = 0,
 
+    // Target-specific register constraints
+    allocatable_mask: RegMask,
+    caller_saved_mask: RegMask,
+    num_arg_regs: u8,
+    arg_regs: []const RegNum,
+
     const Self = @This();
 
-    pub fn init(allocator: std.mem.Allocator, f: *Func, live: liveness.LivenessResult) !Self {
+    pub fn init(allocator: std.mem.Allocator, f: *Func, live: liveness.LivenessResult, target: Target) !Self {
         // Allocate per-value state for all values in the function
         // vid.next_id is the next ID to be allocated, so values 1..next_id-1 exist
         const max_id = f.vid.next_id;
@@ -207,12 +279,22 @@ pub const RegAllocState = struct {
             v.* = .{};
         }
 
+        // Select register constraints based on target architecture
+        const allocatable = if (target.arch == .amd64) AMD64Regs.allocatable else ARM64Regs.allocatable;
+        const caller_saved = if (target.arch == .amd64) AMD64Regs.caller_saved else ARM64Regs.caller_saved;
+        const arg_regs: []const RegNum = if (target.arch == .amd64) &AMD64Regs.arg_regs else &ARM64Regs.arg_regs;
+        const num_args: u8 = @intCast(arg_regs.len);
+
         return Self{
             .allocator = allocator,
             .f = f,
             .live = live,
             .values = values,
             .end_regs = .{},
+            .allocatable_mask = allocatable,
+            .caller_saved_mask = caller_saved,
+            .num_arg_regs = num_args,
+            .arg_regs = arg_regs,
         };
     }
 
@@ -531,7 +613,7 @@ pub const RegAllocState = struct {
     /// Go reference: regalloc.go loadReg() line 1700
     fn loadValue(self: *Self, v: *Value, block: *Block) !*Value {
         const vi = &self.values[v.id];
-        const reg = try self.allocReg(ARM64Regs.allocatable, block);
+        const reg = try self.allocReg(self.allocatable_mask, block);
 
         // Rematerializeable values: copy the original instead of loading from spill
         // Go reference: regalloc.go line 1750 (copyInto for rematerializeable)
@@ -642,7 +724,7 @@ pub const RegAllocState = struct {
         for (phis.items, 0..) |phi, i| {
             if (primary_pred_idx < phi.args.len) {
                 const arg = phi.args[primary_pred_idx];
-                const arg_regs = self.values[arg.id].regs & ~phi_used & ARM64Regs.allocatable;
+                const arg_regs = self.values[arg.id].regs & ~phi_used & self.allocatable_mask;
                 if (arg_regs != 0) {
                     const reg = types.regMaskFirst(arg_regs).?;
                     phi_regs[i] = reg;
@@ -656,7 +738,7 @@ pub const RegAllocState = struct {
         for (phis.items, 0..) |phi, i| {
             if (phi_regs[i] != null) continue;
 
-            const available = ARM64Regs.allocatable & ~phi_used;
+            const available = self.allocatable_mask & ~phi_used;
             if (self.findFreeReg(available)) |reg| {
                 phi_regs[i] = reg;
                 phi_used |= @as(RegMask, 1) << reg;
@@ -810,11 +892,11 @@ pub const RegAllocState = struct {
                     }
                     try self.assignReg(v, 0);
                 } else if (v.op == .arg) {
-                    // Function argument - ARM64 ABI: x0-x7 for first 8, stack for rest
+                    // Function argument - use target-specific arg_regs
                     const arg_idx: usize = @intCast(v.aux_int);
-                    if (arg_idx < 8) {
-                        // Register argument
-                        const arg_reg: RegNum = @intCast(arg_idx);
+                    if (arg_idx < self.arg_regs.len) {
+                        // Register argument - use architecture-specific register mapping
+                        const arg_reg: RegNum = self.arg_regs[arg_idx];
                         if (self.regs[arg_reg].v != null) {
                             // Another value is in this register - need to spill it
                             if (try self.spillReg(arg_reg, block, false)) |spill| {
@@ -823,13 +905,13 @@ pub const RegAllocState = struct {
                         }
                         try self.assignReg(v, arg_reg);
                     } else {
-                        // Stack argument (arg 9+) - allocate a register and mark for stack load
+                        // Stack argument (beyond register args) - allocate a register and mark for stack load
                         // The codegen will emit a load from the appropriate stack slot
-                        const reg = try self.allocReg(ARM64Regs.allocatable, block);
+                        const reg = try self.allocReg(self.allocatable_mask, block);
                         try self.assignReg(v, reg);
                     }
                 } else {
-                    const reg = try self.allocReg(ARM64Regs.allocatable, block);
+                    const reg = try self.allocReg(self.allocatable_mask, block);
                     try self.assignReg(v, reg);
                 }
             }
@@ -1067,7 +1149,7 @@ pub const RegAllocState = struct {
 
     fn findTempReg(self: *const Self, exclude: RegMask) ?RegNum {
         // Find a register that's not in the exclude set and not in use
-        const available = ARM64Regs.allocatable & ~exclude;
+        const available = self.allocatable_mask & ~exclude;
         var m = available;
         while (m != 0) {
             const reg: RegNum = @intCast(@ctz(m));
@@ -1162,13 +1244,13 @@ fn valueNeedsReg(v: *Value) bool {
 // Public API
 // =========================================
 
-pub fn regalloc(allocator: std.mem.Allocator, f: *Func) !RegAllocState {
+pub fn regalloc(allocator: std.mem.Allocator, f: *Func, target: Target) !RegAllocState {
     // First compute liveness
     var live = try liveness.computeLiveness(allocator, f);
     errdefer live.deinit();
 
     // Then allocate registers
-    var state = try RegAllocState.init(allocator, f, live);
+    var state = try RegAllocState.init(allocator, f, live, target);
     errdefer state.deinit();
     try state.run();
 
