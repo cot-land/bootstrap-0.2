@@ -6845,3 +6845,213 @@ test "parity stack stress" {
     var f: i64 = 6; var g: i64 = 7; var h: i64 = 8; var i: i64 = 9; var j: i64 = 10
     @assert(a+b+c+d+e+f+g+h+i+j == 55)
 }
+
+// ============================================================================
+// PHASE 5 TESTS - Algorithm Tests (Consolidated)
+// ============================================================================
+
+// Fibonacci iterative
+fn algo_fib(n: i64) i64 {
+    if n <= 1 { return n }
+    var a: i64 = 0
+    var b: i64 = 1
+    var i: i64 = 2
+    while i <= n {
+        let temp: i64 = a + b
+        a = b
+        b = temp
+        i = i + 1
+    }
+    return b
+}
+
+test "algo fibonacci" {
+    @assert(algo_fib(0) == 0)
+    @assert(algo_fib(1) == 1)
+    @assert(algo_fib(10) == 55)
+    @assert(algo_fib(20) == 6765)
+}
+
+// Factorial iterative
+fn algo_fact(n: i64) i64 {
+    var result: i64 = 1
+    var i: i64 = 2
+    while i <= n {
+        result = result * i
+        i = i + 1
+    }
+    return result
+}
+
+test "algo factorial" {
+    @assert(algo_fact(0) == 1)
+    @assert(algo_fact(1) == 1)
+    @assert(algo_fact(5) == 120)
+    @assert(algo_fact(10) == 3628800)
+}
+
+// Sum of digits
+fn algo_digit_sum(n: i64) i64 {
+    var sum: i64 = 0
+    var x: i64 = n
+    while x > 0 {
+        sum = sum + (x % 10)
+        x = x / 10
+    }
+    return sum
+}
+
+test "algo digit sum" {
+    @assert(algo_digit_sum(123) == 6)
+    @assert(algo_digit_sum(999) == 27)
+    @assert(algo_digit_sum(100) == 1)
+}
+
+// Reverse number
+fn algo_reverse(n: i64) i64 {
+    var result: i64 = 0
+    var x: i64 = n
+    while x > 0 {
+        result = result * 10 + (x % 10)
+        x = x / 10
+    }
+    return result
+}
+
+test "algo reverse" {
+    @assert(algo_reverse(123) == 321)
+    @assert(algo_reverse(100) == 1)
+    @assert(algo_reverse(12345) == 54321)
+}
+
+// Absolute value
+fn algo_abs(x: i64) i64 {
+    if x < 0 { return 0 - x }
+    return x
+}
+
+test "algo abs" {
+    @assert(algo_abs(5) == 5)
+    @assert(algo_abs(-5) == 5)
+    @assert(algo_abs(0) == 0)
+}
+
+// Min/max helpers
+fn algo_min(a: i64, b: i64) i64 {
+    if a < b { return a }
+    return b
+}
+
+fn algo_max(a: i64, b: i64) i64 {
+    if a > b { return a }
+    return b
+}
+
+test "algo min max" {
+    @assert(algo_min(3, 5) == 3)
+    @assert(algo_min(5, 3) == 3)
+    @assert(algo_max(3, 5) == 5)
+    @assert(algo_max(5, 3) == 5)
+}
+
+// Clamp value
+fn algo_clamp(x: i64, lo: i64, hi: i64) i64 {
+    if x < lo { return lo }
+    if x > hi { return hi }
+    return x
+}
+
+test "algo clamp" {
+    @assert(algo_clamp(5, 0, 10) == 5)
+    @assert(algo_clamp(-5, 0, 10) == 0)
+    @assert(algo_clamp(15, 0, 10) == 10)
+}
+
+// Sign function
+fn algo_sign(x: i64) i64 {
+    if x > 0 { return 1 }
+    if x < 0 { return -1 }
+    return 0
+}
+
+test "algo sign" {
+    @assert(algo_sign(5) == 1)
+    @assert(algo_sign(-5) == -1)
+    @assert(algo_sign(0) == 0)
+}
+
+// Integer square root
+fn algo_isqrt(n: i64) i64 {
+    if n < 0 { return -1 }
+    if n == 0 { return 0 }
+    var x: i64 = n
+    var y: i64 = (x + 1) / 2
+    while y < x {
+        x = y
+        y = (x + n / x) / 2
+    }
+    return x
+}
+
+test "algo isqrt" {
+    @assert(algo_isqrt(0) == 0)
+    @assert(algo_isqrt(1) == 1)
+    @assert(algo_isqrt(4) == 2)
+    @assert(algo_isqrt(16) == 4)
+    @assert(algo_isqrt(17) == 4)
+}
+
+// Log base 2 (floor)
+fn algo_log2(n: i64) i64 {
+    if n <= 0 { return -1 }
+    var count: i64 = 0
+    var x: i64 = n
+    while x > 1 {
+        x = x >> 1
+        count = count + 1
+    }
+    return count
+}
+
+test "algo log2" {
+    @assert(algo_log2(1) == 0)
+    @assert(algo_log2(2) == 1)
+    @assert(algo_log2(8) == 3)
+    @assert(algo_log2(16) == 4)
+}
+
+// Is power of two
+fn algo_is_pow2(n: i64) bool {
+    if n <= 0 { return false }
+    return (n & (n - 1)) == 0
+}
+
+test "algo is pow2" {
+    @assert(algo_is_pow2(1))
+    @assert(algo_is_pow2(2))
+    @assert(algo_is_pow2(4))
+    @assert(!algo_is_pow2(3))
+    @assert(algo_is_pow2(1024))
+}
+
+// LCM using GCD
+fn algo_lcm(a: i64, b: i64) i64 {
+    return (a / parity_gcd(a, b)) * b
+}
+
+test "algo lcm" {
+    @assert(algo_lcm(4, 6) == 12)
+    @assert(algo_lcm(3, 5) == 15)
+    @assert(algo_lcm(12, 18) == 36)
+}
+
+// Sum formulas
+fn algo_sum_n(n: i64) i64 { return n * (n + 1) / 2 }
+fn algo_sum_squares(n: i64) i64 { return n * (n + 1) * (2 * n + 1) / 6 }
+
+test "algo sum formulas" {
+    @assert(algo_sum_n(10) == 55)
+    @assert(algo_sum_n(100) == 5050)
+    @assert(algo_sum_squares(3) == 14)
+    @assert(algo_sum_squares(10) == 385)
+}
