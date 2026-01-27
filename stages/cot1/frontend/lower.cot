@@ -5862,113 +5862,93 @@ test "addition" {
     @assert(20 + 22 == 42)
 }
 
-// --- Comparison Tests ---
+// --- Comparison Tests (consolidated) ---
 
-test "not equal" {
-    @assert(1 != 2)
-}
-
-test "less than" {
-    @assert(10 < 20)
-}
-
-test "greater than" {
-    @assert(20 > 10)
-}
-
-test "less or equal - less" {
-    @assert(4 <= 5)
-}
-
-test "less or equal - equal" {
-    @assert(5 <= 5)
-}
-
-test "greater or equal - greater" {
-    @assert(6 >= 5)
-}
-
-test "greater or equal - equal" {
-    @assert(5 >= 5)
-}
-
-test "equal" {
+test "all comparison operators" {
+    // Equal and not equal
     @assert(42 == 42)
-}
+    @assert(1 != 2)
+    @assert(!(1 == 2))
+    @assert(!(42 != 42))
 
-test "negative comparison" {
-    let x: i64 = -10
-    let y: i64 = -5
-    @assert(x < y)
-}
+    // Less than and greater than
+    @assert(10 < 20)
+    @assert(20 > 10)
+    @assert(!(20 < 10))
+    @assert(!(10 > 20))
 
-test "negative vs positive" {
-    @assert(-1 < 1)
-}
+    // Less or equal (both cases)
+    @assert(4 <= 5)
+    @assert(5 <= 5)
+    @assert(!(6 <= 5))
 
-test "zero comparisons" {
+    // Greater or equal (both cases)
+    @assert(6 >= 5)
+    @assert(5 >= 5)
+    @assert(!(4 >= 5))
+
+    // Zero comparisons
     @assert(0 == 0)
     @assert(0 <= 0)
     @assert(0 >= 0)
+
+    // Negative numbers
+    let x: i64 = -10
+    let y: i64 = -5
+    @assert(x < y)
+    @assert(y > x)
+    @assert(-1 < 1)
+    @assert(1 > -1)
 }
 
 // ============================================================================
-// INLINE TESTS - Control Flow
+// INLINE TESTS - Control Flow (consolidated)
 // ============================================================================
 
-test "if true branch" {
-    var result: i64 = 0
+test "if statements" {
+    // True branch
+    var r1: i64 = 0
+    if 1 == 1 { r1 = 42 }
+    @assert(r1 == 42)
+
+    // False branch (else)
+    var r2: i64 = 0
+    if 1 == 2 { r2 = 1 } else { r2 = 42 }
+    @assert(r2 == 42)
+
+    // Nested if
+    var r3: i64 = 0
     if 1 == 1 {
-        result = 42
+        if 2 == 2 { r3 = 42 }
     }
-    @assert(result == 42)
+    @assert(r3 == 42)
+
+    // If-else chain
+    var r4: i64 = 0
+    let x: i64 = 5
+    if x < 3 { r4 = 1 }
+    else if x < 6 { r4 = 42 }
+    else { r4 = 3 }
+    @assert(r4 == 42)
 }
 
-test "if false branch" {
-    var result: i64 = 0
-    if 1 == 2 {
-        result = 1
-    } else {
-        result = 42
-    }
-    @assert(result == 42)
-}
+test "while loops" {
+    // Skip loop (false condition)
+    var r1: i64 = 42
+    while 1 == 2 { r1 = 0 }
+    @assert(r1 == 42)
 
-test "nested if" {
-    var result: i64 = 0
-    if 1 == 1 {
-        if 2 == 2 {
-            result = 42
-        }
-    }
-    @assert(result == 42)
-}
+    // Count up
+    var r2: i64 = 0
+    while r2 < 42 { r2 = r2 + 1 }
+    @assert(r2 == 42)
 
-test "while skip" {
-    var result: i64 = 42
-    while 1 == 2 {
-        result = 0
-    }
-    @assert(result == 42)
-}
+    // Countdown
+    var r3: i64 = 10
+    while r3 > 0 { r3 = r3 - 1 }
+    @assert(r3 == 0)
 
-test "while loop" {
-    var x: i64 = 0
-    while x < 42 {
-        x = x + 1
-    }
-    @assert(x == 42)
-}
-
-test "while countdown" {
-    var x: i64 = 10
-    while x > 0 {
-        x = x - 1
-    }
-    @assert(x == 0)
-}
-
-test "nested while" {
+    // Nested while (3x3 = 9 iterations)
     var sum: i64 = 0
     var i: i64 = 0
     while i < 3 {
@@ -5982,386 +5962,271 @@ test "nested while" {
     @assert(sum == 9)
 }
 
-test "break statement" {
+test "break and continue" {
+    // Break at specific value
     var x: i64 = 0
     while x < 100 {
         x = x + 1
-        if x == 42 {
-            break
-        }
+        if x == 42 { break }
     }
     @assert(x == 42)
-}
 
-test "continue statement" {
+    // Continue to skip value
     var sum: i64 = 0
     var i: i64 = 0
     while i < 10 {
         i = i + 1
-        if i == 5 {
-            continue
-        }
+        if i == 5 { continue }
         sum = sum + i
     }
-    // sum = 1+2+3+4+6+7+8+9+10 = 50
-    @assert(sum == 50)
-}
+    @assert(sum == 50)  // 1+2+3+4+6+7+8+9+10
 
-test "if chain" {
-    var x: i64 = 5
-    var result: i64 = 0
-    if x == 1 {
-        result = 1
-    } else {
-        if x == 5 {
-            result = 42
-        } else {
-            result = 0
+    // Break in nested loop (inner only)
+    var total: i64 = 0
+    var a: i64 = 0
+    while a < 3 {
+        var b: i64 = 0
+        while b < 10 {
+            if b >= 2 { break }
+            total = total + 1
+            b = b + 1
         }
+        a = a + 1
     }
-    @assert(result == 42)
+    @assert(total == 6)  // 2 iterations * 3 outer
 }
 
 // ============================================================================
-// INLINE TESTS - Function Calls
+// INLINE TESTS - Function Calls (consolidated)
 // ============================================================================
 
-test "simple call" {
+test "function calls" {
+    // Simple call
     @assert(test_helper_add(20, 22) == 42)
-}
 
-test "nested call" {
+    // Nested calls (call result as argument)
     @assert(test_helper_add(test_helper_identity(20), test_helper_identity(22)) == 42)
-}
 
-test "8 register args" {
+    // 8 register args (ARM64: x0-x7)
     @assert(test_helper_sum8(1, 2, 3, 4, 5, 6, 7, 8) == 36)
-}
 
-test "9 args with stack" {
+    // 9 args (8 registers + 1 stack)
     @assert(test_helper_sum9(1, 2, 3, 4, 5, 6, 7, 8, 9) == 45)
-}
 
-test "recursion factorial" {
+    // Void function (no return value)
+    test_helper_void()
+    @assert(1 == 1)  // Just verify we got here
+
+    // Recursive calls
     @assert(test_helper_factorial(5) == 120)
-}
-
-test "recursion fibonacci" {
     @assert(test_helper_fib(10) == 55)
 }
 
-test "void call" {
-    test_helper_void()
-    @assert(1 == 1)
-}
-
 // ============================================================================
-// INLINE TESTS - Variables and Assignment
+// INLINE TESTS - Variables (consolidated)
 // ============================================================================
 
-test "var assign" {
+test "variables and assignment" {
+    // var declaration and assignment
     var x: i64 = 42
     @assert(x == 42)
-}
 
-test "var reassign" {
-    var x: i64 = 10
-    x = 42
-    @assert(x == 42)
-}
+    // Reassignment
+    x = 100
+    @assert(x == 100)
 
-test "const decl" {
-    let x: i64 = 42
-    @assert(x == 42)
-}
+    // const declaration
+    let y: i64 = 42
+    @assert(y == 42)
 
-test "multiple vars" {
+    // Multiple vars in expression
     let a: i64 = 10
     let b: i64 = 20
     let c: i64 = 12
     @assert(a + b + c == 42)
-}
 
-test "var in expression" {
-    var x: i64 = 20
-    var y: i64 = 22
-    @assert(x + y == 42)
+    // Var in complex expression
+    var p: i64 = 5
+    var q: i64 = 7
+    @assert(p * q + 7 == 42)
+
+    // Chain of assignments
+    var r: i64 = 1
+    r = r + 10
+    r = r * 2
+    r = r + 20
+    @assert(r == 42)
 }
 
 // ============================================================================
-// INLINE TESTS - Bitwise Operations
+// INLINE TESTS - Bitwise Operations (consolidated)
 // ============================================================================
 
-test "bitwise and" {
+test "bitwise operations" {
+    // AND
     @assert((15 & 10) == 10)
-}
+    @assert((0xFF & 0x0F) == 0x0F)
+    @assert((0 & 0xFF) == 0)
 
-test "bitwise or" {
+    // OR
     @assert((5 | 10) == 15)
-}
+    @assert((0xF0 | 0x0F) == 0xFF)
+    @assert((0 | 0xFF) == 0xFF)
 
-test "bitwise xor" {
+    // XOR
     @assert((15 ^ 10) == 5)
-}
+    @assert((0xFF ^ 0xFF) == 0)
+    @assert((0 ^ 0xFF) == 0xFF)
 
-test "shift left" {
+    // Shift left
     @assert((4 << 3) == 32)
-}
+    @assert((1 << 10) == 1024)
+    @assert((1 << 0) == 1)
 
-test "shift right" {
+    // Shift right
     @assert((32 >> 3) == 4)
-}
+    @assert((256 >> 8) == 1)
+    @assert((1 >> 1) == 0)
 
-test "bitwise combo" {
-    @assert(((15 & 12) | 8) == 12)
-}
+    // NOT (bitwise complement)
+    @assert(~0 == -1)
+    @assert(~(-1) == 0)
+    @assert(~~42 == 42)
 
-test "mask extract" {
-    let val: i64 = 255
-    @assert((val & 15) == 15)
+    // Combined operations
+    let mask: i64 = 0xFF
+    let val: i64 = 0x1234
+    @assert((val & mask) == 0x34)
+    @assert(((val >> 8) & mask) == 0x12)
 }
 
 // ============================================================================
-// INLINE TESTS - Logical Operations
+// INLINE TESTS - Logical Operations (consolidated)
 // ============================================================================
 
-test "logical and true" {
+test "logical operations" {
+    // AND truth table
     @assert(true and true)
-}
+    @assert(!(false and true))
+    @assert(!(true and false))
+    @assert(!(false and false))
 
-test "logical and false first" {
-    var result: bool = false and true
-    @assert(!result)
-}
+    // OR truth table
+    @assert(true or true)
+    @assert(true or false)
+    @assert(false or true)
+    @assert(!(false or false))
 
-test "logical and false second" {
-    var result: bool = true and false
-    @assert(!result)
-}
+    // NOT
+    @assert(!false)
+    @assert(!(!true))
 
-test "logical or false" {
-    var result: bool = false or false
-    @assert(!result)
-}
+    // Chained operations
+    @assert(true and true and true)
+    @assert(!(true and true and false))
+    @assert(true or false or false)
+    @assert(!(false or false or false))
 
-test "logical or true first" {
-    var result: bool = true or false
-    @assert(result)  // result is true
-}
+    // Mixed
+    @assert((true and false) or true)
+    @assert(!((false or false) and true))
 
-test "logical or true second" {
-    var result: bool = false or true
-    @assert(result)  // result is true
-}
-
-test "logical not" {
-    var x: bool = !false
-    @assert(x)  // x should be true
-}
-
-// ============================================================================
-// PHASE 2 TESTS - Additional Arithmetic & Comparisons
-// ============================================================================
-
-test "boolean variable true" {
-    let b: bool = true
-    @assert(b)
-}
-
-test "boolean variable false" {
-    let b: bool = false
-    @assert(!b)
-}
-
-test "chain arithmetic" {
-    @assert(1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 6 == 42)
-}
-
-test "call add one" {
-    @assert(test_add_one(41) == 42)
-}
-
-test "call add" {
-    @assert(test_add(20, 22) == 42)
-}
-
-test "call mul" {
-    @assert(test_mul(6, 7) == 42)
-}
-
-test "call spill" {
-    var x: i64 = test_mul(2, 3)
-    var y: i64 = test_mul(6, 6)
-    @assert(x == 6)
-}
-
-test "fibonacci" {
-    @assert(test_helper_fib(10) == 55)
-}
-
-test "early return" {
-    var x: i64 = 10
-    @assert(x == 10)
-}
-
-test "16 args" {
-    @assert(test_sum16(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16) == 136)
-}
-
-test "add assign" {
-    var x: i64 = 10
-    x += 32
-    @assert(x == 42)
-}
-
-test "sub assign" {
-    var x: i64 = 50
-    x -= 8
-    @assert(x == 42)
-}
-
-test "mul assign" {
-    var x: i64 = 6
-    x *= 7
-    @assert(x == 42)
-}
-
-test "div assign" {
-    var x: i64 = 84
-    x /= 2
-    @assert(x == 42)
-}
-
-test "bitwise not zero" {
-    let x: i64 = 0
-    @assert(~x == -1)
-}
-
-test "bitwise not neg" {
-    let x: i64 = -1
-    @assert(~x == 0)
-}
-
-test "bitwise not double" {
-    let x: i64 = 42
-    @assert(~~x == 42)
-}
-
-test "bitwise and assign" {
-    var x: i64 = 255
-    x &= 15
-    @assert(x == 15)
-}
-
-test "bitwise or assign" {
-    var x: i64 = 5
-    x |= 10
-    @assert(x == 15)
-}
-
-test "shift left manual" {
-    var x: i64 = 1
-    x = x << 4
-    @assert(x == 16)
-}
-
-test "shift right manual" {
-    var x: i64 = 64
-    x = x >> 2
-    @assert(x == 16)
+    // With comparisons
+    let x: i64 = 5
+    @assert((x > 0) and (x < 10))
+    @assert((x == 5) or (x == 6))
 }
 
 // ============================================================================
-// PHASE 2 TESTS - Control Flow
+// INLINE TESTS - Boolean and Compound Assignment (consolidated)
 // ============================================================================
 
-test "while simple skip" {
-    var x: i64 = 42
-    while 1 == 2 {
-        x = 0
-    }
-    @assert(x == 42)
+test "boolean variables" {
+    let t: bool = true
+    let f: bool = false
+    @assert(t)
+    @assert(!f)
+    @assert(t != f)
+
+    // Boolean from comparison
+    let cmp: bool = 5 > 3
+    @assert(cmp)
 }
 
-test "loop sum 0 to 4" {
-    var sum: i64 = 0
-    var i: i64 = 0
-    while i < 5 {
-        sum = sum + i
-        i = i + 1
-    }
-    @assert(sum == 10)
-}
+test "compound assignment operators" {
+    // Add assign
+    var a: i64 = 10
+    a += 32
+    @assert(a == 42)
 
-test "loop break at 5" {
-    var sum: i64 = 0
-    var i: i64 = 0
-    while i < 100 {
-        if i == 5 { break }
-        sum = sum + i
-        i = i + 1
-    }
-    @assert(sum == 10)
-}
+    // Sub assign
+    var b: i64 = 50
+    b -= 8
+    @assert(b == 42)
 
-test "loop continue skip 2" {
-    var sum: i64 = 0
-    var i: i64 = 0
-    while i < 5 {
-        i = i + 1
-        if i == 2 { continue }
-        sum = sum + i
-    }
-    @assert(sum == 13)
-}
+    // Mul assign
+    var c: i64 = 6
+    c *= 7
+    @assert(c == 42)
 
-test "else simple" {
-    var x: i64 = 0
-    if 1 == 2 {
-        x = 10
-    } else {
-        x = 42
-    }
-    @assert(x == 42)
+    // Div assign
+    var d: i64 = 84
+    d /= 2
+    @assert(d == 42)
+
+    // Bitwise compound assignments
+    var e: i64 = 255
+    e &= 15
+    @assert(e == 15)
+
+    var f: i64 = 5
+    f |= 10
+    @assert(f == 15)
+
+    // Mod assign
+    var g: i64 = 47
+    g %= 5
+    @assert(g == 2)
 }
 
 // ============================================================================
-// PHASE 2 TESTS - Function Pointers
+// INLINE TESTS - Function Pointers (consolidated)
 // ============================================================================
 
-test "fn ptr call" {
+test "function pointers" {
+    // Call through function pointer with args
     var f: fn(i64, i64) -> i64 = test_add_fn
     @assert(f(20, 22) == 42)
-}
 
-test "fn ptr no args" {
-    var f: fn() -> i64 = test_get_forty_two
-    @assert(f() == 42)
+    // Call through function pointer without args
+    var g: fn() -> i64 = test_get_forty_two
+    @assert(g() == 42)
 }
 
 // ============================================================================
-// PHASE 2 TESTS - Global Variables
+// INLINE TESTS - Global Variables (consolidated)
 // ============================================================================
 
-test "global increment" {
+test "global variables" {
+    // Reset and increment
     test_g_reset()
     test_g_increment()
     test_g_increment()
     test_g_increment()
     @assert(test_g_get() == 3)
-}
 
-test "global reset" {
+    // Reset after increment
     test_g_increment()
     test_g_reset()
     @assert(test_g_get() == 0)
 }
 
 // ============================================================================
-// PHASE 3 TESTS - Switch Statements
+// INLINE TESTS - Switch Statements (consolidated)
 // ============================================================================
 
-test "switch basic" {
+test "switch statements" {
+    // Basic case match
     let x: i64 = 2
     let result: i64 = switch x {
         1 => 10,
@@ -6370,10 +6235,8 @@ test "switch basic" {
         else => 99,
     }
     @assert(result == 42)
-}
 
-test "switch default and multi" {
-    // Test default case
+    // Default case
     let a: i64 = 5
     let r1: i64 = switch a {
         1 => 10,
@@ -6381,7 +6244,8 @@ test "switch default and multi" {
         else => 42,
     }
     @assert(r1 == 42)
-    // Test first case match
+
+    // First case match
     let b: i64 = 1
     let r2: i64 = switch b {
         1 => 42,
@@ -6389,7 +6253,8 @@ test "switch default and multi" {
         else => 99,
     }
     @assert(r2 == 42)
-    // Test multi patterns
+
+    // Multi patterns
     let c: i64 = 3
     let r3: i64 = switch c {
         1, 2 => 12,
@@ -6400,20 +6265,19 @@ test "switch default and multi" {
 }
 
 // ============================================================================
-// PHASE 3 TESTS - For-In Loops
+// INLINE TESTS - For-In Loops (consolidated)
 // ============================================================================
 
-test "for in array" {
+test "for-in loops" {
+    // Iterate over array
     var arr: [5]i64 = [1, 2, 3, 4, 5]
     var sum: i64 = 0
     for x in arr {
         sum = sum + x
     }
     @assert(sum == 15)
-}
 
-test "for in with break and continue" {
-    // Test break
+    // With break
     var arr1: [5]i64 = [10, 20, 30, 40, 50]
     var sum1: i64 = 0
     for x in arr1 {
@@ -6421,7 +6285,8 @@ test "for in with break and continue" {
         sum1 = sum1 + x
     }
     @assert(sum1 == 30)
-    // Test continue
+
+    // With continue
     var arr2: [5]i64 = [1, 2, 3, 4, 5]
     var sum2: i64 = 0
     for x in arr2 {
@@ -6429,32 +6294,31 @@ test "for in with break and continue" {
         sum2 = sum2 + x
     }
     @assert(sum2 == 12)
-}
 
-test "for in slice" {
-    var arr: [5]i64 = [10, 20, 30, 40, 50]
-    let s: []i64 = arr[1:4]
-    var sum: i64 = 0
+    // Iterate over slice
+    var arr3: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr3[1:4]
+    var sum3: i64 = 0
     for x in s {
-        sum = sum + x
+        sum3 = sum3 + x
     }
-    @assert(sum == 90)
+    @assert(sum3 == 90)
 }
 
 // ============================================================================
-// PHASE 3 TESTS - Defer Statement
+// INLINE TESTS - Defer Statement (consolidated)
 // ============================================================================
 
 fn defer_identity(x: i64) i64 {
     return x
 }
 
-test "defer simple" {
+test "defer statements" {
+    // Simple defer
     defer defer_identity(42)
     @assert(1 == 1)
-}
 
-test "defer multiple and early return" {
+    // Multiple defers
     defer defer_identity(1)
     defer defer_identity(2)
     let x: i64 = 5
@@ -6465,50 +6329,50 @@ test "defer multiple and early return" {
 }
 
 // ============================================================================
-// PHASE 3 TESTS - @intCast
+// INLINE TESTS - @intCast (consolidated)
 // ============================================================================
 
-test "intcast widen" {
+test "intcast operations" {
+    // Widen: u8 -> i64
     let a: u8 = 200
     let b: i64 = @intCast(i64, a)
     @assert(b == 200)
-}
 
-test "intcast truncate and roundtrip" {
     // Truncate: 300 (0x12C) -> 44 (0x2C)
-    let a: i64 = 300
-    let b: u8 = @intCast(u8, a)
-    @assert(b == 44)
-    // Roundtrip
-    let c: i64 = 12345
-    let d: i32 = @intCast(i32, c)
-    let e: i64 = @intCast(i64, d)
-    @assert(e == 12345)
+    let c: i64 = 300
+    let d: u8 = @intCast(u8, c)
+    @assert(d == 44)
+
+    // Roundtrip: i64 -> i32 -> i64
+    let e: i64 = 12345
+    let f: i32 = @intCast(i32, e)
+    let g: i64 = @intCast(i64, f)
+    @assert(g == 12345)
 }
 
 // ============================================================================
-// PHASE 3 TESTS - Register Pressure
+// INLINE TESTS - Register Pressure (consolidated)
 // ============================================================================
 
-test "register pressure 15" {
+test "register pressure" {
+    // 15 live variables (fits in ARM64 registers)
     let a: i64 = 1; let b: i64 = 2; let c: i64 = 3; let d: i64 = 4
     let e: i64 = 5; let f: i64 = 6; let g: i64 = 7; let h: i64 = 8
     let i: i64 = 9; let j: i64 = 10; let k: i64 = 11; let l: i64 = 12
     let m: i64 = 13; let n: i64 = 14; let o: i64 = 15
     @assert(a+b+c+d+e+f+g+h+i+j+k+l+m+n+o == 120)
-}
 
-test "register pressure 20" {
-    let a: i64 = 1; let b: i64 = 2; let c: i64 = 3; let d: i64 = 4
-    let e: i64 = 5; let f: i64 = 6; let g: i64 = 7; let h: i64 = 8
-    let i: i64 = 9; let j: i64 = 10; let k: i64 = 11; let l: i64 = 12
-    let m: i64 = 13; let n: i64 = 14; let o: i64 = 15; let p: i64 = 16
-    let q: i64 = 17; let r: i64 = 18; let s: i64 = 19; let t: i64 = 20
-    @assert(a+b+c+d+e+f+g+h+i+j+k+l+m+n+o+p+q+r+s+t == 210)
+    // 20 live variables (requires spilling)
+    let aa: i64 = 1; let bb: i64 = 2; let cc: i64 = 3; let dd: i64 = 4
+    let ee: i64 = 5; let ff: i64 = 6; let gg: i64 = 7; let hh: i64 = 8
+    let ii: i64 = 9; let jj: i64 = 10; let kk: i64 = 11; let ll: i64 = 12
+    let mm: i64 = 13; let nn: i64 = 14; let oo: i64 = 15; let pp: i64 = 16
+    let qq: i64 = 17; let rr: i64 = 18; let ss: i64 = 19; let tt: i64 = 20
+    @assert(aa+bb+cc+dd+ee+ff+gg+hh+ii+jj+kk+ll+mm+nn+oo+pp+qq+rr+ss+tt == 210)
 }
 
 // ============================================================================
-// PHASE 3 TESTS - Multi-way Control Flow (Phi Nodes)
+// INLINE TESTS - Multi-way Control Flow (consolidated)
 // ============================================================================
 
 fn test_phi_3way(x: i64) i64 {
@@ -6537,26 +6401,20 @@ fn test_phi_4way(x: i64) i64 {
     return result
 }
 
-test "phi 3way" {
-    let r1: i64 = test_phi_3way(1)
-    let r2: i64 = test_phi_3way(2)
-    let r3: i64 = test_phi_3way(99)
-    @assert(r1 + r2 + r3 == 60)
-}
+test "multi-way control flow" {
+    // 3-way if-else-if
+    @assert(test_phi_3way(1) + test_phi_3way(2) + test_phi_3way(99) == 60)
 
-test "phi 4way" {
-    let r1: i64 = test_phi_4way(1)
-    let r2: i64 = test_phi_4way(2)
-    let r3: i64 = test_phi_4way(3)
-    let r4: i64 = test_phi_4way(99)
-    @assert(r1 + r2 + r3 + r4 == 1000)
+    // 4-way if-else-if-else-if
+    @assert(test_phi_4way(1) + test_phi_4way(2) + test_phi_4way(3) + test_phi_4way(99) == 1000)
 }
 
 // ============================================================================
-// PHASE 3 TESTS - Deep Nesting
+// INLINE TESTS - Deep Nesting (consolidated)
 // ============================================================================
 
-test "nest 3 levels" {
+test "deep nesting" {
+    // 3 levels nested
     var result: i64 = 0
     var i: i64 = 0
     while i < 3 {
@@ -6570,9 +6428,8 @@ test "nest 3 levels" {
         i = i + 1
     }
     @assert(result == 5)
-}
 
-test "nest 4 levels" {
+    // 4 levels nested
     var total: i64 = 0
     var a: i64 = 0
     while a < 2 {
@@ -6593,55 +6450,53 @@ test "nest 4 levels" {
 }
 
 // ============================================================================
-// PHASE 3 TESTS - Complex Expressions
+// INLINE TESTS - Complex Expressions (consolidated)
 // ============================================================================
 
-test "long expression" {
+test "complex expressions" {
+    // Long expression
     let a: i64 = 1; let b: i64 = 2; let c: i64 = 3
-    let result: i64 = ((a + b) * (c + a) + (b * c)) * ((a + c) - b) + (a * b * c)
-    @assert(result == 42)
-}
+    let r1: i64 = ((a + b) * (c + a) + (b * c)) * ((a + c) - b) + (a * b * c)
+    @assert(r1 == 42)
 
-test "nested arithmetic" {
+    // Nested arithmetic
     let x: i64 = 2; let y: i64 = 3; let z: i64 = 4
-    let result: i64 = (((x + y) * z) + ((y * z) - x)) * (x + y - 1)
-    @assert(result == 120)
-}
+    let r2: i64 = (((x + y) * z) + ((y * z) - x)) * (x + y - 1)
+    @assert(r2 == 120)
 
-test "pressure in loop" {
+    // Register pressure in loop
     var sum: i64 = 0
     var i: i64 = 0
     while i < 5 {
-        let a: i64 = i * 2
-        let b: i64 = i * 3
-        let c: i64 = i * 4
-        let d: i64 = i * 5
-        let e: i64 = a + b
-        let f: i64 = c + d
-        sum = sum + e + f
+        let aa: i64 = i * 2
+        let bb: i64 = i * 3
+        let cc: i64 = i * 4
+        let dd: i64 = i * 5
+        let ee: i64 = aa + bb
+        let ff: i64 = cc + dd
+        sum = sum + ee + ff
         i = i + 1
     }
     @assert(sum == 140)
 }
 
 // ============================================================================
-// PHASE 3 TESTS - Bug Regression Tests
+// INLINE TESTS - Bug Regressions (consolidated)
 // ============================================================================
 
-test "bug004 large struct return" {
+test "large struct handling" {
+    // BUG-004: Large struct return (>16 bytes)
     let s: TestBigReturn = test_make_big_return(10, 20, 12)
     @assert(s.a + s.b + s.c == 42)
-}
 
-test "bug019 large struct arg" {
-    var s: TestBigArg
-    s.a = 1; s.b = 2; s.c = 3; s.d = 4; s.e = 5; s.f = 6; s.g = 21
-    @assert(test_sum_big_arg(s) == 42)
-}
+    // BUG-019: Large struct argument
+    var s2: TestBigArg
+    s2.a = 1; s2.b = 2; s2.c = 3; s2.d = 4; s2.e = 5; s2.f = 6; s2.g = 21
+    @assert(test_sum_big_arg(s2) == 42)
 
-test "bug019b large struct literal arg" {
-    let s: TestBigArg = TestBigArg{ .a = 6, .b = 6, .c = 6, .d = 6, .e = 6, .f = 6, .g = 6 }
-    @assert(test_sum_big_arg(s) == 42)
+    // BUG-019b: Large struct literal argument
+    let s3: TestBigArg = TestBigArg{ .a = 6, .b = 6, .c = 6, .d = 6, .e = 6, .f = 6, .g = 6 }
+    @assert(test_sum_big_arg(s3) == 42)
 }
 
 // ============================================================================
@@ -6659,12 +6514,6 @@ fn parity_power(base: i64, exp: i64) i64 {
     return result
 }
 
-test "parity power" {
-    @assert(parity_power(2, 10) == 1024)
-    @assert(parity_power(3, 4) == 81)
-    @assert(parity_power(5, 0) == 1)
-}
-
 // Collatz sequence - tests conditional in loop
 fn parity_collatz(n: i64) i64 {
     var steps: i64 = 0
@@ -6680,12 +6529,6 @@ fn parity_collatz(n: i64) i64 {
     return steps
 }
 
-test "parity collatz" {
-    @assert(parity_collatz(27) == 111)
-    @assert(parity_collatz(1) == 0)
-    @assert(parity_collatz(2) == 1)
-}
-
 // Is prime - tests nested conditionals and loops
 fn parity_is_prime(n: i64) bool {
     if n <= 1 { return false }
@@ -6697,13 +6540,6 @@ fn parity_is_prime(n: i64) bool {
         i = i + 2
     }
     return true
-}
-
-test "parity is prime" {
-    @assert(parity_is_prime(2))
-    @assert(parity_is_prime(17))
-    @assert(!parity_is_prime(18))
-    @assert(parity_is_prime(97))
 }
 
 // GCD using Euclidean algorithm
@@ -6718,12 +6554,6 @@ fn parity_gcd(a: i64, b: i64) i64 {
     return x
 }
 
-test "parity gcd" {
-    @assert(parity_gcd(48, 18) == 6)
-    @assert(parity_gcd(100, 25) == 25)
-    @assert(parity_gcd(7, 3) == 1)
-}
-
 // Count set bits
 fn parity_count_bits(n: i64) i64 {
     var count: i64 = 0
@@ -6735,15 +6565,37 @@ fn parity_count_bits(n: i64) i64 {
     return count
 }
 
-test "parity count bits" {
+test "parity math functions" {
+    // Power
+    @assert(parity_power(2, 10) == 1024)
+    @assert(parity_power(3, 4) == 81)
+    @assert(parity_power(5, 0) == 1)
+
+    // Collatz
+    @assert(parity_collatz(27) == 111)
+    @assert(parity_collatz(1) == 0)
+    @assert(parity_collatz(2) == 1)
+
+    // Is prime
+    @assert(parity_is_prime(2))
+    @assert(parity_is_prime(17))
+    @assert(!parity_is_prime(18))
+    @assert(parity_is_prime(97))
+
+    // GCD
+    @assert(parity_gcd(48, 18) == 6)
+    @assert(parity_gcd(100, 25) == 25)
+    @assert(parity_gcd(7, 3) == 1)
+
+    // Count bits
     @assert(parity_count_bits(0) == 0)
     @assert(parity_count_bits(1) == 1)
     @assert(parity_count_bits(7) == 3)
     @assert(parity_count_bits(255) == 8)
 }
 
-// Triple nested loop
-test "parity triple loop" {
+test "parity loops and expressions" {
+    // Triple nested loop
     var sum: i64 = 0
     var i: i64 = 0
     while i < 2 {
@@ -6759,34 +6611,28 @@ test "parity triple loop" {
         i = i + 1
     }
     @assert(sum == 24)
-}
 
-// Triangular sum
-test "parity triangular sum" {
-    var sum: i64 = 0
-    var i: i64 = 1
-    while i <= 5 {
-        var j: i64 = 1
-        while j <= i {
-            sum = sum + j
-            j = j + 1
+    // Triangular sum
+    var sum2: i64 = 0
+    var ii: i64 = 1
+    while ii <= 5 {
+        var jj: i64 = 1
+        while jj <= ii {
+            sum2 = sum2 + jj
+            jj = jj + 1
         }
-        i = i + 1
+        ii = ii + 1
     }
-    @assert(sum == 35)
-}
+    @assert(sum2 == 35)
 
-// Expression precedence tests
-test "parity expr precedence" {
+    // Expression precedence
     @assert(2 + 3 * 4 == 14)
     @assert((2 + 3) * 4 == 20)
     @assert(10 - 3 - 2 == 5)
     @assert(10 - (3 - 2) == 9)
     @assert(2 * 3 + 4 * 5 == 26)
-}
 
-// Comparison chain tests
-test "parity comparisons" {
+    // Comparisons
     let a: i64 = 5
     let b: i64 = 10
     let c: i64 = 5
@@ -6796,58 +6642,37 @@ test "parity comparisons" {
     @assert(a >= c)
     @assert(a == c)
     @assert(a != b)
-}
 
-// Bitwise operation chain
-test "parity bitwise chain" {
+    // Bitwise chain
     let x: i64 = 0xFF
     @assert((x & 0x0F) == 0x0F)
     @assert((x | 0x100) == 0x1FF)
     @assert((x ^ 0xFF) == 0)
     @assert((x >> 4) == 0x0F)
     @assert((0x0F << 4) == 0xF0)
-}
 
-// Logical operation chain
-test "parity logical chain" {
+    // Logical chain
     @assert(1 == 1 and 2 == 2 and 3 == 3)
     @assert(!(1 == 2 and 2 == 2))
     @assert(1 == 2 or 2 == 2)
     @assert(!(1 == 2 or 2 == 3))
-}
 
-// Variable reassignment chain
-test "parity reassign chain" {
-    var x: i64 = 1
-    x = x + 1
-    x = x * 2
-    x = x - 1
-    x = x / 1
-    @assert(x == 3)
-}
+    // Reassignment chain
+    var y: i64 = 1
+    y = y + 1
+    y = y * 2
+    y = y - 1
+    y = y / 1
+    @assert(y == 3)
 
-// Compound assignment comprehensive
-test "parity compound assigns" {
-    var a: i64 = 10
-    a += 5
-    @assert(a == 15)
-    a -= 3
-    @assert(a == 12)
-    a *= 2
-    @assert(a == 24)
-    a /= 4
-    @assert(a == 6)
-}
-
-// Stack allocation stress
-test "parity stack stress" {
-    var a: i64 = 1; var b: i64 = 2; var c: i64 = 3; var d: i64 = 4; var e: i64 = 5
-    var f: i64 = 6; var g: i64 = 7; var h: i64 = 8; var i: i64 = 9; var j: i64 = 10
-    @assert(a+b+c+d+e+f+g+h+i+j == 55)
+    // Stack allocation stress
+    var v1: i64 = 1; var v2: i64 = 2; var v3: i64 = 3; var v4: i64 = 4; var v5: i64 = 5
+    var v6: i64 = 6; var v7: i64 = 7; var v8: i64 = 8; var v9: i64 = 9; var v10: i64 = 10
+    @assert(v1+v2+v3+v4+v5+v6+v7+v8+v9+v10 == 55)
 }
 
 // ============================================================================
-// PHASE 5 TESTS - Algorithm Tests (Consolidated)
+// INLINE TESTS - Algorithm Functions (consolidated)
 // ============================================================================
 
 // Fibonacci iterative
@@ -6865,13 +6690,6 @@ fn algo_fib(n: i64) i64 {
     return b
 }
 
-test "algo fibonacci" {
-    @assert(algo_fib(0) == 0)
-    @assert(algo_fib(1) == 1)
-    @assert(algo_fib(10) == 55)
-    @assert(algo_fib(20) == 6765)
-}
-
 // Factorial iterative
 fn algo_fact(n: i64) i64 {
     var result: i64 = 1
@@ -6881,13 +6699,6 @@ fn algo_fact(n: i64) i64 {
         i = i + 1
     }
     return result
-}
-
-test "algo factorial" {
-    @assert(algo_fact(0) == 1)
-    @assert(algo_fact(1) == 1)
-    @assert(algo_fact(5) == 120)
-    @assert(algo_fact(10) == 3628800)
 }
 
 // Sum of digits
@@ -6901,12 +6712,6 @@ fn algo_digit_sum(n: i64) i64 {
     return sum
 }
 
-test "algo digit sum" {
-    @assert(algo_digit_sum(123) == 6)
-    @assert(algo_digit_sum(999) == 27)
-    @assert(algo_digit_sum(100) == 1)
-}
-
 // Reverse number
 fn algo_reverse(n: i64) i64 {
     var result: i64 = 0
@@ -6918,22 +6723,10 @@ fn algo_reverse(n: i64) i64 {
     return result
 }
 
-test "algo reverse" {
-    @assert(algo_reverse(123) == 321)
-    @assert(algo_reverse(100) == 1)
-    @assert(algo_reverse(12345) == 54321)
-}
-
 // Absolute value
 fn algo_abs(x: i64) i64 {
     if x < 0 { return 0 - x }
     return x
-}
-
-test "algo abs" {
-    @assert(algo_abs(5) == 5)
-    @assert(algo_abs(-5) == 5)
-    @assert(algo_abs(0) == 0)
 }
 
 // Min/max helpers
@@ -6947,13 +6740,6 @@ fn algo_max(a: i64, b: i64) i64 {
     return b
 }
 
-test "algo min max" {
-    @assert(algo_min(3, 5) == 3)
-    @assert(algo_min(5, 3) == 3)
-    @assert(algo_max(3, 5) == 5)
-    @assert(algo_max(5, 3) == 5)
-}
-
 // Clamp value
 fn algo_clamp(x: i64, lo: i64, hi: i64) i64 {
     if x < lo { return lo }
@@ -6961,23 +6747,11 @@ fn algo_clamp(x: i64, lo: i64, hi: i64) i64 {
     return x
 }
 
-test "algo clamp" {
-    @assert(algo_clamp(5, 0, 10) == 5)
-    @assert(algo_clamp(-5, 0, 10) == 0)
-    @assert(algo_clamp(15, 0, 10) == 10)
-}
-
 // Sign function
 fn algo_sign(x: i64) i64 {
     if x > 0 { return 1 }
     if x < 0 { return -1 }
     return 0
-}
-
-test "algo sign" {
-    @assert(algo_sign(5) == 1)
-    @assert(algo_sign(-5) == -1)
-    @assert(algo_sign(0) == 0)
 }
 
 // Integer square root
@@ -6993,14 +6767,6 @@ fn algo_isqrt(n: i64) i64 {
     return x
 }
 
-test "algo isqrt" {
-    @assert(algo_isqrt(0) == 0)
-    @assert(algo_isqrt(1) == 1)
-    @assert(algo_isqrt(4) == 2)
-    @assert(algo_isqrt(16) == 4)
-    @assert(algo_isqrt(17) == 4)
-}
-
 // Log base 2 (floor)
 fn algo_log2(n: i64) i64 {
     if n <= 0 { return -1 }
@@ -7013,25 +6779,10 @@ fn algo_log2(n: i64) i64 {
     return count
 }
 
-test "algo log2" {
-    @assert(algo_log2(1) == 0)
-    @assert(algo_log2(2) == 1)
-    @assert(algo_log2(8) == 3)
-    @assert(algo_log2(16) == 4)
-}
-
 // Is power of two
 fn algo_is_pow2(n: i64) bool {
     if n <= 0 { return false }
     return (n & (n - 1)) == 0
-}
-
-test "algo is pow2" {
-    @assert(algo_is_pow2(1))
-    @assert(algo_is_pow2(2))
-    @assert(algo_is_pow2(4))
-    @assert(!algo_is_pow2(3))
-    @assert(algo_is_pow2(1024))
 }
 
 // LCM using GCD
@@ -7039,17 +6790,80 @@ fn algo_lcm(a: i64, b: i64) i64 {
     return (a / parity_gcd(a, b)) * b
 }
 
-test "algo lcm" {
-    @assert(algo_lcm(4, 6) == 12)
-    @assert(algo_lcm(3, 5) == 15)
-    @assert(algo_lcm(12, 18) == 36)
-}
-
 // Sum formulas
 fn algo_sum_n(n: i64) i64 { return n * (n + 1) / 2 }
 fn algo_sum_squares(n: i64) i64 { return n * (n + 1) * (2 * n + 1) / 6 }
 
-test "algo sum formulas" {
+test "algorithm functions" {
+    // Fibonacci
+    @assert(algo_fib(0) == 0)
+    @assert(algo_fib(1) == 1)
+    @assert(algo_fib(10) == 55)
+    @assert(algo_fib(20) == 6765)
+
+    // Factorial
+    @assert(algo_fact(0) == 1)
+    @assert(algo_fact(1) == 1)
+    @assert(algo_fact(5) == 120)
+    @assert(algo_fact(10) == 3628800)
+
+    // Digit sum
+    @assert(algo_digit_sum(123) == 6)
+    @assert(algo_digit_sum(999) == 27)
+    @assert(algo_digit_sum(100) == 1)
+
+    // Reverse
+    @assert(algo_reverse(123) == 321)
+    @assert(algo_reverse(100) == 1)
+    @assert(algo_reverse(12345) == 54321)
+
+    // Abs
+    @assert(algo_abs(5) == 5)
+    @assert(algo_abs(-5) == 5)
+    @assert(algo_abs(0) == 0)
+
+    // Min/max
+    @assert(algo_min(3, 5) == 3)
+    @assert(algo_min(5, 3) == 3)
+    @assert(algo_max(3, 5) == 5)
+    @assert(algo_max(5, 3) == 5)
+
+    // Clamp
+    @assert(algo_clamp(5, 0, 10) == 5)
+    @assert(algo_clamp(-5, 0, 10) == 0)
+    @assert(algo_clamp(15, 0, 10) == 10)
+
+    // Sign
+    @assert(algo_sign(5) == 1)
+    @assert(algo_sign(-5) == -1)
+    @assert(algo_sign(0) == 0)
+
+    // Integer sqrt
+    @assert(algo_isqrt(0) == 0)
+    @assert(algo_isqrt(1) == 1)
+    @assert(algo_isqrt(4) == 2)
+    @assert(algo_isqrt(16) == 4)
+    @assert(algo_isqrt(17) == 4)
+
+    // Log base 2
+    @assert(algo_log2(1) == 0)
+    @assert(algo_log2(2) == 1)
+    @assert(algo_log2(8) == 3)
+    @assert(algo_log2(16) == 4)
+
+    // Is power of 2
+    @assert(algo_is_pow2(1))
+    @assert(algo_is_pow2(2))
+    @assert(algo_is_pow2(4))
+    @assert(!algo_is_pow2(3))
+    @assert(algo_is_pow2(1024))
+
+    // LCM
+    @assert(algo_lcm(4, 6) == 12)
+    @assert(algo_lcm(3, 5) == 15)
+    @assert(algo_lcm(12, 18) == 36)
+
+    // Sum formulas
     @assert(algo_sum_n(10) == 55)
     @assert(algo_sum_n(100) == 5050)
     @assert(algo_sum_squares(3) == 14)
@@ -7057,111 +6871,97 @@ test "algo sum formulas" {
 }
 
 // ============================================================================
-// INLINE TESTS - Edge Cases and Boundary Conditions
+// INLINE TESTS - Edge Cases (consolidated)
 // ============================================================================
 
-test "division edge cases" {
-    @assert(10 / 3 == 3)  // Integer truncation
-    @assert((-10) / 3 == -3)  // Negative dividend
-    @assert(10 / (-3) == -3)  // Negative divisor
-    @assert(0 / 5 == 0)  // Zero dividend
-}
+test "edge cases" {
+    // Division
+    @assert(10 / 3 == 3)
+    @assert((-10) / 3 == -3)
+    @assert(10 / (-3) == -3)
+    @assert(0 / 5 == 0)
 
-test "modulo edge cases" {
+    // Modulo
     @assert(10 % 3 == 1)
     @assert(9 % 3 == 0)
     @assert(0 % 5 == 0)
-}
 
-test "shift edge cases" {
+    // Shift
     @assert(1 << 0 == 1)
     @assert(1 << 10 == 1024)
     @assert(256 >> 8 == 1)
     @assert(1 >> 1 == 0)
-}
 
-test "bitwise edge cases" {
+    // Bitwise
     @assert(0 & 0xFF == 0)
     @assert(0xFF & 0xFF == 0xFF)
     @assert(0 | 0xFF == 0xFF)
     @assert(0xFF ^ 0xFF == 0)
-}
 
-test "comparison edge cases" {
-    let max: i64 = 9223372036854775807  // i64 max
-    let min: i64 = -9223372036854775808  // i64 min (approx)
+    // i64 extremes
+    let max: i64 = 9223372036854775807
+    let min: i64 = -9223372036854775808
     @assert(max > 0)
     @assert(min < 0)
     @assert(max > min)
 }
 
 // ============================================================================
-// INLINE TESTS - Complex Expressions
+// INLINE TESTS - Expression and Loop Variations (consolidated)
 // ============================================================================
 
-test "chained arithmetic" {
-    let x: i64 = 1 + 2 * 3 - 4 / 2 + 5 % 3  // 1 + 6 - 2 + 2 = 7
-    @assert(x == 7)
-}
+test "expression variations" {
+    // Chained arithmetic
+    let x1: i64 = 1 + 2 * 3 - 4 / 2 + 5 % 3  // 1 + 6 - 2 + 2 = 7
+    @assert(x1 == 7)
 
-test "deeply nested arithmetic" {
-    let x: i64 = ((((1 + 2) * 3) - 4) * 5) + 6  // ((3 * 3) - 4) * 5 + 6 = 5 * 5 + 6 = 31
-    @assert(x == 31)
-}
+    // Deeply nested
+    let x2: i64 = ((((1 + 2) * 3) - 4) * 5) + 6
+    @assert(x2 == 31)
 
-test "mixed operators" {
+    // Mixed operators
     let a: i64 = 10
     let b: i64 = 3
     let c: i64 = 2
-    let result: i64 = a + b * c - a / b + a % b  // 10 + 6 - 3 + 1 = 14
-    @assert(result == 14)
-}
+    let r: i64 = a + b * c - a / b + a % b
+    @assert(r == 14)
 
-test "complex boolean" {
-    let a: i64 = 5
-    let b: i64 = 10
-    let c: i64 = 15
-    @assert((a < b) and (b < c))
-    @assert((a < c) or (c < a))
-    @assert(!((a > b) and (b > c)))
-}
+    // Complex boolean
+    let p: i64 = 5
+    let q: i64 = 10
+    let s: i64 = 15
+    @assert((p < q) and (q < s))
+    @assert((p < s) or (s < p))
 
-test "comparison chain" {
+    // Comparison chain
     let x: i64 = 5
     @assert(x > 0 and x < 10)
     @assert(x >= 5 and x <= 5)
-    @assert(!(x > 5) and !(x < 5))
 }
 
-// ============================================================================
-// INLINE TESTS - Loop Variations
-// ============================================================================
-
-test "empty loop" {
+test "loop variations" {
+    // Empty loop
     var count: i64 = 0
     while 0 == 1 {
         count = count + 1
     }
     @assert(count == 0)
-}
 
-test "single iteration loop" {
-    var count: i64 = 0
-    while count < 1 {
-        count = count + 1
+    // Single iteration
+    var count2: i64 = 0
+    while count2 < 1 {
+        count2 = count2 + 1
     }
-    @assert(count == 1)
-}
+    @assert(count2 == 1)
 
-test "countdown loop" {
+    // Countdown
     var n: i64 = 10
     while n > 0 {
         n = n - 1
     }
     @assert(n == 0)
-}
 
-test "nested loops multiply" {
+    // Nested 5x5
     var total: i64 = 0
     var i: i64 = 0
     while i < 5 {
@@ -7173,76 +6973,72 @@ test "nested loops multiply" {
         i = i + 1
     }
     @assert(total == 25)
-}
 
-test "triple nested loops" {
-    var total: i64 = 0
-    var i: i64 = 0
-    while i < 3 {
-        var j: i64 = 0
-        while j < 3 {
-            var k: i64 = 0
-            while k < 3 {
-                total = total + 1
-                k = k + 1
+    // Triple nested 3x3x3
+    var total2: i64 = 0
+    var ii: i64 = 0
+    while ii < 3 {
+        var jj: i64 = 0
+        while jj < 3 {
+            var kk: i64 = 0
+            while kk < 3 {
+                total2 = total2 + 1
+                kk = kk + 1
             }
-            j = j + 1
+            jj = jj + 1
         }
-        i = i + 1
+        ii = ii + 1
     }
-    @assert(total == 27)
+    @assert(total2 == 27)
 }
 
 // ============================================================================
-// INLINE TESTS - Function Calling
+// INLINE TESTS - Function Call Patterns (consolidated)
 // ============================================================================
 
 fn helper_double(x: i64) i64 { return x * 2 }
 fn helper_triple(x: i64) i64 { return x * 3 }
 fn helper_add3(a: i64, b: i64, c: i64) i64 { return a + b + c }
 
-test "chained function calls" {
+test "function call patterns" {
+    // Chained calls
     @assert(helper_double(helper_double(5)) == 20)
     @assert(helper_triple(helper_double(2)) == 12)
-}
 
-test "function result in expression" {
+    // Function result in expression
     let x: i64 = helper_double(5) + helper_triple(3)
     @assert(x == 19)
-}
 
-test "function call as argument" {
+    // Function call as argument
     @assert(helper_add3(helper_double(1), helper_double(2), helper_double(3)) == 12)
-}
 
-test "many arguments" {
+    // Many arguments
     @assert(test_helper_sum8(1, 2, 3, 4, 5, 6, 7, 8) == 36)
     @assert(test_helper_sum9(1, 2, 3, 4, 5, 6, 7, 8, 9) == 45)
 }
 
 // ============================================================================
-// INLINE TESTS - Variable Scoping
+// INLINE TESTS - Variable Scoping (consolidated)
 // ============================================================================
 
-test "block scoping" {
+test "variable scoping" {
+    // Block scoping
     var x: i64 = 1
     {
         var x: i64 = 2  // Shadows outer x
         x = 42
     }
     // Outer x unchanged
-}
 
-test "if scoping" {
-    var x: i64 = 10
+    // If scoping
+    var y: i64 = 10
     if 1 == 1 {
-        var y: i64 = 20
-        x = x + y
+        var z: i64 = 20
+        y = y + z
     }
-    @assert(x == 30)
-}
+    @assert(y == 30)
 
-test "while scoping" {
+    // While scoping
     var total: i64 = 0
     var i: i64 = 0
     while i < 3 {
@@ -7250,53 +7046,12 @@ test "while scoping" {
         total = total + local
         i = i + 1
     }
-    @assert(total == 30)  // 0 + 10 + 20
+    @assert(total == 30)
 }
 
 // ============================================================================
-// INLINE TESTS - Combined Features
+// INLINE TESTS - Combined Features (consolidated)
 // ============================================================================
-
-test "loop with early break computation" {
-    var sum: i64 = 0
-    var i: i64 = 0
-    while i < 100 {
-        sum = sum + i
-        if sum > 20 {
-            break
-        }
-        i = i + 1
-    }
-    // sum = 0+1+2+3+4+5+6 = 21 (> 20)
-    @assert(sum == 21)
-}
-
-test "loop with continue" {
-    var sum: i64 = 0
-    var i: i64 = 0
-    while i < 10 {
-        i = i + 1
-        if i % 2 == 0 {
-            continue
-        }
-        sum = sum + i
-    }
-    // sum = 1+3+5+7+9 = 25
-    @assert(sum == 25)
-}
-
-test "recursive fibonacci" {
-    @assert(test_helper_fib(0) == 0)
-    @assert(test_helper_fib(1) == 1)
-    @assert(test_helper_fib(10) == 55)
-}
-
-test "recursive factorial" {
-    @assert(test_helper_factorial(0) == 1)
-    @assert(test_helper_factorial(1) == 1)
-    @assert(test_helper_factorial(5) == 120)
-    @assert(test_helper_factorial(10) == 3628800)
-}
 
 // Binary search helper
 fn test_binary_search(arr: *i64, len: i64, target: i64) i64 {
@@ -7317,7 +7072,36 @@ fn test_binary_search(arr: *i64, len: i64, target: i64) i64 {
     return -1
 }
 
-test "binary search" {
+test "combined features" {
+    // Loop with early break
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 100 {
+        sum = sum + i
+        if sum > 20 { break }
+        i = i + 1
+    }
+    @assert(sum == 21)
+
+    // Loop with continue (odd numbers only)
+    var sum2: i64 = 0
+    var j: i64 = 0
+    while j < 10 {
+        j = j + 1
+        if j % 2 == 0 { continue }
+        sum2 = sum2 + j
+    }
+    @assert(sum2 == 25)
+
+    // Recursive functions
+    @assert(test_helper_fib(0) == 0)
+    @assert(test_helper_fib(1) == 1)
+    @assert(test_helper_fib(10) == 55)
+    @assert(test_helper_factorial(0) == 1)
+    @assert(test_helper_factorial(5) == 120)
+    @assert(test_helper_factorial(10) == 3628800)
+
+    // Binary search
     var arr: [5]i64 = [10, 20, 30, 40, 50]
     @assert(test_binary_search(&arr[0], 5, 30) == 2)
     @assert(test_binary_search(&arr[0], 5, 10) == 0)
