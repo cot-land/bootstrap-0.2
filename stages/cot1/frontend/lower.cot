@@ -5712,3 +5712,103 @@ const IR_OP_SHR: i64 = 17;
 const IR_OP_NEG: i64 = 18;
 const IR_OP_NOT: i64 = 19;
 const IR_OP_BIT_NOT: i64 = 20;
+
+// ============================================================================
+// INLINE TESTS - Arithmetic and Comparisons
+// ============================================================================
+
+// --- Arithmetic Tests ---
+
+test "return literal" {
+    @assert(42 == 42)
+}
+
+test "multiplication" {
+    @assert(6 * 7 == 42)
+}
+
+test "division" {
+    @assert(84 / 2 == 42)
+}
+
+test "subtraction" {
+    @assert(50 - 8 == 42)
+}
+
+test "negation" {
+    let x: i64 = -5
+    @assert(x + 47 == 42)
+}
+
+test "modulo" {
+    @assert(17 % 5 + 40 == 42)
+}
+
+test "operator precedence" {
+    // 2 + (3*4) + (2*3*4) + 4 = 2 + 12 + 24 + 4 = 42
+    @assert(2 + 3 * 4 + 2 * 3 * 4 + 4 == 42)
+}
+
+test "parentheses" {
+    // (1+2) * (3+4) * 2 = 3 * 7 * 2 = 42
+    @assert((1 + 2) * (3 + 4) * 2 == 42)
+}
+
+test "large numbers" {
+    let big: i64 = 1000000000
+    @assert(big / 1000000000 == 1)
+}
+
+test "addition" {
+    @assert(20 + 22 == 42)
+}
+
+// --- Comparison Tests ---
+
+test "not equal" {
+    @assert(1 != 2)
+}
+
+test "less than" {
+    @assert(10 < 20)
+}
+
+test "greater than" {
+    @assert(20 > 10)
+}
+
+test "less or equal - less" {
+    @assert(4 <= 5)
+}
+
+test "less or equal - equal" {
+    @assert(5 <= 5)
+}
+
+test "greater or equal - greater" {
+    @assert(6 >= 5)
+}
+
+test "greater or equal - equal" {
+    @assert(5 >= 5)
+}
+
+test "equal" {
+    @assert(42 == 42)
+}
+
+test "negative comparison" {
+    let x: i64 = -10
+    let y: i64 = -5
+    @assert(x < y)
+}
+
+test "negative vs positive" {
+    @assert(-1 < 1)
+}
+
+test "zero comparisons" {
+    @assert(0 == 0)
+    @assert(0 <= 0)
+    @assert(0 >= 0)
+}
