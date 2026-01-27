@@ -3678,7 +3678,11 @@ fn blockControl(self: *GenState, block: *Block, next_block: i64) {
     }
 
     // Unknown block kind - emit NOP
-    self.emitInst(encode_nop());
+    if self.target == TARGET_AMD64 {
+        self.emitInstPacked(AMD64_nop());
+    } else {
+        self.emitInst(encode_nop());
+    }
 }
 
 // ============================================================================
