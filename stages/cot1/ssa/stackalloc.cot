@@ -281,7 +281,7 @@ fn StackAlloc_propagateLiveness(state: *StackAllocState, f: *Func, vid: i64, use
         let block: *Block = f.getBlock( bid);
         var p: i64 = 0;
         while p < block.preds.count {
-            let pred_id: i64 = Block_getPred(block, p);
+            let pred_id: i64 = block.getPred( p);
             if pred_id >= 0 {
                 StackAllocState_addLiveOut(state, pred_id, vid);
                 i64list_append(&worklist, pred_id);

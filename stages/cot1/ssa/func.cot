@@ -477,23 +477,23 @@ impl Func {
         b.kind = BlockKind.If;
         b.control = cond.id;
 
-        Block_setSucc(b, 0, then_block);
-        Block_setSucc(b, 1, else_block);
+        b.setSucc( 0, then_block);
+        b.setSucc( 1, else_block);
 
         let then_b: *Block = Func_getBlock(self,then_block);
         let else_b: *Block = Func_getBlock(self,else_block);
-        Block_addPred(then_b, self.current_block);
-        Block_addPred(else_b, self.current_block);
+        then_b.addPred( self.current_block);
+        else_b.addPred( self.current_block);
     }
 
     // Set up an unconditional jump
     fn emitJump(self: *Func, target: i64) {
         let b: *Block = Func_getBlock(self,self.current_block);
         b.kind = BlockKind.Plain;
-        Block_addSucc(b, target);
+        b.addSucc( target);
 
         let target_b: *Block = Func_getBlock(self,target);
-        Block_addPred(target_b, self.current_block);
+        target_b.addPred( self.current_block);
     }
 
     // Mark current block as return block

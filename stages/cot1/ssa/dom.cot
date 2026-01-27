@@ -251,7 +251,7 @@ fn DomTree_compute(dt: *DomTree, f: *Func) {
 
             var p: i64 = 0;
             while p < b.preds.count {
-                let pred_id: i64 = Block_getPred(b, p);
+                let pred_id: i64 = b.getPred( p);
                 if pred_id < 0 {
                     p = p + 1;
                     continue;
@@ -406,7 +406,7 @@ fn DomTree_computeFrontier(dt: *DomTree, f: *Func) {
 
         var p: i64 = 0;
         while p < b.preds.count {
-            let pred_id: i64 = Block_getPred(b, p);
+            let pred_id: i64 = b.getPred( p);
             if pred_id < 0 {
                 p = p + 1;
                 continue;

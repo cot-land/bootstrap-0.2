@@ -2633,7 +2633,7 @@ fn emitPhiMoves(self: *GenState, current_block: *Block, target_block_id: i64) {
     var pred_idx: i64 = -1;
     var i: i64 = 0;
     while i < target_block.preds.count {
-        if Block_getPred(target_block, i) == current_block.id {
+        if target_block.getPred( i) == current_block.id {
             pred_idx = i;
         }
         i = i + 1;

@@ -750,7 +750,7 @@ fn SSABuilder_lookupVarOutgoing(b: *SSABuilder, block_id: i64, local_idx: i64, t
 
         // Single predecessor? Keep walking back
         if blk.preds.count == 1 {
-            cur_id = Block_getPred(blk, 0);
+            cur_id = blk.getPred( 0);
             continue;
         }
 
@@ -909,7 +909,7 @@ fn SSABuilder_insertPhis(b: *SSABuilder) {
         i64list_clear(&args);
         var pred_idx: i64 = 0;
         while pred_idx < blk.preds.count {
-            let pred_block_id: i64 = Block_getPred(blk, pred_idx);
+            let pred_block_id: i64 = blk.getPred( pred_idx);
             let val_id: i64 = SSABuilder_lookupVarOutgoing(b, pred_block_id, local_idx, fwd.type_idx,
                                                            &fwd_refs);
             i64list_append(&args, val_id);

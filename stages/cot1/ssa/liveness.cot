@@ -631,7 +631,7 @@ fn Liveness_processBlockLiveness(lr: *LivenessResult, f: *Func, block: *Block,
     // Propagate to predecessors
     var p: i64 = 0;
     while p < block.preds.count {
-        let pred_id: i64 = Block_getPred(block, p);
+        let pred_id: i64 = block.getPred( p);
         if pred_id == INVALID_BLOCK { p = p + 1; continue; }
 
         let pred: *Block = f.getBlock( pred_id);

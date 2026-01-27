@@ -77,9 +77,173 @@ struct Block {
     aux_int: i64,         // For return blocks: return value ID
 }
 
-// ============================================================================
-// Block Constructors
-// ============================================================================
+impl Block {
+
+    // ============================================================================
+    // Block Constructors
+    // ============================================================================
+
+
+    // Get predecessor count (accessor for preds.count)
+    fn getPredsCount(self: *Block) i64 {
+        return self.preds.count;
+    }
+
+
+    // Get predecessor at index
+    fn getPred(self: *Block, idx: i64) i64 {
+        if idx < 0 or idx >= self.preds.count { return INVALID_BLOCK; }
+        return i64list_get(&self.preds, idx);
+    }
+
+
+
+
+
+    // ============================================================================
+    // Successor Management
+    // ============================================================================
+
+    // Add a successor to this block
+    fn addSucc(self: *Block, succ_id: i64) {
+        if self.succs_count >= MAX_SUCCS { return; }
+        self.succs[self.succs_count] = succ_id;
+        self.succs_count = self.succs_count + 1;
+    }
+
+
+    // Set successor at index (for branch: 0=then, 1=else)
+    fn setSucc(self: *Block, idx: i64, succ_id: i64) {
+        if idx < 0 or idx >= MAX_SUCCS { return; }
+        self.succs[idx] = succ_id;
+        if idx >= self.succs_count {
+            self.succs_count = idx + 1;
+        }
+    }
+
+
+    // Get first successor (or INVALID_BLOCK)
+    fn succ0(self: *Block) i64 {
+        if self.succs_count < 1 { return INVALID_BLOCK; }
+        return self.succs[0];
+    }
+
+
+    // Get second successor (or INVALID_BLOCK)
+    fn succ1(self: *Block) i64 {
+        if self.succs_count < 2 { return INVALID_BLOCK; }
+        return self.succs[1];
+    }
+
+
+    // ============================================================================
+    // Predecessor Management
+    // ============================================================================
+
+    // Add a predecessor to this block
+    fn addPred(self: *Block, pred_id: i64) {
+        i64list_append(&self.preds, pred_id);
+    }
+
+
+    // Check if block has predecessor
+    fn hasPred(self: *Block, pred_id: i64) bool {
+        var i: i64 = 0;
+        while i < self.preds.count {
+            if i64list_get(&self.preds, i) == pred_id { return true; }
+            i = i + 1;
+        }
+        return false;
+    }
+
+
+    // ============================================================================
+    // Block Queries
+    // ============================================================================
+
+    // Check if block is entry block (no predecessors)
+    fn isEntry(self: *Block) bool {
+        return self.preds.count == 0;
+    }
+
+
+    // Check if block is exit block (no successors)
+    fn isExit(self: *Block) bool {
+        return self.succs_count == 0;
+    }
+
+
+    // Check if block ends with conditional branch
+    fn isIf(self: *Block) bool {
+        return self.kind == BlockKind.If;
+    }
+
+
+    // Check if block ends with return
+    fn isReturn(self: *Block) bool {
+        return self.kind == BlockKind.Return;
+    }
+
+
+    // Check if block is plain (unconditional jump or fallthrough)
+    fn isPlain(self: *Block) bool {
+        return self.kind == BlockKind.Plain;
+    }
+
+
+    // Get number of predecessors
+    // Reference: Zig's Block.numPreds()
+    fn numPreds(self: *Block) i64 {
+        return self.preds.count;
+    }
+
+
+    // Get number of successors
+    // Reference: Zig's Block.numSuccs()
+    fn numSuccs(self: *Block) i64 {
+        return self.succs_count;
+    }
+
+
+    // Get number of values in this block
+    // Reference: Zig's Block.numValues()
+    fn numValues(self: *Block) i64 {
+        return self.values_count;
+    }
+
+
+    // Get number of control values (1 for If blocks, 0 for others)
+    // Reference: Zig's Block.numControls()
+    fn numControls(self: *Block) i64 {
+        if self.kind == BlockKind.If {
+            return 1;
+        }
+        return 0;
+    }
+
+
+    // Set the control value (for If blocks)
+    // Reference: Zig's Block.setControl()
+    fn setControl(self: *Block, v_id: i64) {
+        self.control = v_id;
+    }
+
+
+    // Get the control value (for If blocks)
+    // Reference: Zig's Block.getControl()
+    fn getControl(self: *Block) i64 {
+        return self.control;
+    }
+
+
+    // Reset all control values
+    // Reference: Zig's Block.resetControls()
+    fn resetControls(self: *Block) {
+        self.control = INVALID_ID;
+    }
+
+
+}
 
 fn Block_new(id: i64, kind: BlockKind) Block {
     var b: Block = undefined;
@@ -99,17 +263,6 @@ fn Block_new(id: i64, kind: BlockKind) Block {
     return b;
 }
 
-// Get predecessor count (accessor for preds.count)
-fn Block_getPredsCount(b: *Block) i64 {
-    return b.preds.count;
-}
-
-// Get predecessor at index
-fn Block_getPred(b: *Block, idx: i64) i64 {
-    if idx < 0 or idx >= b.preds.count { return INVALID_BLOCK; }
-    return i64list_get(&b.preds, idx);
-}
-
 fn Block_newPlain(id: i64) Block {
     return Block_new(id, BlockKind.Plain);
 }
@@ -120,131 +273,6 @@ fn Block_newIf(id: i64) Block {
 
 fn Block_newReturn(id: i64) Block {
     return Block_new(id, BlockKind.Return);
-}
-
-// ============================================================================
-// Successor Management
-// ============================================================================
-
-// Add a successor to this block
-fn Block_addSucc(b: *Block, succ_id: i64) {
-    if b.succs_count >= MAX_SUCCS { return; }
-    b.succs[b.succs_count] = succ_id;
-    b.succs_count = b.succs_count + 1;
-}
-
-// Set successor at index (for branch: 0=then, 1=else)
-fn Block_setSucc(b: *Block, idx: i64, succ_id: i64) {
-    if idx < 0 or idx >= MAX_SUCCS { return; }
-    b.succs[idx] = succ_id;
-    if idx >= b.succs_count {
-        b.succs_count = idx + 1;
-    }
-}
-
-// Get first successor (or INVALID_BLOCK)
-fn Block_succ0(b: *Block) i64 {
-    if b.succs_count < 1 { return INVALID_BLOCK; }
-    return b.succs[0];
-}
-
-// Get second successor (or INVALID_BLOCK)
-fn Block_succ1(b: *Block) i64 {
-    if b.succs_count < 2 { return INVALID_BLOCK; }
-    return b.succs[1];
-}
-
-// ============================================================================
-// Predecessor Management
-// ============================================================================
-
-// Add a predecessor to this block
-fn Block_addPred(b: *Block, pred_id: i64) {
-    i64list_append(&b.preds, pred_id);
-}
-
-// Check if block has predecessor
-fn Block_hasPred(b: *Block, pred_id: i64) bool {
-    var i: i64 = 0;
-    while i < b.preds.count {
-        if i64list_get(&b.preds, i) == pred_id { return true; }
-        i = i + 1;
-    }
-    return false;
-}
-
-// ============================================================================
-// Block Queries
-// ============================================================================
-
-// Check if block is entry block (no predecessors)
-fn Block_isEntry(b: *Block) bool {
-    return b.preds.count == 0;
-}
-
-// Check if block is exit block (no successors)
-fn Block_isExit(b: *Block) bool {
-    return b.succs_count == 0;
-}
-
-// Check if block ends with conditional branch
-fn Block_isIf(b: *Block) bool {
-    return b.kind == BlockKind.If;
-}
-
-// Check if block ends with return
-fn Block_isReturn(b: *Block) bool {
-    return b.kind == BlockKind.Return;
-}
-
-// Check if block is plain (unconditional jump or fallthrough)
-fn Block_isPlain(b: *Block) bool {
-    return b.kind == BlockKind.Plain;
-}
-
-// Get number of predecessors
-// Reference: Zig's Block.numPreds()
-fn Block_numPreds(b: *Block) i64 {
-    return b.preds.count;
-}
-
-// Get number of successors
-// Reference: Zig's Block.numSuccs()
-fn Block_numSuccs(b: *Block) i64 {
-    return b.succs_count;
-}
-
-// Get number of values in this block
-// Reference: Zig's Block.numValues()
-fn Block_numValues(b: *Block) i64 {
-    return b.values_count;
-}
-
-// Get number of control values (1 for If blocks, 0 for others)
-// Reference: Zig's Block.numControls()
-fn Block_numControls(b: *Block) i64 {
-    if b.kind == BlockKind.If {
-        return 1;
-    }
-    return 0;
-}
-
-// Set the control value (for If blocks)
-// Reference: Zig's Block.setControl()
-fn Block_setControl(b: *Block, v_id: i64) {
-    b.control = v_id;
-}
-
-// Get the control value (for If blocks)
-// Reference: Zig's Block.getControl()
-fn Block_getControl(b: *Block) i64 {
-    return b.control;
-}
-
-// Reset all control values
-// Reference: Zig's Block.resetControls()
-fn Block_resetControls(b: *Block) {
-    b.control = INVALID_ID;
 }
 
 // ============================================================================
@@ -294,8 +322,8 @@ fn BlockPool_connect(pool: *BlockPool, from_id: i64, to_id: i64) {
     let from: *Block = BlockPool_get(pool, from_id);
     let to: *Block = BlockPool_get(pool, to_id);
 
-    Block_addSucc(from, to_id);
-    Block_addPred(to, from_id);
+    from.addSucc(to_id);
+    to.addPred(from_id);
 }
 
 // Set up conditional branch: from -> then_id (if true), else_id (if false)
@@ -304,11 +332,11 @@ fn BlockPool_setIf(pool: *BlockPool, from_id: i64, control: i64, then_id: i64, e
     from.kind = BlockKind.If;
     from.control = control;
 
-    Block_setSucc(from, 0, then_id);
-    Block_setSucc(from, 1, else_id);
+    from.setSucc(0, then_id);
+    from.setSucc(1, else_id);
 
     let then_b: *Block = BlockPool_get(pool, then_id);
     let else_b: *Block = BlockPool_get(pool, else_id);
-    Block_addPred(then_b, from_id);
-    Block_addPred(else_b, from_id);
+    then_b.addPred(from_id);
+    else_b.addPred(from_id);
 }
