@@ -2,7 +2,7 @@
 // COT END-TO-END TEST SUITE
 // ============================================================================
 //
-// Progress: 166 / 166 tests passing
+// Progress: 190 / 190 tests passing
 //
 // ============================================================================
 // STATUS TRACKER
@@ -1972,6 +1972,526 @@ fn test_bug019b_large_struct_literal_arg() i64 {
 // MAIN - Test Runner
 // ============================================================================
 
+// ============================================================================
+// PARITY TESTS (merged from test/parity/)
+// ============================================================================
+
+// Parity test: arrays/arr_011_bubble_sort
+fn bubble_sort_parity_bubble_sort(arr: *i64, len: i64) void {
+    var i: i64 = 0;
+    while i < len - 1 {
+        var j: i64 = 0;
+        while j < len - 1 - i {
+            if (arr + j).* > (arr + j + 1).* {
+                var tmp: i64 = (arr + j).*;
+                (arr + j).* = (arr + j + 1).*;
+                (arr + j + 1).* = tmp;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+}
+fn test_parity_bubble_sort() i64 {
+    var arr: *i64 = malloc(40);
+    (arr + 0).* = 5;
+    (arr + 1).* = 2;
+    (arr + 2).* = 4;
+    (arr + 3).* = 1;
+    (arr + 4).* = 3;
+    bubble_sort_parity_bubble_sort(arr, 5);
+    if (arr + 0).* == 1 and (arr + 4).* == 5 { return 42; }
+    return 1;
+}
+
+
+// Parity test: arrays/arr_016_insertion_sort
+fn insertion_sort_parity_insertion_sort(arr: *i64, n: i64) void {
+    var i: i64 = 1;
+    while i < n {
+        var key: i64 = (arr + i).*;
+        var j: i64 = i - 1;
+        while j >= 0 and (arr + j).* > key {
+            (arr + j + 1).* = (arr + j).*;
+            j = j - 1;
+        }
+        (arr + j + 1).* = key;
+        i = i + 1;
+    }
+}
+fn test_parity_insertion_sort() i64 {
+    var arr: *i64 = malloc(40);
+    (arr + 0).* = 5;
+    (arr + 1).* = 3;
+    (arr + 2).* = 4;
+    (arr + 3).* = 1;
+    (arr + 4).* = 2;
+    insertion_sort_parity_insertion_sort(arr, 5);
+    if (arr + 0).* == 1 and (arr + 4).* == 5 { return 42; }
+    return 1;
+}
+
+
+// Parity test: arrays/arr_017_selection_sort
+fn selection_sort_parity_selection_sort(arr: *i64, n: i64) void {
+    var i: i64 = 0;
+    while i < n - 1 {
+        var min_idx: i64 = i;
+        var j: i64 = i + 1;
+        while j < n {
+            if (arr + j).* < (arr + min_idx).* {
+                min_idx = j;
+            }
+            j = j + 1;
+        }
+        var tmp: i64 = (arr + i).*;
+        (arr + i).* = (arr + min_idx).*;
+        (arr + min_idx).* = tmp;
+        i = i + 1;
+    }
+}
+fn test_parity_selection_sort() i64 {
+    var arr: *i64 = malloc(40);
+    (arr + 0).* = 4;
+    (arr + 1).* = 2;
+    (arr + 2).* = 5;
+    (arr + 3).* = 1;
+    (arr + 4).* = 3;
+    selection_sort_parity_selection_sort(arr, 5);
+    if (arr + 0).* == 1 and (arr + 4).* == 5 { return 42; }
+    return 1;
+}
+
+
+// Parity test: arrays/arr_018_binary_search
+fn binary_search_parity_binary_search(arr: *i64, n: i64, target: i64) i64 {
+    var low: i64 = 0;
+    var high: i64 = n - 1;
+    while low <= high {
+        var mid: i64 = (low + high) / 2;
+        var val: i64 = (arr + mid).*;
+        if val == target { return mid; }
+        if val < target { low = mid + 1; }
+        if val > target { high = mid - 1; }
+    }
+    return 0 - 1;
+}
+fn test_parity_binary_search() i64 {
+    var arr: *i64 = malloc(56);
+    (arr + 0).* = 10;
+    (arr + 1).* = 20;
+    (arr + 2).* = 30;
+    (arr + 3).* = 40;
+    (arr + 4).* = 50;
+    (arr + 5).* = 60;
+    (arr + 6).* = 70;
+    if binary_search_parity_binary_search(arr, 7, 40) == 3 { return 42; }
+    return 1;
+}
+
+
+// Parity test: functions/fn_061_collatz
+fn collatz_steps_parity_collatz(n: i64) i64 {
+    var steps: i64 = 0;
+    var x: i64 = n;
+    while x > 1 {
+        if x % 2 == 0 {
+            x = x / 2;
+        } else {
+            x = 3 * x + 1;
+        }
+        steps = steps + 1;
+    }
+    return steps;
+}
+fn test_parity_collatz() i64 {
+    if collatz_steps_parity_collatz(27) == 111 { return 42; }
+    return 1;
+}
+
+
+// Parity test: functions/fn_060_is_prime
+fn is_prime_parity_is_prime(n: i64) i64 {
+    if n <= 1 { return 0; }
+    if n <= 3 { return 1; }
+    if n % 2 == 0 { return 0; }
+    var i: i64 = 3;
+    while i * i <= n {
+        if n % i == 0 { return 0; }
+        i = i + 2;
+    }
+    return 1;
+}
+fn test_parity_is_prime() i64 {
+    var p1: i64 = is_prime_parity_is_prime(2);
+    var p2: i64 = is_prime_parity_is_prime(17);
+    var p3: i64 = is_prime_parity_is_prime(18);
+    var p4: i64 = is_prime_parity_is_prime(97);
+    if p1 == 1 and p2 == 1 and p3 == 0 and p4 == 1 { return 42; }
+    return 1;
+}
+
+
+// Parity test: functions/fn_059_power
+fn power_parity_power(base: i64, exp: i64) i64 {
+    var result: i64 = 1;
+    var i: i64 = 0;
+    while i < exp {
+        result = result * base;
+        i = i + 1;
+    }
+    return result;
+}
+fn test_parity_power() i64 {
+    if power_parity_power(2, 10) == 1024 { return 42; }
+    return 1;
+}
+
+
+// Parity test: control_flow/cf_085_triple_loop
+fn test_parity_triple_loop() i64 {
+    var sum: i64 = 0;
+    var i: i64 = 0;
+    while i < 2 {
+        var j: i64 = 0;
+        while j < 3 {
+            var k: i64 = 0;
+            while k < 4 {
+                sum = sum + 1;
+                k = k + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    if sum == 24 { return 42; }
+    return 1;
+}
+
+
+// Parity test: control_flow/cf_094_nested_loop_sum
+fn test_parity_nested_loop() i64 {
+    var sum: i64 = 0;
+    var i: i64 = 1;
+    while i <= 5 {
+        var j: i64 = 1;
+        while j <= i {
+            sum = sum + j;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    if sum == 35 { return 42; }
+    return 1;
+}
+
+
+// Parity test: expressions/expr_100_count_bits
+fn count_bits_parity_count_bits(n: i64) i64 {
+    var count: i64 = 0;
+    var x: i64 = n;
+    while x > 0 {
+        count = count + (x & 1);
+        x = x >> 1;
+    }
+    return count;
+}
+fn test_parity_count_bits() i64 {
+    if count_bits_parity_count_bits(0b11101010) == 5 { return 42; }
+    return 1;
+}
+
+
+
+// Parity test: arrays/arr_031_reverse_in_place
+fn reverse_parity_reverse(arr: *i64, n: i64) void {
+    var i: i64 = 0;
+    var j: i64 = n - 1;
+    while i < j {
+        var t: i64 = (arr + i).*;
+        (arr + i).* = (arr + j).*;
+        (arr + j).* = t;
+        i = i + 1;
+        j = j - 1;
+    }
+}
+fn test_parity_reverse() i64 {
+    var arr: *i64 = malloc(40);
+    (arr + 0).* = 1;
+    (arr + 1).* = 2;
+    (arr + 2).* = 3;
+    (arr + 3).* = 4;
+    (arr + 4).* = 5;
+    reverse_parity_reverse(arr, 5);
+    if (arr + 0).* == 5 and (arr + 4).* == 1 and (arr + 2).* == 3 { return 42; }
+    return 1;
+}
+
+
+// Parity test: arrays/arr_007_find_max
+fn find_max_parity_find_max(arr: *i64, len: i64) i64 {
+    var max: i64 = (arr + 0).*;
+    var i: i64 = 1;
+    while i < len {
+        if (arr + i).* > max {
+            max = (arr + i).*;
+        }
+        i = i + 1;
+    }
+    return max;
+}
+fn test_parity_find_max() i64 {
+    var arr: *i64 = malloc(40);
+    (arr + 0).* = 30;
+    (arr + 1).* = 10;
+    (arr + 2).* = 50;
+    (arr + 3).* = 20;
+    (arr + 4).* = 40;
+    if find_max_parity_find_max(arr, 5) == 50 { return 42; }
+    return 1;
+}
+
+
+// Parity test: arrays/arr_008_find_min
+fn find_min_parity_find_min(arr: *i64, len: i64) i64 {
+    var min: i64 = (arr + 0).*;
+    var i: i64 = 1;
+    while i < len {
+        if (arr + i).* < min {
+            min = (arr + i).*;
+        }
+        i = i + 1;
+    }
+    return min;
+}
+fn test_parity_find_min() i64 {
+    var arr: *i64 = malloc(40);
+    (arr + 0).* = 30;
+    (arr + 1).* = 10;
+    (arr + 2).* = 50;
+    (arr + 3).* = 5;
+    (arr + 4).* = 40;
+    if find_min_parity_find_min(arr, 5) == 5 { return 42; }
+    return 1;
+}
+
+
+// Parity test: arrays/arr_013_count
+fn count_val_parity_array_count(arr: *i64, len: i64, val: i64) i64 {
+    var count: i64 = 0;
+    var i: i64 = 0;
+    while i < len {
+        if (arr + i).* == val {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    return count;
+}
+fn test_parity_array_count() i64 {
+    var arr: *i64 = malloc(56);
+    (arr + 0).* = 1;
+    (arr + 1).* = 2;
+    (arr + 2).* = 1;
+    (arr + 3).* = 3;
+    (arr + 4).* = 1;
+    (arr + 5).* = 2;
+    (arr + 6).* = 1;
+    if count_val_parity_array_count(arr, 7, 1) == 4 { return 42; }
+    return 1;
+}
+
+
+// Parity test: arrays/arr_021_partial_sum
+fn partial_sums_parity_partial_sum(arr: *i64, out: *i64, n: i64) void {
+    var sum: i64 = 0;
+    var i: i64 = 0;
+    while i < n {
+        sum = sum + (arr + i).*;
+        (out + i).* = sum;
+        i = i + 1;
+    }
+}
+fn test_parity_partial_sum() i64 {
+    var arr: *i64 = malloc(40);
+    var out: *i64 = malloc(40);
+    (arr + 0).* = 1;
+    (arr + 1).* = 2;
+    (arr + 2).* = 3;
+    (arr + 3).* = 4;
+    (arr + 4).* = 5;
+    partial_sums_parity_partial_sum(arr, out, 5);
+    if (out + 0).* == 1 and (out + 4).* == 15 { return 42; }
+    return 1;
+}
+
+
+// Parity test: control_flow/cf_070_count_primes
+fn is_prime_parity_count_primes(n: i64) i64 {
+    if n <= 1 { return 0; }
+    if n <= 3 { return 1; }
+    if n % 2 == 0 { return 0; }
+    var i: i64 = 3;
+    while i * i <= n {
+        if n % i == 0 { return 0; }
+        i = i + 2;
+    }
+    return 1;
+}
+fn test_parity_count_primes() i64 {
+    var count: i64 = 0;
+    var n: i64 = 2;
+    while n <= 100 {
+        count = count + is_prime_parity_count_primes(n);
+        n = n + 1;
+    }
+    if count == 25 { return 42; }
+    return 1;
+}
+
+
+// Parity test: control_flow/cf_080_sum_divisible
+fn sum_divisible_parity_sum_divisible(n: i64, d: i64) i64 {
+    var sum: i64 = 0;
+    var i: i64 = 1;
+    while i <= n {
+        if i % d == 0 {
+            sum = sum + i;
+        }
+        i = i + 1;
+    }
+    return sum;
+}
+fn test_parity_sum_divisible() i64 {
+    if sum_divisible_parity_sum_divisible(10, 2) == 30 { return 42; }
+    return 1;
+}
+
+
+// Parity test: control_flow/cf_097_fizzbuzz_logic
+fn fizzbuzz_parity_fizzbuzz(n: i64) i64 {
+    if n % 15 == 0 { return 3; }
+    if n % 5 == 0 { return 2; }
+    if n % 3 == 0 { return 1; }
+    return 0;
+}
+fn test_parity_fizzbuzz() i64 {
+    if fizzbuzz_parity_fizzbuzz(15) == 3 {
+        if fizzbuzz_parity_fizzbuzz(9) == 1 {
+            if fizzbuzz_parity_fizzbuzz(10) == 2 {
+                if fizzbuzz_parity_fizzbuzz(7) == 0 { return 42; }
+            }
+        }
+    }
+    return 1;
+}
+
+
+// Parity test: expressions/expr_113_align_up
+fn align_up_parity_align_up(n: i64, align: i64) i64 {
+    return (n + align - 1) & (0 - align);
+}
+fn test_parity_align_up() i64 {
+    if align_up_parity_align_up(13, 8) == 16 { return 42; }
+    return 1;
+}
+
+
+// Parity test: expressions/expr_115_bit_extract
+fn extract_byte_parity_bit_extract(x: i64, pos: i64) i64 {
+    return (x >> (pos * 8)) & 0xFF;
+}
+fn test_parity_bit_extract() i64 {
+    var x: i64 = 0x12345678;
+    if extract_byte_parity_bit_extract(x, 0) == 0x78 { return 42; }
+    return 1;
+}
+
+
+// Parity test: functions/fn_057_fibonacci_iter
+fn fib_iter_parity_fib_iter(n: i64) i64 {
+    if n <= 1 { return n; }
+    var a: i64 = 0;
+    var b: i64 = 1;
+    var i: i64 = 2;
+    while i <= n {
+        var tmp: i64 = a + b;
+        a = b;
+        b = tmp;
+        i = i + 1;
+    }
+    return b;
+}
+fn test_parity_fib_iter() i64 {
+    if fib_iter_parity_fib_iter(10) == 55 { return 42; }
+    return 1;
+}
+
+
+// Parity test: functions/fn_058_factorial_iter
+fn fact_iter_parity_factorial(n: i64) i64 {
+    var result: i64 = 1;
+    var i: i64 = 2;
+    while i <= n {
+        result = result * i;
+        i = i + 1;
+    }
+    return result;
+}
+fn test_parity_factorial() i64 {
+    if fact_iter_parity_factorial(6) == 720 { return 42; }
+    return 1;
+}
+
+
+// Parity test: functions/fn_073_nth_prime
+fn is_prime_parity_nth_prime(n: i64) i64 {
+    if n <= 1 { return 0; }
+    if n <= 3 { return 1; }
+    if n % 2 == 0 { return 0; }
+    var i: i64 = 3;
+    while i * i <= n {
+        if n % i == 0 { return 0; }
+        i = i + 2;
+    }
+    return 1;
+}
+fn nth_prime_parity_nth_prime(n: i64) i64 {
+    var count: i64 = 0;
+    var num: i64 = 2;
+    while count < n {
+        if is_prime_parity_nth_prime(num) == 1 {
+            count = count + 1;
+            if count == n { return num; }
+        }
+        num = num + 1;
+    }
+    return num;
+}
+fn test_parity_nth_prime() i64 {
+    if nth_prime_parity_nth_prime(10) == 29 { return 42; }
+    return 1;
+}
+
+
+// Parity test: memory/mem_050_fibonacci_array
+fn init_fib_parity_fib_array(arr: *i64, n: i64) void {
+    if n >= 1 { (arr + 0).* = 0; }
+    if n >= 2 { (arr + 1).* = 1; }
+    var i: i64 = 2;
+    while i < n {
+        (arr + i).* = (arr + i - 1).* + (arr + i - 2).*;
+        i = i + 1;
+    }
+}
+fn test_parity_fib_array() i64 {
+    var arr: *i64 = malloc(80);
+    init_fib_parity_fib_array(arr, 10);
+    if (arr + 9).* == 34 { return 42; }
+    return 1;
+}
+
+
 fn main() i64 {
     var failed: i64 = 0
 
@@ -2222,9 +2742,37 @@ fn main() i64 {
     if test_bug019_large_struct_arg() != 42 { println("FAIL: test_bug019_large_struct_arg"); failed += 1 }
     if test_bug019b_large_struct_literal_arg() != 42 { println("FAIL: test_bug019b_large_struct_literal_arg"); failed += 1 }
 
+
+    // TIER 27: Parity Tests
+    if test_parity_bubble_sort() != 42 { println("FAIL: test_parity_bubble_sort"); failed += 1 }
+    if test_parity_insertion_sort() != 42 { println("FAIL: test_parity_insertion_sort"); failed += 1 }
+    if test_parity_selection_sort() != 42 { println("FAIL: test_parity_selection_sort"); failed += 1 }
+    if test_parity_binary_search() != 42 { println("FAIL: test_parity_binary_search"); failed += 1 }
+    if test_parity_collatz() != 42 { println("FAIL: test_parity_collatz"); failed += 1 }
+    if test_parity_is_prime() != 42 { println("FAIL: test_parity_is_prime"); failed += 1 }
+    if test_parity_power() != 42 { println("FAIL: test_parity_power"); failed += 1 }
+    if test_parity_triple_loop() != 42 { println("FAIL: test_parity_triple_loop"); failed += 1 }
+    if test_parity_nested_loop() != 42 { println("FAIL: test_parity_nested_loop"); failed += 1 }
+    if test_parity_count_bits() != 42 { println("FAIL: test_parity_count_bits"); failed += 1 }
+
+    if test_parity_reverse() != 42 { println("FAIL: test_parity_reverse"); failed += 1 }
+    if test_parity_find_max() != 42 { println("FAIL: test_parity_find_max"); failed += 1 }
+    if test_parity_find_min() != 42 { println("FAIL: test_parity_find_min"); failed += 1 }
+    if test_parity_array_count() != 42 { println("FAIL: test_parity_array_count"); failed += 1 }
+    if test_parity_partial_sum() != 42 { println("FAIL: test_parity_partial_sum"); failed += 1 }
+    if test_parity_count_primes() != 42 { println("FAIL: test_parity_count_primes"); failed += 1 }
+    if test_parity_sum_divisible() != 42 { println("FAIL: test_parity_sum_divisible"); failed += 1 }
+    if test_parity_fizzbuzz() != 42 { println("FAIL: test_parity_fizzbuzz"); failed += 1 }
+    if test_parity_align_up() != 42 { println("FAIL: test_parity_align_up"); failed += 1 }
+    if test_parity_bit_extract() != 42 { println("FAIL: test_parity_bit_extract"); failed += 1 }
+    if test_parity_fib_iter() != 42 { println("FAIL: test_parity_fib_iter"); failed += 1 }
+    if test_parity_factorial() != 42 { println("FAIL: test_parity_factorial"); failed += 1 }
+    if test_parity_nth_prime() != 42 { println("FAIL: test_parity_nth_prime"); failed += 1 }
+    if test_parity_fib_array() != 42 { println("FAIL: test_parity_fib_array"); failed += 1 }
+
     // Summary
     if failed == 0 {
-        println("All 166 tests passed!")
+        println("All 190 tests passed!")
     }
 
     return failed
