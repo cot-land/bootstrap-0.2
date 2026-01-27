@@ -41,7 +41,7 @@ fn expandCalls(f: *Func, type_pool: *TypeRegistry) {
 
             // Check for Store of non-SSA type
             if v.op == Op.Store and v.args.count >= 2 {
-                let stored_id: i64 = Value_getArg(v, 1);
+                let stored_id: i64 = v.getArg( 1);
                 if stored_id >= 0 {
                     let stored_val: *Value = f.getValue( stored_id);
 
@@ -102,7 +102,7 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
 
             var arg_idx: i64 = start_idx;
             while arg_idx < v.args.count {
-                let arg_id: i64 = Value_getArg(v, arg_idx);
+                let arg_id: i64 = v.getArg( arg_idx);
                 if arg_id < 0 {
                     i64list_append(&new_args, arg_id);
                     arg_idx = arg_idx + 1;
@@ -119,8 +119,8 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
                     // Check if arg is already string_make with available components
                     if arg.op == Op.StringMake and arg.args.count >= 2 {
                         // Directly use the ptr and len components
-                        let ptr_id: i64 = Value_getArg(arg, 0);
-                        let len_id: i64 = Value_getArg(arg, 1);
+                        let ptr_id: i64 = arg.getArg( 0);
+                        let len_id: i64 = arg.getArg( 1);
                         i64list_append(&new_args, ptr_id);
                         i64list_append(&new_args, len_id);
 
@@ -137,11 +137,11 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
                         f.current_block = block.id;
 
                         let ptr_val: *Value = f.newValue( Op.StringPtr, TYPE_I64);
-                        Value_addArg(ptr_val, arg);  // arg is the string value
+                        ptr_val.addArg( arg);  // arg is the string value
                         let ptr_val_id: i64 = ptr_val.id;
 
                         let len_val: *Value = f.newValue( Op.StringLen, TYPE_I64);
-                        Value_addArg(len_val, arg);  // arg is the string value
+                        len_val.addArg( arg);  // arg is the string value
                         let len_val_id: i64 = len_val.id;
 
                         f.current_block = saved_block;
@@ -167,7 +167,7 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
                         needs_rewrite = true;
                         // Pass the source address instead of the loaded value
                         // Go reference: expand_calls.go line 379 - use arg.Args[0]
-                        let source_addr_id: i64 = Value_getArg(arg, 0);
+                        let source_addr_id: i64 = arg.getArg( 0);
 
                         // Update use counts
                         arg.uses = arg.uses - 1;
@@ -223,19 +223,19 @@ fn applyDecRules(f: *Func) {
             // slice_ptr(slice_make(ptr, len)) → copy(ptr)
             if v.op == Op.StringPtr or v.op == Op.SlicePtr {
                 if v.args.count >= 1 {
-                    let arg_id: i64 = Value_getArg(v, 0);
+                    let arg_id: i64 = v.getArg( 0);
                     if arg_id >= 0 {
                         let arg: *Value = f.getValue( arg_id);
                         if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args.count >= 1 {
-                            let ptr_id: i64 = Value_getArg(arg, 0);
+                            let ptr_id: i64 = arg.getArg( 0);
 
                             // Decrement old arg's use count
                             arg.uses = arg.uses - 1;
 
                             // Transform to copy
                             v.op = Op.Copy;
-                            Value_setArgById(v, 0, ptr_id);
-                            Value_truncateArgs(v, 1);
+                            v.setArgById( 0, ptr_id);
+                            v.truncateArgs( 1);
 
                             // Increment new arg's use count
                             if ptr_id >= 0 {
@@ -251,19 +251,19 @@ fn applyDecRules(f: *Func) {
             // slice_len(slice_make(ptr, len)) → copy(len)
             if v.op == Op.StringLen or v.op == Op.SliceLen {
                 if v.args.count >= 1 {
-                    let arg_id: i64 = Value_getArg(v, 0);
+                    let arg_id: i64 = v.getArg( 0);
                     if arg_id >= 0 {
                         let arg: *Value = f.getValue( arg_id);
                         if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args.count >= 2 {
-                            let len_id: i64 = Value_getArg(arg, 1);
+                            let len_id: i64 = arg.getArg( 1);
 
                             // Decrement old arg's use count
                             arg.uses = arg.uses - 1;
 
                             // Transform to copy
                             v.op = Op.Copy;
-                            Value_setArgById(v, 0, len_id);
-                            Value_truncateArgs(v, 1);
+                            v.setArgById( 0, len_id);
+                            v.truncateArgs( 1);
 
                             // Increment new arg's use count
                             if len_id >= 0 {

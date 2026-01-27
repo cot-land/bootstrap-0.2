@@ -411,7 +411,7 @@ fn RegAlloc_allocatePhis(ra: *RegAllocState, f: *Func, block: *Block, primary_pr
     while i < phi_ids.count {
         let phi: *Value = f.getValue( i64list_get(&phi_ids, i));
         if primary_pred_idx >= 0 and primary_pred_idx < phi.args.count {
-            let arg_id: i64 = Value_getArg(phi, primary_pred_idx);
+            let arg_id: i64 = phi.getArg( primary_pred_idx);
             if arg_id >= 0 and arg_id < ra.val_states_count {
                 let arg_vs: *ValState = ra.val_states + arg_id;
                 // Check if arg has a register that's not already used by a phi
@@ -522,7 +522,7 @@ fn RegAlloc_processValue(ra: *RegAllocState, f: *Func, v: *Value, block_id: i64)
     // Process arguments - ensure they're in registers
     var i: i64 = 0;
     while i < v.args.count {
-        let arg_id: i64 = Value_getArg(v, i);
+        let arg_id: i64 = v.getArg( i);
         if arg_id != INVALID_ID and arg_id < ra.val_states_count {
             let arg_vs: *ValState = ra.val_states + arg_id;
             if arg_vs.needs_reg and not ValState_inReg(arg_vs) {

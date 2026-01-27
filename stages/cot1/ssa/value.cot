@@ -47,224 +47,244 @@ struct Value {
     spill_slot: i64,      // Stack slot if spilled (-1 if none)
 }
 
-// ============================================================================
-// Value Constructors
-// ============================================================================
+impl Value {
 
-fn Value_new(id: i64, op: Op, type_idx: i64, block_id: i64) Value {
-    var v: Value = undefined;
-    v.id = id;
-    v.op = op;
-    v.type_idx = type_idx;
-    // Initialize dynamic args list
-    i64list_init(&v.args);
-    v.uses = 0;
-    v.aux_int = 0;
-    v.aux_ptr = 0;
-    v.block_id = block_id;
-    v.pos = 0;
-    v.reg = -1;
-    v.spill_slot = -1;
-    return v;
-}
+    // ============================================================================
+    // Value Constructors
+    // ============================================================================
 
-// Get number of arguments (accessor for args.count)
-fn Value_getArgsCount(v: *Value) i64 {
-    return v.args.count;
-}
-
-fn Value_newConstInt(id: i64, value: i64, type_idx: i64, block_id: i64) Value {
-    var v: Value = Value_new(id, Op.ConstInt, type_idx, block_id);
-    v.aux_int = value;
-    return v;
-}
-
-fn Value_newConstBool(id: i64, value: bool, block_id: i64) Value {
-    var v: Value = Value_new(id, Op.ConstBool, 1, block_id);  // TYPE_BOOL = 1
-    if value {
-        v.aux_int = 1;
-    } else {
+    fn create(id: i64, op: Op, type_idx: i64, block_id: i64) Value {
+        var v: Value = undefined;
+        v.id = id;
+        v.op = op;
+        v.type_idx = type_idx;
+        // Initialize dynamic args list
+        i64list_init(&v.args);
+        v.uses = 0;
         v.aux_int = 0;
-    }
-    return v;
-}
-
-// ============================================================================
-// Value Argument Management
-// ============================================================================
-
-// Add a single argument to a value
-// IMPORTANT: Always use this instead of modifying args directly!
-// This maintains use count invariants.
-fn Value_addArg(v: *Value, arg: *Value) {
-    i64list_append(&v.args, arg.id);
-    arg.uses = arg.uses + 1;
-}
-
-// Add two arguments (common case for binary ops)
-fn Value_addArg2(v: *Value, arg0: *Value, arg1: *Value) {
-    Value_addArg(v, arg0);
-    Value_addArg(v, arg1);
-}
-
-// Add three arguments (e.g., store: ptr, val, mem)
-fn Value_addArg3(v: *Value, arg0: *Value, arg1: *Value, arg2: *Value) {
-    Value_addArg(v, arg0);
-    Value_addArg(v, arg1);
-    Value_addArg(v, arg2);
-}
-
-// Set argument at specific index (for phi nodes and similar)
-fn Value_setArg(v: *Value, idx: i64, arg: *Value) {
-    if idx < 0 { return; }
-
-    // Ensure capacity for this index
-    i64list_ensure_capacity(&v.args, idx + 1);
-
-    // Extend count if necessary (filling gaps with INVALID_ID)
-    while v.args.count <= idx {
-        i64list_append(&v.args, INVALID_ID);
+        v.aux_ptr = 0;
+        v.block_id = block_id;
+        v.pos = 0;
+        v.reg = -1;
+        v.spill_slot = -1;
+        return v;
     }
 
-    // Decrement old arg's use count if present
-    if i64list_get(&v.args, idx) != INVALID_ID {
-        // Would need function context to decrement old arg's uses
+    // Get number of arguments (accessor for args.count)
+    fn getArgsCount(self: *Value) i64 {
+        return self.args.count;
     }
 
-    i64list_set(&v.args, idx, arg.id);
-    arg.uses = arg.uses + 1;
-}
+    fn newConstInt(id: i64, value: i64, type_idx: i64, block_id: i64) Value {
+        var v: Value = Value_create(id, Op.ConstInt, type_idx, block_id);
+        v.aux_int = value;
+        return v;
+    }
 
-// Reset all arguments (for value replacement)
-fn Value_resetArgs(v: *Value) {
-    i64list_clear(&v.args);
-}
+    fn newConstBool(id: i64, value: bool, block_id: i64) Value {
+        var v: Value = Value_create(id, Op.ConstBool, 1, block_id);  // TYPE_BOOL = 1
+        if value {
+            v.aux_int = 1;
+        } else {
+            v.aux_int = 0;
+        }
+        return v;
+    }
 
-// Truncate args to specified count (for SSA passes)
-fn Value_truncateArgs(v: *Value, count: i64) {
-    if count >= 0 and count < v.args.count {
-        v.args.count = count;
+    // ============================================================================
+    // Value Argument Management
+    // ============================================================================
+
+    // Add a single argument to a value
+    // IMPORTANT: Always use this instead of modifying args directly!
+    // This maintains use count invariants.
+    fn addArg(self: *Value, arg: *Value)  {
+        i64list_append(&self.args, arg.id);
+        arg.uses = arg.uses + 1;
+    }
+
+    // Add two arguments (common case for binary ops)
+    fn addArg2(self: *Value, arg0: *Value, arg1: *Value)  {
+        self.addArg(arg0);
+        self.addArg(arg1);
+    }
+
+    // Add three arguments (e.g., store: ptr, val, mem)
+    fn addArg3(self: *Value, arg0: *Value, arg1: *Value, arg2: *Value)  {
+        self.addArg(arg0);
+        self.addArg(arg1);
+        self.addArg(arg2);
+    }
+
+    // Set argument at specific index (for phi nodes and similar)
+    fn setArg(self: *Value, idx: i64, arg: *Value)  {
+        if idx < 0 { return; }
+
+        // Ensure capacity for this index
+        i64list_ensure_capacity(&self.args, idx + 1);
+
+        // Extend count if necessary (filling gaps with INVALID_ID)
+        while self.args.count <= idx {
+            i64list_append(&self.args, INVALID_ID);
+        }
+
+        // Decrement old arg's use count if present
+        if i64list_get(&self.args, idx) != INVALID_ID {
+            // Would need function context to decrement old arg's uses
+        }
+
+        i64list_set(&self.args, idx, arg.id);
+        arg.uses = arg.uses + 1;
+    }
+
+    // Reset all arguments (for value replacement)
+    fn resetArgs(self: *Value)  {
+        i64list_clear(&self.args);
+    }
+
+    // Truncate args to specified count (for SSA passes)
+    fn truncateArgs(self: *Value, count: i64)  {
+        if count >= 0 and count < self.args.count {
+            self.args.count = count;
+        }
+    }
+
+    // Clear args and set a single arg by id (common SSA pass pattern)
+    fn setSingleArg(self: *Value, arg_id: i64)  {
+        i64list_clear(&self.args);
+        i64list_append(&self.args, arg_id);
+    }
+
+    // ============================================================================
+    // Value Queries
+    // ============================================================================
+
+    // Check if value is a constant (rematerializable)
+    fn isConstant(self: *Value) bool {
+        return Op_isConstant(self.op);
+    }
+
+    // Check if value is rematerializable (can be recomputed cheaply)
+    // Reference: Zig's Value.isRematerializable()
+    fn isRematerializable(self: *Value) bool {
+        return Op_isConstant(self.op);
+    }
+
+    // Check if value has side effects
+    fn hasSideEffects(self: *Value) bool {
+        return Op_hasSideEffects(self.op);
+    }
+
+    // Check if value reads memory
+    // Reference: Zig's Value.readsMemory()
+    fn readsMemory(self: *Value) bool {
+        return Op_readsMemory(self.op);
+    }
+
+    // Check if value writes memory
+    // Reference: Zig's Value.writesMemory()
+    fn writesMemory(self: *Value) bool {
+        return Op_writesMemory(self.op);
+    }
+
+    // Check if value is dead (no uses and no side effects)
+    fn isDead(self: *Value) bool {
+        return self.uses == 0 and not self.hasSideEffects();
+    }
+
+    // Check if value produces a boolean result
+    fn isBool(self: *Value) bool {
+        return Op_isComparison(self.op) or self.op == Op.ConstBool;
+    }
+
+    // Get argument at index (or INVALID_ID if out of bounds)
+    fn getArg(self: *Value, idx: i64) i64 {
+        if idx < 0 or idx >= self.args.count { return INVALID_ID; }
+        return i64list_get(&self.args, idx);
+    }
+
+    // Set argument at index by value id directly (for SSA passes)
+    fn setArgById(self: *Value, idx: i64, arg_id: i64)  {
+        if idx < 0 { return; }
+        i64list_ensure_capacity(&self.args, idx + 1);
+        while self.args.count <= idx {
+            i64list_append(&self.args, INVALID_ID);
+        }
+        i64list_set(&self.args, idx, arg_id);
+    }
+
+    // Get first argument (or INVALID_ID if none)
+    fn arg0(self: *Value) i64 {
+        return self.getArg(0);
+    }
+
+    // Get second argument (or INVALID_ID if none)
+    fn arg1(self: *Value) i64 {
+        return self.getArg(1);
+    }
+
+    // Get third argument (or INVALID_ID if none)
+    fn arg2(self: *Value) i64 {
+        return self.getArg(2);
+    }
+
+    // Get number of arguments
+    // Reference: Zig's Value.numArgs()
+    fn numArgs(self: *Value) i64 {
+        return self.args.count;
+    }
+
+    // Alias for argsLen to match Zig naming
+    // Reference: Zig's Value.argsLen()
+    fn argsLen(self: *Value) i64 {
+        return self.args.count;
+    }
+
+    // Alias for isConst to match Zig naming
+    // Reference: Zig's Value.isConst()
+    fn isConst(self: *Value) bool {
+        return Op_isConstant(self.op);
+    }
+
+    // Get assigned register (or -1 if none)
+    // Reference: Zig's Value.getReg()
+    fn getReg(self: *Value) i64 {
+        return self.reg;
+    }
+
+    // Check if value has an assigned register
+    // Reference: Zig's Value.hasReg()
+    fn hasReg(self: *Value) bool {
+        return self.reg >= 0;
+    }
+
+    // Get spill slot (or -1 if none)
+    fn getSpillSlot(self: *Value) i64 {
+        return self.spill_slot;
+    }
+
+    // Check if value is spilled
+    fn isSpilled(self: *Value) bool {
+        return self.spill_slot >= 0;
+    }
+
+    // ============================================================================
+    // Use Count Management
+    // ============================================================================
+
+    // Increment use count (call when value becomes an argument)
+    fn incUses(self: *Value) void {
+        self.uses = self.uses + 1;
+    }
+
+    // Decrement use count (call when value is no longer referenced)
+    fn decUses(self: *Value) void {
+        if self.uses > 0 {
+            self.uses = self.uses - 1;
+        }
     }
 }
 
-// Clear args and set a single arg by id (common SSA pass pattern)
-fn Value_setSingleArg(v: *Value, arg_id: i64) {
-    i64list_clear(&v.args);
-    i64list_append(&v.args, arg_id);
-}
-
-// ============================================================================
-// Value Queries
-// ============================================================================
-
-// Check if value is a constant (rematerializable)
-fn Value_isConstant(v: *Value) bool {
-    return Op_isConstant(v.op);
-}
-
-// Check if value is rematerializable (can be recomputed cheaply)
-// Reference: Zig's Value.isRematerializable()
-fn Value_isRematerializable(v: *Value) bool {
-    return Op_isConstant(v.op);
-}
-
-// Check if value has side effects
-fn Value_hasSideEffects(v: *Value) bool {
-    return Op_hasSideEffects(v.op);
-}
-
-// Check if value reads memory
-// Reference: Zig's Value.readsMemory()
-fn Value_readsMemory(v: *Value) bool {
-    return Op_readsMemory(v.op);
-}
-
-// Check if value writes memory
-// Reference: Zig's Value.writesMemory()
-fn Value_writesMemory(v: *Value) bool {
-    return Op_writesMemory(v.op);
-}
-
-// Check if value is dead (no uses and no side effects)
-fn Value_isDead(v: *Value) bool {
-    return v.uses == 0 and not Value_hasSideEffects(v);
-}
-
-// Check if value produces a boolean result
-fn Value_isBool(v: *Value) bool {
-    return Op_isComparison(v.op) or v.op == Op.ConstBool;
-}
-
-// Get argument at index (or INVALID_ID if out of bounds)
-fn Value_getArg(v: *Value, idx: i64) i64 {
-    if idx < 0 or idx >= v.args.count { return INVALID_ID; }
-    return i64list_get(&v.args, idx);
-}
-
-// Set argument at index by value id directly (for SSA passes)
-fn Value_setArgById(v: *Value, idx: i64, arg_id: i64) {
-    if idx < 0 { return; }
-    i64list_ensure_capacity(&v.args, idx + 1);
-    while v.args.count <= idx {
-        i64list_append(&v.args, INVALID_ID);
-    }
-    i64list_set(&v.args, idx, arg_id);
-}
-
-// Get first argument (or INVALID_ID if none)
-fn Value_arg0(v: *Value) i64 {
-    return Value_getArg(v, 0);
-}
-
-// Get second argument (or INVALID_ID if none)
-fn Value_arg1(v: *Value) i64 {
-    return Value_getArg(v, 1);
-}
-
-// Get third argument (or INVALID_ID if none)
-fn Value_arg2(v: *Value) i64 {
-    return Value_getArg(v, 2);
-}
-
-// Get number of arguments
-// Reference: Zig's Value.numArgs()
-fn Value_numArgs(v: *Value) i64 {
-    return v.args.count;
-}
-
-// Alias for argsLen to match Zig naming
-// Reference: Zig's Value.argsLen()
-fn Value_argsLen(v: *Value) i64 {
-    return v.args.count;
-}
-
-// Alias for isConst to match Zig naming
-// Reference: Zig's Value.isConst()
-fn Value_isConst(v: *Value) bool {
-    return Op_isConstant(v.op);
-}
-
-// Get assigned register (or -1 if none)
-// Reference: Zig's Value.getReg()
-fn Value_getReg(v: *Value) i64 {
-    return v.reg;
-}
-
-// Check if value has an assigned register
-// Reference: Zig's Value.hasReg()
-fn Value_hasReg(v: *Value) bool {
-    return v.reg >= 0;
-}
-
-// Get spill slot (or -1 if none)
-fn Value_getSpillSlot(v: *Value) i64 {
-    return v.spill_slot;
-}
-
-// Check if value is spilled
-fn Value_isSpilled(v: *Value) bool {
-    return v.spill_slot >= 0;
-}
 
 // ============================================================================
 // Value Pool (arena allocation)
@@ -278,44 +298,31 @@ struct ValuePool {
     cap: i64,
 }
 
-fn ValuePool_init(pool: *ValuePool, values: *Value, cap: i64) {
-    pool.values = values;
-    pool.count = 0;
-    pool.cap = cap;
-}
+impl ValuePool {
 
-fn ValuePool_alloc(pool: *ValuePool, op: Op, type_idx: i64, block_id: i64) *Value {
-    if pool.count >= pool.cap {
-        return pool.values;  // Return first value as error placeholder
+    fn init(self: *ValuePool, values: *Value, cap: i64)  {
+        self.values = values;
+        self.count = 0;
+        self.cap = cap;
     }
 
-    let id: i64 = pool.count;
-    let v: *Value = pool.values + id;
-    v.* = Value_new(id, op, type_idx, block_id);
-    pool.count = pool.count + 1;
+    fn alloc(self: *ValuePool, op: Op, type_idx: i64, block_id: i64) *Value {
+        if self.count >= self.cap {
+            return self.values;  // Return first value as error placeholder
+        }
 
-    return v;
-}
+        let id: i64 = self.count;
+        let v: *Value = self.values + id;
+        v.* = Value_create(id, op, type_idx, block_id);
+        self.count = self.count + 1;
 
-fn ValuePool_get(pool: *ValuePool, id: i64) *Value {
-    if id < 0 or id >= pool.count {
-        return pool.values;  // Return first value as error placeholder
+        return v;
     }
-    return pool.values + id;
-}
 
-// ============================================================================
-// Use Count Management
-// ============================================================================
-
-// Increment use count (call when value becomes an argument)
-fn Value_incUses(v: *Value) {
-    v.uses = v.uses + 1;
-}
-
-// Decrement use count (call when value is no longer referenced)
-fn Value_decUses(v: *Value) {
-    if v.uses > 0 {
-        v.uses = v.uses - 1;
+    fn get(self: *ValuePool, id: i64) *Value {
+        if id < 0 or id >= self.count {
+            return self.values;  // Return first value as error placeholder
+        }
+        return self.values + id;
     }
 }

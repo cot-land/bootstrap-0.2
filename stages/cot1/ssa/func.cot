@@ -246,7 +246,7 @@ impl Func {
 
         let id: i64 = self.values_count;
         let v: *Value = self.values + id;
-        v.* = Value_new(id, op, type_idx, self.current_block);
+        v.* = Value_create(id, op, type_idx, self.current_block);
         self.values_count = self.values_count + 1;
 
         // Update block's value range
@@ -401,21 +401,21 @@ impl Func {
     // Emit a binary operation
     fn emitBinary(self: *Func, op: Op, left: *Value, right: *Value, type_idx: i64) *Value {
         let v: *Value = Func_newValue(self,op, type_idx);
-        Value_addArg2(v, left, right);
+        v.addArg2( left, right);
         return v;
     }
 
     // Emit a unary operation
     fn emitUnary(self: *Func, op: Op, operand: *Value, type_idx: i64) *Value {
         let v: *Value = Func_newValue(self,op, type_idx);
-        Value_addArg(v, operand);
+        v.addArg( operand);
         return v;
     }
 
     // Emit a select (conditional value): cond ? true_val : false_val
     fn emitSelect(self: *Func, cond: *Value, true_val: *Value, false_val: *Value, type_idx: i64) *Value {
         let v: *Value = Func_newValue(self,Op.Select, type_idx);
-        Value_addArg3(v, cond, true_val, false_val);
+        v.addArg3( cond, true_val, false_val);
         return v;
     }
 
@@ -426,7 +426,7 @@ impl Func {
         v.aux_int = local_idx;
 
         let load: *Value = Func_newValue(self,Op.Load, local.type_idx);
-        Value_addArg(load, v);
+        load.addArg( v);
         return load;
     }
 
@@ -437,7 +437,7 @@ impl Func {
         addr.aux_int = local_idx;
 
         let store: *Value = Func_newValue(self,Op.Store, 0);  // Store has no result type
-        Value_addArg2(store, addr, val);
+        store.addArg2( addr, val);
         return store;
     }
 
@@ -445,7 +445,7 @@ impl Func {
     fn emitReturn(self: *Func, val: *Value) *Value {
         let ret: *Value = Func_newValue(self,Op.Return, 0);
         if val.id != INVALID_ID {
-            Value_addArg(ret, val);
+            ret.addArg( val);
         }
         return ret;
     }

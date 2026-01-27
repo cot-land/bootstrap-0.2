@@ -943,14 +943,14 @@ fn SSABuilder_insertPhis(b: *SSABuilder) {
             ai = 0;
             while ai < args.count {
                 let arg_val: *Value = b.func.getValue( i64list_get(&args, ai));
-                Value_addArg(fwd, arg_val);
+                fwd.addArg( arg_val);
                 ai = ai + 1;
             }
         } else if witness != INVALID_ID {
             // One witness (excluding self). Make it a copy.
             fwd.op = Op.Copy;
             let witness_val: *Value = b.func.getValue( witness);
-            Value_addArg(fwd, witness_val);
+            fwd.addArg( witness_val);
         }
         // If no witness at all (all self-references), leave as FwdRef
         // This is an error but will be caught later
@@ -1120,7 +1120,7 @@ fn SSABuilder_emitPhi(b: *SSABuilder, type_idx: i64) *Value {
 fn SSABuilder_phiAddArg(b: *SSABuilder, phi: *Value, val: *Value, pred_block: i64) {
     // For simplicity, store args directly
     // In full implementation, args are ordered by predecessor
-    Value_addArg(phi, val);
+    phi.addArg( val);
 }
 
 // ============================================================================
@@ -1242,8 +1242,8 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
                 let str_make_val: *Value = b.func.newValue( Op.StringMake, TYPE_STRING);
                 let fresh_ptr_val: *Value = b.func.getValue( ptr_arg_id);
                 let fresh_len_val: *Value = b.func.getValue( len_arg_id);
-                Value_addArg(str_make_val, fresh_ptr_val);
-                Value_addArg(str_make_val, fresh_len_val);
+                str_make_val.addArg( fresh_ptr_val);
+                str_make_val.addArg( fresh_len_val);
 
                 // Save StringMake result for Phase 3 (not the raw Arg)
                 i64list_append(&arg_value_ids, str_make_val.id);
@@ -1292,15 +1292,15 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
         if arg_val.op == Op.StringMake and arg_val.args.count >= 2 {
             // String param: store ptr at offset 0, len at offset 8
             // Get the arg IDs from the StringMake value
-            let ptr_val_id: i64 = Value_getArg(arg_val, 0);
-            let len_val_id: i64 = Value_getArg(arg_val, 1);
+            let ptr_val_id: i64 = arg_val.getArg( 0);
+            let len_val_id: i64 = arg_val.getArg( 1);
 
             // Store ptr to base address
             let store_ptr: *Value = b.func.newValue( Op.Store, TYPE_VOID);
             // Re-fetch all needed values after Func_newValue
             let fresh_addr: *Value = b.func.getValue( addr_val_id);
             let fresh_ptr: *Value = b.func.getValue( ptr_val_id);
-            Value_addArg2(store_ptr, fresh_addr, fresh_ptr);
+            store_ptr.addArg2( fresh_addr, fresh_ptr);
 
             // Create addr + 8 for len using OffPtr (offset pointer)
             let addr_plus_8: *Value = b.func.newValue( Op.OffPtr, TYPE_I64);
@@ -1308,14 +1308,14 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
             addr_plus_8.aux_int = 8;  // offset
             // Re-fetch addr after potential realloc
             let fresh_addr2: *Value = b.func.getValue( addr_val_id);
-            Value_addArg(addr_plus_8, fresh_addr2);  // base pointer
+            addr_plus_8.addArg( fresh_addr2);  // base pointer
 
             // Store len at offset 8
             let store_len: *Value = b.func.newValue( Op.Store, TYPE_VOID);
             // Re-fetch values after Func_newValue
             let fresh_addr_plus_8: *Value = b.func.getValue( addr_plus_8_id);
             let fresh_len: *Value = b.func.getValue( len_val_id);
-            Value_addArg2(store_len, fresh_addr_plus_8, fresh_len);
+            store_len.addArg2( fresh_addr_plus_8, fresh_len);
         } else {
             // BUG-019 FIX: >16B struct types are passed by reference
             // Following Zig ssa_builder.zig lines 222-238
@@ -1337,14 +1337,14 @@ fn SSABuilder_build(b: *SSABuilder) i64 {
                 // Re-fetch values after Func_newValue
                 let fresh_addr: *Value = b.func.getValue( addr_val_id);
                 let fresh_arg: *Value = b.func.getValue( arg_val_id);
-                Value_addArg2(move_val, fresh_addr, fresh_arg);
+                move_val.addArg2( fresh_addr, fresh_arg);
             } else {
                 // Store Arg to stack slot
                 let store_val: *Value = b.func.newValue( Op.Store, TYPE_VOID);
                 // Re-fetch values after Func_newValue
                 let fresh_addr: *Value = b.func.getValue( addr_val_id);
                 let fresh_arg: *Value = b.func.getValue( arg_val_id);
-                Value_addArg2(store_val, fresh_addr, fresh_arg);
+                store_val.addArg2( fresh_addr, fresh_arg);
             }
         }
 
@@ -1559,7 +1559,7 @@ fn SSABuilder_convertUnary(b: *SSABuilder, ir_node: *IRNode) i64 {
     let operand_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
     let ssa_op: Op = Op_fromIRUnaryOp(ir_node.op);
     let val: *Value = b.func.newValue( ssa_op, TYPE_I64);
-    Value_addArg(val, operand_val);
+    val.addArg( operand_val);
     SSABuilder_assignReg(b, val);
     return val.id;
 }
@@ -1607,7 +1607,7 @@ fn SSABuilder_convertStoreLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
         // Move: (dest, source) with aux_int = size
         let move_val: *Value = b.func.newValue( Op.Move, TYPE_VOID);
         move_val.aux_int = struct_size;
-        Value_addArg2(move_val, dest_addr, value_val);
+        move_val.addArg2( dest_addr, value_val);
         return move_val.id;
     }
 
@@ -1643,7 +1643,7 @@ fn SSABuilder_convertStoreGlobal(b: *SSABuilder, ir_node: *IRNode) i64 {
     let val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
     let store_val: *Value = b.func.newValue( Op.GlobalStore, TYPE_I64);
     store_val.aux_int = global_idx;
-    Value_addArg(store_val, val);
+    store_val.addArg( val);
     SSABuilder_assignReg(b, store_val);
     return store_val.id;
 }
@@ -1676,7 +1676,7 @@ fn SSABuilder_convertLoad(b: *SSABuilder, ir_node: *IRNode) i64 {
     // Use the IR node's type_idx to preserve byte types (u8, i8)
     let ptr_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
     let load_val: *Value = b.func.newValue( Op.Load, ir_node.type_idx);
-    Value_addArg(load_val, ptr_val);
+    load_val.addArg( ptr_val);
     SSABuilder_assignReg(b, load_val);
     return load_val.id;
 }
@@ -1686,7 +1686,7 @@ fn SSABuilder_convertStore(b: *SSABuilder, ir_node: *IRNode) i64 {
     let ptr_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
     let val_val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
     let store_val: *Value = b.func.newValue( Op.Store, TYPE_VOID);
-    Value_addArg2(store_val, ptr_val, val_val);
+    store_val.addArg2( ptr_val, val_val);
     // Stores don't need registers
     return store_val.id;
 }
@@ -1705,7 +1705,7 @@ fn SSABuilder_convertFieldLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
 
     // 2. Add offset to get field address
     let off_val: *Value = b.func.newValue( Op.OffPtr, TYPE_I64);
-    Value_addArg(off_val, addr_val);
+    off_val.addArg( addr_val);
     off_val.aux_int = offset;
 
     // Check if result is a struct or array - if so, return address (no load)
@@ -1725,7 +1725,7 @@ fn SSABuilder_convertFieldLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
 
     // 3. Primitive type - load the field value
     let load_val: *Value = b.func.newValue( Op.Load, ir_node.type_idx);
-    Value_addArg(load_val, off_val);
+    load_val.addArg( off_val);
     SSABuilder_assignReg(b, load_val);
     return load_val.id;
 }
@@ -1738,7 +1738,7 @@ fn SSABuilder_convertFieldValue(b: *SSABuilder, ir_node: *IRNode) i64 {
 
     // 1. Add offset to base to get field address
     let off_val: *Value = b.func.newValue( Op.OffPtr, TYPE_I64);
-    Value_addArg(off_val, base_val);
+    off_val.addArg( base_val);
     off_val.aux_int = offset;
 
     // Check if result is a struct or array - if so, return address (no load)
@@ -1758,7 +1758,7 @@ fn SSABuilder_convertFieldValue(b: *SSABuilder, ir_node: *IRNode) i64 {
 
     // 2. Primitive type - load the field value
     let load_val: *Value = b.func.newValue( Op.Load, ir_node.type_idx);
-    Value_addArg(load_val, off_val);
+    load_val.addArg( off_val);
     SSABuilder_assignReg(b, load_val);
     return load_val.id;
 }
@@ -1776,13 +1776,13 @@ fn SSABuilder_convertStoreFieldLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
 
     // 2. Add offset to get field address
     let off_val: *Value = b.func.newValue( Op.OffPtr, TYPE_I64);
-    Value_addArg(off_val, addr_val);
+    off_val.addArg( addr_val);
     off_val.aux_int = offset;
     SSABuilder_assignReg(b, off_val);
 
     // 3. Store the value
     let store_val: *Value = b.func.newValue( Op.Store, TYPE_VOID);
-    Value_addArg2(store_val, off_val, val_val);
+    store_val.addArg2( off_val, val_val);
     return store_val.id;
 }
 
@@ -1794,13 +1794,13 @@ fn SSABuilder_convertStoreField(b: *SSABuilder, ir_node: *IRNode) i64 {
 
     // 1. Add offset to base to get field address
     let off_val: *Value = b.func.newValue( Op.OffPtr, TYPE_I64);
-    Value_addArg(off_val, base_val);
+    off_val.addArg( base_val);
     off_val.aux_int = offset;
     SSABuilder_assignReg(b, off_val);
 
     // 2. Store the value
     let store_val: *Value = b.func.newValue( Op.Store, TYPE_VOID);
-    Value_addArg2(store_val, off_val, val_val);
+    store_val.addArg2( off_val, val_val);
     return store_val.id;
 }
 
@@ -1829,7 +1829,7 @@ fn SSABuilder_convertIndexLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
 
     // 4. Load the element value
     let load_val: *Value = b.func.newValue( Op.Load, ir_node.type_idx);
-    Value_addArg(load_val, ptr_val);
+    load_val.addArg( ptr_val);
     SSABuilder_assignReg(b, load_val);
     return load_val.id;
 }
@@ -1865,7 +1865,7 @@ fn SSABuilder_convertIndexValue(b: *SSABuilder, ir_node: *IRNode) i64 {
 
     // 4. Load the element value for primitives
     let load_val: *Value = b.func.newValue( Op.Load, ir_node.type_idx);
-    Value_addArg(load_val, ptr_val);
+    load_val.addArg( ptr_val);
     SSABuilder_assignReg(b, load_val);
     return load_val.id;
 }
@@ -1896,7 +1896,7 @@ fn SSABuilder_convertStoreIndexLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
     // BUG FIX: Propagate elem_size to Store for correct sized store instruction
     // Without this, codegen uses 64-bit STR for byte arrays, corrupting stack
     let store_val: *Value = b.func.newValue( Op.Store, TYPE_VOID);
-    Value_addArg2(store_val, ptr_val, val_val);
+    store_val.addArg2( ptr_val, val_val);
     store_val.aux_int = elem_size;  // Store element size for codegen
     return store_val.id;
 }
@@ -1921,7 +1921,7 @@ fn SSABuilder_convertStoreIndexValue(b: *SSABuilder, ir_node: *IRNode) i64 {
     // 3. Store the value
     // BUG FIX: Propagate elem_size to Store for correct sized store instruction
     let store_val: *Value = b.func.newValue( Op.Store, TYPE_VOID);
-    Value_addArg2(store_val, ptr_val, val_val);
+    store_val.addArg2( ptr_val, val_val);
     store_val.aux_int = elem_size;  // Store element size for codegen
     return store_val.id;
 }
@@ -1933,7 +1933,7 @@ fn SSABuilder_convertMakeString(b: *SSABuilder, ir_node: *IRNode) i64 {
     let ptr_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
     let len_val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
     let make_val: *Value = b.func.newValue( Op.StringMake, TYPE_STRING);
-    Value_addArg2(make_val, ptr_val, len_val);
+    make_val.addArg2( ptr_val, len_val);
     SSABuilder_assignReg(b, make_val);
     return make_val.id;
 }
@@ -1943,7 +1943,7 @@ fn SSABuilder_convertMakeSlice(b: *SSABuilder, ir_node: *IRNode) i64 {
     let ptr_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
     let len_val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
     let make_val: *Value = b.func.newValue( Op.SliceMake, TYPE_I64);
-    Value_addArg2(make_val, ptr_val, len_val);
+    make_val.addArg2( ptr_val, len_val);
     SSABuilder_assignReg(b, make_val);
     return make_val.id;
 }
@@ -1952,7 +1952,7 @@ fn SSABuilder_convertSlicePtr(b: *SSABuilder, ir_node: *IRNode) i64 {
     // Extract pointer from slice: left=slice_expr (relative IR index)
     let slice_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
     let ptr_val: *Value = b.func.newValue( Op.SlicePtr, TYPE_I64);
-    Value_addArg(ptr_val, slice_val);
+    ptr_val.addArg( slice_val);
     SSABuilder_assignReg(b, ptr_val);
     return ptr_val.id;
 }
@@ -1961,7 +1961,7 @@ fn SSABuilder_convertSliceLen(b: *SSABuilder, ir_node: *IRNode) i64 {
     // Extract length from slice: left=slice_expr (relative IR index)
     let slice_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
     let len_val: *Value = b.func.newValue( Op.SliceLen, TYPE_I64);
-    Value_addArg(len_val, slice_val);
+    len_val.addArg( slice_val);
     SSABuilder_assignReg(b, len_val);
     return len_val.id;
 }
@@ -2000,7 +2000,7 @@ fn SSABuilder_convertCall(b: *SSABuilder, ir_node: *IRNode) i64 {
         let arg_ir_node: *IRNode = b.ir_nodes + abs_idx;
         let arg_value_id: i64 = SSABuilder_convertNode(b, arg_ir_node, abs_idx);
         let arg_val: *Value = b.func.getValue( arg_value_id);
-        Value_addArg(val, arg_val);
+        val.addArg( arg_val);
         arg_idx = arg_idx + 1;
     }
     SSABuilder_assignReg(b, val);
@@ -2019,7 +2019,7 @@ fn SSABuilder_convertCallIndirect(b: *SSABuilder, ir_node: *IRNode) i64 {
     let fn_ptr_ir_node: *IRNode = b.ir_nodes + fn_ptr_abs_idx;
     let fn_ptr_value_id: i64 = SSABuilder_convertNode(b, fn_ptr_ir_node, fn_ptr_abs_idx);
     let fn_ptr_val: *Value = b.func.getValue( fn_ptr_value_id);
-    Value_addArg(val, fn_ptr_val);
+    val.addArg( fn_ptr_val);
 
     // Add remaining arguments - call convertNode for each arg (matches Zig)
     var arg_idx: i64 = 0;
@@ -2029,7 +2029,7 @@ fn SSABuilder_convertCallIndirect(b: *SSABuilder, ir_node: *IRNode) i64 {
         let arg_ir_node: *IRNode = b.ir_nodes + abs_idx;
         let arg_value_id: i64 = SSABuilder_convertNode(b, arg_ir_node, abs_idx);
         let arg_val: *Value = b.func.getValue( arg_value_id);
-        Value_addArg(val, arg_val);
+        val.addArg( arg_val);
         arg_idx = arg_idx + 1;
     }
     SSABuilder_assignReg(b, val);
@@ -2056,7 +2056,7 @@ fn SSABuilder_convertStrConcat(b: *SSABuilder, ir_node: *IRNode) i64 {
         let arg_ir_node: *IRNode = b.ir_nodes + abs_idx;
         let arg_value_id: i64 = SSABuilder_convertNode(b, arg_ir_node, abs_idx);
         let arg_val: *Value = b.func.getValue( arg_value_id);
-        Value_addArg(val, arg_val);
+        val.addArg( arg_val);
         arg_idx = arg_idx + 1;
     }
 

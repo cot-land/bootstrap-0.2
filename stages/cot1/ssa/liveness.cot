@@ -544,7 +544,7 @@ fn Liveness_processSuccessorPhis(lm: *LiveMap, f: *Func, block: *Block) {
             // For simplicity, assume edge_idx matches predecessor order
             // In full impl, we'd track edge indices
             if s < v.args.count {
-                let arg_id: i64 = Value_getArg(v, s);
+                let arg_id: i64 = v.getArg( s);
                 if arg_id != INVALID_ID {
                     let arg: *Value = f.getValue( arg_id);
                     if Value_needsRegister(arg) {
@@ -616,7 +616,7 @@ fn Liveness_processBlockLiveness(lr: *LivenessResult, f: *Func, block: *Block,
         // Add arguments to live set
         var a: i64 = 0;
         while a < v.args.count {
-            let arg_id: i64 = Value_getArg(v, a);
+            let arg_id: i64 = v.getArg( a);
             if arg_id != INVALID_ID {
                 let arg: *Value = f.getValue( arg_id);
                 if Value_needsRegister(arg) {

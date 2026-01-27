@@ -118,8 +118,8 @@ fn valuesEquivalent(f: *Func, v: *Value, w: *Value) bool {
     // All arguments must be identical
     var i: i64 = 0;
     while i < v.args.count {
-        let v_arg: i64 = Value_getArg(v, i);
-        let w_arg: i64 = Value_getArg(w, i);
+        let v_arg: i64 = v.getArg( i);
+        let w_arg: i64 = w.getArg( i);
         if v_arg != w_arg {
             return false;
         }
@@ -149,8 +149,8 @@ fn replaceUsesInBlock(f: *Func, block: *Block, old_id: i64, new_id: i64) i64 {
         // Check each argument
         var ai: i64 = 0;
         while ai < v.args.count {
-            if Value_getArg(v, ai) == old_id {
-                Value_setArgById(v, ai, new_id);
+            if v.getArg( ai) == old_id {
+                v.setArgById( ai, new_id);
                 count = count + 1;
             }
             ai = ai + 1;

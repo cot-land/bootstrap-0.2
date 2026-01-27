@@ -62,7 +62,7 @@ fn earlyDeadcodeBlock(f: *Func, block: *Block) bool {
         // This may cascade to make more values dead
         var ai: i64 = 0;
         while ai < v.args.count {
-            let arg_id: i64 = Value_getArg(v, ai);
+            let arg_id: i64 = v.getArg( ai);
             if arg_id >= 0 and arg_id < f.values_count {
                 let arg: *Value = f.getValue( arg_id);
                 if arg.uses > 0 {
