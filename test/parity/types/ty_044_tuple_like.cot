@@ -1,0 +1,11 @@
+struct Pair { first: i64, second: i64 }
+fn make_pair(a: i64, b: i64, p: *Pair) void {
+    p.first = a;
+    p.second = b;
+}
+fn main() i64 {
+    var p: Pair = undefined;
+    make_pair(10, 20, &p);
+    if p.first == 10 and p.second == 20 { return 0; }
+    return 1;
+}

@@ -1,0 +1,6 @@
+fn main() i64 {
+    var x: i64 = 7;
+    var sq: i64 = x * x;
+    if sq == 49 { return 0; }
+    return 1;
+}

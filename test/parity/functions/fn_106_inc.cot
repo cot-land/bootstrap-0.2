@@ -1,0 +1,7 @@
+fn inc(n: i64) i64 {
+    return n + 1;
+}
+fn main() i64 {
+    if inc(41) == 42 { return 0; }
+    return 1;
+}

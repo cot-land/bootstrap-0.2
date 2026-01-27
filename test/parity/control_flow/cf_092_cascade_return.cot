@@ -1,0 +1,16 @@
+fn classify_char(c: i64) i64 {
+    if c >= 48 {
+        if c <= 57 { return 1; }
+    }
+    if c >= 65 {
+        if c <= 90 { return 2; }
+    }
+    if c >= 97 {
+        if c <= 122 { return 2; }
+    }
+    return 0;
+}
+fn main() i64 {
+    if classify_char(65) == 2 { return 0; }
+    return 1;
+}

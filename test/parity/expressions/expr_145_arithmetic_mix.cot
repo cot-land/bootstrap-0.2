@@ -1,0 +1,12 @@
+fn main() i64 {
+    var a: i64 = 10;
+    var b: i64 = 3;
+    var sum: i64 = a + b;
+    var diff: i64 = a - b;
+    var prod: i64 = a * b;
+    var quot: i64 = a / b;
+    var rem: i64 = a % b;
+    var result: i64 = sum + diff + prod + quot + rem;
+    if result == 51 { return 0; }
+    return 1;
+}

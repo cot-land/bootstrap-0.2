@@ -1,0 +1,10 @@
+extern fn malloc_i64(count: i64) *i64;
+var result: i64 = 0;
+fn set_result(val: i64) void {
+    result = val;
+}
+fn main() i64 {
+    set_result(42);
+    if result == 42 { return 0; }
+    return 1;
+}

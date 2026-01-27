@@ -1,0 +1,18 @@
+extern fn malloc_i64(count: i64) *i64;
+fn add_arrays(a: *i64, b: *i64, out: *i64, n: i64) void {
+    var i: i64 = 0;
+    while i < n {
+        (out + i).* = (a + i).* + (b + i).*;
+        i = i + 1;
+    }
+}
+fn main() i64 {
+    var a: *i64 = malloc_i64(3);
+    var b: *i64 = malloc_i64(3);
+    var out: *i64 = malloc_i64(3);
+    (a + 0).* = 10; (a + 1).* = 20; (a + 2).* = 30;
+    (b + 0).* = 1; (b + 1).* = 2; (b + 2).* = 3;
+    add_arrays(a, b, out, 3);
+    if (out + 0).* == 11 and (out + 2).* == 33 { return 0; }
+    return 1;
+}

@@ -1,0 +1,12 @@
+struct Vec2 { x: i64, y: i64 }
+fn make_vec(x: i64, y: i64, out: *Vec2) void {
+    out.x = x;
+    out.y = y;
+}
+fn main() i64 {
+    var v: Vec2 = undefined;
+    make_vec(3, 4, &v);
+    var len_sq: i64 = v.x * v.x + v.y * v.y;
+    if len_sq == 25 { return 0; }
+    return 1;
+}

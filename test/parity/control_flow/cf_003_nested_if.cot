@@ -1,0 +1,8 @@
+fn classify(x: i64) i64 {
+    if x > 0 {
+        if x > 10 { return 2; }
+        return 1;
+    }
+    return 0;
+}
+fn main() i64 { if classify(5) == 1 { return 0; } return 1; }

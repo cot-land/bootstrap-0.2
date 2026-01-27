@@ -1,0 +1,18 @@
+extern fn malloc_i64(count: i64) *i64;
+fn dot_product(a: *i64, b: *i64, n: i64) i64 {
+    var sum: i64 = 0;
+    var i: i64 = 0;
+    while i < n {
+        sum = sum + (a + i).* * (b + i).*;
+        i = i + 1;
+    }
+    return sum;
+}
+fn main() i64 {
+    var a: *i64 = malloc_i64(3);
+    var b: *i64 = malloc_i64(3);
+    (a + 0).* = 1; (a + 1).* = 2; (a + 2).* = 3;
+    (b + 0).* = 4; (b + 1).* = 5; (b + 2).* = 6;
+    if dot_product(a, b, 3) == 32 { return 0; }
+    return 1;
+}

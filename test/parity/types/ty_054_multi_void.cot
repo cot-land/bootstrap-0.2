@@ -1,0 +1,12 @@
+extern fn malloc_i64(count: i64) *i64;
+var counter: i64 = 0;
+fn increment() void {
+    counter = counter + 1;
+}
+fn main() i64 {
+    increment();
+    increment();
+    increment();
+    if counter == 3 { return 0; }
+    return 1;
+}

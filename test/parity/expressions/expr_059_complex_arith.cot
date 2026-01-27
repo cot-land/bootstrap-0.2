@@ -1,0 +1,4 @@
+fn complex_arith(a: i64, b: i64, c: i64) i64 {
+    return (a * a) + (b * b) + (c * c);
+}
+fn main() i64 { if complex_arith(3, 4, 5) == 50 { return 0; } return 1; }

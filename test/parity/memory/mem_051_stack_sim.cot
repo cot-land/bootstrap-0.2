@@ -1,0 +1,23 @@
+extern fn malloc_i64(count: i64) *i64;
+var stack: *i64 = null;
+var sp: i64 = 0;
+fn push(val: i64) void {
+    (stack + sp).* = val;
+    sp = sp + 1;
+}
+fn pop() i64 {
+    sp = sp - 1;
+    return (stack + sp).*;
+}
+fn main() i64 {
+    stack = malloc_i64(10);
+    push(10);
+    push(20);
+    push(30);
+    var a: i64 = pop();
+    var b: i64 = pop();
+    if a == 30 {
+        if b == 20 { return 0; }
+    }
+    return 1;
+}

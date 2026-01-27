@@ -1,0 +1,12 @@
+struct Triple { a: i64, b: i64, c: i64 }
+fn sum_triple(t: *Triple) i64 {
+    return t.a + t.b + t.c;
+}
+fn main() i64 {
+    var t: Triple = undefined;
+    t.a = 10;
+    t.b = 20;
+    t.c = 30;
+    if sum_triple(&t) == 60 { return 0; }
+    return 1;
+}

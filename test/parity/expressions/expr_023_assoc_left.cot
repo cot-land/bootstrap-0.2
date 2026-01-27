@@ -1,0 +1,2 @@
+fn left_assoc() i64 { return 100 - 30 - 20; }
+fn main() i64 { if left_assoc() == 50 { return 0; } return 1; }

@@ -1,0 +1,9 @@
+fn main() i64 {
+    var x: i64 = 1;
+    x = x + x;
+    x = x + x;
+    x = x + x;
+    x = x + x;
+    if x == 16 { return 0; }
+    return 1;
+}

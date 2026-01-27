@@ -1,0 +1,7 @@
+fn dec(n: i64) i64 {
+    return n - 1;
+}
+fn main() i64 {
+    if dec(43) == 42 { return 0; }
+    return 1;
+}

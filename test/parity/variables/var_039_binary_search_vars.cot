@@ -1,0 +1,17 @@
+fn main() i64 {
+    var target: i64 = 37;
+    var lo: i64 = 0;
+    var hi: i64 = 100;
+    var steps: i64 = 0;
+    while lo < hi {
+        var mid: i64 = (lo + hi) / 2;
+        if mid < target {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        }
+        steps = steps + 1;
+    }
+    if lo == 37 { return 0; }
+    return 1;
+}

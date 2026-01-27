@@ -1,0 +1,16 @@
+extern fn malloc_i64(count: i64) *i64;
+fn init_fib(arr: *i64, n: i64) void {
+    if n >= 1 { (arr + 0).* = 0; }
+    if n >= 2 { (arr + 1).* = 1; }
+    var i: i64 = 2;
+    while i < n {
+        (arr + i).* = (arr + i - 1).* + (arr + i - 2).*;
+        i = i + 1;
+    }
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(10);
+    init_fib(arr, 10);
+    if (arr + 9).* == 34 { return 0; }
+    return 1;
+}

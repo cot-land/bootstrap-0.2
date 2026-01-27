@@ -1,0 +1,14 @@
+struct Point { x: i64, y: i64 }
+fn copy_point(src: *Point, dst: *Point) void {
+    dst.x = src.x;
+    dst.y = src.y;
+}
+fn main() i64 {
+    var p1: Point = undefined;
+    var p2: Point = undefined;
+    p1.x = 10;
+    p1.y = 20;
+    copy_point(&p1, &p2);
+    if p2.x == 10 and p2.y == 20 { return 0; }
+    return 1;
+}

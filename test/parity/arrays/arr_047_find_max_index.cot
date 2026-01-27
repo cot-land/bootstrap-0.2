@@ -1,0 +1,22 @@
+extern fn malloc_i64(count: i64) *i64;
+fn find_max_idx(arr: *i64, n: i64) i64 {
+    var max_idx: i64 = 0;
+    var i: i64 = 1;
+    while i < n {
+        if (arr + i).* > (arr + max_idx).* {
+            max_idx = i;
+        }
+        i = i + 1;
+    }
+    return max_idx;
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(5);
+    (arr + 0).* = 10;
+    (arr + 1).* = 50;
+    (arr + 2).* = 30;
+    (arr + 3).* = 40;
+    (arr + 4).* = 20;
+    if find_max_idx(arr, 5) == 1 { return 0; }
+    return 1;
+}

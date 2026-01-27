@@ -1,0 +1,8 @@
+struct Point { x: i64, y: i64 }
+fn main() i64 {
+    var p: Point = undefined;
+    p.x = 10;
+    p.y = 20;
+    if p.x + p.y == 30 { return 0; }
+    return 1;
+}

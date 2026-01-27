@@ -1,0 +1,2 @@
+fn rect_area(w: i64, h: i64) i64 { return w * h; }
+fn main() i64 { if rect_area(5, 7) == 35 { return 0; } return 1; }

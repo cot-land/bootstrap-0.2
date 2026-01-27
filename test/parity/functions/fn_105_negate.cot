@@ -1,0 +1,7 @@
+fn negate(n: i64) i64 {
+    return 0 - n;
+}
+fn main() i64 {
+    if negate(42) == 0 - 42 { return 0; }
+    return 1;
+}

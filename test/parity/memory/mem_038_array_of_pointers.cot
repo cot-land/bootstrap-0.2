@@ -1,0 +1,13 @@
+extern fn malloc_i64(count: i64) *i64;
+fn main() i64 {
+    var arr: *i64 = malloc_i64(3);
+    var a: *i64 = malloc_i64(1);
+    var b: *i64 = malloc_i64(1);
+    a.* = 10;
+    b.* = 20;
+    (arr + 0).* = a.*;
+    (arr + 1).* = b.*;
+    (arr + 2).* = a.* + b.*;
+    if (arr + 2).* == 30 { return 0; }
+    return 1;
+}

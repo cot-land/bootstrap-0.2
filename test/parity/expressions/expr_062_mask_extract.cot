@@ -1,0 +1,4 @@
+fn extract_byte(val: i64, pos: i64) i64 {
+    return (val >> (pos * 8)) & 0xFF;
+}
+fn main() i64 { if extract_byte(0x12345678, 1) == 0x56 { return 0; } return 1; }

@@ -1,0 +1,10 @@
+extern fn malloc_i64(count: i64) *i64;
+fn make_array(size: i64) *i64 {
+    return malloc_i64(size);
+}
+fn main() i64 {
+    var arr: *i64 = make_array(3);
+    arr.* = 100;
+    if arr.* == 100 { return 0; }
+    return 1;
+}

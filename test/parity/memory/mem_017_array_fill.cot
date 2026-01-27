@@ -1,0 +1,14 @@
+extern fn malloc_i64(size: i64) *i64;
+fn fill_range(arr: *i64, start: i64, count: i64) void {
+    var i: i64 = 0;
+    while i < count {
+        (arr + i).* = start + i;
+        i = i + 1;
+    }
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(5);
+    fill_range(arr, 10, 5);
+    if (arr + 2).* == 12 { return 0; }
+    return 1;
+}

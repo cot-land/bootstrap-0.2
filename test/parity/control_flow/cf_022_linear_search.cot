@@ -1,0 +1,16 @@
+extern fn malloc_i64(size: i64) *i64;
+fn linear_search(arr: *i64, len: i64, target: i64) i64 {
+    var i: i64 = 0;
+    while i < len {
+        if (arr + i).* == target { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(5);
+    (arr + 0).* = 3; (arr + 1).* = 1; (arr + 2).* = 4;
+    (arr + 3).* = 1; (arr + 4).* = 5;
+    if linear_search(arr, 5, 4) == 2 { return 0; }
+    return 1;
+}

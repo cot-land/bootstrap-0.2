@@ -1,0 +1,7 @@
+fn main() i64 {
+    var a: i64 = 10;
+    var b: i64 = 6;
+    var diff: i64 = a * a - b * b;
+    if diff == 64 { return 0; }
+    return 1;
+}

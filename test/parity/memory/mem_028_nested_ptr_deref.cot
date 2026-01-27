@@ -1,0 +1,11 @@
+fn main() i64 {
+    var a: i64 = 100;
+    var b: i64 = 200;
+    var pa: *i64 = &a;
+    var pb: *i64 = &b;
+    var ppa: **i64 = &pa;
+    var ppb: **i64 = &pb;
+    var sum: i64 = ppa.*.* + ppb.*.*;
+    if sum == 300 { return 0; }
+    return 1;
+}

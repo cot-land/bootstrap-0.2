@@ -1,0 +1,4 @@
+fn complex_shift(a: i64, b: i64) i64 {
+    return ((a << 4) | (b >> 4)) & 0xFF;
+}
+fn main() i64 { if complex_shift(0x0A, 0xB0) == 0xAB { return 0; } return 1; }

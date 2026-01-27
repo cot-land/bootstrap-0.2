@@ -1,0 +1,7 @@
+fn main() i64 {
+    var x: i64 = 1000000000;
+    var y: i64 = 2000000000;
+    var z: i64 = x + y;
+    if z == 3000000000 { return 0; }
+    return 1;
+}

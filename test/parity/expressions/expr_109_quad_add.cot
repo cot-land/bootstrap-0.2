@@ -1,0 +1,9 @@
+fn main() i64 {
+    var a: i64 = 10;
+    var b: i64 = 20;
+    var c: i64 = 30;
+    var d: i64 = 40;
+    var r: i64 = a + b + c + d;
+    if r == 100 { return 0; }
+    return 1;
+}

@@ -1,0 +1,14 @@
+fn min(a: i64, b: i64) i64 {
+    if a < b { return a; }
+    return b;
+}
+fn max(a: i64, b: i64) i64 {
+    if a > b { return a; }
+    return b;
+}
+fn main() i64 {
+    var a: i64 = 5;
+    var b: i64 = 10;
+    if min(a, b) == 5 and max(a, b) == 10 { return 0; }
+    return 1;
+}

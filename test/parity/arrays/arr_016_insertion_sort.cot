@@ -1,0 +1,25 @@
+extern fn malloc_i64(count: i64) *i64;
+fn insertion_sort(arr: *i64, n: i64) void {
+    var i: i64 = 1;
+    while i < n {
+        var key: i64 = (arr + i).*;
+        var j: i64 = i - 1;
+        while j >= 0 and (arr + j).* > key {
+            (arr + j + 1).* = (arr + j).*;
+            j = j - 1;
+        }
+        (arr + j + 1).* = key;
+        i = i + 1;
+    }
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(5);
+    (arr + 0).* = 5;
+    (arr + 1).* = 3;
+    (arr + 2).* = 4;
+    (arr + 3).* = 1;
+    (arr + 4).* = 2;
+    insertion_sort(arr, 5);
+    if (arr + 0).* == 1 and (arr + 4).* == 5 { return 0; }
+    return 1;
+}

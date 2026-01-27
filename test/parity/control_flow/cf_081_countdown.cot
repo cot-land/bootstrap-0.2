@@ -1,0 +1,13 @@
+fn countdown(n: i64) i64 {
+    var result: i64 = 0;
+    var i: i64 = n;
+    while i > 0 {
+        result = result + i;
+        i = i - 1;
+    }
+    return result;
+}
+fn main() i64 {
+    if countdown(5) == 15 { return 0; }
+    return 1;
+}

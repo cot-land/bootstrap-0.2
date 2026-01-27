@@ -1,0 +1,7 @@
+fn main() i64 {
+    var x: i64 = 10;
+    x = 20;
+    x = 30;
+    if x == 30 { return 0; }
+    return 1;
+}

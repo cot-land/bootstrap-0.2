@@ -1,0 +1,7 @@
+fn cube(n: i64) i64 {
+    return n * n * n;
+}
+fn main() i64 {
+    if cube(5) == 125 { return 0; }
+    return 1;
+}

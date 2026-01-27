@@ -1,0 +1,5 @@
+fn main() i64 {
+    var x: i64 = (0 - 17) % 5;
+    if x == 0 - 2 { return 0; }
+    return 1;
+}

@@ -1,0 +1,5 @@
+fn main() i64 {
+    var p: i64 = 3 * 3 * 3 * 3;
+    if p == 81 { return 0; }
+    return 1;
+}

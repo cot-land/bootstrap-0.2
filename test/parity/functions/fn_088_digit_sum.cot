@@ -1,0 +1,9 @@
+fn digit_sum(n: i64) i64 {
+    if n < 0 { n = 0 - n; }
+    if n < 10 { return n; }
+    return n % 10 + digit_sum(n / 10);
+}
+fn main() i64 {
+    if digit_sum(12345) == 15 { return 0; }
+    return 1;
+}

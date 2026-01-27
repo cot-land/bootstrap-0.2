@@ -1,0 +1,5 @@
+fn f1(x: i64) i64 { return x + 1; }
+fn f2(x: i64) i64 { return f1(x) + 1; }
+fn f3(x: i64) i64 { return f2(x) + 1; }
+fn f4(x: i64) i64 { return f3(x) + 1; }
+fn main() i64 { if f4(0) == 4 { return 0; } return 1; }

@@ -1,0 +1,20 @@
+extern fn malloc_i64(count: i64) *i64;
+fn zero_array(arr: *i64, n: i64) void {
+    var i: i64 = 0;
+    while i < n {
+        (arr + i).* = 0;
+        i = i + 1;
+    }
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(5);
+    (arr + 0).* = 1;
+    (arr + 1).* = 2;
+    (arr + 2).* = 3;
+    (arr + 3).* = 4;
+    (arr + 4).* = 5;
+    zero_array(arr, 5);
+    var sum: i64 = (arr + 0).* + (arr + 1).* + (arr + 2).* + (arr + 3).* + (arr + 4).*;
+    if sum == 0 { return 0; }
+    return 1;
+}

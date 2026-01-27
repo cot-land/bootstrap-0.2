@@ -1,0 +1,9 @@
+struct Vec3 { x: i64, y: i64, z: i64 }
+fn main() i64 {
+    var v: Vec3 = undefined;
+    v.x = 1;
+    v.y = 2;
+    v.z = 3;
+    if v.x + v.y + v.z == 6 { return 0; }
+    return 1;
+}

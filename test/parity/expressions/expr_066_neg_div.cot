@@ -1,0 +1,2 @@
+fn neg_div(a: i64, b: i64) i64 { return (-a) / b; }
+fn main() i64 { if neg_div(20, 4) == -5 { return 0; } return 1; }

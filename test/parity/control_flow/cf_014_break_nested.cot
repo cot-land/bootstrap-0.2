@@ -1,0 +1,18 @@
+fn find_product(limit: i64) i64 {
+    var result: i64 = 0;
+    var i: i64 = 1;
+    while i < 10 {
+        var j: i64 = 1;
+        while j < 10 {
+            if i * j > limit {
+                result = i * j;
+                break;
+            }
+            j = j + 1;
+        }
+        if result > 0 { break; }
+        i = i + 1;
+    }
+    return result;
+}
+fn main() i64 { if find_product(20) == 21 { return 0; } return 1; }

@@ -1,0 +1,13 @@
+struct Point { x: i64, y: i64 }
+fn points_equal(a: *Point, b: *Point) i64 {
+    if a.x == b.x and a.y == b.y { return 1; }
+    return 0;
+}
+fn main() i64 {
+    var p1: Point = undefined;
+    var p2: Point = undefined;
+    p1.x = 5; p1.y = 10;
+    p2.x = 5; p2.y = 10;
+    if points_equal(&p1, &p2) == 1 { return 0; }
+    return 1;
+}

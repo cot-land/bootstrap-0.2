@@ -1,0 +1,2 @@
+fn calc(a: i64, b: i64, c: i64) i64 { return (a + b) * c; }
+fn main() i64 { if calc(3, 4, 6) == 42 { return 0; } return 1; }

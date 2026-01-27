@@ -1,0 +1,10 @@
+fn is_negative(n: i64) i64 {
+    if n < 0 { return 1; }
+    return 0;
+}
+fn main() i64 {
+    if is_negative(0 - 5) == 1 {
+        if is_negative(5) == 0 { return 0; }
+    }
+    return 1;
+}

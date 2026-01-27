@@ -1,0 +1,7 @@
+fn main() i64 {
+    var x: i64 = 0;
+    var bit: i64 = 3;
+    x = x | (1 << bit);
+    if x == 8 { return 0; }
+    return 1;
+}

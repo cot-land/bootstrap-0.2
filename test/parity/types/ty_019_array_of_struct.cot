@@ -1,0 +1,11 @@
+struct Item { id: i64, value: i64 }
+extern fn malloc_struct(size: i64) *Item;
+fn main() i64 {
+    var items: *Item = malloc_struct(48);
+    (items + 0).id = 1; (items + 0).value = 100;
+    (items + 1).id = 2; (items + 1).value = 200;
+    (items + 2).id = 3; (items + 2).value = 300;
+    var sum: i64 = (items + 0).value + (items + 1).value + (items + 2).value;
+    if sum == 600 { return 0; }
+    return 1;
+}

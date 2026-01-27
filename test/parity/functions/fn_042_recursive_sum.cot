@@ -1,0 +1,5 @@
+fn rec_sum(a: i64, b: i64, c: i64) i64 {
+    if a <= 0 { return c; }
+    return rec_sum(a - 1, b, c + b);
+}
+fn main() i64 { if rec_sum(5, 3, 0) == 15 { return 0; } return 1; }

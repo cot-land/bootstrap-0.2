@@ -1,0 +1,7 @@
+fn main() i64 {
+    var x: i64 = 8;
+    var l: i64 = x << 2;
+    var r: i64 = x >> 2;
+    if l == 32 and r == 2 { return 0; }
+    return 1;
+}

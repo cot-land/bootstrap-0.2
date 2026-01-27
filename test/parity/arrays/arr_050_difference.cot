@@ -1,0 +1,20 @@
+extern fn malloc_i64(count: i64) *i64;
+fn differences(arr: *i64, diff: *i64, n: i64) void {
+    var i: i64 = 0;
+    while i < n - 1 {
+        (diff + i).* = (arr + i + 1).* - (arr + i).*;
+        i = i + 1;
+    }
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(5);
+    var diff: *i64 = malloc_i64(4);
+    (arr + 0).* = 1;
+    (arr + 1).* = 3;
+    (arr + 2).* = 6;
+    (arr + 3).* = 10;
+    (arr + 4).* = 15;
+    differences(arr, diff, 5);
+    if (diff + 0).* == 2 { return 0; }
+    return 1;
+}

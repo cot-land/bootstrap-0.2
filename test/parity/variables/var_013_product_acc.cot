@@ -1,0 +1,9 @@
+fn main() i64 {
+    var prod: i64 = 1;
+    prod = prod * 2;
+    prod = prod * 3;
+    prod = prod * 4;
+    prod = prod * 5;
+    if prod == 120 { return 0; }
+    return 1;
+}

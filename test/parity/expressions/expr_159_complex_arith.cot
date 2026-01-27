@@ -1,0 +1,5 @@
+fn main() i64 {
+    var result: i64 = 2 + 3 * 4 - 6 / 2;
+    if result == 11 { return 0; }
+    return 1;
+}

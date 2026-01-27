@@ -1,0 +1,30 @@
+extern fn malloc_i64(count: i64) *i64;
+fn count_unique(arr: *i64, n: i64) i64 {
+    var count: i64 = 0;
+    var i: i64 = 0;
+    while i < n {
+        var unique: i64 = 1;
+        var j: i64 = 0;
+        while j < i {
+            if (arr + j).* == (arr + i).* {
+                unique = 0;
+            }
+            j = j + 1;
+        }
+        count = count + unique;
+        i = i + 1;
+    }
+    return count;
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(7);
+    (arr + 0).* = 1;
+    (arr + 1).* = 2;
+    (arr + 2).* = 1;
+    (arr + 3).* = 3;
+    (arr + 4).* = 2;
+    (arr + 5).* = 1;
+    (arr + 6).* = 4;
+    if count_unique(arr, 7) == 4 { return 0; }
+    return 1;
+}

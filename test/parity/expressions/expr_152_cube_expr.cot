@@ -1,0 +1,6 @@
+fn main() i64 {
+    var x: i64 = 4;
+    var cu: i64 = x * x * x;
+    if cu == 64 { return 0; }
+    return 1;
+}

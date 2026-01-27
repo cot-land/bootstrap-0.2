@@ -1,0 +1,16 @@
+fn gcd(a: i64, b: i64) i64 {
+    var x: i64 = a;
+    var y: i64 = b;
+    while y > 0 {
+        var t: i64 = y;
+        y = x % y;
+        x = t;
+    }
+    return x;
+}
+fn main() i64 {
+    var g1: i64 = gcd(252, 105);
+    var g2: i64 = gcd(1071, 462);
+    if g1 == 21 and g2 == 21 { return 0; }
+    return 1;
+}

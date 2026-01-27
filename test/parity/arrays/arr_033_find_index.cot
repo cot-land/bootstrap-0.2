@@ -1,0 +1,21 @@
+extern fn malloc_i64(count: i64) *i64;
+fn find_index(arr: *i64, n: i64, val: i64) i64 {
+    var i: i64 = 0;
+    while i < n {
+        if (arr + i).* == val {
+            return i;
+        }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(5);
+    (arr + 0).* = 10;
+    (arr + 1).* = 20;
+    (arr + 2).* = 30;
+    (arr + 3).* = 40;
+    (arr + 4).* = 50;
+    if find_index(arr, 5, 30) == 2 { return 0; }
+    return 1;
+}

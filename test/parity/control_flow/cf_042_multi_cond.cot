@@ -1,0 +1,11 @@
+fn main() i64 {
+    var a: i64 = 5;
+    var b: i64 = 10;
+    var c: i64 = 15;
+    if a < b and b < c {
+        if a + b == c {
+            return 0;
+        }
+    }
+    return 1;
+}

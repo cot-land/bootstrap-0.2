@@ -1,0 +1,4 @@
+fn double(x: i64) i64 { return x * 2; }
+fn triple(x: i64) i64 { return x * 3; }
+fn apply_both(x: i64) i64 { return double(triple(x)); }
+fn main() i64 { if apply_both(5) == 30 { return 0; } return 1; }

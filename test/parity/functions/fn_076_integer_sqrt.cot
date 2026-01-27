@@ -1,0 +1,13 @@
+fn isqrt(n: i64) i64 {
+    var x: i64 = n;
+    var y: i64 = (x + 1) / 2;
+    while y < x {
+        x = y;
+        y = (x + n / x) / 2;
+    }
+    return x;
+}
+fn main() i64 {
+    if isqrt(100) == 10 { return 0; }
+    return 1;
+}

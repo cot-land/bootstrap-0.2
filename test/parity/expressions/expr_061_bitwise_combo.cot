@@ -1,0 +1,4 @@
+fn bitwise(a: i64, b: i64) i64 {
+    return (a & b) ^ (a | b);
+}
+fn main() i64 { if bitwise(0xAA, 0x55) == 0xFF { return 0; } return 1; }

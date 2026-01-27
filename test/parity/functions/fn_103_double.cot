@@ -1,0 +1,7 @@
+fn double(n: i64) i64 {
+    return n + n;
+}
+fn main() i64 {
+    if double(21) == 42 { return 0; }
+    return 1;
+}

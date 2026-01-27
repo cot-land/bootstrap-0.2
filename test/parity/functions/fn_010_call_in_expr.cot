@@ -1,0 +1,6 @@
+fn square(x: i64) i64 { return x * x; }
+fn main() i64 {
+    var result: i64 = square(3) + square(4);
+    if result == 25 { return 0; }
+    return 1;
+}

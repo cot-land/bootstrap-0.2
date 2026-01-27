@@ -1,0 +1,5 @@
+fn main() i64 {
+    var x: i64 = 1000 / 10 / 5 / 2;
+    if x == 10 { return 0; }
+    return 1;
+}

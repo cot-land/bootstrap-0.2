@@ -1,0 +1,21 @@
+struct Node { val: i64, next: *Node }
+extern fn malloc_struct(size: i64, count: i64) *Node;
+fn sum_list(head: *Node) i64 {
+    var sum: i64 = 0;
+    var curr: *Node = head;
+    while curr != null {
+        sum = sum + curr.val;
+        curr = curr.next;
+    }
+    return sum;
+}
+fn main() i64 {
+    var n1: *Node = malloc_struct(16, 1);
+    var n2: *Node = malloc_struct(16, 1);
+    var n3: *Node = malloc_struct(16, 1);
+    n1.val = 10; n1.next = n2;
+    n2.val = 20; n2.next = n3;
+    n3.val = 30; n3.next = null;
+    if sum_list(n1) == 60 { return 0; }
+    return 1;
+}

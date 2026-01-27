@@ -1,0 +1,13 @@
+fn digit_sum(n: i64) i64 {
+    var sum: i64 = 0;
+    var x: i64 = n;
+    while x > 0 {
+        sum = sum + (x % 10);
+        x = x / 10;
+    }
+    return sum;
+}
+fn main() i64 {
+    if digit_sum(12345) == 15 { return 0; }
+    return 1;
+}

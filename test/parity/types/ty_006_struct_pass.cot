@@ -1,0 +1,9 @@
+struct Pair { a: i64, b: i64 }
+fn sum_pair(p: *Pair) i64 { return p.a + p.b; }
+fn main() i64 {
+    var p: Pair = undefined;
+    p.a = 5;
+    p.b = 7;
+    if sum_pair(&p) == 12 { return 0; }
+    return 1;
+}

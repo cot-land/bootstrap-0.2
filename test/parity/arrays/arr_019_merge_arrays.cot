@@ -1,0 +1,36 @@
+extern fn malloc_i64(count: i64) *i64;
+fn merge(a: *i64, na: i64, b: *i64, nb: i64, out: *i64) void {
+    var i: i64 = 0;
+    var j: i64 = 0;
+    var k: i64 = 0;
+    while i < na and j < nb {
+        if (a + i).* <= (b + j).* {
+            (out + k).* = (a + i).*;
+            i = i + 1;
+        } else {
+            (out + k).* = (b + j).*;
+            j = j + 1;
+        }
+        k = k + 1;
+    }
+    while i < na {
+        (out + k).* = (a + i).*;
+        i = i + 1;
+        k = k + 1;
+    }
+    while j < nb {
+        (out + k).* = (b + j).*;
+        j = j + 1;
+        k = k + 1;
+    }
+}
+fn main() i64 {
+    var a: *i64 = malloc_i64(3);
+    var b: *i64 = malloc_i64(3);
+    var out: *i64 = malloc_i64(6);
+    (a + 0).* = 1; (a + 1).* = 3; (a + 2).* = 5;
+    (b + 0).* = 2; (b + 1).* = 4; (b + 2).* = 6;
+    merge(a, 3, b, 3, out);
+    if (out + 0).* == 1 and (out + 5).* == 6 { return 0; }
+    return 1;
+}

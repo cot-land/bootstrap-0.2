@@ -1,0 +1,10 @@
+fn power(base: i64, exp: i64) i64 {
+    var result: i64 = 1;
+    var i: i64 = 0;
+    while i < exp {
+        result = result * base;
+        i = i + 1;
+    }
+    return result;
+}
+fn main() i64 { if power(2, 10) == 1024 { return 0; } return 1; }

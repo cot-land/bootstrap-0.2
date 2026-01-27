@@ -1,0 +1,11 @@
+struct Point { x: i64, y: i64 }
+extern fn malloc_struct(size: i64) *Point;
+fn main() i64 {
+    var pts: *Point = malloc_struct(48);
+    (pts + 0).x = 1; (pts + 0).y = 2;
+    (pts + 1).x = 3; (pts + 1).y = 4;
+    (pts + 2).x = 5; (pts + 2).y = 6;
+    var sum: i64 = (pts + 0).x + (pts + 1).x + (pts + 2).x;
+    if sum == 9 { return 0; }
+    return 1;
+}

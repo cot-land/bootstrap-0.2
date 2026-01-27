@@ -1,0 +1,7 @@
+struct Quad { a: i64, b: i64, c: i64, d: i64 }
+fn main() i64 {
+    var q: Quad = undefined;
+    q.a = 1; q.b = 2; q.c = 3; q.d = 4;
+    if q.a * q.b * q.c * q.d == 24 { return 0; }
+    return 1;
+}

@@ -1,0 +1,14 @@
+fn gcd_euclid(a: i64, b: i64) i64 {
+    var x: i64 = a;
+    var y: i64 = b;
+    while y > 0 {
+        var t: i64 = y;
+        y = x % y;
+        x = t;
+    }
+    return x;
+}
+fn main() i64 {
+    if gcd_euclid(48, 18) == 6 { return 0; }
+    return 1;
+}

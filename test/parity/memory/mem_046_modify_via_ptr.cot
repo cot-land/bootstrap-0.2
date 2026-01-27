@@ -1,0 +1,11 @@
+extern fn malloc_i64(count: i64) *i64;
+fn double_value(p: *i64) void {
+    p.* = p.* * 2;
+}
+fn main() i64 {
+    var x: *i64 = malloc_i64(1);
+    x.* = 21;
+    double_value(x);
+    if x.* == 42 { return 0; }
+    return 1;
+}

@@ -1,0 +1,24 @@
+extern fn malloc_i64(count: i64) *i64;
+fn remove_elem(arr: *i64, n: i64, val: i64) i64 {
+    var write: i64 = 0;
+    var read: i64 = 0;
+    while read < n {
+        if (arr + read).* != val {
+            (arr + write).* = (arr + read).*;
+            write = write + 1;
+        }
+        read = read + 1;
+    }
+    return write;
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(5);
+    (arr + 0).* = 1;
+    (arr + 1).* = 2;
+    (arr + 2).* = 3;
+    (arr + 3).* = 2;
+    (arr + 4).* = 4;
+    var new_len: i64 = remove_elem(arr, 5, 2);
+    if new_len == 3 { return 0; }
+    return 1;
+}

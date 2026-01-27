@@ -1,0 +1,10 @@
+fn is_power_of_two(n: i64) i64 {
+    if n <= 0 { return 0; }
+    if n == 1 { return 1; }
+    if n % 2 != 0 { return 0; }
+    return is_power_of_two(n / 2);
+}
+fn main() i64 {
+    if is_power_of_two(16) == 1 and is_power_of_two(15) == 0 { return 0; }
+    return 1;
+}

@@ -1,0 +1,9 @@
+struct Inner { val: i64 }
+struct Outer { inner: Inner, extra: i64 }
+fn main() i64 {
+    var o: Outer = undefined;
+    o.inner.val = 100;
+    o.extra = 5;
+    if o.inner.val + o.extra == 105 { return 0; }
+    return 1;
+}

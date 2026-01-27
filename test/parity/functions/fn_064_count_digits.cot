@@ -1,0 +1,17 @@
+fn count_digits(n: i64) i64 {
+    if n == 0 { return 1; }
+    var count: i64 = 0;
+    var x: i64 = n;
+    while x > 0 {
+        count = count + 1;
+        x = x / 10;
+    }
+    return count;
+}
+fn main() i64 {
+    var c1: i64 = count_digits(0);
+    var c2: i64 = count_digits(12345);
+    var c3: i64 = count_digits(1000000);
+    if c1 == 1 and c2 == 5 and c3 == 7 { return 0; }
+    return 1;
+}

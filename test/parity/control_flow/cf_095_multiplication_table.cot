@@ -1,0 +1,15 @@
+extern fn malloc_i64(count: i64) *i64;
+fn main() i64 {
+    var table: *i64 = malloc_i64(25);
+    var i: i64 = 0;
+    while i < 5 {
+        var j: i64 = 0;
+        while j < 5 {
+            (table + i * 5 + j).* = (i + 1) * (j + 1);
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    if (table + 2 * 5 + 3).* == 12 { return 0; }
+    return 1;
+}

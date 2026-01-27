@@ -1,0 +1,8 @@
+fn main() i64 {
+    var a: i64 = 100 - 50 - 25;
+    var b: i64 = 100 - (50 - 25);
+    if a == 25 {
+        if b == 75 { return 0; }
+    }
+    return 1;
+}

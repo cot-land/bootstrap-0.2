@@ -1,0 +1,13 @@
+struct Point { x: i64, y: i64 }
+extern fn malloc_struct(size: i64, count: i64) *Point;
+fn make_point(x: i64, y: i64) *Point {
+    var p: *Point = malloc_struct(16, 1);
+    p.x = x;
+    p.y = y;
+    return p;
+}
+fn main() i64 {
+    var p: *Point = make_point(10, 20);
+    if p.x == 10 and p.y == 20 { return 0; }
+    return 1;
+}

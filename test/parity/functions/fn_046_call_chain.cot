@@ -1,0 +1,8 @@
+fn double(x: i64) i64 { return x * 2; }
+fn triple(x: i64) i64 { return x * 3; }
+fn quadruple(x: i64) i64 { return x * 4; }
+fn main() i64 {
+    var r: i64 = quadruple(triple(double(5)));
+    if r == 120 { return 0; }
+    return 1;
+}

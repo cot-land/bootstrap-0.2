@@ -926,22 +926,26 @@ export fn malloc_u8(size: i64) ?[*]u8 {
     const result = allocator.alloc(u8, usize_size) catch {
         return null;
     };
+    // Zero memory to prevent non-deterministic behavior from uninitialized data
+    @memset(result, 0);
     return result.ptr;
 }
 
-export fn realloc_u8(ptr: ?[*]u8, new_size: i64) ?[*]u8 {
+export fn realloc_u8(ptr: ?[*]u8, old_size: i64, new_size: i64) ?[*]u8 {
     const allocator = std.heap.c_allocator;
-    const usize_size: usize = @intCast(new_size);
+    const usize_new: usize = @intCast(new_size);
     if (ptr) |p| {
-        // Get the old allocation - we need to know its size
-        // Since we don't track sizes, just allocate new and copy
-        const new_mem = allocator.alloc(u8, usize_size) catch {
+        const new_mem = allocator.alloc(u8, usize_new) catch {
             return null;
         };
-        // Copy old data (up to new_size, assuming old was at least that large)
-        @memcpy(new_mem[0..usize_size], p[0..usize_size]);
-        // Free old memory - this is tricky without knowing old size
-        // For now, just return new memory (leak old)
+        // Copy old data (only up to old_size to avoid buffer over-read)
+        const usize_old: usize = @intCast(old_size);
+        const copy_size = @min(usize_old, usize_new);
+        @memcpy(new_mem[0..copy_size], p[0..copy_size]);
+        // Zero the new portion beyond old data
+        if (usize_new > usize_old) {
+            @memset(new_mem[usize_old..usize_new], 0);
+        }
         return new_mem.ptr;
     } else {
         return malloc_u8(new_size);
@@ -961,6 +965,8 @@ export fn malloc_i64(count: i64) ?[*]i64 {
     const result = allocator.alloc(i64, usize_count) catch {
         return null;
     };
+    // Zero memory to prevent non-deterministic behavior from uninitialized data
+    @memset(result, 0);
     return result.ptr;
 }
 
@@ -975,6 +981,10 @@ export fn realloc_i64(ptr: ?[*]i64, old_count: i64, new_count: i64) ?[*]i64 {
         const usize_old: usize = @intCast(old_count);
         const copy_count = @min(usize_old, usize_new);
         @memcpy(new_mem[0..copy_count], p[0..copy_count]);
+        // Zero the new portion beyond old data
+        if (usize_new > usize_old) {
+            @memset(new_mem[usize_old..usize_new], 0);
+        }
         return new_mem.ptr;
     } else {
         return malloc_i64(new_count);
@@ -990,6 +1000,8 @@ fn malloc_struct(count: i64, struct_size: i64) ?*anyopaque {
     const allocator = std.heap.c_allocator;
     const total: usize = @intCast(count * struct_size);
     const result = allocator.alloc(u8, total) catch return null;
+    // Zero memory to prevent non-deterministic behavior from uninitialized data
+    @memset(result, 0);
     return @ptrCast(result.ptr);
 }
 
@@ -1046,6 +1058,10 @@ fn realloc_struct(ptr: ?*anyopaque, old_count: i64, new_count: i64, struct_size:
         const copy_size = @min(old_total, new_total);
         const src: [*]u8 = @ptrCast(p);
         @memcpy(new_mem[0..copy_size], src[0..copy_size]);
+        // Zero the new portion beyond old data
+        if (new_total > old_total) {
+            @memset(new_mem[old_total..new_total], 0);
+        }
         // Free old memory to prevent memory leak
         const old_slice: []u8 = src[0..old_total];
         allocator.free(old_slice);

@@ -1,0 +1,23 @@
+struct Node { val: i64, next: *Node }
+extern fn malloc_struct(size: i64, count: i64) *Node;
+fn count_list(head: *Node) i64 {
+    var count: i64 = 0;
+    var curr: *Node = head;
+    while curr != null {
+        count = count + 1;
+        curr = curr.next;
+    }
+    return count;
+}
+fn main() i64 {
+    var n1: *Node = malloc_struct(16, 1);
+    var n2: *Node = malloc_struct(16, 1);
+    var n3: *Node = malloc_struct(16, 1);
+    var n4: *Node = malloc_struct(16, 1);
+    n1.val = 1; n1.next = n2;
+    n2.val = 2; n2.next = n3;
+    n3.val = 3; n3.next = n4;
+    n4.val = 4; n4.next = null;
+    if count_list(n1) == 4 { return 0; }
+    return 1;
+}

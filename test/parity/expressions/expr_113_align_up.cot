@@ -1,0 +1,7 @@
+fn align_up(n: i64, align: i64) i64 {
+    return (n + align - 1) & (0 - align);
+}
+fn main() i64 {
+    if align_up(13, 8) == 16 { return 0; }
+    return 1;
+}

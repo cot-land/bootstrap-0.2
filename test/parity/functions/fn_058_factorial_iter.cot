@@ -1,0 +1,13 @@
+fn fact_iter(n: i64) i64 {
+    var result: i64 = 1;
+    var i: i64 = 2;
+    while i <= n {
+        result = result * i;
+        i = i + 1;
+    }
+    return result;
+}
+fn main() i64 {
+    if fact_iter(6) == 720 { return 0; }
+    return 1;
+}

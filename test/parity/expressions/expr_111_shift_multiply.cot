@@ -1,0 +1,6 @@
+fn main() i64 {
+    var x: i64 = 5;
+    var mul8: i64 = x << 3;
+    if mul8 == 40 { return 0; }
+    return 1;
+}

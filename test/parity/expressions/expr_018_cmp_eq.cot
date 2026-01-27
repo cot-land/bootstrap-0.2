@@ -1,0 +1,2 @@
+fn eq(a: i64, b: i64) i64 { if a == b { return 1; } return 0; }
+fn main() i64 { if eq(42, 42) == 1 { return 0; } return 1; }

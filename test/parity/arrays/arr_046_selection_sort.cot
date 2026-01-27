@@ -1,0 +1,31 @@
+extern fn malloc_i64(count: i64) *i64;
+fn selection_sort(arr: *i64, n: i64) void {
+    var i: i64 = 0;
+    while i < n - 1 {
+        var min_idx: i64 = i;
+        var j: i64 = i + 1;
+        while j < n {
+            if (arr + j).* < (arr + min_idx).* {
+                min_idx = j;
+            }
+            j = j + 1;
+        }
+        if min_idx != i {
+            var t: i64 = (arr + i).*;
+            (arr + i).* = (arr + min_idx).*;
+            (arr + min_idx).* = t;
+        }
+        i = i + 1;
+    }
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(5);
+    (arr + 0).* = 5;
+    (arr + 1).* = 3;
+    (arr + 2).* = 1;
+    (arr + 3).* = 4;
+    (arr + 4).* = 2;
+    selection_sort(arr, 5);
+    if (arr + 0).* == 1 { return 0; }
+    return 1;
+}

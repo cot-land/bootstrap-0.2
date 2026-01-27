@@ -1,0 +1,12 @@
+struct Node { value: i64, next: *Node }
+extern fn malloc_struct(size: i64) *Node;
+fn main() i64 {
+    var n1: *Node = malloc_struct(16);
+    var n2: *Node = malloc_struct(16);
+    n1.value = 10;
+    n1.next = n2;
+    n2.value = 20;
+    n2.next = null;
+    if n1.next.value == 20 { return 0; }
+    return 1;
+}

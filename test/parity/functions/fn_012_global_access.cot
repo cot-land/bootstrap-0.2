@@ -1,0 +1,10 @@
+var g_counter: i64 = 0;
+fn increment() void { g_counter = g_counter + 1; }
+fn get_counter() i64 { return g_counter; }
+fn main() i64 {
+    increment();
+    increment();
+    increment();
+    if get_counter() == 3 { return 0; }
+    return 1;
+}

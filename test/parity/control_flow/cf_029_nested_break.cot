@@ -1,0 +1,11 @@
+fn find_sum_gt(limit: i64) i64 {
+    var sum: i64 = 0;
+    var i: i64 = 1;
+    while i < 100 {
+        sum = sum + i;
+        if sum > limit { break; }
+        i = i + 1;
+    }
+    return sum;
+}
+fn main() i64 { if find_sum_gt(50) == 55 { return 0; } return 1; }

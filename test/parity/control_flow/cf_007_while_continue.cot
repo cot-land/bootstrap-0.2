@@ -1,0 +1,11 @@
+fn sum_odd(n: i64) i64 {
+    var sum: i64 = 0;
+    var i: i64 = 0;
+    while i < n {
+        i = i + 1;
+        if (i % 2) == 0 { continue; }
+        sum = sum + i;
+    }
+    return sum;
+}
+fn main() i64 { if sum_odd(10) == 25 { return 0; } return 1; }

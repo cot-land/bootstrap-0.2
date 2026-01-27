@@ -1,0 +1,7 @@
+fn test_reassign() i64 {
+    var x: i64 = 5;
+    x = x + 10;
+    x = x * 2;
+    return x;
+}
+fn main() i64 { if test_reassign() == 30 { return 0; } return 1; }

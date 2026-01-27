@@ -1,0 +1,15 @@
+fn sum_odds(n: i64) i64 {
+    var sum: i64 = 0;
+    var i: i64 = 1;
+    while i <= n {
+        if i % 2 == 1 {
+            sum = sum + i;
+        }
+        i = i + 1;
+    }
+    return sum;
+}
+fn main() i64 {
+    if sum_odds(10) == 25 { return 0; }
+    return 1;
+}

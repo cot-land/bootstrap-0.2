@@ -1,0 +1,13 @@
+fn div_rem(a: i64, b: i64, q: *i64, r: *i64) void {
+    q.* = a / b;
+    r.* = a % b;
+}
+fn main() i64 {
+    var quot: i64 = 0;
+    var rem: i64 = 0;
+    div_rem(17, 5, &quot, &rem);
+    if quot == 3 {
+        if rem == 2 { return 0; }
+    }
+    return 1;
+}

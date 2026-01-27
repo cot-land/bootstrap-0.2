@@ -1,0 +1,5 @@
+fn main() i64 {
+    var x: i64 = (10 + 5) * 3 - 20 / 4;
+    if x == 40 { return 0; }
+    return 1;
+}

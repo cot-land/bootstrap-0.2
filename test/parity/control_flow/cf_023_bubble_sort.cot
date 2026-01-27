@@ -1,0 +1,25 @@
+extern fn malloc_i64(size: i64) *i64;
+fn bubble_sort(arr: *i64, len: i64) void {
+    var i: i64 = 0;
+    while i < len - 1 {
+        var j: i64 = 0;
+        while j < len - 1 - i {
+            var a: i64 = (arr + j).*;
+            var b: i64 = (arr + j + 1).*;
+            if a > b {
+                (arr + j).* = b;
+                (arr + j + 1).* = a;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(5);
+    (arr + 0).* = 5; (arr + 1).* = 2; (arr + 2).* = 4;
+    (arr + 3).* = 1; (arr + 4).* = 3;
+    bubble_sort(arr, 5);
+    if (arr + 0).* == 1 { return 0; }
+    return 1;
+}

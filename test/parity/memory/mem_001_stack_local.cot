@@ -1,0 +1,9 @@
+fn test_stack() i64 {
+    var a: i64 = 1;
+    var b: i64 = 2;
+    var c: i64 = 3;
+    var d: i64 = 4;
+    var e: i64 = 5;
+    return a + b + c + d + e;
+}
+fn main() i64 { if test_stack() == 15 { return 0; } return 1; }

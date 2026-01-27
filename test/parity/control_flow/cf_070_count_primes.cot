@@ -1,0 +1,21 @@
+fn is_prime(n: i64) i64 {
+    if n <= 1 { return 0; }
+    if n <= 3 { return 1; }
+    if n % 2 == 0 { return 0; }
+    var i: i64 = 3;
+    while i * i <= n {
+        if n % i == 0 { return 0; }
+        i = i + 2;
+    }
+    return 1;
+}
+fn main() i64 {
+    var count: i64 = 0;
+    var n: i64 = 2;
+    while n <= 100 {
+        count = count + is_prime(n);
+        n = n + 1;
+    }
+    if count == 25 { return 0; }
+    return 1;
+}

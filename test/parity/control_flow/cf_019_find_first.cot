@@ -1,0 +1,9 @@
+fn find_first_divisible(n: i64, divisor: i64) i64 {
+    var i: i64 = 1;
+    while i <= n {
+        if (i % divisor) == 0 { return i; }
+        i = i + 1;
+    }
+    return 0;
+}
+fn main() i64 { if find_first_divisible(10, 3) == 3 { return 0; } return 1; }

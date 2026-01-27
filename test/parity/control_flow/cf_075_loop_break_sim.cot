@@ -1,0 +1,11 @@
+fn find_first_positive(a: i64, b: i64, c: i64, d: i64) i64 {
+    if a > 0 { return a; }
+    if b > 0 { return b; }
+    if c > 0 { return c; }
+    if d > 0 { return d; }
+    return 0;
+}
+fn main() i64 {
+    if find_first_positive(0-1, 0-2, 3, 4) == 3 { return 0; }
+    return 1;
+}

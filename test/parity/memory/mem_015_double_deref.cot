@@ -1,0 +1,7 @@
+fn main() i64 {
+    var x: i64 = 42;
+    var p1: *i64 = &x;
+    var p2: **i64 = &p1;
+    if p2.*.* == 42 { return 0; }
+    return 1;
+}

@@ -1,0 +1,7 @@
+fn main() i64 {
+    var x: i64 = 0b11110000;
+    var left: i64 = (x << 4) & 0xFF;
+    var right: i64 = (x >> 4) & 0xFF;
+    if left == 0 and right == 0b00001111 { return 0; }
+    return 1;
+}

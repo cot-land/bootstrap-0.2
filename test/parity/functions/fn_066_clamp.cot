@@ -1,0 +1,12 @@
+fn clamp(x: i64, lo: i64, hi: i64) i64 {
+    if x < lo { return lo; }
+    if x > hi { return hi; }
+    return x;
+}
+fn main() i64 {
+    var c1: i64 = clamp(5, 0, 10);
+    var c2: i64 = clamp(0 - 5, 0, 10);
+    var c3: i64 = clamp(15, 0, 10);
+    if c1 == 5 and c2 == 0 and c3 == 10 { return 0; }
+    return 1;
+}

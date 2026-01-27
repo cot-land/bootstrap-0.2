@@ -1,0 +1,13 @@
+struct Data { a: i64, b: i64 }
+fn copy_struct(src: *Data, dst: *Data) void {
+    dst.a = src.a;
+    dst.b = src.b;
+}
+fn main() i64 {
+    var s1: Data = undefined;
+    var s2: Data = undefined;
+    s1.a = 100; s1.b = 200;
+    copy_struct(&s1, &s2);
+    if s2.a + s2.b == 300 { return 0; }
+    return 1;
+}

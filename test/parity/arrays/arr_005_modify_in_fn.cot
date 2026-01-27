@@ -1,0 +1,17 @@
+extern fn malloc_i64(count: i64) *i64;
+fn double_array(arr: *i64, len: i64) void {
+    var i: i64 = 0;
+    while i < len {
+        (arr + i).* = (arr + i).* * 2;
+        i = i + 1;
+    }
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(3);
+    (arr + 0).* = 5;
+    (arr + 1).* = 10;
+    (arr + 2).* = 15;
+    double_array(arr, 3);
+    if (arr + 0).* == 10 and (arr + 1).* == 20 and (arr + 2).* == 30 { return 0; }
+    return 1;
+}

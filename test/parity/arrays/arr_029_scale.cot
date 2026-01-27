@@ -1,0 +1,18 @@
+extern fn malloc_i64(count: i64) *i64;
+fn scale(arr: *i64, n: i64, factor: i64) void {
+    var i: i64 = 0;
+    while i < n {
+        (arr + i).* = (arr + i).* * factor;
+        i = i + 1;
+    }
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(4);
+    (arr + 0).* = 1;
+    (arr + 1).* = 2;
+    (arr + 2).* = 3;
+    (arr + 3).* = 4;
+    scale(arr, 4, 10);
+    if (arr + 0).* == 10 and (arr + 3).* == 40 { return 0; }
+    return 1;
+}

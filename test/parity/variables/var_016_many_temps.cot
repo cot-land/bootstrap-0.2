@@ -1,0 +1,14 @@
+fn main() i64 {
+    var a: i64 = 1;
+    var b: i64 = a + 1;
+    var c: i64 = b + 1;
+    var d: i64 = c + 1;
+    var e: i64 = d + 1;
+    var f: i64 = e + 1;
+    var g: i64 = f + 1;
+    var h: i64 = g + 1;
+    var i: i64 = h + 1;
+    var j: i64 = i + 1;
+    if j == 10 { return 0; }
+    return 1;
+}

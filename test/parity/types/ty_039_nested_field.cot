@@ -1,0 +1,9 @@
+struct Inner { value: i64 }
+struct Outer { inner: Inner, count: i64 }
+fn main() i64 {
+    var o: Outer = undefined;
+    o.inner.value = 42;
+    o.count = 10;
+    if o.inner.value == 42 and o.count == 10 { return 0; }
+    return 1;
+}

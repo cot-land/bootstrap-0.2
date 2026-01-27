@@ -1,0 +1,16 @@
+fn count_leading_zeros_byte(x: i64) i64 {
+    var count: i64 = 0;
+    var mask: i64 = 0x80;
+    while mask > 0 {
+        if (x & mask) != 0 {
+            return count;
+        }
+        count = count + 1;
+        mask = mask >> 1;
+    }
+    return 8;
+}
+fn main() i64 {
+    if count_leading_zeros_byte(0x20) == 2 { return 0; }
+    return 1;
+}

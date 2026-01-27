@@ -1,0 +1,16 @@
+extern fn malloc_i64(size: i64) *i64;
+fn index_of(arr: *i64, len: i64, val: i64) i64 {
+    var i: i64 = 0;
+    while i < len {
+        if (arr + i).* == val { return i; }
+        i = i + 1;
+    }
+    return -1;
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(5);
+    (arr + 0).* = 5; (arr + 1).* = 10; (arr + 2).* = 15;
+    (arr + 3).* = 20; (arr + 4).* = 25;
+    if index_of(arr, 5, 15) == 2 { return 0; }
+    return 1;
+}

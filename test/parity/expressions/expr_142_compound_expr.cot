@@ -1,0 +1,8 @@
+fn main() i64 {
+    var x: i64 = 2;
+    var y: i64 = 3;
+    var z: i64 = 4;
+    var result: i64 = (x + y) * (y + z);
+    if result == 35 { return 0; }
+    return 1;
+}

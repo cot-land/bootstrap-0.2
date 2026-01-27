@@ -1,0 +1,9 @@
+fn main() i64 {
+    var a: i64 = 100;
+    var b: i64 = 7;
+    var q: i64 = a / b;
+    var r: i64 = a % b;
+    var check: i64 = q * b + r;
+    if check == a { return 0; }
+    return 1;
+}

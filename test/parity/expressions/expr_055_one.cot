@@ -1,0 +1,2 @@
+fn one() i64 { return 1; }
+fn main() i64 { if one() == 1 { return 0; } return 1; }

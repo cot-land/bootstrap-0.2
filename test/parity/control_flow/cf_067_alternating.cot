@@ -1,0 +1,12 @@
+fn main() i64 {
+    var sum: i64 = 0;
+    var i: i64 = 1;
+    var sign: i64 = 1;
+    while i <= 10 {
+        sum = sum + sign * i;
+        sign = 0 - sign;
+        i = i + 1;
+    }
+    if sum == 0 - 5 { return 0; }
+    return 1;
+}

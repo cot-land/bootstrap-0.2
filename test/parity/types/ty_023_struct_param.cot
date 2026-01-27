@@ -1,0 +1,15 @@
+struct Point { x: i64, y: i64 }
+fn add_points(a: *Point, b: *Point, out: *Point) void {
+    out.x = a.x + b.x;
+    out.y = a.y + b.y;
+}
+fn main() i64 {
+    var p1: Point = undefined;
+    var p2: Point = undefined;
+    var p3: Point = undefined;
+    p1.x = 1; p1.y = 2;
+    p2.x = 3; p2.y = 4;
+    add_points(&p1, &p2, &p3);
+    if p3.x + p3.y == 10 { return 0; }
+    return 1;
+}

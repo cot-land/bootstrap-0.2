@@ -1,0 +1,24 @@
+extern fn malloc_i64(count: i64) *i64;
+fn all_positive(arr: *i64, n: i64) i64 {
+    var i: i64 = 0;
+    while i < n {
+        if (arr + i).* <= 0 {
+            return 0;
+        }
+        i = i + 1;
+    }
+    return 1;
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(5);
+    (arr + 0).* = 1;
+    (arr + 1).* = 2;
+    (arr + 2).* = 3;
+    (arr + 3).* = 4;
+    (arr + 4).* = 5;
+    var r1: i64 = all_positive(arr, 5);
+    (arr + 2).* = 0 - 1;
+    var r2: i64 = all_positive(arr, 5);
+    if r1 == 1 and r2 == 0 { return 0; }
+    return 1;
+}

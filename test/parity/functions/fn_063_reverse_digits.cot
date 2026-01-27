@@ -1,0 +1,13 @@
+fn reverse_num(n: i64) i64 {
+    var rev: i64 = 0;
+    var x: i64 = n;
+    while x > 0 {
+        rev = rev * 10 + (x % 10);
+        x = x / 10;
+    }
+    return rev;
+}
+fn main() i64 {
+    if reverse_num(12345) == 54321 { return 0; }
+    return 1;
+}

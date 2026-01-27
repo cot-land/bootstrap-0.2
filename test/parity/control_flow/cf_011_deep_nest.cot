@@ -1,0 +1,14 @@
+fn deep_nest(x: i64) i64 {
+    if x > 0 {
+        if x > 5 {
+            if x > 10 {
+                if x > 15 { return 4; }
+                return 3;
+            }
+            return 2;
+        }
+        return 1;
+    }
+    return 0;
+}
+fn main() i64 { if deep_nest(12) == 3 { return 0; } return 1; }

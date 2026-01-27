@@ -1,0 +1,17 @@
+fn gcd(a: i64, b: i64) i64 {
+    var x: i64 = a;
+    var y: i64 = b;
+    while y > 0 {
+        var t: i64 = y;
+        y = x % y;
+        x = t;
+    }
+    return x;
+}
+fn lcm(a: i64, b: i64) i64 {
+    return (a / gcd(a, b)) * b;
+}
+fn main() i64 {
+    if lcm(12, 18) == 36 { return 0; }
+    return 1;
+}

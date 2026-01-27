@@ -1,0 +1,15 @@
+struct Data { a: i64, b: i64, c: i64 }
+fn clear_data(d: *Data) void {
+    d.a = 0;
+    d.b = 0;
+    d.c = 0;
+}
+fn main() i64 {
+    var d: Data = undefined;
+    d.a = 100;
+    d.b = 200;
+    d.c = 300;
+    clear_data(&d);
+    if d.a == 0 and d.b == 0 and d.c == 0 { return 0; }
+    return 1;
+}

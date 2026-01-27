@@ -1,0 +1,25 @@
+extern fn malloc_i64(count: i64) *i64;
+var queue: *i64 = null;
+var head: i64 = 0;
+var tail: i64 = 0;
+fn enqueue(val: i64) void {
+    (queue + tail).* = val;
+    tail = tail + 1;
+}
+fn dequeue() i64 {
+    var val: i64 = (queue + head).*;
+    head = head + 1;
+    return val;
+}
+fn main() i64 {
+    queue = malloc_i64(10);
+    enqueue(10);
+    enqueue(20);
+    enqueue(30);
+    var a: i64 = dequeue();
+    var b: i64 = dequeue();
+    if a == 10 {
+        if b == 20 { return 0; }
+    }
+    return 1;
+}

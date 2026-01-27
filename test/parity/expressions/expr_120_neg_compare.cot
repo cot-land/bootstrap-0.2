@@ -1,0 +1,9 @@
+fn main() i64 {
+    var neg: i64 = 0 - 10;
+    var pos: i64 = 10;
+    var r1: i64 = 0; if neg < 0 { r1 = 1; }
+    var r2: i64 = 0; if neg < pos { r2 = 1; }
+    var r3: i64 = 0; if pos > 0 { r3 = 1; }
+    if r1 == 1 and r2 == 1 and r3 == 1 { return 0; }
+    return 1;
+}

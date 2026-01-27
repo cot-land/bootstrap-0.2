@@ -1,0 +1,7 @@
+var g_val: i64 = 0;
+fn set_global(v: i64) void { g_val = v; }
+fn main() i64 {
+    set_global(42);
+    if g_val == 42 { return 0; }
+    return 1;
+}

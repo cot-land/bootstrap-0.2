@@ -1,0 +1,6 @@
+fn main() i64 {
+    var x: i64 = 255;
+    x = x & (255 - 8);
+    if x == 247 { return 0; }
+    return 1;
+}

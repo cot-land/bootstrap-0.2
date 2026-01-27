@@ -1,0 +1,11 @@
+struct Record { id: i64, value: i64, flags: i64 }
+fn main() i64 {
+    var r: Record = undefined;
+    r.id = 1;
+    r.value = 100;
+    r.flags = 7;
+    var ptr: *Record = &r;
+    var sum: i64 = ptr.id + ptr.value + ptr.flags;
+    if sum == 108 { return 0; }
+    return 1;
+}

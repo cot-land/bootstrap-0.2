@@ -1,0 +1,10 @@
+fn main() i64 {
+    var n: i64 = 123;
+    var rev: i64 = 0;
+    while n > 0 {
+        rev = rev * 10 + n % 10;
+        n = n / 10;
+    }
+    if rev == 321 { return 0; }
+    return 1;
+}

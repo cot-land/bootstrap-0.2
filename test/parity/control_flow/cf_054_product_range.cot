@@ -1,0 +1,13 @@
+fn product_range(start: i64, end: i64) i64 {
+    var prod: i64 = 1;
+    var i: i64 = start;
+    while i <= end {
+        prod = prod * i;
+        i = i + 1;
+    }
+    return prod;
+}
+fn main() i64 {
+    if product_range(1, 6) == 720 { return 0; }
+    return 1;
+}

@@ -1,0 +1,9 @@
+struct Point { x: i64, y: i64 }
+fn main() i64 {
+    var p: Point = undefined;
+    p.x = 5;
+    p.y = 10;
+    var ptr: *Point = &p;
+    if ptr.x == 5 and ptr.y == 10 { return 0; }
+    return 1;
+}

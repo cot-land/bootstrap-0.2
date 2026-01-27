@@ -1,0 +1,14 @@
+fn main() i64 {
+    var n: i64 = 27;
+    var steps: i64 = 0;
+    while n != 1 {
+        if n % 2 == 0 {
+            n = n / 2;
+        } else {
+            n = 3 * n + 1;
+        }
+        steps = steps + 1;
+    }
+    if steps == 111 { return 0; }
+    return 1;
+}

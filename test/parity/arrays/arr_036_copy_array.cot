@@ -1,0 +1,20 @@
+extern fn malloc_i64(count: i64) *i64;
+fn copy_array(src: *i64, dst: *i64, n: i64) void {
+    var i: i64 = 0;
+    while i < n {
+        (dst + i).* = (src + i).*;
+        i = i + 1;
+    }
+}
+fn main() i64 {
+    var src: *i64 = malloc_i64(5);
+    var dst: *i64 = malloc_i64(5);
+    (src + 0).* = 10;
+    (src + 1).* = 20;
+    (src + 2).* = 30;
+    (src + 3).* = 40;
+    (src + 4).* = 50;
+    copy_array(src, dst, 5);
+    if (dst + 2).* == 30 and (dst + 4).* == 50 { return 0; }
+    return 1;
+}

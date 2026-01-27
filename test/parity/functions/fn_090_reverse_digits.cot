@@ -1,0 +1,11 @@
+fn reverse_helper(n: i64, acc: i64) i64 {
+    if n == 0 { return acc; }
+    return reverse_helper(n / 10, acc * 10 + n % 10);
+}
+fn reverse_digits(n: i64) i64 {
+    return reverse_helper(n, 0);
+}
+fn main() i64 {
+    if reverse_digits(12345) == 54321 { return 0; }
+    return 1;
+}

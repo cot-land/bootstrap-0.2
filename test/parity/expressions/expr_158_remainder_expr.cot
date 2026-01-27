@@ -1,0 +1,7 @@
+fn main() i64 {
+    var a: i64 = 47;
+    var b: i64 = 5;
+    var rem: i64 = a % b;
+    if rem == 2 { return 0; }
+    return 1;
+}

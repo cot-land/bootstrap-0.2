@@ -1,0 +1,17 @@
+extern fn malloc_i64(count: i64) *i64;
+fn main() i64 {
+    var arr: *i64 = malloc_i64(25);
+    var idx: i64 = 0;
+    var i: i64 = 0;
+    while i < 5 {
+        var j: i64 = 0;
+        while j < 5 {
+            (arr + idx).* = i * 5 + j;
+            idx = idx + 1;
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    if (arr + 0).* == 0 and (arr + 24).* == 24 { return 0; }
+    return 1;
+}

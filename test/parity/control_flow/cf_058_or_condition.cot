@@ -1,0 +1,11 @@
+fn main() i64 {
+    var x: i64 = 5;
+    var ok: i64 = 0;
+    if x < 0 or x > 10 {
+        ok = 0;
+    } else {
+        ok = 1;
+    }
+    if ok == 1 { return 0; }
+    return 1;
+}

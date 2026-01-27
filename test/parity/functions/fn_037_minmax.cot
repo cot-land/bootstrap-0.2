@@ -1,0 +1,13 @@
+fn minmax(a: i64, b: i64, min: *i64, max: *i64) void {
+    if a < b { min.* = a; max.* = b; }
+    else { min.* = b; max.* = a; }
+}
+fn main() i64 {
+    var lo: i64 = 0;
+    var hi: i64 = 0;
+    minmax(7, 3, &lo, &hi);
+    if lo == 3 {
+        if hi == 7 { return 0; }
+    }
+    return 1;
+}

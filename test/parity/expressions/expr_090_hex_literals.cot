@@ -1,0 +1,6 @@
+fn main() i64 {
+    var x: i64 = 0xFF;
+    var y: i64 = 0x100;
+    if x + 1 == y { return 0; }
+    return 1;
+}

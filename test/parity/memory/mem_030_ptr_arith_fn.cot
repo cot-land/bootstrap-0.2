@@ -1,0 +1,14 @@
+extern fn malloc_i64(count: i64) *i64;
+fn get_at(arr: *i64, idx: i64) i64 {
+    return (arr + idx).*;
+}
+fn set_at(arr: *i64, idx: i64, val: i64) void {
+    (arr + idx).* = val;
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(5);
+    set_at(arr, 0, 10);
+    set_at(arr, 4, 50);
+    if get_at(arr, 0) == 10 and get_at(arr, 4) == 50 { return 0; }
+    return 1;
+}

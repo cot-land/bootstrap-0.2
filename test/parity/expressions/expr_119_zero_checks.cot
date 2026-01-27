@@ -1,0 +1,9 @@
+fn main() i64 {
+    var x: i64 = 0;
+    var is_zero: i64 = 0;
+    if x == 0 { is_zero = 1; }
+    var is_nonzero: i64 = 0;
+    if x != 0 { is_nonzero = 1; }
+    if is_zero == 1 and is_nonzero == 0 { return 0; }
+    return 1;
+}

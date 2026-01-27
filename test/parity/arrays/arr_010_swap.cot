@@ -1,0 +1,15 @@
+extern fn malloc_i64(count: i64) *i64;
+fn swap(arr: *i64, i: i64, j: i64) void {
+    var tmp: i64 = (arr + i).*;
+    (arr + i).* = (arr + j).*;
+    (arr + j).* = tmp;
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(3);
+    (arr + 0).* = 10;
+    (arr + 1).* = 20;
+    (arr + 2).* = 30;
+    swap(arr, 0, 2);
+    if (arr + 0).* == 30 and (arr + 2).* == 10 { return 0; }
+    return 1;
+}

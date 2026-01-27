@@ -1,0 +1,9 @@
+fn all_ops(a: i64, b: i64) i64 {
+    var sum: i64 = a + b;
+    var diff: i64 = a - b;
+    var prod: i64 = a * b;
+    var quot: i64 = a / b;
+    return sum + diff + prod + quot;
+}
+// 20+4=24, 20-4=16, 20*4=80, 20/4=5, total=125
+fn main() i64 { if all_ops(20, 4) == 125 { return 0; } return 1; }

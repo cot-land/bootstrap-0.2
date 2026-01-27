@@ -1,0 +1,12 @@
+// NOTE: Zig treats function params as const, so use local vars
+fn gcd(a_in: i64, b_in: i64) i64 {
+    var a: i64 = a_in;
+    var b: i64 = b_in;
+    while b != 0 {
+        var t: i64 = b;
+        b = a % b;
+        a = t;
+    }
+    return a;
+}
+fn main() i64 { if gcd(48, 18) == 6 { return 0; } return 1; }

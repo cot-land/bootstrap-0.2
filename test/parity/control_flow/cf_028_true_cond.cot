@@ -1,0 +1,5 @@
+fn true_cond() i64 {
+    if 1 == 1 { return 42; }
+    return 0;
+}
+fn main() i64 { if true_cond() == 42 { return 0; } return 1; }

@@ -1,0 +1,5 @@
+fn test_else(x: i64) i64 {
+    if x > 0 { return 1; }
+    else { return 0; }
+}
+fn main() i64 { if test_else(5) == 1 { return 0; } return 1; }

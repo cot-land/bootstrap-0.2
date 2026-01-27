@@ -1,0 +1,34 @@
+extern fn malloc_i64(count: i64) *i64;
+fn second_largest(arr: *i64, n: i64) i64 {
+    if n < 2 { return 0; }
+    var first: i64 = (arr + 0).*;
+    var second: i64 = (arr + 0).*;
+    if (arr + 1).* > first {
+        second = first;
+        first = (arr + 1).*;
+    } else {
+        second = (arr + 1).*;
+    }
+    var i: i64 = 2;
+    while i < n {
+        var val: i64 = (arr + i).*;
+        if val > first {
+            second = first;
+            first = val;
+        } else if val > second {
+            second = val;
+        }
+        i = i + 1;
+    }
+    return second;
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(5);
+    (arr + 0).* = 10;
+    (arr + 1).* = 50;
+    (arr + 2).* = 30;
+    (arr + 3).* = 40;
+    (arr + 4).* = 20;
+    if second_largest(arr, 5) == 40 { return 0; }
+    return 1;
+}

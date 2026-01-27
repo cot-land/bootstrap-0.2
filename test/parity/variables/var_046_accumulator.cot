@@ -1,0 +1,8 @@
+fn main() i64 {
+    var acc: i64 = 0;
+    acc = acc + 10;
+    acc = acc + 20;
+    acc = acc + 30;
+    if acc == 60 { return 0; }
+    return 1;
+}

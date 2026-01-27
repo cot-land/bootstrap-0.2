@@ -1,0 +1,11 @@
+fn count_odd_in_range(lo: i64, hi: i64) i64 {
+    var count: i64 = 0;
+    var i: i64 = lo;
+    while i <= hi {
+        if (i % 2) == 0 { i = i + 1; continue; }
+        count = count + 1;
+        i = i + 1;
+    }
+    return count;
+}
+fn main() i64 { if count_odd_in_range(1, 10) == 5 { return 0; } return 1; }

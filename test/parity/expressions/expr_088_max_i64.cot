@@ -1,0 +1,6 @@
+fn main() i64 {
+    var max: i64 = 9223372036854775807;
+    var one: i64 = 1;
+    if max > max - one { return 0; }
+    return 1;
+}

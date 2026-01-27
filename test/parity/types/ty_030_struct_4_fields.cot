@@ -1,0 +1,13 @@
+struct Rect { x: i64, y: i64, w: i64, h: i64 }
+fn area(r: *Rect) i64 {
+    return r.w * r.h;
+}
+fn main() i64 {
+    var r: Rect = undefined;
+    r.x = 0;
+    r.y = 0;
+    r.w = 10;
+    r.h = 5;
+    if area(&r) == 50 { return 0; }
+    return 1;
+}

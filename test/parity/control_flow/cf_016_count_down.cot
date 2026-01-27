@@ -1,0 +1,10 @@
+fn count_down(n: i64) i64 {
+    var count: i64 = 0;
+    var i: i64 = n;
+    while i > 0 {
+        count = count + 1;
+        i = i - 1;
+    }
+    return count;
+}
+fn main() i64 { if count_down(10) == 10 { return 0; } return 1; }

@@ -1,0 +1,16 @@
+extern fn malloc_i64(count: i64) *i64;
+fn init_powers(arr: *i64, n: i64, base: i64) void {
+    var val: i64 = 1;
+    var i: i64 = 0;
+    while i < n {
+        (arr + i).* = val;
+        val = val * base;
+        i = i + 1;
+    }
+}
+fn main() i64 {
+    var arr: *i64 = malloc_i64(5);
+    init_powers(arr, 5, 2);
+    if (arr + 4).* == 16 { return 0; }
+    return 1;
+}

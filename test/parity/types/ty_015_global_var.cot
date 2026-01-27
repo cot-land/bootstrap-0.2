@@ -1,0 +1,10 @@
+// NOTE: Zig compiler has bug with global initialization
+// Work around by initializing in main()
+var g_value: i64 = 0;
+fn modify_global() void { g_value = g_value + 50; }
+fn main() i64 {
+    g_value = 100;
+    modify_global();
+    if g_value == 150 { return 0; }
+    return 1;
+}

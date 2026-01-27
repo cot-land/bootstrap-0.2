@@ -1,0 +1,8 @@
+extern fn malloc_i64(count: i64) *i64;
+fn main() i64 {
+    var x: *i64 = malloc_i64(1);
+    x.* = 42;
+    var y: i64 = x.*;
+    if y == 42 { return 0; }
+    return 1;
+}

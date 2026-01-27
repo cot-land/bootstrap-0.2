@@ -1,0 +1,9 @@
+fn main() i64 {
+    var n: i64 = 32;
+    var is_pow2: i64 = 0;
+    if (n & (n - 1)) == 0 {
+        is_pow2 = 1;
+    }
+    if is_pow2 == 1 { return 0; }
+    return 1;
+}
