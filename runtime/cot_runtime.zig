@@ -1048,6 +1048,9 @@ export fn malloc_BlockLiveness(count: i64) ?*anyopaque { return malloc_struct(co
 // Type checker types
 export fn malloc_CheckerSymbol(count: i64) ?*anyopaque { return malloc_struct(count, 64); }  // CheckerSymbol: 8 * 8 = 64 (7 i64 + 2 bools padded)
 
+// cot1: Method registry for impl blocks
+export fn malloc_MethodEntry(count: i64) ?*anyopaque { return malloc_struct(count, 48); }  // MethodEntry: 6 * 8 = 48
+
 // Struct reallocation functions - reallocate with copy and free old memory
 fn realloc_struct(ptr: ?*anyopaque, old_count: i64, new_count: i64, struct_size: i64) ?*anyopaque {
     const allocator = std.heap.c_allocator;

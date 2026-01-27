@@ -2912,11 +2912,18 @@ fn GenState_finalize(
     var func_offsets: StrMap = StrMap_init(512);  // Capacity for ~500 functions
 
     // Populate the map with all function names
+    // cot1: name_start can be either offset (< source_len) or absolute pointer (>= source_len)
     var func_idx: i64 = 0;
     while func_idx < ir_funcs_count {
         let ir_func: *IRFunc = ir_funcs + func_idx;
         // Store code_offset as value (add 1 to distinguish from "not found" which is 0)
-        StrMap_put(&func_offsets, source + ir_func.name_start, ir_func.name_len, ir_func.code_offset + 1);
+        var name_ptr: *u8 = null;
+        if ir_func.name_start < source_len {
+            name_ptr = source + ir_func.name_start;
+        } else {
+            name_ptr = @intToPtr(*u8, ir_func.name_start);
+        }
+        StrMap_put(&func_offsets, name_ptr, ir_func.name_len, ir_func.code_offset + 1);
         func_idx = func_idx + 1;
     }
 
@@ -2964,11 +2971,21 @@ fn GenState_finalize(
         let ir_func: *IRFunc = ir_funcs + sym_func_idx;
 
         // Build symbol name: "_" + function name
+        // cot1: name_start can be either an offset into source (for regular functions)
+        // or an absolute pointer (for impl block methods with synthesized names)
+        // If name_start >= source_len, it's an absolute pointer
         let sn: *u8 = sym_name.items;
         sn.* = 95;  // '_'
         var name_idx: i64 = 0;
         while name_idx < ir_func.name_len and name_idx < 126 {
-            (sn + 1 + name_idx).* = (source + ir_func.name_start + name_idx).*;
+            if ir_func.name_start < source_len {
+                // Regular function: offset into source
+                (sn + 1 + name_idx).* = (source + ir_func.name_start + name_idx).*;
+            } else {
+                // cot1: Synthesized method name - name_start is an absolute pointer
+                let name_ptr: *u8 = @intToPtr(*u8, ir_func.name_start);
+                (sn + 1 + name_idx).* = (name_ptr + name_idx).*;
+            }
             name_idx = name_idx + 1;
         }
         let sym_len: i64 = 1 + ir_func.name_len;

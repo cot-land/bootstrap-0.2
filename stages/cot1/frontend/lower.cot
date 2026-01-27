@@ -45,6 +45,7 @@ extern fn realloc_ConstEntry(ptr: *ConstEntry, old_count: i64, new_count: i64) *
 
 // Malloc externs for self-allocation (Lowerer allocates its own internal storage)
 extern fn malloc_TypeAliasEntry(count: i64) *TypeAliasEntry;
+extern fn malloc_MethodEntry(count: i64) *MethodEntry;
 extern fn malloc_u8(count: i64) *u8;
 
 // Initial capacities for Lowerer-owned storage
@@ -70,6 +71,17 @@ fn copy_func_name(source: *u8, start: i64, len: i64) i64 {
 struct StructFieldLookup {
     offset: i64,
     found: bool,
+}
+
+// cot1: Method registry entry for method call desugaring
+// Maps (type_name, method_name) → synthesized_method_name
+struct MethodEntry {
+    type_name_start: i64,      // Start of type name in source
+    type_name_len: i64,        // Length of type name
+    method_name_start: i64,    // Start of method name in source
+    method_name_len: i64,      // Length of method name
+    synth_name_ptr: i64,       // Pointer to synthesized name (TypeName_methodName)
+    synth_name_len: i64,       // Length of synthesized name
 }
 
 struct Lowerer {
@@ -150,6 +162,24 @@ struct Lowerer {
     func_map: StrMap,
     // Function name → return type handle map for O(1) return type lookup
     func_ret_map: StrMap,
+
+    // cot1: Synthesized names buffer for impl block methods
+    // Stores "TypeName_methodName" strings for methods defined in impl blocks
+    // name_start for these methods points into this buffer (as absolute pointer)
+    synth_names: *u8,
+    synth_names_count: i64,
+    synth_names_cap: i64,
+
+    // cot1: Track which FnDecl nodes are inside impl blocks
+    // impl_method_flags[i] = 1 if node i is a method inside an impl block
+    impl_method_flags: *u8,
+    impl_method_flags_count: i64,
+
+    // cot1: Method registry for method call desugaring
+    // Maps (type_name, method_name) → synthesized_method_name
+    method_registry: *MethodEntry,
+    method_registry_count: i64,
+    method_registry_cap: i64,
 }
 
 // ============================================================================
@@ -448,6 +478,21 @@ fn Lowerer_init(l: *Lowerer,
     l.func_map = StrMap_init(256);
     // Initialize function return type map for O(1) lookup
     l.func_ret_map = StrMap_init(256);
+
+    // cot1: Initialize synthesized names buffer for impl block methods
+    l.synth_names_cap = 4096;  // Should be enough for most impl blocks
+    l.synth_names = malloc_u8(l.synth_names_cap);
+    l.synth_names_count = 0;
+
+    // cot1: Initialize impl method flags array
+    // Will be sized to nodes_count when Lowerer_markImplMethods is called
+    l.impl_method_flags = null;
+    l.impl_method_flags_count = 0;
+
+    // cot1: Initialize method registry
+    l.method_registry_cap = 256;
+    l.method_registry = malloc_MethodEntry(l.method_registry_cap);
+    l.method_registry_count = 0;
 }
 
 // cot1: Register a type alias
@@ -489,6 +534,163 @@ fn Lowerer_lookupTypeAlias(l: *Lowerer, name_start: i64, name_len: i64) i64 {
         i = i + 1;
     }
     return -1;  // Not found
+}
+
+// cot1: Synthesize a method name "TypeName_methodName" and return pointer to it
+// Returns the address of the synthesized name in synth_names buffer
+// Also sets *out_len to the length of the synthesized name
+fn Lowerer_synthMethodName(l: *Lowerer, type_name_start: i64, type_name_len: i64,
+                            method_name_start: i64, method_name_len: i64,
+                            out_len: *i64) i64 {
+    // Calculate total length: TypeName + _ + methodName
+    let total_len: i64 = type_name_len + 1 + method_name_len;
+
+    // Ensure capacity
+    if l.synth_names_count + total_len > l.synth_names_cap {
+        // Grow buffer
+        let new_cap: i64 = l.synth_names_cap * 2;
+        l.synth_names = realloc_u8(l.synth_names, l.synth_names_cap, new_cap);
+        l.synth_names_cap = new_cap;
+    }
+
+    // Get pointer to where we'll write the synthesized name
+    let result_ptr: *u8 = l.synth_names + l.synth_names_count;
+    let result_addr: i64 = @ptrToInt(result_ptr);
+
+    // Copy TypeName
+    var i: i64 = 0;
+    while i < type_name_len {
+        (result_ptr + i).* = (l.source + type_name_start + i).*;
+        i = i + 1;
+    }
+
+    // Add underscore
+    (result_ptr + type_name_len).* = 95;  // '_'
+
+    // Copy methodName
+    i = 0;
+    while i < method_name_len {
+        (result_ptr + type_name_len + 1 + i).* = (l.source + method_name_start + i).*;
+        i = i + 1;
+    }
+
+    l.synth_names_count = l.synth_names_count + total_len;
+    out_len.* = total_len;
+
+    return result_addr;
+}
+
+// cot1: Register a method in the method registry
+fn Lowerer_registerMethod(l: *Lowerer, type_name_start: i64, type_name_len: i64,
+                           method_name_start: i64, method_name_len: i64,
+                           synth_name_ptr: i64, synth_name_len: i64) {
+    if l.method_registry == null { return; }
+    if l.method_registry_count >= l.method_registry_cap { return; }
+
+    let entry: *MethodEntry = l.method_registry + l.method_registry_count;
+    entry.type_name_start = type_name_start;
+    entry.type_name_len = type_name_len;
+    entry.method_name_start = method_name_start;
+    entry.method_name_len = method_name_len;
+    entry.synth_name_ptr = synth_name_ptr;
+    entry.synth_name_len = synth_name_len;
+    l.method_registry_count = l.method_registry_count + 1;
+}
+
+// cot1: Look up a method by type and method name
+// Returns pointer to MethodEntry if found, null otherwise
+fn Lowerer_lookupMethod(l: *Lowerer, type_name_start: i64, type_name_len: i64,
+                         method_name_start: i64, method_name_len: i64) *MethodEntry {
+    if l.method_registry == null { return null; }
+
+    var i: i64 = 0;
+    while i < l.method_registry_count {
+        let entry: *MethodEntry = l.method_registry + i;
+
+        // Match type name
+        if entry.type_name_len == type_name_len {
+            var type_match: bool = true;
+            var tj: i64 = 0;
+            while tj < type_name_len {
+                let c1: u8 = (l.source + entry.type_name_start + tj).*;
+                let c2: u8 = (l.source + type_name_start + tj).*;
+                if c1 != c2 {
+                    type_match = false;
+                    break;
+                }
+                tj = tj + 1;
+            }
+
+            if type_match {
+                // Match method name
+                if entry.method_name_len == method_name_len {
+                    var method_match: bool = true;
+                    var mj: i64 = 0;
+                    while mj < method_name_len {
+                        let c3: u8 = (l.source + entry.method_name_start + mj).*;
+                        let c4: u8 = (l.source + method_name_start + mj).*;
+                        if c3 != c4 {
+                            method_match = false;
+                            break;
+                        }
+                        mj = mj + 1;
+                    }
+
+                    if method_match {
+                        return entry;
+                    }
+                }
+            }
+        }
+        i = i + 1;
+    }
+    return null;
+}
+
+// cot1: Mark all FnDecl nodes that are inside impl blocks
+// This must be called before Pass 1.9 so we can skip these nodes in regular processing
+fn Lowerer_markImplMethods(l: *Lowerer) {
+    // Allocate flags array sized to nodes_count
+    l.impl_method_flags_count = l.nodes_count;
+    l.impl_method_flags = malloc_u8(l.impl_method_flags_count);
+
+    // Initialize all to 0 (not an impl method)
+    var j: i64 = 0;
+    while j < l.impl_method_flags_count {
+        (l.impl_method_flags + j).* = 0;
+        j = j + 1;
+    }
+
+    // Scan for ImplBlock nodes and mark their method children
+    var i: i64 = 0;
+    while i < l.nodes_count {
+        let node: *Node = l.nodes + i;
+        if node.kind == NodeKind.ImplBlock {
+            let methods_start: i64 = node.field2;
+            let methods_count: i64 = node.field3;
+
+            var method_idx: i64 = 0;
+            while method_idx < methods_count {
+                let method_node_idx_ptr: *i64 = l.children + methods_start + method_idx;
+                let method_node_idx: i64 = method_node_idx_ptr.*;
+
+                // Mark this node as an impl method
+                if method_node_idx >= 0 and method_node_idx < l.impl_method_flags_count {
+                    (l.impl_method_flags + method_node_idx).* = 1;
+                }
+
+                method_idx = method_idx + 1;
+            }
+        }
+        i = i + 1;
+    }
+}
+
+// cot1: Check if a node is an impl method (should be skipped in regular FnDecl processing)
+fn Lowerer_isImplMethod(l: *Lowerer, node_idx: i64) bool {
+    if l.impl_method_flags == null { return false; }
+    if node_idx < 0 or node_idx >= l.impl_method_flags_count { return false; }
+    return (l.impl_method_flags + node_idx).* == 1;
 }
 
 // cot1: Push a labeled loop onto the stack
@@ -1125,21 +1327,57 @@ fn Lowerer_lowerAll(l: *Lowerer) i64 {
     print("    pass1.5 globals: "); print((t1 - t0) / 1000000); print("ms\n");
     t0 = t1;
 
+    // cot1 Pass 1.8: Mark impl block methods so they're skipped in regular FnDecl processing
+    Lowerer_markImplMethods(l);
+
     // Pass 1.9: Pre-populate func_map and func_ret_map with all function names for O(1) lookup
     // This must happen before lowering function bodies
     // Also includes ExternFnDecl for return type lookups
+    // cot1: Also handles impl block methods with synthesized names
+    // cot1: Skip FnDecl nodes that are inside impl blocks (handled separately)
     var func_idx: i64 = 0;
     i = 0;
     while i < l.nodes_count {
         let node: *Node = l.nodes + i;
         if node.kind == NodeKind.FnDecl {
-            StrMap_put(&l.func_map, l.source + node.field0, node.field1, func_idx);
-            // Store return type handle for O(1) lookup (field4 = ret_type_handle)
-            StrMap_put(&l.func_ret_map, l.source + node.field0, node.field1, node.field4);
-            func_idx = func_idx + 1;
+            // cot1: Skip if this is an impl method (will be handled with synthesized name)
+            if not Lowerer_isImplMethod(l, i) {
+                StrMap_put(&l.func_map, l.source + node.field0, node.field1, func_idx);
+                // Store return type handle for O(1) lookup (field4 = ret_type_handle)
+                StrMap_put(&l.func_ret_map, l.source + node.field0, node.field1, node.field4);
+                func_idx = func_idx + 1;
+            }
         } else if node.kind == NodeKind.ExternFnDecl {
             // ExternFnDecl also needs return type in map for call type inference
             StrMap_put(&l.func_ret_map, l.source + node.field0, node.field1, node.field4);
+        } else if node.kind == NodeKind.ImplBlock {
+            // cot1: Register impl block methods with synthesized names
+            // ImplBlock: field0=type_name_start, field1=type_name_len, field2=methods_start, field3=methods_count
+            let type_name_start: i64 = node.field0;
+            let type_name_len: i64 = node.field1;
+            let methods_start: i64 = node.field2;
+            let methods_count: i64 = node.field3;
+
+            var method_idx: i64 = 0;
+            while method_idx < methods_count {
+                let method_node_idx_ptr: *i64 = l.children + methods_start + method_idx;
+                let method_node_idx: i64 = method_node_idx_ptr.*;
+                let method_node: *Node = l.nodes + method_node_idx;
+
+                // Synthesize "TypeName_methodName"
+                var synth_len: i64 = 0;
+                let synth_name_ptr: i64 = Lowerer_synthMethodName(l,
+                    type_name_start, type_name_len,
+                    method_node.field0, method_node.field1,
+                    &synth_len);
+
+                // Register with synthesized name
+                StrMap_put(&l.func_map, @intToPtr(*u8, synth_name_ptr), synth_len, func_idx);
+                StrMap_put(&l.func_ret_map, @intToPtr(*u8, synth_name_ptr), synth_len, method_node.field4);
+                func_idx = func_idx + 1;
+
+                method_idx = method_idx + 1;
+            }
         }
         i = i + 1;
     }
@@ -1150,11 +1388,19 @@ fn Lowerer_lowerAll(l: *Lowerer) i64 {
     // Second pass: process function declarations
     // Note: ExternFnDecl nodes are skipped - they don't need IR,
     // the linker will resolve external symbols
+    // cot1: Also handles impl block methods
+    // cot1: Skip FnDecl nodes that are inside impl blocks (handled by ImplBlock processing)
     i = 0;
     while i < l.nodes_count {
         let node: *Node = l.nodes + i;
         if node.kind == NodeKind.FnDecl {
-            Lowerer_lowerFnDecl(l, node);
+            // cot1: Skip if this is an impl method
+            if not Lowerer_isImplMethod(l, i) {
+                Lowerer_lowerFnDecl(l, node);
+            }
+        } else if node.kind == NodeKind.ImplBlock {
+            // cot1: Lower impl block methods with synthesized names
+            Lowerer_lowerImplBlock(l, node);
         }
         // ExternFnDecl - skip, no IR needed (linker resolves external symbols)
         i = i + 1;
@@ -1324,6 +1570,144 @@ fn Lowerer_lowerFnDecl(l: *Lowerer, node: *Node) {
     l.ir_funcs_count = l.ir_funcs_count + 1;
 
     l.current_func = null;
+}
+
+// cot1: Lower a method from an impl block with synthesized name
+// Similar to Lowerer_lowerFnDecl but uses synthesized name "TypeName_methodName"
+fn Lowerer_lowerMethodWithName(l: *Lowerer, node: *Node, synth_name_ptr: i64, synth_name_len: i64) {
+    // Ensure capacity for this function's locals and nodes
+    let estimated_locals: i64 = node.field3 + 100;
+    Lowerer_ensureLocalsCapacity(l, estimated_locals);
+    Lowerer_ensureNodesCapacity(l, 500);
+
+    // Record starting positions for this function
+    let nodes_start: i64 = l.ir_nodes_count;
+    let locals_start: i64 = l.ir_locals_count;
+
+    // Get return type from FnDecl node
+    var return_type: i64 = resolve_type_expr(l, node.field4);
+    if return_type < 0 {
+        return_type = TYPE_VOID;
+    }
+
+    // Create function builder with synthesized name
+    var fb: FuncBuilder = undefined;
+    let remaining_locals: i64 = l.ir_locals_cap - l.ir_locals_count;
+    let remaining_nodes: i64 = l.ir_nodes_cap - l.ir_nodes_count;
+
+    FuncBuilder_init(&fb,
+                      synth_name_ptr, synth_name_len,  // synthesized name
+                      return_type,
+                      l.ir_locals + l.ir_locals_count,
+                      remaining_locals,
+                      l.ir_nodes + l.ir_nodes_count,
+                      remaining_nodes);
+
+    l.current_func = &fb;
+
+    // Add function parameters as locals
+    let params_start: i64 = node.field2;
+    let params_count: i64 = node.field3;
+    var param_idx: i64 = 0;
+    while param_idx < params_count {
+        let child_ptr: *i64 = l.children + params_start + param_idx;
+        let param_node_idx: i64 = child_ptr.*;
+        let param_node: *Node = l.nodes + param_node_idx;
+
+        var param_type: i64 = resolve_type_expr(l, param_node.field3);
+        if param_type < 0 {
+            param_type = TYPE_I64;
+        }
+        let param_size: i64 = TypeRegistry_sizeof(l.type_pool, param_type);
+        let local_idx: i64 = FuncBuilder_addParam(&fb,
+                               param_node.field0, param_node.field1,
+                               param_type, param_idx, param_size);
+
+        // Set struct_type_start/len for pointer-to-struct parameters
+        if local_idx >= 0 {
+            let local: *IRLocal = fb.locals + local_idx;
+            let type_info: *Type = TypeRegistry_get(l.type_pool, param_type);
+            if type_info != null and type_info.kind == TypeKind.Pointer {
+                let pointee: *Type = TypeRegistry_get(l.type_pool, type_info.elem);
+                if pointee != null and pointee.kind == TypeKind.Struct {
+                    local.struct_type_start = pointee.name_start;
+                    local.struct_type_len = pointee.name_len;
+                }
+            }
+        }
+
+        param_idx = param_idx + 1;
+    }
+
+    // Lower the function body
+    let body_idx: i64 = node.field5;
+    var body_terminated: bool = false;
+
+    if body_idx >= 0 {
+        let body_node: *Node = l.nodes + body_idx;
+        body_terminated = Lowerer_lowerBlockCheckTerminated(l, body_node);
+    }
+
+    // If function body doesn't end with a return, emit implicit void return
+    if not body_terminated {
+        FuncBuilder_emitReturnVoid(&fb);
+    }
+
+    // Update counts from function builder
+    l.ir_nodes_count = l.ir_nodes_count + fb.nodes_count;
+    l.ir_locals_count = l.ir_locals_count + fb.locals_count;
+
+    // Record function metadata with synthesized name
+    Lowerer_ensureFuncsCapacity(l, 1);
+    let func_ptr: *IRFunc = l.ir_funcs + l.ir_funcs_count;
+
+    func_ptr.name_start = synth_name_ptr;  // Pointer to synthesized name
+    func_ptr.name_len = synth_name_len;
+    func_ptr.return_type = return_type;
+    func_ptr.nodes_start = nodes_start;
+    func_ptr.nodes_count = fb.nodes_count;
+    func_ptr.locals_start = locals_start;
+    func_ptr.locals_count = fb.locals_count;
+    func_ptr.code_offset = 0;
+
+    l.ir_funcs_count = l.ir_funcs_count + 1;
+
+    l.current_func = null;
+}
+
+// cot1: Lower an impl block - synthesize names and lower all methods
+fn Lowerer_lowerImplBlock(l: *Lowerer, node: *Node) {
+    // ImplBlock: field0=type_name_start, field1=type_name_len, field2=methods_start, field3=methods_count
+    let type_name_start: i64 = node.field0;
+    let type_name_len: i64 = node.field1;
+    let methods_start: i64 = node.field2;
+    let methods_count: i64 = node.field3;
+
+
+    var method_idx: i64 = 0;
+    while method_idx < methods_count {
+        let method_node_idx_ptr: *i64 = l.children + methods_start + method_idx;
+        let method_node_idx: i64 = method_node_idx_ptr.*;
+        let method_node: *Node = l.nodes + method_node_idx;
+
+        // Synthesize "TypeName_methodName"
+        var synth_len: i64 = 0;
+        let synth_name_ptr: i64 = Lowerer_synthMethodName(l,
+            type_name_start, type_name_len,
+            method_node.field0, method_node.field1,
+            &synth_len);
+
+        // Register method in registry for later lookup (method call syntax)
+        Lowerer_registerMethod(l,
+            type_name_start, type_name_len,
+            method_node.field0, method_node.field1,
+            synth_name_ptr, synth_len);
+
+        // Lower the method with synthesized name
+        Lowerer_lowerMethodWithName(l, method_node, synth_name_ptr, synth_len);
+
+        method_idx = method_idx + 1;
+    }
 }
 
 // ============================================================================
@@ -3215,6 +3599,134 @@ fn Lowerer_lowerBuiltinPrint(l: *Lowerer, node: *Node, is_println: bool) i64 {
     return NULL_NODE;  // print/println returns void
 }
 
+// cot1: Lower method call syntax (obj.method(args))
+// Transform to TypeName_method(&obj, args) or TypeName_method(obj, args) if obj is already a pointer
+fn Lowerer_lowerMethodCall(l: *Lowerer, call_node: *Node, field_access: *Node) i64 {
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return NULL_NODE; }
+
+    // Extract receiver and method name from FieldAccess
+    let receiver_idx: i64 = field_access.field0;
+    let method_name_start: i64 = field_access.field1;
+    let method_name_len: i64 = field_access.field2;
+    let receiver_node: *Node = l.nodes + receiver_idx;
+
+    // Determine the receiver's struct type
+    // Currently supports: Ident (local variable) and DerefExpr (pointer dereference)
+    var type_name_start: i64 = -1;
+    var type_name_len: i64 = 0;
+    var receiver_is_pointer: bool = false;
+
+    if receiver_node.kind == NodeKind.Ident {
+        // Look up the local variable to get its type
+        let recv_name_start: i64 = receiver_node.field0;
+        let recv_name_len: i64 = receiver_node.field1;
+
+        var local_idx: i64 = 0;
+        while local_idx < fb.locals_count {
+            let local: *IRLocal = fb.locals + local_idx;
+            if names_equal(l.source, local.name_start, local.name_len, recv_name_start, recv_name_len) {
+                // Found the local - get its type info
+                let type_info: *Type = TypeRegistry_get(l.type_pool, local.type_idx);
+                if type_info != null {
+                    if type_info.kind == TypeKind.Struct {
+                        type_name_start = type_info.name_start;
+                        type_name_len = type_info.name_len;
+                        receiver_is_pointer = false;
+                    } else if type_info.kind == TypeKind.Pointer {
+                        // Pointer to struct
+                        let pointee: *Type = TypeRegistry_get(l.type_pool, type_info.elem);
+                        if pointee != null and pointee.kind == TypeKind.Struct {
+                            type_name_start = pointee.name_start;
+                            type_name_len = pointee.name_len;
+                            receiver_is_pointer = true;
+                        }
+                    }
+                }
+            }
+            local_idx = local_idx + 1;
+        }
+    }
+
+    // If we couldn't determine the type, this isn't a method call
+    if type_name_start < 0 {
+        return NULL_NODE;
+    }
+
+    // Look up the method in the registry
+    let method_entry: *MethodEntry = Lowerer_lookupMethod(l,
+        type_name_start, type_name_len,
+        method_name_start, method_name_len);
+
+    if method_entry == null {
+        // Not a registered method - fall back to regular field access (error later)
+        return NULL_NODE;
+    }
+
+    // Found the method - emit call to synthesized name
+    // First, lower the receiver expression
+    var receiver_val: i64 = 0;
+    if receiver_is_pointer {
+        // Already a pointer, just lower the expression
+        receiver_val = Lowerer_lowerExpr(l, receiver_node);
+    } else {
+        // Need to take address of receiver
+        receiver_val = Lowerer_lowerAddressOfExpr(l, receiver_node);
+    }
+
+    // Get original call arguments
+    let args_start: i64 = call_node.field1;
+    let args_count: i64 = call_node.field2;
+
+    // Create the call node with synthesized name
+    var ir_node: IRNode = IRNode_new(IRNodeKind.Call, TYPE_I64);
+    ir_node.func_name_start = method_entry.synth_name_ptr;
+    ir_node.func_name_len = method_entry.synth_name_len;
+
+    // Add receiver as first argument
+    i64list_append(&ir_node.call_args, receiver_val);
+
+    // Add original arguments
+    var i: i64 = 0;
+    while i < args_count {
+        let arg_ptr: *i64 = l.children + args_start + i;
+        let arg_node_idx: i64 = arg_ptr.*;
+        let arg_node: *Node = l.nodes + arg_node_idx;
+        let arg_val: i64 = Lowerer_lowerExpr(l, arg_node);
+        i64list_append(&ir_node.call_args, arg_val);
+        i = i + 1;
+    }
+
+    return FuncBuilder_emit(fb, ir_node);
+}
+
+// Helper: Take address of an expression (for method receiver)
+fn Lowerer_lowerAddressOfExpr(l: *Lowerer, node: *Node) i64 {
+    let fb: *FuncBuilder = l.current_func;
+    if fb == null { return NULL_NODE; }
+
+    // For an Ident node, get the local and take its address
+    if node.kind == NodeKind.Ident {
+        let name_start: i64 = node.field0;
+        let name_len: i64 = node.field1;
+
+        // Find the local
+        var local_idx: i64 = 0;
+        while local_idx < fb.locals_count {
+            let local: *IRLocal = fb.locals + local_idx;
+            if names_equal(l.source, local.name_start, local.name_len, name_start, name_len) {
+                // Found - emit local address
+                return FuncBuilder_emitAddrLocal(fb, local_idx, TYPE_I64);
+            }
+            local_idx = local_idx + 1;
+        }
+    }
+
+    // For other expressions, lower and hope for the best
+    // (This is a fallback - may need more cases)
+    return Lowerer_lowerExpr(l, node);
+}
+
 fn Lowerer_lowerCall(l: *Lowerer, node: *Node) i64 {
     // CallExpr fields:
     // field0 = callee (node index)
@@ -3224,8 +3736,15 @@ fn Lowerer_lowerCall(l: *Lowerer, node: *Node) i64 {
     let fb: *FuncBuilder = l.current_func;
     if fb == null { return NULL_NODE; }
 
-    // Get callee - must be an identifier for now
+    // Get callee - can be identifier or method call (FieldAccess)
     let callee_node: *Node = l.nodes + node.field0;
+
+    // cot1: Handle method call syntax (obj.method())
+    // Transform obj.method(args) -> TypeName_method(&obj, args) or (obj, args) if already pointer
+    if callee_node.kind == NodeKind.FieldAccess {
+        return Lowerer_lowerMethodCall(l, node, callee_node);
+    }
+
     if callee_node.kind != NodeKind.Ident {
         return NULL_NODE;  // Only simple function calls supported
     }

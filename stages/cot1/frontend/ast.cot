@@ -66,6 +66,7 @@ enum NodeKind {
     FieldDecl,      // name: type (struct field)
     ImportDecl,     // import "path";
     TypeAliasDecl,  // type Name = Type; (cot1: field0=name_start, field1=name_len, field2=type_node_idx)
+    ImplBlock,      // impl TypeName { fn... } (cot1: field0=type_name_start, field1=type_name_len, field2=methods_start, field3=methods_count)
 
     // Member access
     FieldAccess,    // expr.field
@@ -794,6 +795,30 @@ fn Node_typeAliasDecl(pool: *NodePool, name_start: i64, name_len: i64,
     n.field1 = name_len;        // Alias name length
     n.field2 = type_node_idx;   // Type expression node index
     n.field3 = 0;               // Reserved
+
+    return idx;
+}
+
+// cot1: Create an impl block node
+// impl TypeName { fn method1() { } fn method2() { } }
+// field0: type_name_start (offset in source)
+// field1: type_name_len
+// field2: methods_start (index in children array)
+// field3: methods_count
+// Reference: Rust impl blocks - methods are associated with a type
+fn Node_implBlock(pool: *NodePool, type_name_start: i64, type_name_len: i64,
+                   methods_start: i64, methods_count: i64,
+                   start: i64, end: i64) i64 {
+    let idx: i64 = NodePool_alloc(pool);
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.ImplBlock;
+    n.start = start;
+    n.end = end;
+    n.field0 = type_name_start;   // Type name offset
+    n.field1 = type_name_len;     // Type name length
+    n.field2 = methods_start;     // Start index in children array
+    n.field3 = methods_count;     // Number of methods
 
     return idx;
 }
