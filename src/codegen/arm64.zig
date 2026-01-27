@@ -835,8 +835,41 @@ pub const ARM64CodeGen = struct {
         // Record block start offset for branch calculations
         try self.block_offsets.put(self.allocator, block.id, self.offset());
 
-        // Generate each value in the block
+        // BUG-020 FIX: Dead code elimination before generating code.
+        // Regalloc may have created store_reg values that increment uses of dead values,
+        // making them appear non-dead. We need to work backwards to fix this.
+        // First pass: find and mark truly dead values by propagating dead uses backwards
+        var i: usize = block.values.items.len;
+        while (i > 0) {
+            i -= 1;
+            const value = block.values.items[i];
+            if (value.uses == 0) {
+                const has_side_effects = switch (value.op) {
+                    .store, .move, .static_call, .closure_call, .load_reg => true,
+                    else => false,
+                };
+                if (!has_side_effects) {
+                    // Dead value - decrement uses of its arguments
+                    for (value.args) |arg| {
+                        if (arg.uses > 0) arg.uses -= 1;
+                    }
+                }
+            }
+        }
+
+        // Second pass: generate code, skipping dead values
         for (block.values.items) |value| {
+            // Skip dead values (uses == 0) unless they have side effects
+            if (value.uses == 0) {
+                const has_side_effects = switch (value.op) {
+                    .store, .move, .static_call, .closure_call, .load_reg => true,
+                    else => false,
+                };
+                if (!has_side_effects) {
+                    debug.log(.codegen, "    v{d} = {s} (skipped - dead value)", .{ value.id, @tagName(value.op) });
+                    continue;
+                }
+            }
             try self.generateValueBinary(value);
         }
 
