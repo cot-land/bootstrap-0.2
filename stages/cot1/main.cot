@@ -559,16 +559,16 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     // Initialize code generator state (shared across functions)
     // GenState now self-allocates its storage (following Zig pattern)
     var gs: GenState = undefined;
-    GenState_init(&gs);
+    gs.init();
 
     // Set source for DWARF debug info line tracking
-    GenState_setSource(&gs, g_source, g_source_len);
+    gs.setSource(g_source, g_source_len);
 
     // Set up globals for codegen (uses lowerer's registered globals)
-    GenState_setGlobals(&gs, g_ir_globals, lowerer.ir_globals_count);
+    gs.setGlobals(g_ir_globals, lowerer.ir_globals_count);
 
     // BUG-054: Set type registry for hidden return detection at call sites
-    GenState_setTypeRegistry(&gs, &g_type_pool);
+    gs.setTypeRegistry(&g_type_pool);
 
     var total_blocks: i64 = 0;
     var total_values: i64 = 0;
@@ -681,7 +681,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         gs.func = &ssa_func;
         gs.branches_count = 0;  // Reset branches for this function
 
-        let genssa_result: i64 = GenState_generate(&gs);
+        let genssa_result: i64 = gs.generate();
         t_codegen = t_codegen + (get_time_ns() - t_tmp);
         if genssa_result != 0 {
             print("  FAIL: genssa error\n");
@@ -734,8 +734,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     // - Adding function address relocations
     // - Adding string literal data and relocations
     // - Generating DWARF debug info
-    let finalize_result: i64 = GenState_finalize(
-        &gs,
+    let finalize_result: i64 = gs.finalize(
         g_source, g_source_len,
         g_ir_funcs, lowerer.ir_funcs_count,
         g_ir_globals, lowerer.ir_globals_count,

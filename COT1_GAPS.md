@@ -16,7 +16,7 @@ Converting cot1 from function-style (`Func_getBlock(f, id)`) to method syntax (`
 | Phase | Structs | Status |
 |-------|---------|--------|
 | 1a | Func, Local | **Complete** |
-| 1b | GenState | Pending |
+| 1b | GenState | **Complete** |
 | 1c | Value | Pending |
 | 2a-c | Parser, FuncBuilder, Lowerer | Pending |
 | 3a-d | SSABuilder, TypeRegistry, Scanner, MachOWriter, Block | Pending |
