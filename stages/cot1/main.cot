@@ -615,19 +615,19 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
         // Initialize SSA builder (self-allocates storage)
         var builder: SSABuilder = undefined;
-        SSABuilder_init(&builder, &ssa_func);
+        builder.init( &ssa_func);
 
         // Set IR references for this function (split to avoid >8 args)
-        SSABuilder_setIRNodes(&builder,
+        builder.setIRNodes(
                          g_ir_nodes, ir_func.nodes_start, ir_func.nodes_count);
-        SSABuilder_setIRLocals(&builder,
+        builder.setIRLocals(
                          g_ir_locals, ir_func.locals_start, ir_func.locals_count);
-        SSABuilder_setSource(&builder, g_source, g_source_len);
-        SSABuilder_setTypeRegistry(&builder, &g_type_pool);
+        builder.setSource( g_source, g_source_len);
+        builder.setTypeRegistry( &g_type_pool);
 
         // Build SSA from IR (handles blocks, locals, params, conversion)
         t_tmp = get_time_ns();
-        let build_result: i64 = SSABuilder_build(&builder);
+        let build_result: i64 = builder.build();
         t_build = t_build + (get_time_ns() - t_tmp);
 
         // Run expand_calls pass - handle >16B struct args and decompose aggregates

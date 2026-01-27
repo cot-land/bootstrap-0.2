@@ -312,1898 +312,1744 @@ struct SSABuilder {
 
 // SSABuilder owns its storage (matches bootstrap Zig pattern)
 // Allocates all arrays directly into struct fields via module storage
-fn SSABuilder_init(b: *SSABuilder, f: *Func) {
-    // Allocate module storage on first use
-    SSABuilder_allocateStorage();
 
-    b.func = f;
-    b.current_block = INVALID_BLOCK;
-    b.current_defs = null;
+impl SSABuilder {
 
-    // Use module-allocated storage
-    b.all_defs = sb_all_defs;
-    b.all_defs_count = 0;
-    b.all_defs_cap = sb_all_defs_cap;
-
-    // CRITICAL: Reset all_defs for new function (stale initialized flags cause crashes)
-    var bd_idx: i64 = 0;
-    while bd_idx < sb_all_defs_cap {
-        let bd: *BlockDefs = sb_all_defs + bd_idx;
-        BlockDefs_clear(bd);
-        bd_idx = bd_idx + 1;
-    }
-
-    b.block_map = sb_block_map;
-    b.block_map_count = 0;
-    b.block_map_cap = sb_block_map_cap;
-    // OPTIMIZATION: Sparse index for O(1) lookup
-    b.block_map_index = sb_block_map_index;
-    b.block_map_index_cap = sb_block_map_index_cap;
-
-    // CRITICAL: Reset block_map_index for new function (stale entries cause crashes)
-    var bmi: i64 = 0;
-    while bmi < sb_block_map_index_cap {
-        (sb_block_map_index + bmi).* = -1;
-        bmi = bmi + 1;
-    }
-
-    b.node_values = sb_node_values;
-    b.node_values_cap = sb_node_values_cap;
-
-    // CRITICAL: Reset node_values for new function (stale entries cause crashes)
-    var nvi: i64 = 0;
-    while nvi < sb_node_values_cap {
-        (sb_node_values + nvi).* = INVALID_ID;
-        nvi = nvi + 1;
-    }
-
-    b.var_storage = sb_var_storage;
-    b.var_storage_used = 0;
-    b.var_storage_cap = sb_var_storage_cap;
-
-    // CRITICAL: Reset var_storage for new function (stale entries cause crashes)
-    var vsi: i64 = 0;
-    while vsi < sb_var_storage_cap {
-        (sb_var_storage + vsi).* = INVALID_ID;
-        vsi = vsi + 1;
-    }
-
-    // FwdRef pattern state
-    b.fwd_vars = sb_fwd_vars;
-    b.fwd_vars_count = 0;
-    b.fwd_vars_cap = sb_fwd_vars_cap;
-    // OPTIMIZATION: Sparse index for O(1) lookup
-    b.fwd_vars_index = sb_fwd_vars_index;
-    b.fwd_vars_index_cap = sb_fwd_vars_index_cap;
-
-    // CRITICAL: Reset fwd_vars_index for new function (stale entries cause crashes)
-    var fvi: i64 = 0;
-    while fvi < sb_fwd_vars_index_cap {
-        (sb_fwd_vars_index + fvi).* = INVALID_ID;
-        fvi = fvi + 1;
-    }
-
-    // IR references (set later via SSABuilder_setIRNodes/Locals/Source)
-    b.ir_nodes = null;
-    b.ir_nodes_start = 0;
-    b.ir_nodes_end = 0;
-    b.ir_locals = null;
-    b.ir_locals_start = 0;
-    b.ir_locals_count = 0;
-    b.source = null;
-    b.source_len = 0;
-    b.type_registry = null;
-
-    // Register allocation - simple round-robin matching original main.cot
-    b.next_reg = X1;          // Start at X1 (X0 is reserved for return value)
-    b.max_reg = 28;           // Max is X28 (29=FP, 30=LR, 31=SP/XZR)
-}
-
-// Set type registry for struct type checks
-// Following Zig ssa_builder.zig:49 - type_registry field
-fn SSABuilder_setTypeRegistry(b: *SSABuilder, reg: *TypeRegistry) {
-    b.type_registry = reg;
-}
-
-// Assign a register to a value and increment the counter
-// Returns the assigned register
-// Note: Skips X16-X18 which are reserved on ARM64 (linker scratch + platform)
-fn SSABuilder_assignReg(b: *SSABuilder, v: *Value) i64 {
-    // Skip X16, X17, X18 if we're in that range (reserved: linker scratch + platform)
-    if b.next_reg >= 16 and b.next_reg <= 18 {
-        b.next_reg = 19;  // Skip to X19
-    }
-
-    let reg: i64 = b.next_reg;
-    v.reg = reg;
-
-    // Advance to next allocatable register
-    b.next_reg = b.next_reg + 1;
-    // Skip X16, X17, X18 if we wrap into that range
-    if b.next_reg == 16 {
-        b.next_reg = 19;  // Skip to X19
-    }
-    if b.next_reg > b.max_reg {
-        b.next_reg = X1;  // Wrap around
-    }
-    return reg;
-}
-
-// Set IR references before calling build()
-// Matches Zig's SSABuilder.init() which takes ir_func
-// Set IR nodes for the SSA builder
-fn SSABuilder_setIRNodes(b: *SSABuilder,
-                    ir_nodes: *IRNode, ir_nodes_start: i64, ir_nodes_count: i64) {
-    b.ir_nodes = ir_nodes;
-    b.ir_nodes_start = ir_nodes_start;
-    b.ir_nodes_end = ir_nodes_start + ir_nodes_count;
-}
-
-// Set IR locals for the SSA builder
-fn SSABuilder_setIRLocals(b: *SSABuilder,
-                    ir_locals: *IRLocal, ir_locals_start: i64, ir_locals_count: i64) {
-    b.ir_locals = ir_locals;
-    b.ir_locals_start = ir_locals_start;
-    b.ir_locals_count = ir_locals_count;
-}
-
-// Set source for the SSA builder
-fn SSABuilder_setSource(b: *SSABuilder, source: *u8, source_len: i64) {
-    b.source = source;
-    b.source_len = source_len;
-}
-
-// Allocate storage for a block's direct-indexed i64 array (values[var_idx] = value_id)
-fn SSABuilder_allocDefs(b: *SSABuilder, count: i64) *i64 {
-    // Grow var_storage if needed
-    if b.var_storage_used + count > b.var_storage_cap {
-        let new_cap: i64 = b.var_storage_cap * 2;
-        // Update both local and global pointers
-        let old_ptr: *i64 = sb_var_storage;
-        sb_var_storage = realloc_i64(old_ptr, sb_var_storage_cap, new_cap);
-        sb_var_storage_cap = new_cap;
-        b.var_storage = sb_var_storage;
-        b.var_storage_cap = new_cap;
-    }
-    let result: *i64 = b.var_storage + b.var_storage_used;
-    b.var_storage_used = b.var_storage_used + count;
-    return result;
-}
-
-// ============================================================================
-// Block Management
-// ============================================================================
-
-// Create a new SSA block and set it as current
-fn SSABuilder_newBlock(b: *SSABuilder, kind: BlockKind) i64 {
-    let block_id: i64 = b.func.newBlock( kind);
-    SSABuilder_setBlock(b, block_id);
-    return block_id;
-}
-
-// Get current block being built
-// Reference: Zig's SSABuilder.currentBlock()
-fn SSABuilder_currentBlock(b: *SSABuilder) i64 {
-    return b.current_block;
-}
-
-// Set current block
-// Reference: Zig uses getOrPut pattern - reuse existing BlockDefs if present
-// OPTIMIZED: Uses direct indexing by block_id for O(1) access
-fn SSABuilder_setBlock(b: *SSABuilder, block_id: i64) {
-    // Clear per-block fwd_vars (like Zig's startBlock clears fwd_vars)
-    // This prevents FwdRefs from accumulating across blocks
-    b.fwd_vars_count = 0;
-
-    b.current_block = block_id;
-    b.func.setBlock( block_id);
-
-    // Grow all_defs if block_id is beyond capacity
-    // This ensures we can use direct indexing: all_defs[block_id]
-    while block_id >= b.all_defs_cap {
-        let new_cap: i64 = b.all_defs_cap * 2;
-        let blockdefs_size: i64 = @sizeOf(BlockDefs);
-        let old_ptr: *u8 = @ptrCast(*u8, sb_all_defs);
-        let new_ptr: *u8 = realloc_sized(old_ptr, sb_all_defs_cap, new_cap, blockdefs_size);
-        sb_all_defs = @ptrCast(*BlockDefs, new_ptr);
-
-        // Initialize new entries as uninitialized
-        var i: i64 = sb_all_defs_cap;
-        while i < new_cap {
-            let bd: *BlockDefs = sb_all_defs + i;
+    fn init(self: *SSABuilder, f: *Func) {
+        // Allocate module storage on first use
+        SSABuilder_allocateStorage();
+    
+        self.func = f;
+        self.current_block = INVALID_BLOCK;
+        self.current_defs = null;
+    
+        // Use module-allocated storage
+        self.all_defs = sb_all_defs;
+        self.all_defs_count = 0;
+        self.all_defs_cap = sb_all_defs_cap;
+    
+        // CRITICAL: Reset all_defs for new function (stale initialized flags cause crashes)
+        var bd_idx: i64 = 0;
+        while bd_idx < sb_all_defs_cap {
+            let bd: *BlockDefs = sb_all_defs + bd_idx;
             BlockDefs_clear(bd);
-            i = i + 1;
+            bd_idx = bd_idx + 1;
         }
-
-        sb_all_defs_cap = new_cap;
-        b.all_defs = sb_all_defs;
-        b.all_defs_cap = new_cap;
-    }
-
-    // Direct index: all_defs[block_id]
-    let bd: *BlockDefs = b.all_defs + block_id;
-
-    // Check if already initialized (like Zig's getOrPut)
-    if bd.initialized {
-        b.current_defs = bd;
-        return;
-    }
-
-    // First visit to this block - initialize it with direct-indexed i64 array
-    let storage: *i64 = SSABuilder_allocDefs(b, MAX_VAR_DEFS);
-    BlockDefs_init(bd, block_id, storage, MAX_VAR_DEFS);
-    b.current_defs = bd;
-    b.all_defs_count = b.all_defs_count + 1;
-}
-
-// Map IR block to SSA block
-fn SSABuilder_mapBlock(b: *SSABuilder, ir_block: i64, ssa_block: i64) {
-    // Grow block_map if needed - use @sizeOf for correct size
-    if b.block_map_count >= b.block_map_cap {
-        let new_cap: i64 = b.block_map_cap * 2;
-        let blockmap_size: i64 = @sizeOf(BlockMapping);
-        let old_ptr: *u8 = @ptrCast(*u8, sb_block_map);
-        let new_ptr: *u8 = realloc_sized(old_ptr, sb_block_map_cap, new_cap, blockmap_size);
-        sb_block_map = @ptrCast(*BlockMapping, new_ptr);
-        sb_block_map_cap = new_cap;
-        b.block_map = sb_block_map;
-        b.block_map_cap = new_cap;
-    }
-    let m: *BlockMapping = b.block_map + b.block_map_count;
-    m.ir_block = ir_block;
-    m.ssa_block = ssa_block;
-
-    // OPTIMIZATION: Update sparse index for O(1) lookup
-    // Grow index if needed
-    if ir_block >= b.block_map_index_cap {
-        let new_cap: i64 = ir_block * 2 + 16;
-        let old_ptr: *i64 = sb_block_map_index;
-        let new_ptr: *i64 = realloc_i64(old_ptr, sb_block_map_index_cap, new_cap);
-        // Initialize new entries to -1
-        var ni: i64 = sb_block_map_index_cap;
-        while ni < new_cap {
-            (new_ptr + ni).* = -1;
-            ni = ni + 1;
+    
+        self.block_map = sb_block_map;
+        self.block_map_count = 0;
+        self.block_map_cap = sb_block_map_cap;
+        // OPTIMIZATION: Sparse index for O(1) lookup
+        self.block_map_index = sb_block_map_index;
+        self.block_map_index_cap = sb_block_map_index_cap;
+    
+        // CRITICAL: Reset block_map_index for new function (stale entries cause crashes)
+        var bmi: i64 = 0;
+        while bmi < sb_block_map_index_cap {
+            (sb_block_map_index + bmi).* = -1;
+            bmi = bmi + 1;
         }
-        sb_block_map_index = new_ptr;
-        sb_block_map_index_cap = new_cap;
-        b.block_map_index = new_ptr;
-        b.block_map_index_cap = new_cap;
-    }
-    // Store position in block_map
-    (b.block_map_index + ir_block).* = b.block_map_count;
-
-    b.block_map_count = b.block_map_count + 1;
-}
-
-// Get SSA block for IR block (or -1)
-// OPTIMIZED: O(1) lookup using sparse index
-fn SSABuilder_getSSABlock(b: *SSABuilder, ir_block: i64) i64 {
-    // Use sparse index for O(1) lookup
-    if ir_block >= 0 and ir_block < b.block_map_index_cap and b.block_map_index != null {
-        let pos: i64 = (b.block_map_index + ir_block).*;
-        if pos >= 0 and pos < b.block_map_count {
-            let m: *BlockMapping = b.block_map + pos;
-            return m.ssa_block;
+    
+        self.node_values = sb_node_values;
+        self.node_values_cap = sb_node_values_cap;
+    
+        // CRITICAL: Reset node_values for new function (stale entries cause crashes)
+        var nvi: i64 = 0;
+        while nvi < sb_node_values_cap {
+            (sb_node_values + nvi).* = INVALID_ID;
+            nvi = nvi + 1;
         }
+    
+        self.var_storage = sb_var_storage;
+        self.var_storage_used = 0;
+        self.var_storage_cap = sb_var_storage_cap;
+    
+        // CRITICAL: Reset var_storage for new function (stale entries cause crashes)
+        var vsi: i64 = 0;
+        while vsi < sb_var_storage_cap {
+            (sb_var_storage + vsi).* = INVALID_ID;
+            vsi = vsi + 1;
+        }
+    
+        // FwdRef pattern state
+        self.fwd_vars = sb_fwd_vars;
+        self.fwd_vars_count = 0;
+        self.fwd_vars_cap = sb_fwd_vars_cap;
+        // OPTIMIZATION: Sparse index for O(1) lookup
+        self.fwd_vars_index = sb_fwd_vars_index;
+        self.fwd_vars_index_cap = sb_fwd_vars_index_cap;
+    
+        // CRITICAL: Reset fwd_vars_index for new function (stale entries cause crashes)
+        var fvi: i64 = 0;
+        while fvi < sb_fwd_vars_index_cap {
+            (sb_fwd_vars_index + fvi).* = INVALID_ID;
+            fvi = fvi + 1;
+        }
+    
+        // IR references (set later via SSABuilder_setIRNodes/Locals/Source)
+        self.ir_nodes = null;
+        self.ir_nodes_start = 0;
+        self.ir_nodes_end = 0;
+        self.ir_locals = null;
+        self.ir_locals_start = 0;
+        self.ir_locals_count = 0;
+        self.source = null;
+        self.source_len = 0;
+        self.type_registry = null;
+    
+        // Register allocation - simple round-robin matching original main.cot
+        self.next_reg = X1;          // Start at X1 (X0 is reserved for return value)
+        self.max_reg = 28;           // Max is X28 (29=FP, 30=LR, 31=SP/XZR)
     }
-    return INVALID_BLOCK;
-}
 
-// ============================================================================
-// Variable Tracking
-// ============================================================================
-
-// Set variable value in current block
-fn SSABuilder_setVar(b: *SSABuilder, var_idx: i64, value_id: i64) {
-    if b.current_defs != null {
-        BlockDefs_set(b.current_defs, var_idx, value_id);
+    fn setTypeRegistry(self: *SSABuilder, reg: *TypeRegistry) {
+        self.type_registry = reg;
     }
-}
 
-// Get variable value from current block (or -1)
-fn SSABuilder_getVar(b: *SSABuilder, var_idx: i64) i64 {
-    if b.current_defs != null {
-        return BlockDefs_get(b.current_defs, var_idx);
+    fn assignReg(self: *SSABuilder, v: *Value) i64 {
+        // Skip X16, X17, X18 if we're in that range (reserved: linker scratch + platform)
+        if self.next_reg >= 16 and self.next_reg <= 18 {
+            self.next_reg = 19;  // Skip to X19
+        }
+    
+        let reg: i64 = self.next_reg;
+        v.reg = reg;
+    
+        // Advance to next allocatable register
+        self.next_reg = self.next_reg + 1;
+        // Skip X16, X17, X18 if we wrap into that range
+        if self.next_reg == 16 {
+            self.next_reg = 19;  // Skip to X19
+        }
+        if self.next_reg > self.max_reg {
+            self.next_reg = X1;  // Wrap around
+        }
+        return reg;
     }
-    return INVALID_ID;
-}
 
-// ============================================================================
-// FwdRef Pattern - Go's Iterative Phi Insertion
-// Reference: Zig ssa_builder.zig:354-381 (variable) and 1642-1819 (insertPhis)
-// ============================================================================
+    fn setIRNodes(self: *SSABuilder,
+                        ir_nodes: *IRNode, ir_nodes_start: i64, ir_nodes_count: i64) {
+        self.ir_nodes = ir_nodes;
+        self.ir_nodes_start = ir_nodes_start;
+        self.ir_nodes_end = ir_nodes_start + ir_nodes_count;
+    }
 
-// Initialize fwd_vars storage
-fn SSABuilder_initFwdVars(b: *SSABuilder, storage: *VarDef, cap: i64) {
-    b.fwd_vars = storage;
-    b.fwd_vars_count = 0;
-    b.fwd_vars_cap = cap;
-}
+    fn setIRLocals(self: *SSABuilder,
+                        ir_locals: *IRLocal, ir_locals_start: i64, ir_locals_count: i64) {
+        self.ir_locals = ir_locals;
+        self.ir_locals_start = ir_locals_start;
+        self.ir_locals_count = ir_locals_count;
+    }
 
-// Clear fwd_vars for a new block
-fn SSABuilder_clearFwdVars(b: *SSABuilder) {
-    // OPTIMIZATION: Clear sparse index entries for O(1) lookup reset
-    if b.fwd_vars_index != null {
-        var i: i64 = 0;
-        while i < b.fwd_vars_count {
-            let fv: *VarDef = b.fwd_vars + i;
-            if fv.var_idx >= 0 and fv.var_idx < b.fwd_vars_index_cap {
-                (b.fwd_vars_index + fv.var_idx).* = INVALID_ID;
+    fn setSource(self: *SSABuilder, source: *u8, source_len: i64) {
+        self.source = source;
+        self.source_len = source_len;
+    }
+
+    fn allocDefs(self: *SSABuilder, count: i64) *i64 {
+        // Grow var_storage if needed
+        if self.var_storage_used + count > self.var_storage_cap {
+            let new_cap: i64 = self.var_storage_cap * 2;
+            // Update both local and global pointers
+            let old_ptr: *i64 = sb_var_storage;
+            sb_var_storage = realloc_i64(old_ptr, sb_var_storage_cap, new_cap);
+            sb_var_storage_cap = new_cap;
+            self.var_storage = sb_var_storage;
+            self.var_storage_cap = new_cap;
+        }
+        let result: *i64 = self.var_storage + self.var_storage_used;
+        self.var_storage_used = self.var_storage_used + count;
+        return result;
+    }
+
+    fn newBlock(self: *SSABuilder, kind: BlockKind) i64 {
+        let block_id: i64 = self.func.newBlock( kind);
+        self.setBlock(block_id);
+        return block_id;
+    }
+
+    fn currentBlock(self: *SSABuilder) i64 {
+        return self.current_block;
+    }
+
+    fn setBlock(self: *SSABuilder, block_id: i64) {
+        // Clear per-block fwd_vars (like Zig's startBlock clears fwd_vars)
+        // This prevents FwdRefs from accumulating across blocks
+        self.fwd_vars_count = 0;
+    
+        self.current_block = block_id;
+        self.func.setBlock( block_id);
+    
+        // Grow all_defs if block_id is beyond capacity
+        // This ensures we can use direct indexing: all_defs[block_id]
+        while block_id >= self.all_defs_cap {
+            let new_cap: i64 = self.all_defs_cap * 2;
+            let blockdefs_size: i64 = @sizeOf(BlockDefs);
+            let old_ptr: *u8 = @ptrCast(*u8, sb_all_defs);
+            let new_ptr: *u8 = realloc_sized(old_ptr, sb_all_defs_cap, new_cap, blockdefs_size);
+            sb_all_defs = @ptrCast(*BlockDefs, new_ptr);
+    
+            // Initialize new entries as uninitialized
+            var i: i64 = sb_all_defs_cap;
+            while i < new_cap {
+                let bd: *BlockDefs = sb_all_defs + i;
+                BlockDefs_clear(bd);
+                i = i + 1;
             }
-            i = i + 1;
+    
+            sb_all_defs_cap = new_cap;
+            self.all_defs = sb_all_defs;
+            self.all_defs_cap = new_cap;
         }
-    }
-    b.fwd_vars_count = 0;
-}
-
-// Get cached FwdRef for variable in current block (or INVALID_ID)
-// OPTIMIZED: O(1) lookup using sparse index
-fn SSABuilder_getFwdVar(b: *SSABuilder, var_idx: i64) i64 {
-    // Use sparse index for O(1) lookup
-    if var_idx >= 0 and var_idx < b.fwd_vars_index_cap and b.fwd_vars_index != null {
-        return (b.fwd_vars_index + var_idx).*;
-    }
-    return INVALID_ID;
-}
-
-// Cache FwdRef for variable in current block
-fn SSABuilder_setFwdVar(b: *SSABuilder, var_idx: i64, value_id: i64) {
-    // Grow fwd_vars if needed - use @sizeOf for correct size
-    if b.fwd_vars_count >= b.fwd_vars_cap {
-        let new_cap: i64 = b.fwd_vars_cap * 2;
-        let vardef_size: i64 = @sizeOf(VarDef);
-        let old_ptr: *u8 = @ptrCast(*u8, sb_fwd_vars);
-        let new_ptr: *u8 = realloc_sized(old_ptr, sb_fwd_vars_cap, new_cap, vardef_size);
-        sb_fwd_vars = @ptrCast(*VarDef, new_ptr);
-        sb_fwd_vars_cap = new_cap;
-        b.fwd_vars = sb_fwd_vars;
-        b.fwd_vars_cap = new_cap;
-    }
-    let fv: *VarDef = b.fwd_vars + b.fwd_vars_count;
-    fv.var_idx = var_idx;
-    fv.value_id = value_id;
-    b.fwd_vars_count = b.fwd_vars_count + 1;
-
-    // OPTIMIZATION: Update sparse index for O(1) lookup
-    // Grow index if needed
-    if var_idx >= b.fwd_vars_index_cap {
-        let new_cap: i64 = var_idx * 2 + 16;
-        let old_ptr: *i64 = sb_fwd_vars_index;
-        let new_ptr: *i64 = realloc_i64(old_ptr, sb_fwd_vars_index_cap, new_cap);
-        // Initialize new entries to INVALID_ID
-        var ni: i64 = sb_fwd_vars_index_cap;
-        while ni < new_cap {
-            (new_ptr + ni).* = INVALID_ID;
-            ni = ni + 1;
+    
+        // Direct index: all_defs[block_id]
+        let bd: *BlockDefs = self.all_defs + block_id;
+    
+        // Check if already initialized (like Zig's getOrPut)
+        if bd.initialized {
+            self.current_defs = bd;
+            return;
         }
-        sb_fwd_vars_index = new_ptr;
-        sb_fwd_vars_index_cap = new_cap;
-        b.fwd_vars_index = new_ptr;
-        b.fwd_vars_index_cap = new_cap;
-    }
-    // Store value directly in index (not position)
-    (b.fwd_vars_index + var_idx).* = value_id;
-}
-
-// Read current value of a variable - creates FwdRef if needed.
-// This is the KEY method that implements the FwdRef pattern.
-// Reference: Zig ssa_builder.zig:354-381
-fn SSABuilder_variable(b: *SSABuilder, local_idx: i64, type_idx: i64) *Value {
-    // 1. Check current block's definitions
-    let val_id: i64 = SSABuilder_getVar(b, local_idx);
-    if val_id != INVALID_ID {
-        return b.func.getValue( val_id);
+    
+        // First visit to this block - initialize it with direct-indexed i64 array
+        let storage: *i64 = self.allocDefs(MAX_VAR_DEFS);
+        BlockDefs_init(bd, block_id, storage, MAX_VAR_DEFS);
+        self.current_defs = bd;
+        self.all_defs_count = self.all_defs_count + 1;
     }
 
-    // 2. Check if we already created a FwdRef for this
-    let fwd_id: i64 = SSABuilder_getFwdVar(b, local_idx);
-    if fwd_id != INVALID_ID {
-        return b.func.getValue( fwd_id);
+    fn mapBlock(self: *SSABuilder, ir_block: i64, ssa_block: i64) {
+        // Grow block_map if needed - use @sizeOf for correct size
+        if self.block_map_count >= self.block_map_cap {
+            let new_cap: i64 = self.block_map_cap * 2;
+            let blockmap_size: i64 = @sizeOf(BlockMapping);
+            let old_ptr: *u8 = @ptrCast(*u8, sb_block_map);
+            let new_ptr: *u8 = realloc_sized(old_ptr, sb_block_map_cap, new_cap, blockmap_size);
+            sb_block_map = @ptrCast(*BlockMapping, new_ptr);
+            sb_block_map_cap = new_cap;
+            self.block_map = sb_block_map;
+            self.block_map_cap = new_cap;
+        }
+        let m: *BlockMapping = self.block_map + self.block_map_count;
+        m.ir_block = ir_block;
+        m.ssa_block = ssa_block;
+    
+        // OPTIMIZATION: Update sparse index for O(1) lookup
+        // Grow index if needed
+        if ir_block >= self.block_map_index_cap {
+            let new_cap: i64 = ir_block * 2 + 16;
+            let old_ptr: *i64 = sb_block_map_index;
+            let new_ptr: *i64 = realloc_i64(old_ptr, sb_block_map_index_cap, new_cap);
+            // Initialize new entries to -1
+            var ni: i64 = sb_block_map_index_cap;
+            while ni < new_cap {
+                (new_ptr + ni).* = -1;
+                ni = ni + 1;
+            }
+            sb_block_map_index = new_ptr;
+            sb_block_map_index_cap = new_cap;
+            self.block_map_index = new_ptr;
+            self.block_map_index_cap = new_cap;
+        }
+        // Store position in block_map
+        (self.block_map_index + ir_block).* = self.block_map_count;
+    
+        self.block_map_count = self.block_map_count + 1;
     }
 
-    // 3. Create forward reference - will be resolved later by insertPhis
-    let fwd_ref: *Value = b.func.newValue( Op.FwdRef, type_idx);
-    fwd_ref.aux_int = local_idx;  // Remember which variable
-
-    // 4. Cache to coalesce multiple uses in same block
-    SSABuilder_setFwdVar(b, local_idx, fwd_ref.id);
-
-    return fwd_ref;
-}
-
-// Helper: ensure defvars[block_id][local_idx] = value
-// Reference: Zig ssa_builder.zig:1759-1770
-fn SSABuilder_ensureDefvar(b: *SSABuilder, block_id: i64, local_idx: i64, value_id: i64) {
-    let bd: *BlockDefs = SSABuilder_getBlockDefs(b, block_id);
-    if bd == null { return; }
-
-    // Only set if not already defined (don't override real definitions with FwdRefs)
-    let existing: i64 = BlockDefs_get(bd, local_idx);
-    if existing == INVALID_ID {
-        BlockDefs_set(bd, local_idx, value_id);
-    }
-}
-
-// Look up the value of a variable at the end of a block.
-// If not found and we hit a block with multiple predecessors, creates a new FwdRef.
-// Reference: Zig ssa_builder.zig:1775-1819
-// Returns value_id or creates a new FwdRef and returns its id
-fn SSABuilder_lookupVarOutgoing(b: *SSABuilder, block_id: i64, local_idx: i64, type_idx: i64,
-                                fwd_refs: *I64List) i64 {
-    var cur_id: i64 = block_id;
-
-    // Walk backwards through single-predecessor chains
-    while true {
-        // Check if block defines this variable
-        let bd: *BlockDefs = SSABuilder_getBlockDefs(b, cur_id);
-        if bd != null {
-            let val_id: i64 = BlockDefs_get(bd, local_idx);
-            if val_id != INVALID_ID {
-                return val_id;
+    fn getSSABlock(self: *SSABuilder, ir_block: i64) i64 {
+        // Use sparse index for O(1) lookup
+        if ir_block >= 0 and ir_block < self.block_map_index_cap and self.block_map_index != null {
+            let pos: i64 = (self.block_map_index + ir_block).*;
+            if pos >= 0 and pos < self.block_map_count {
+                let m: *BlockMapping = self.block_map + pos;
+                return m.ssa_block;
             }
         }
-
-        // Get block to check predecessors
-        let blk: *Block = b.func.getBlock( cur_id);
-        if blk == null { break; }
-
-        // Single predecessor? Keep walking back
-        if blk.preds.count == 1 {
-            cur_id = blk.getPred( 0);
-            continue;
-        }
-
-        // Multiple predecessors or no predecessors (entry) - stop walking
-        break;
+        return INVALID_BLOCK;
     }
 
-    // Create a new FwdRef in the block we walked back to (cur_id), NOT current block
-    // This matches Zig: self.func.newValue(.fwd_ref, type_idx, cur, self.cur_pos)
-    // Temporarily switch to cur_id block to create value there
-    let saved_block: i64 = b.func.current_block;
-    b.func.setBlock( cur_id);
-    let new_fwd: *Value = b.func.newValue( Op.FwdRef, type_idx);
-    new_fwd.aux_int = local_idx;
-    b.func.setBlock( saved_block);  // Restore
-
-    // Store in defvars so we don't create duplicate
-    SSABuilder_ensureDefvar(b, cur_id, local_idx, new_fwd.id);
-
-    // CRITICAL: Add to work list so it gets processed
-    i64list_append(fwd_refs, new_fwd.id);
-
-    return new_fwd.id;
-}
-
-// Reorder values in each block to ensure phis come first.
-// Reference: Zig ssa_builder.zig:1732-1757
-fn SSABuilder_reorderPhis(b: *SSABuilder) {
-    var block_idx: i64 = 0;
-    while block_idx < b.func.blocks_count {
-        let blk: *Block = b.func.getBlock( block_idx);
-
-        // Count phis and non-phis
-        var phi_count: i64 = 0;
-        var i: i64 = 0;
-        while i < blk.values_count {
-            let v: *Value = b.func.getValue( blk.values_start + i);
-            if v.op == Op.Phi {
-                phi_count = phi_count + 1;
-            }
-            i = i + 1;
+    fn setVar(self: *SSABuilder, var_idx: i64, value_id: i64) {
+        if self.current_defs != null {
+            BlockDefs_set(self.current_defs, var_idx, value_id);
         }
-
-        // If all values are phis or no phis, nothing to do
-        if phi_count == 0 or phi_count == blk.values_count {
-            block_idx = block_idx + 1;
-            continue;
-        }
-
-        // Need to reorder: use dynamic list
-        var temp_ids: I64List = undefined;
-        i64list_init(&temp_ids);
-
-        // First pass: collect phis
-        i = 0;
-        while i < blk.values_count {
-            let v: *Value = b.func.getValue( blk.values_start + i);
-            if v.op == Op.Phi {
-                i64list_append(&temp_ids, blk.values_start + i);
-            }
-            i = i + 1;
-        }
-
-        // Second pass: collect non-phis
-        i = 0;
-        while i < blk.values_count {
-            let v: *Value = b.func.getValue( blk.values_start + i);
-            if v.op != Op.Phi {
-                i64list_append(&temp_ids, blk.values_start + i);
-            }
-            i = i + 1;
-        }
-
-        // Note: The values themselves don't move, just their IDs
-        // This is a simplification - real implementation would update the block's value list
-        // For now, we rely on codegen handling phis first regardless of order
-
-        i64list_deinit(&temp_ids);
-        block_idx = block_idx + 1;
-    }
-}
-
-// Insert phi nodes for all forward references using Go's iterative algorithm.
-// Called after all blocks have been walked.
-// Reference: Zig ssa_builder.zig:1642-1727
-fn SSABuilder_insertPhis(b: *SSABuilder) {
-    // Work list of FwdRef value IDs to process (dynamic list)
-    var fwd_refs: I64List = undefined;
-    i64list_init(&fwd_refs);
-
-    // Collect initial FwdRef values and treat them as definitions
-    var block_idx: i64 = 0;
-    while block_idx < b.func.blocks_count {
-        let blk: *Block = b.func.getBlock( block_idx);
-        var i: i64 = 0;
-        while i < blk.values_count {
-            let val_id: i64 = blk.values_start + i;
-            let v: *Value = b.func.getValue( val_id);
-            if v.op == Op.FwdRef {
-                // Add to work list
-                i64list_append(&fwd_refs, val_id);
-                // Treat FwdRefs as definitions in their block
-                let local_idx: i64 = v.aux_int;
-                SSABuilder_ensureDefvar(b, block_idx, local_idx, val_id);
-            }
-            i = i + 1;
-        }
-        block_idx = block_idx + 1;
     }
 
-    // Temporary storage for incoming values (dynamic list)
-    var args: I64List = undefined;
-    i64list_init(&args);
-
-    // Safety: limit iterations to prevent infinite loops
-    // Max iterations = initial FwdRefs * max_block_count (generous upper bound)
-    let initial_fwd_refs: i64 = fwd_refs.count;
-    let max_iters: i64 = (fwd_refs.count + 1) * (b.func.blocks_count + 1) * 2;
-    var iter_count: i64 = 0;
-
-    // (Debug output removed for performance)
-
-    // Process FwdRefs iteratively until the work list is empty
-    while fwd_refs.count > 0 {
-        iter_count = iter_count + 1;
-        if iter_count > max_iters {
-            // Bail out to prevent infinite loop - print warning
-            // print("  WARNING: phi insertion bailed out at iter="); print(iter_count); print(" remaining="); print(fwd_refs.count); print("\n");
-            break;
+    fn getVar(self: *SSABuilder, var_idx: i64) i64 {
+        if self.current_defs != null {
+            return BlockDefs_get(self.current_defs, var_idx);
         }
-
-        // Pop from work list
-        let fwd_id: i64 = i64list_pop(&fwd_refs);
-        let fwd: *Value = b.func.getValue( fwd_id);
-
-        // Get block directly from Value's block_id field (O(1) instead of O(n*m) search)
-        // This matches Zig: const block = fwd.block orelse continue;
-        let fwd_block_id: i64 = fwd.block_id;
-        if fwd_block_id < 0 { continue; }
-
-        let blk: *Block = b.func.getBlock( fwd_block_id);
-
-        // Entry block should never have FwdRef (variable used before defined)
-        if fwd_block_id == 0 {
-            continue;
-        }
-
-        // No predecessors? Skip (unreachable block)
-        if blk.preds.count == 0 {
-            continue;
-        }
-
-        let local_idx: i64 = fwd.aux_int;
-
-        // Find variable value on each predecessor
-        i64list_clear(&args);
-        var pred_idx: i64 = 0;
-        while pred_idx < blk.preds.count {
-            let pred_block_id: i64 = blk.getPred( pred_idx);
-            let val_id: i64 = SSABuilder_lookupVarOutgoing(b, pred_block_id, local_idx, fwd.type_idx,
-                                                           &fwd_refs);
-            i64list_append(&args, val_id);
-            pred_idx = pred_idx + 1;
-        }
-
-        // Decide if we need a phi or not
-        // We need a phi if there are two different args (excluding self-references)
-        var witness: i64 = INVALID_ID;
-        var need_phi: bool = false;
-
-        var ai: i64 = 0;
-        while ai < args.count {
-            let a: i64 = i64list_get(&args, ai);
-            if a == fwd_id {
-                ai = ai + 1;
-                continue;  // Self-reference, skip
-            }
-            if witness == INVALID_ID {
-                witness = a;  // First witness
-            } else if a != witness {
-                need_phi = true;  // Two different values, need phi
-                break;
-            }
-            ai = ai + 1;
-        }
-
-        if need_phi {
-            // Convert to Phi with all incoming values
-            fwd.op = Op.Phi;
-            ai = 0;
-            while ai < args.count {
-                let arg_val: *Value = b.func.getValue( i64list_get(&args, ai));
-                fwd.addArg( arg_val);
-                ai = ai + 1;
-            }
-        } else if witness != INVALID_ID {
-            // One witness (excluding self). Make it a copy.
-            fwd.op = Op.Copy;
-            let witness_val: *Value = b.func.getValue( witness);
-            fwd.addArg( witness_val);
-        }
-        // If no witness at all (all self-references), leave as FwdRef
-        // This is an error but will be caught later
-    }
-
-    // Clean up dynamic lists
-    i64list_deinit(&args);
-    i64list_deinit(&fwd_refs);
-
-    // Reorder all blocks to ensure phis are at the start
-    SSABuilder_reorderPhis(b);
-}
-
-// ============================================================================
-// Node Value Caching
-// ============================================================================
-
-// Cache IR node → SSA value mapping
-// OPTIMIZED: O(1) direct array access using relative index
-fn SSABuilder_cacheNode(b: *SSABuilder, node_idx: i64, value_id: i64) {
-    let rel_idx: i64 = node_idx - b.ir_nodes_start;
-    if rel_idx < 0 or rel_idx >= b.node_values_cap {
-        return;  // Out of bounds
-    }
-    (b.node_values + rel_idx).* = value_id;
-}
-
-// Get cached SSA value for IR node (or -1)
-// OPTIMIZED: O(1) direct array access using relative index
-fn SSABuilder_getCached(b: *SSABuilder, node_idx: i64) i64 {
-    let rel_idx: i64 = node_idx - b.ir_nodes_start;
-    if rel_idx < 0 or rel_idx >= b.node_values_cap {
         return INVALID_ID;
     }
-    return (b.node_values + rel_idx).*;
-}
 
-// ============================================================================
-// Value Emission (wrappers around func_* functions)
-// ============================================================================
-
-// Emit constant integer
-fn SSABuilder_emitConstInt(b: *SSABuilder, value: i64, type_idx: i64) *Value {
-    return b.func.emitConstInt( value, type_idx);
-}
-
-// Emit constant boolean
-fn SSABuilder_emitConstBool(b: *SSABuilder, value: bool) *Value {
-    return b.func.emitConstBool( value);
-}
-
-// Emit binary operation
-fn SSABuilder_emitBinary(b: *SSABuilder, op: Op, left: *Value, right: *Value, type_idx: i64) *Value {
-    return b.func.emitBinary( op, left, right, type_idx);
-}
-
-// Emit unary operation
-fn SSABuilder_emitUnary(b: *SSABuilder, op: Op, operand: *Value, type_idx: i64) *Value {
-    return b.func.emitUnary( op, operand, type_idx);
-}
-
-// Emit load from local
-fn SSABuilder_emitLoadLocal(b: *SSABuilder, local_idx: i64) *Value {
-    return b.func.emitLoadLocal( local_idx);
-}
-
-// Emit store to local
-fn SSABuilder_emitStoreLocal(b: *SSABuilder, local_idx: i64, val: *Value) *Value {
-    return b.func.emitStoreLocal( local_idx, val);
-}
-
-// Emit return
-fn SSABuilder_emitReturn(b: *SSABuilder, val: *Value) *Value {
-    return b.func.emitReturn( val);
-}
-
-// Emit stack allocation (alloca)
-// Reference: Zig's SSABuilder.buildAlloca()
-// Returns pointer to allocated stack space
-fn SSABuilder_emitAlloca(b: *SSABuilder, size: i64, align: i64, type_idx: i64) *Value {
-    // In cot0, we use LocalAddr to get address of a local variable
-    // Add a new local to the function and return its address
-    let local_idx: i64 = b.func.addLocal( 0, 0, type_idx, true);
-    let local: *Local = b.func.getLocal( local_idx);
-    local.size = size;
-    local.align = align;
-
-    let addr: *Value = b.func.newValue( Op.LocalAddr, type_idx);
-    addr.aux_int = local_idx;
-    return addr;
-}
-
-// Emit type cast/conversion
-// Reference: Zig's SSABuilder.buildCast()
-// Selects appropriate conversion op based on source/dest size
-fn SSABuilder_emitCast(b: *SSABuilder, val: *Value, src_size: i64, dst_size: i64, is_signed: bool, dst_type: i64) *Value {
-    // Same size - no conversion needed
-    if src_size == dst_size {
-        return val;
+    fn initFwdVars(self: *SSABuilder, storage: *VarDef, cap: i64) {
+        self.fwd_vars = storage;
+        self.fwd_vars_count = 0;
+        self.fwd_vars_cap = cap;
     }
 
-    // Extension (smaller to larger)
-    if src_size < dst_size {
-        var op: Op = Op.ZeroExt8to64;  // Default
-        if is_signed {
-            if src_size == 1 {
-                op = Op.SignExt8to64;
-            } else if src_size == 2 {
-                op = Op.SignExt16to64;
-            } else if src_size == 4 {
-                op = Op.SignExt32to64;
-            }
-        } else {
-            if src_size == 1 {
-                op = Op.ZeroExt8to64;
-            } else if src_size == 2 {
-                op = Op.ZeroExt16to64;
-            } else if src_size == 4 {
-                op = Op.ZeroExt32to64;
+    fn clearFwdVars(self: *SSABuilder) {
+        // OPTIMIZATION: Clear sparse index entries for O(1) lookup reset
+        if self.fwd_vars_index != null {
+            var i: i64 = 0;
+            while i < self.fwd_vars_count {
+                let fv: *VarDef = self.fwd_vars + i;
+                if fv.var_idx >= 0 and fv.var_idx < self.fwd_vars_index_cap {
+                    (self.fwd_vars_index + fv.var_idx).* = INVALID_ID;
+                }
+                i = i + 1;
             }
         }
-        return b.func.emitUnary( op, val, dst_type);
+        self.fwd_vars_count = 0;
     }
 
-    // Truncation (larger to smaller)
-    var op: Op = Op.Trunc64to8;  // Default
-    if dst_size == 1 {
-        op = Op.Trunc64to8;
-    } else if dst_size == 2 {
-        op = Op.Trunc64to16;
-    } else if dst_size == 4 {
-        op = Op.Trunc64to32;
-    }
-    return b.func.emitUnary( op, val, dst_type);
-}
-
-// ============================================================================
-// Control Flow
-// ============================================================================
-
-// Emit conditional branch
-fn SSABuilder_emitIf(b: *SSABuilder, cond: *Value, then_block: i64, else_block: i64) {
-    b.func.emitIf( cond, then_block, else_block);
-}
-
-// Emit unconditional jump
-fn SSABuilder_emitJump(b: *SSABuilder, target: i64) {
-    b.func.emitJump( target);
-}
-
-// Mark current block as return
-fn SSABuilder_emitReturn_block(b: *SSABuilder) {
-    b.func.emitReturnBlock();
-}
-
-// ============================================================================
-// Phi Node Creation
-// ============================================================================
-
-// Create phi node for variable
-fn SSABuilder_emitPhi(b: *SSABuilder, type_idx: i64) *Value {
-    let v: *Value = b.func.newValue( Op.Phi, type_idx);
-    return v;
-}
-
-// Add argument to phi node from predecessor block
-fn SSABuilder_phiAddArg(b: *SSABuilder, phi: *Value, val: *Value, pred_block: i64) {
-    // For simplicity, store args directly
-    // In full implementation, args are ordered by predecessor
-    phi.addArg( val);
-}
-
-// ============================================================================
-// Complete IR to SSA Conversion
-// Matches Zig's SSABuilder.build() in src/frontend/ssa_builder.zig
-// ============================================================================
-
-// Build SSA from IR function
-// Returns 0 on success, error code otherwise
-// Reference: Zig's SSABuilder.build() at line 383
-fn SSABuilder_build(b: *SSABuilder) i64 {
-    // Step 1: Find max block_id
-
-    // Step 1: Find max block_id in IR nodes to know how many blocks we need
-    var max_block_id: i64 = 0;
-    var ir_idx: i64 = b.ir_nodes_start;
-    while ir_idx < b.ir_nodes_end {
-        let ir_node: *IRNode = b.ir_nodes + ir_idx;
-        if ir_node.block_id > max_block_id {
-            max_block_id = ir_node.block_id;
+    fn getFwdVar(self: *SSABuilder, var_idx: i64) i64 {
+        // Use sparse index for O(1) lookup
+        if var_idx >= 0 and var_idx < self.fwd_vars_index_cap and self.fwd_vars_index != null {
+            return (self.fwd_vars_index + var_idx).*;
         }
-        ir_idx = ir_idx + 1;
+        return INVALID_ID;
     }
 
-    // Step 2: Create SSA blocks
-
-    // Step 2: Create SSA blocks
-    // Entry block (block 0)
-    let entry: i64 = b.func.newEntryBlock();
-    SSABuilder_setBlock(b, entry);
-    SSABuilder_mapBlock(b, 0, entry);
-
-    // Create additional blocks (1 through max_block_id)
-    var block_idx: i64 = 1;
-    while block_idx <= max_block_id {
-        let new_block: i64 = b.func.newBlock( BlockKind.Plain);
-        SSABuilder_mapBlock(b, block_idx, new_block);
-        block_idx = block_idx + 1;
-    }
-
-    // Step 3: Register locals
-
-    // Step 3: Register locals (params first, then regular locals)
-    // Copy from IR locals to SSA locals
-    var local_idx: i64 = b.ir_locals_start;
-    let locals_end: i64 = b.ir_locals_start + b.ir_locals_count;
-    var ssa_local_idx: i64 = 0;
-    while local_idx < locals_end {
-        let ir_local: *IRLocal = b.ir_locals + local_idx;
-        if ir_local.is_param {
-            b.func.addParam( ir_local.name_start, ir_local.name_len,
-                          ir_local.type_idx);
-        } else {
-            b.func.addLocal( ir_local.name_start, ir_local.name_len,
-                          ir_local.type_idx, ir_local.is_mutable);
+    fn setFwdVar(self: *SSABuilder, var_idx: i64, value_id: i64) {
+        // Grow fwd_vars if needed - use @sizeOf for correct size
+        if self.fwd_vars_count >= self.fwd_vars_cap {
+            let new_cap: i64 = self.fwd_vars_cap * 2;
+            let vardef_size: i64 = @sizeOf(VarDef);
+            let old_ptr: *u8 = @ptrCast(*u8, sb_fwd_vars);
+            let new_ptr: *u8 = realloc_sized(old_ptr, sb_fwd_vars_cap, new_cap, vardef_size);
+            sb_fwd_vars = @ptrCast(*VarDef, new_ptr);
+            sb_fwd_vars_cap = new_cap;
+            self.fwd_vars = sb_fwd_vars;
+            self.fwd_vars_cap = new_cap;
         }
-        // Copy size from IR local to SSA local
-        let ssa_local: *Local = b.func.getLocal( ssa_local_idx);
-        ssa_local.size = ir_local.size;
-        local_idx = local_idx + 1;
-        ssa_local_idx = ssa_local_idx + 1;
+        let fv: *VarDef = self.fwd_vars + self.fwd_vars_count;
+        fv.var_idx = var_idx;
+        fv.value_id = value_id;
+        self.fwd_vars_count = self.fwd_vars_count + 1;
+    
+        // OPTIMIZATION: Update sparse index for O(1) lookup
+        // Grow index if needed
+        if var_idx >= self.fwd_vars_index_cap {
+            let new_cap: i64 = var_idx * 2 + 16;
+            let old_ptr: *i64 = sb_fwd_vars_index;
+            let new_ptr: *i64 = realloc_i64(old_ptr, sb_fwd_vars_index_cap, new_cap);
+            // Initialize new entries to INVALID_ID
+            var ni: i64 = sb_fwd_vars_index_cap;
+            while ni < new_cap {
+                (new_ptr + ni).* = INVALID_ID;
+                ni = ni + 1;
+            }
+            sb_fwd_vars_index = new_ptr;
+            sb_fwd_vars_index_cap = new_cap;
+            self.fwd_vars_index = new_ptr;
+            self.fwd_vars_index_cap = new_cap;
+        }
+        // Store value directly in index (not position)
+        (self.fwd_vars_index + var_idx).* = value_id;
     }
-    // Step 4: Handle parameters
-    // Step 4: Handle parameters with 3-phase approach (BUG-056 fix)
-    // Following Zig's ssa_builder.zig lines 111-242
-    //
-    // CRITICAL: Emit ALL Arg ops FIRST, then stores.
-    // This ensures ABI registers (x0-x7) aren't overwritten before being captured.
-    //
-    // Phase 1: Create ALL Arg ops (captures all ABI register values)
-    // Phase 2: Create slice_make ops for string params (not yet implemented)
-    // Phase 3: Store all params to stack slots
-    //
-    // String/slice params take TWO registers (ptr + len), so we track the
-    // physical register index separately from the logical param index.
 
-    // Dynamic lists to track params across phases (store value IDs, not pointers)
-    var arg_value_ids: I64List = undefined;
-    var arg_local_indices: I64List = undefined;
-    i64list_init(&arg_value_ids);
-    i64list_init(&arg_local_indices);
+    fn variable(self: *SSABuilder, local_idx: i64, type_idx: i64) *Value {
+        // 1. Check current block's definitions
+        let val_id: i64 = self.getVar(local_idx);
+        if val_id != INVALID_ID {
+            return self.func.getValue( val_id);
+        }
+    
+        // 2. Check if we already created a FwdRef for this
+        let fwd_id: i64 = self.getFwdVar(local_idx);
+        if fwd_id != INVALID_ID {
+            return self.func.getValue( fwd_id);
+        }
+    
+        // 3. Create forward reference - will be resolved later by insertPhis
+        let fwd_ref: *Value = self.func.newValue( Op.FwdRef, type_idx);
+        fwd_ref.aux_int = local_idx;  // Remember which variable
+    
+        // 4. Cache to coalesce multiple uses in same block
+        self.setFwdVar(local_idx, fwd_ref.id);
+    
+        return fwd_ref;
+    }
 
-    // Phase 1: Create ALL Arg ops first
-    // phys_reg_idx tracks the physical ABI register (x0, x1, ..., or stack slot)
-    var phys_reg_idx: i64 = 0;
-    var param_local_idx: i64 = 0;
-    while param_local_idx < b.func.locals_count {
-        let param_local: *Local = b.func.getLocal( param_local_idx);
-        if param_local.is_param {
-            // Check if this is a string parameter (needs 2 registers: ptr, len)
-            let is_string_param: bool = param_local.type_idx == TYPE_STRING;
+    fn ensureDefvar(self: *SSABuilder, block_id: i64, local_idx: i64, value_id: i64) {
+        let bd: *BlockDefs = self.getBlockDefs(block_id);
+        if bd == null { return; }
+    
+        // Only set if not already defined (don't override real definitions with FwdRefs)
+        let existing: i64 = BlockDefs_get(bd, local_idx);
+        if existing == INVALID_ID {
+            BlockDefs_set(bd, local_idx, value_id);
+        }
+    }
 
-            if is_string_param {
-                // String param: create TWO Arg ops (ptr in reg N, len in reg N+1)
-                // Then combine them with StringMake
-                //
-                // CRITICAL: Use IDs, not pointers - Func_newValue can realloc!
-
-                // Arg for ptr
-                let ptr_arg_val: *Value = b.func.newValue( Op.Arg, TYPE_I64);
-                let ptr_arg_id: i64 = ptr_arg_val.id;  // Save ID before potential realloc
-                ptr_arg_val.aux_int = phys_reg_idx;
-                if phys_reg_idx < 8 {
-                    ptr_arg_val.reg = X0 + phys_reg_idx;
+    fn lookupVarOutgoing(self: *SSABuilder, block_id: i64, local_idx: i64, type_idx: i64,
+                                    fwd_refs: *I64List) i64 {
+        var cur_id: i64 = block_id;
+    
+        // Walk backwards through single-predecessor chains
+        while true {
+            // Check if block defines this variable
+            let bd: *BlockDefs = self.getBlockDefs(cur_id);
+            if bd != null {
+                let val_id: i64 = BlockDefs_get(bd, local_idx);
+                if val_id != INVALID_ID {
+                    return val_id;
                 }
-                phys_reg_idx = phys_reg_idx + 1;
+            }
+    
+            // Get block to check predecessors
+            let blk: *Block = self.func.getBlock( cur_id);
+            if blk == null { break; }
+    
+            // Single predecessor? Keep walking back
+            if blk.preds.count == 1 {
+                cur_id = blk.getPred( 0);
+                continue;
+            }
+    
+            // Multiple predecessors or no predecessors (entry) - stop walking
+            break;
+        }
+    
+        // Create a new FwdRef in the block we walked back to (cur_id), NOT current block
+        // This matches Zig: self.func.newValue(.fwd_ref, type_idx, cur, self.cur_pos)
+        // Temporarily switch to cur_id block to create value there
+        let saved_block: i64 = self.func.current_block;
+        self.func.setBlock( cur_id);
+        let new_fwd: *Value = self.func.newValue( Op.FwdRef, type_idx);
+        new_fwd.aux_int = local_idx;
+        self.func.setBlock( saved_block);  // Restore
+    
+        // Store in defvars so we don't create duplicate
+        self.ensureDefvar(cur_id, local_idx, new_fwd.id);
+    
+        // CRITICAL: Add to work list so it gets processed
+        i64list_append(fwd_refs, new_fwd.id);
+    
+        return new_fwd.id;
+    }
 
-                // Arg for len
-                let len_arg_val: *Value = b.func.newValue( Op.Arg, TYPE_I64);
-                let len_arg_id: i64 = len_arg_val.id;  // Save ID before potential realloc
-                len_arg_val.aux_int = phys_reg_idx;
-                if phys_reg_idx < 8 {
-                    len_arg_val.reg = X0 + phys_reg_idx;
+    fn reorderPhis(self: *SSABuilder) {
+        var block_idx: i64 = 0;
+        while block_idx < self.func.blocks_count {
+            let blk: *Block = self.func.getBlock( block_idx);
+    
+            // Count phis and non-phis
+            var phi_count: i64 = 0;
+            var i: i64 = 0;
+            while i < blk.values_count {
+                let v: *Value = self.func.getValue( blk.values_start + i);
+                if v.op == Op.Phi {
+                    phi_count = phi_count + 1;
                 }
-                phys_reg_idx = phys_reg_idx + 1;
+                i = i + 1;
+            }
+    
+            // If all values are phis or no phis, nothing to do
+            if phi_count == 0 or phi_count == blk.values_count {
+                block_idx = block_idx + 1;
+                continue;
+            }
+    
+            // Need to reorder: use dynamic list
+            var temp_ids: I64List = undefined;
+            i64list_init(&temp_ids);
+    
+            // First pass: collect phis
+            i = 0;
+            while i < blk.values_count {
+                let v: *Value = self.func.getValue( blk.values_start + i);
+                if v.op == Op.Phi {
+                    i64list_append(&temp_ids, blk.values_start + i);
+                }
+                i = i + 1;
+            }
+    
+            // Second pass: collect non-phis
+            i = 0;
+            while i < blk.values_count {
+                let v: *Value = self.func.getValue( blk.values_start + i);
+                if v.op != Op.Phi {
+                    i64list_append(&temp_ids, blk.values_start + i);
+                }
+                i = i + 1;
+            }
+    
+            // Note: The values themselves don't move, just their IDs
+            // This is a simplification - real implementation would update the block's value list
+            // For now, we rely on codegen handling phis first regardless of order
+    
+            i64list_deinit(&temp_ids);
+            block_idx = block_idx + 1;
+        }
+    }
 
-                // Create StringMake to combine ptr and len
-                // Re-fetch pointers since Func_newValue may have reallocated
-                let str_make_val: *Value = b.func.newValue( Op.StringMake, TYPE_STRING);
-                let fresh_ptr_val: *Value = b.func.getValue( ptr_arg_id);
-                let fresh_len_val: *Value = b.func.getValue( len_arg_id);
-                str_make_val.addArg( fresh_ptr_val);
-                str_make_val.addArg( fresh_len_val);
+    fn insertPhis(self: *SSABuilder) {
+        // Work list of FwdRef value IDs to process (dynamic list)
+        var fwd_refs: I64List = undefined;
+        i64list_init(&fwd_refs);
+    
+        // Collect initial FwdRef values and treat them as definitions
+        var block_idx: i64 = 0;
+        while block_idx < self.func.blocks_count {
+            let blk: *Block = self.func.getBlock( block_idx);
+            var i: i64 = 0;
+            while i < blk.values_count {
+                let val_id: i64 = blk.values_start + i;
+                let v: *Value = self.func.getValue( val_id);
+                if v.op == Op.FwdRef {
+                    // Add to work list
+                    i64list_append(&fwd_refs, val_id);
+                    // Treat FwdRefs as definitions in their block
+                    let local_idx: i64 = v.aux_int;
+                    self.ensureDefvar(block_idx, local_idx, val_id);
+                }
+                i = i + 1;
+            }
+            block_idx = block_idx + 1;
+        }
+    
+        // Temporary storage for incoming values (dynamic list)
+        var args: I64List = undefined;
+        i64list_init(&args);
+    
+        // Safety: limit iterations to prevent infinite loops
+        // Max iterations = initial FwdRefs * max_block_count (generous upper bound)
+        let initial_fwd_refs: i64 = fwd_refs.count;
+        let max_iters: i64 = (fwd_refs.count + 1) * (self.func.blocks_count + 1) * 2;
+        var iter_count: i64 = 0;
+    
+        // (Debug output removed for performance)
+    
+        // Process FwdRefs iteratively until the work list is empty
+        while fwd_refs.count > 0 {
+            iter_count = iter_count + 1;
+            if iter_count > max_iters {
+                // Bail out to prevent infinite loop - print warning
+                // print("  WARNING: phi insertion bailed out at iter="); print(iter_count); print(" remaining="); print(fwd_refs.count); print("\n");
+                break;
+            }
+    
+            // Pop from work list
+            let fwd_id: i64 = i64list_pop(&fwd_refs);
+            let fwd: *Value = self.func.getValue( fwd_id);
+    
+            // Get block directly from Value's block_id field (O(1) instead of O(n*m) search)
+            // This matches Zig: const block = fwd.block orelse continue;
+            let fwd_block_id: i64 = fwd.block_id;
+            if fwd_block_id < 0 { continue; }
+    
+            let blk: *Block = self.func.getBlock( fwd_block_id);
+    
+            // Entry block should never have FwdRef (variable used before defined)
+            if fwd_block_id == 0 {
+                continue;
+            }
+    
+            // No predecessors? Skip (unreachable block)
+            if blk.preds.count == 0 {
+                continue;
+            }
+    
+            let local_idx: i64 = fwd.aux_int;
+    
+            // Find variable value on each predecessor
+            i64list_clear(&args);
+            var pred_idx: i64 = 0;
+            while pred_idx < blk.preds.count {
+                let pred_block_id: i64 = blk.getPred( pred_idx);
+                let val_id: i64 = self.lookupVarOutgoing(pred_block_id, local_idx, fwd.type_idx,
+                                                               &fwd_refs);
+                i64list_append(&args, val_id);
+                pred_idx = pred_idx + 1;
+            }
+    
+            // Decide if we need a phi or not
+            // We need a phi if there are two different args (excluding self-references)
+            var witness: i64 = INVALID_ID;
+            var need_phi: bool = false;
+    
+            var ai: i64 = 0;
+            while ai < args.count {
+                let a: i64 = i64list_get(&args, ai);
+                if a == fwd_id {
+                    ai = ai + 1;
+                    continue;  // Self-reference, skip
+                }
+                if witness == INVALID_ID {
+                    witness = a;  // First witness
+                } else if a != witness {
+                    need_phi = true;  // Two different values, need phi
+                    break;
+                }
+                ai = ai + 1;
+            }
+    
+            if need_phi {
+                // Convert to Phi with all incoming values
+                fwd.op = Op.Phi;
+                ai = 0;
+                while ai < args.count {
+                    let arg_val: *Value = self.func.getValue( i64list_get(&args, ai));
+                    fwd.addArg( arg_val);
+                    ai = ai + 1;
+                }
+            } else if witness != INVALID_ID {
+                // One witness (excluding self). Make it a copy.
+                fwd.op = Op.Copy;
+                let witness_val: *Value = self.func.getValue( witness);
+                fwd.addArg( witness_val);
+            }
+            // If no witness at all (all self-references), leave as FwdRef
+            // This is an error but will be caught later
+        }
+    
+        // Clean up dynamic lists
+        i64list_deinit(&args);
+        i64list_deinit(&fwd_refs);
+    
+        // Reorder all blocks to ensure phis are at the start
+        self.reorderPhis();
+    }
 
-                // Save StringMake result for Phase 3 (not the raw Arg)
-                i64list_append(&arg_value_ids, str_make_val.id);
-                i64list_append(&arg_local_indices, param_local_idx);
+    fn cacheNode(self: *SSABuilder, node_idx: i64, value_id: i64) {
+        let rel_idx: i64 = node_idx - self.ir_nodes_start;
+        if rel_idx < 0 or rel_idx >= self.node_values_cap {
+            return;  // Out of bounds
+        }
+        (self.node_values + rel_idx).* = value_id;
+    }
+
+    fn getCached(self: *SSABuilder, node_idx: i64) i64 {
+        let rel_idx: i64 = node_idx - self.ir_nodes_start;
+        if rel_idx < 0 or rel_idx >= self.node_values_cap {
+            return INVALID_ID;
+        }
+        return (self.node_values + rel_idx).*;
+    }
+
+    fn emitConstInt(self: *SSABuilder, value: i64, type_idx: i64) *Value {
+        return self.func.emitConstInt( value, type_idx);
+    }
+
+    fn emitConstBool(self: *SSABuilder, value: bool) *Value {
+        return self.func.emitConstBool( value);
+    }
+
+    fn emitBinary(self: *SSABuilder, op: Op, left: *Value, right: *Value, type_idx: i64) *Value {
+        return self.func.emitBinary( op, left, right, type_idx);
+    }
+
+    fn emitUnary(self: *SSABuilder, op: Op, operand: *Value, type_idx: i64) *Value {
+        return self.func.emitUnary( op, operand, type_idx);
+    }
+
+    fn emitLoadLocal(self: *SSABuilder, local_idx: i64) *Value {
+        return self.func.emitLoadLocal( local_idx);
+    }
+
+    fn emitStoreLocal(self: *SSABuilder, local_idx: i64, val: *Value) *Value {
+        return self.func.emitStoreLocal( local_idx, val);
+    }
+
+    fn emitReturn(self: *SSABuilder, val: *Value) *Value {
+        return self.func.emitReturn( val);
+    }
+
+    fn emitAlloca(self: *SSABuilder, size: i64, align: i64, type_idx: i64) *Value {
+        // In cot0, we use LocalAddr to get address of a local variable
+        // Add a new local to the function and return its address
+        let local_idx: i64 = self.func.addLocal( 0, 0, type_idx, true);
+        let local: *Local = self.func.getLocal( local_idx);
+        local.size = size;
+        local.align = align;
+    
+        let addr: *Value = self.func.newValue( Op.LocalAddr, type_idx);
+        addr.aux_int = local_idx;
+        return addr;
+    }
+
+    fn emitCast(self: *SSABuilder, val: *Value, src_size: i64, dst_size: i64, is_signed: bool, dst_type: i64) *Value {
+        // Same size - no conversion needed
+        if src_size == dst_size {
+            return val;
+        }
+    
+        // Extension (smaller to larger)
+        if src_size < dst_size {
+            var op: Op = Op.ZeroExt8to64;  // Default
+            if is_signed {
+                if src_size == 1 {
+                    op = Op.SignExt8to64;
+                } else if src_size == 2 {
+                    op = Op.SignExt16to64;
+                } else if src_size == 4 {
+                    op = Op.SignExt32to64;
+                }
             } else {
-                // Non-string param: create single Arg op
-                // ARM64 ABI: x0-x7 for first 8 args, stack for rest
-                let arg_val: *Value = b.func.newValue( Op.Arg, TYPE_I64);
-                arg_val.aux_int = phys_reg_idx;  // Physical register index, not logical param index
-                if phys_reg_idx < 8 {
-                    // Register argument - pre-assign to X0-X7
-                    arg_val.reg = X0 + phys_reg_idx;
+                if src_size == 1 {
+                    op = Op.ZeroExt8to64;
+                } else if src_size == 2 {
+                    op = Op.ZeroExt16to64;
+                } else if src_size == 4 {
+                    op = Op.ZeroExt32to64;
                 }
-                // Stack arguments (phys_reg_idx >= 8) have reg=-1, will be assigned by regalloc
-
-                // Save for Phase 3
-                i64list_append(&arg_value_ids, arg_val.id);
-                i64list_append(&arg_local_indices, param_local_idx);
-
-                phys_reg_idx = phys_reg_idx + 1;
             }
+            return self.func.emitUnary( op, val, dst_type);
         }
-        param_local_idx = param_local_idx + 1;
+    
+        // Truncation (larger to smaller)
+        var op: Op = Op.Trunc64to8;  // Default
+        if dst_size == 1 {
+            op = Op.Trunc64to8;
+        } else if dst_size == 2 {
+            op = Op.Trunc64to16;
+        } else if dst_size == 4 {
+            op = Op.Trunc64to32;
+        }
+        return self.func.emitUnary( op, val, dst_type);
     }
 
-    // Phase 2: String params handled above with StringMake
+    fn emitIf(self: *SSABuilder, cond: *Value, then_block: i64, else_block: i64) {
+        self.func.emitIf( cond, then_block, else_block);
+    }
 
-    // Phase 3: Store all params to stack slots
-    // This happens AFTER all Arg ops are created
-    var i: i64 = 0;
-    while i < arg_value_ids.count {
-        // CRITICAL: Use IDs throughout to avoid stale pointers after realloc
-        let arg_val_id: i64 = i64list_get(&arg_value_ids, i);
-        let local_idx: i64 = i64list_get(&arg_local_indices, i);
-        let param_local: *Local = b.func.getLocal( local_idx);
+    fn emitJump(self: *SSABuilder, target: i64) {
+        self.func.emitJump( target);
+    }
 
-        // Create LocalAddr value for the stack slot
-        let addr_val: *Value = b.func.newValue( Op.LocalAddr, TYPE_I64);
-        let addr_val_id: i64 = addr_val.id;  // Save ID
-        addr_val.aux_int = local_idx;
+    fn emitReturn_block(self: *SSABuilder) {
+        self.func.emitReturnBlock();
+    }
 
-        // Re-fetch arg_val after potential realloc
-        let arg_val: *Value = b.func.getValue( arg_val_id);
+    fn emitPhi(self: *SSABuilder, type_idx: i64) *Value {
+        let v: *Value = self.func.newValue( Op.Phi, type_idx);
+        return v;
+    }
 
-        // Handle string params specially: store both ptr and len components
-        if arg_val.op == Op.StringMake and arg_val.args.count >= 2 {
-            // String param: store ptr at offset 0, len at offset 8
-            // Get the arg IDs from the StringMake value
-            let ptr_val_id: i64 = arg_val.getArg( 0);
-            let len_val_id: i64 = arg_val.getArg( 1);
+    fn phiAddArg(self: *SSABuilder, phi: *Value, val: *Value, pred_block: i64) {
+        // For simplicity, store args directly
+        // In full implementation, args are ordered by predecessor
+        phi.addArg( val);
+    }
 
-            // Store ptr to base address
-            let store_ptr: *Value = b.func.newValue( Op.Store, TYPE_VOID);
-            // Re-fetch all needed values after Func_newValue
-            let fresh_addr: *Value = b.func.getValue( addr_val_id);
-            let fresh_ptr: *Value = b.func.getValue( ptr_val_id);
-            store_ptr.addArg2( fresh_addr, fresh_ptr);
-
-            // Create addr + 8 for len using OffPtr (offset pointer)
-            let addr_plus_8: *Value = b.func.newValue( Op.OffPtr, TYPE_I64);
-            let addr_plus_8_id: i64 = addr_plus_8.id;
-            addr_plus_8.aux_int = 8;  // offset
-            // Re-fetch addr after potential realloc
-            let fresh_addr2: *Value = b.func.getValue( addr_val_id);
-            addr_plus_8.addArg( fresh_addr2);  // base pointer
-
-            // Store len at offset 8
-            let store_len: *Value = b.func.newValue( Op.Store, TYPE_VOID);
-            // Re-fetch values after Func_newValue
-            let fresh_addr_plus_8: *Value = b.func.getValue( addr_plus_8_id);
-            let fresh_len: *Value = b.func.getValue( len_val_id);
-            store_len.addArg2( fresh_addr_plus_8, fresh_len);
-        } else {
-            // BUG-019 FIX: >16B struct types are passed by reference
-            // Following Zig ssa_builder.zig lines 222-238
-            // param_val is a POINTER to source, use OpMove to copy
-            var is_large_struct: bool = false;
-            var type_size: i64 = 8;
-            if b.type_registry != null {
-                type_size = TypeRegistry_sizeof(b.type_registry, param_local.type_idx);
-                let is_struct: bool = TypeInfo_isStruct(b.type_registry, param_local.type_idx);
-                if is_struct and type_size > 16 {
-                    is_large_struct = true;
-                }
+    fn build(self: *SSABuilder) i64 {
+        // Step 1: Find max block_id
+    
+        // Step 1: Find max block_id in IR nodes to know how many blocks we need
+        var max_block_id: i64 = 0;
+        var ir_idx: i64 = self.ir_nodes_start;
+        while ir_idx < self.ir_nodes_end {
+            let ir_node: *IRNode = self.ir_nodes + ir_idx;
+            if ir_node.block_id > max_block_id {
+                max_block_id = ir_node.block_id;
             }
-
-            if is_large_struct {
-                // OpMove: copy from arg_val (source ptr) to addr_val (dest)
-                let move_val: *Value = b.func.newValue( Op.Move, TYPE_VOID);
-                move_val.aux_int = type_size;
-                // Re-fetch values after Func_newValue
-                let fresh_addr: *Value = b.func.getValue( addr_val_id);
-                let fresh_arg: *Value = b.func.getValue( arg_val_id);
-                move_val.addArg2( fresh_addr, fresh_arg);
+            ir_idx = ir_idx + 1;
+        }
+    
+        // Step 2: Create SSA blocks
+    
+        // Step 2: Create SSA blocks
+        // Entry block (block 0)
+        let entry: i64 = self.func.newEntryBlock();
+        self.setBlock(entry);
+        self.mapBlock(0, entry);
+    
+        // Create additional blocks (1 through max_block_id)
+        var block_idx: i64 = 1;
+        while block_idx <= max_block_id {
+            let new_block: i64 = self.func.newBlock( BlockKind.Plain);
+            self.mapBlock(block_idx, new_block);
+            block_idx = block_idx + 1;
+        }
+    
+        // Step 3: Register locals
+    
+        // Step 3: Register locals (params first, then regular locals)
+        // Copy from IR locals to SSA locals
+        var local_idx: i64 = self.ir_locals_start;
+        let locals_end: i64 = self.ir_locals_start + self.ir_locals_count;
+        var ssa_local_idx: i64 = 0;
+        while local_idx < locals_end {
+            let ir_local: *IRLocal = self.ir_locals + local_idx;
+            if ir_local.is_param {
+                self.func.addParam( ir_local.name_start, ir_local.name_len,
+                              ir_local.type_idx);
             } else {
-                // Store Arg to stack slot
-                let store_val: *Value = b.func.newValue( Op.Store, TYPE_VOID);
+                self.func.addLocal( ir_local.name_start, ir_local.name_len,
+                              ir_local.type_idx, ir_local.is_mutable);
+            }
+            // Copy size from IR local to SSA local
+            let ssa_local: *Local = self.func.getLocal( ssa_local_idx);
+            ssa_local.size = ir_local.size;
+            local_idx = local_idx + 1;
+            ssa_local_idx = ssa_local_idx + 1;
+        }
+        // Step 4: Handle parameters
+        // Step 4: Handle parameters with 3-phase approach (BUG-056 fix)
+        // Following Zig's ssa_builder.zig lines 111-242
+        //
+        // CRITICAL: Emit ALL Arg ops FIRST, then stores.
+        // This ensures ABI registers (x0-x7) aren't overwritten before being captured.
+        //
+        // Phase 1: Create ALL Arg ops (captures all ABI register values)
+        // Phase 2: Create slice_make ops for string params (not yet implemented)
+        // Phase 3: Store all params to stack slots
+        //
+        // String/slice params take TWO registers (ptr + len), so we track the
+        // physical register index separately from the logical param index.
+    
+        // Dynamic lists to track params across phases (store value IDs, not pointers)
+        var arg_value_ids: I64List = undefined;
+        var arg_local_indices: I64List = undefined;
+        i64list_init(&arg_value_ids);
+        i64list_init(&arg_local_indices);
+    
+        // Phase 1: Create ALL Arg ops first
+        // phys_reg_idx tracks the physical ABI register (x0, x1, ..., or stack slot)
+        var phys_reg_idx: i64 = 0;
+        var param_local_idx: i64 = 0;
+        while param_local_idx < self.func.locals_count {
+            let param_local: *Local = self.func.getLocal( param_local_idx);
+            if param_local.is_param {
+                // Check if this is a string parameter (needs 2 registers: ptr, len)
+                let is_string_param: bool = param_local.type_idx == TYPE_STRING;
+    
+                if is_string_param {
+                    // String param: create TWO Arg ops (ptr in reg N, len in reg N+1)
+                    // Then combine them with StringMake
+                    //
+                    // CRITICAL: Use IDs, not pointers - Func_newValue can realloc!
+    
+                    // Arg for ptr
+                    let ptr_arg_val: *Value = self.func.newValue( Op.Arg, TYPE_I64);
+                    let ptr_arg_id: i64 = ptr_arg_val.id;  // Save ID before potential realloc
+                    ptr_arg_val.aux_int = phys_reg_idx;
+                    if phys_reg_idx < 8 {
+                        ptr_arg_val.reg = X0 + phys_reg_idx;
+                    }
+                    phys_reg_idx = phys_reg_idx + 1;
+    
+                    // Arg for len
+                    let len_arg_val: *Value = self.func.newValue( Op.Arg, TYPE_I64);
+                    let len_arg_id: i64 = len_arg_val.id;  // Save ID before potential realloc
+                    len_arg_val.aux_int = phys_reg_idx;
+                    if phys_reg_idx < 8 {
+                        len_arg_val.reg = X0 + phys_reg_idx;
+                    }
+                    phys_reg_idx = phys_reg_idx + 1;
+    
+                    // Create StringMake to combine ptr and len
+                    // Re-fetch pointers since Func_newValue may have reallocated
+                    let str_make_val: *Value = self.func.newValue( Op.StringMake, TYPE_STRING);
+                    let fresh_ptr_val: *Value = self.func.getValue( ptr_arg_id);
+                    let fresh_len_val: *Value = self.func.getValue( len_arg_id);
+                    str_make_val.addArg( fresh_ptr_val);
+                    str_make_val.addArg( fresh_len_val);
+    
+                    // Save StringMake result for Phase 3 (not the raw Arg)
+                    i64list_append(&arg_value_ids, str_make_val.id);
+                    i64list_append(&arg_local_indices, param_local_idx);
+                } else {
+                    // Non-string param: create single Arg op
+                    // ARM64 ABI: x0-x7 for first 8 args, stack for rest
+                    let arg_val: *Value = self.func.newValue( Op.Arg, TYPE_I64);
+                    arg_val.aux_int = phys_reg_idx;  // Physical register index, not logical param index
+                    if phys_reg_idx < 8 {
+                        // Register argument - pre-assign to X0-X7
+                        arg_val.reg = X0 + phys_reg_idx;
+                    }
+                    // Stack arguments (phys_reg_idx >= 8) have reg=-1, will be assigned by regalloc
+    
+                    // Save for Phase 3
+                    i64list_append(&arg_value_ids, arg_val.id);
+                    i64list_append(&arg_local_indices, param_local_idx);
+    
+                    phys_reg_idx = phys_reg_idx + 1;
+                }
+            }
+            param_local_idx = param_local_idx + 1;
+        }
+    
+        // Phase 2: String params handled above with StringMake
+    
+        // Phase 3: Store all params to stack slots
+        // This happens AFTER all Arg ops are created
+        var i: i64 = 0;
+        while i < arg_value_ids.count {
+            // CRITICAL: Use IDs throughout to avoid stale pointers after realloc
+            let arg_val_id: i64 = i64list_get(&arg_value_ids, i);
+            let local_idx: i64 = i64list_get(&arg_local_indices, i);
+            let param_local: *Local = self.func.getLocal( local_idx);
+    
+            // Create LocalAddr value for the stack slot
+            let addr_val: *Value = self.func.newValue( Op.LocalAddr, TYPE_I64);
+            let addr_val_id: i64 = addr_val.id;  // Save ID
+            addr_val.aux_int = local_idx;
+    
+            // Re-fetch arg_val after potential realloc
+            let arg_val: *Value = self.func.getValue( arg_val_id);
+    
+            // Handle string params specially: store both ptr and len components
+            if arg_val.op == Op.StringMake and arg_val.args.count >= 2 {
+                // String param: store ptr at offset 0, len at offset 8
+                // Get the arg IDs from the StringMake value
+                let ptr_val_id: i64 = arg_val.getArg( 0);
+                let len_val_id: i64 = arg_val.getArg( 1);
+    
+                // Store ptr to base address
+                let store_ptr: *Value = self.func.newValue( Op.Store, TYPE_VOID);
+                // Re-fetch all needed values after Func_newValue
+                let fresh_addr: *Value = self.func.getValue( addr_val_id);
+                let fresh_ptr: *Value = self.func.getValue( ptr_val_id);
+                store_ptr.addArg2( fresh_addr, fresh_ptr);
+    
+                // Create addr + 8 for len using OffPtr (offset pointer)
+                let addr_plus_8: *Value = self.func.newValue( Op.OffPtr, TYPE_I64);
+                let addr_plus_8_id: i64 = addr_plus_8.id;
+                addr_plus_8.aux_int = 8;  // offset
+                // Re-fetch addr after potential realloc
+                let fresh_addr2: *Value = self.func.getValue( addr_val_id);
+                addr_plus_8.addArg( fresh_addr2);  // base pointer
+    
+                // Store len at offset 8
+                let store_len: *Value = self.func.newValue( Op.Store, TYPE_VOID);
                 // Re-fetch values after Func_newValue
-                let fresh_addr: *Value = b.func.getValue( addr_val_id);
-                let fresh_arg: *Value = b.func.getValue( arg_val_id);
-                store_val.addArg2( fresh_addr, fresh_arg);
+                let fresh_addr_plus_8: *Value = self.func.getValue( addr_plus_8_id);
+                let fresh_len: *Value = self.func.getValue( len_val_id);
+                store_len.addArg2( fresh_addr_plus_8, fresh_len);
+            } else {
+                // BUG-019 FIX: >16B struct types are passed by reference
+                // Following Zig ssa_builder.zig lines 222-238
+                // param_val is a POINTER to source, use OpMove to copy
+                var is_large_struct: bool = false;
+                var type_size: i64 = 8;
+                if self.type_registry != null {
+                    type_size = TypeRegistry_sizeof(self.type_registry, param_local.type_idx);
+                    let is_struct: bool = TypeInfo_isStruct(self.type_registry, param_local.type_idx);
+                    if is_struct and type_size > 16 {
+                        is_large_struct = true;
+                    }
+                }
+    
+                if is_large_struct {
+                    // OpMove: copy from arg_val (source ptr) to addr_val (dest)
+                    let move_val: *Value = self.func.newValue( Op.Move, TYPE_VOID);
+                    move_val.aux_int = type_size;
+                    // Re-fetch values after Func_newValue
+                    let fresh_addr: *Value = self.func.getValue( addr_val_id);
+                    let fresh_arg: *Value = self.func.getValue( arg_val_id);
+                    move_val.addArg2( fresh_addr, fresh_arg);
+                } else {
+                    // Store Arg to stack slot
+                    let store_val: *Value = self.func.newValue( Op.Store, TYPE_VOID);
+                    // Re-fetch values after Func_newValue
+                    let fresh_addr: *Value = self.func.getValue( addr_val_id);
+                    let fresh_arg: *Value = self.func.getValue( arg_val_id);
+                    store_val.addArg2( fresh_addr, fresh_arg);
+                }
+            }
+    
+            i = i + 1;
+        }
+        i64list_deinit(&arg_value_ids);
+        i64list_deinit(&arg_local_indices);
+    
+        // Step 4.5: Initialize node_values cache for O(1) lookup
+        // Size needed = number of IR nodes for this function
+        let nodes_needed: i64 = self.ir_nodes_end - self.ir_nodes_start;
+        // Grow if needed
+        while nodes_needed > self.node_values_cap {
+            let new_cap: i64 = self.node_values_cap * 2;
+            let old_ptr: *i64 = sb_node_values;
+            sb_node_values = realloc_i64(old_ptr, sb_node_values_cap, new_cap);
+            sb_node_values_cap = new_cap;
+            self.node_values = sb_node_values;
+            self.node_values_cap = new_cap;
+        }
+        // Initialize all entries to INVALID_ID
+        var nv_idx: i64 = 0;
+        while nv_idx < nodes_needed {
+            (self.node_values + nv_idx).* = INVALID_ID;
+            nv_idx = nv_idx + 1;
+        }
+    
+        // Step 5: Convert IR nodes to SSA
+        // Track current IR block for block transitions
+        var current_ir_block: i64 = 0;
+        ir_idx = self.ir_nodes_start;
+        while ir_idx < self.ir_nodes_end {
+            let ir_node: *IRNode = self.ir_nodes + ir_idx;
+    
+            // Handle block transitions
+            if ir_node.block_id != current_ir_block {
+                current_ir_block = ir_node.block_id;
+                let ssa_block: i64 = self.getSSABlock(current_ir_block);
+                if ssa_block >= 0 {
+                    self.setBlock(ssa_block);
+                }
+            }
+    
+            // Convert this node
+            self.convertNode(ir_node, ir_idx);
+    
+            ir_idx = ir_idx + 1;
+        }
+    
+        // Step 6: Insert phi nodes for forward references
+        // Reference: Zig ssa_builder.zig:455
+        self.insertPhis();
+    
+        // Step 6.5: Verify SSA form
+        // Reference: Zig ssa_builder.zig:459
+        self.verify();
+    
+        // Step 7: Emit return block
+        self.func.emitReturnBlock();
+    
+        return 0;
+    }
+
+    fn convertNode(self: *SSABuilder, ir_node: *IRNode, ir_idx: i64) i64 {
+        // Check if already converted (using node_values cache)
+        let cached: i64 = self.getCached(ir_idx);
+        if cached != INVALID_ID {
+            return cached;
+        }
+    
+        // Dispatch based on node kind
+        var result_id: i64 = INVALID_ID;
+    
+        if ir_node.kind == IRNodeKind.ConstInt {
+            result_id = self.convertConstInt(ir_node);
+        } else if ir_node.kind == IRNodeKind.ConstString {
+            result_id = self.convertConstString(ir_node);
+        } else if ir_node.kind == IRNodeKind.ConstBool {
+            result_id = self.convertConstBool(ir_node);
+        } else if ir_node.kind == IRNodeKind.Binary {
+            result_id = self.convertBinary(ir_node);
+        } else if ir_node.kind == IRNodeKind.Unary {
+            result_id = self.convertUnary(ir_node);
+        } else if ir_node.kind == IRNodeKind.LoadLocal {
+            result_id = self.convertLoadLocal(ir_node);
+        } else if ir_node.kind == IRNodeKind.StoreLocal {
+            result_id = self.convertStoreLocal(ir_node);
+        } else if ir_node.kind == IRNodeKind.AddrLocal {
+            result_id = self.convertAddrLocal(ir_node);
+        } else if ir_node.kind == IRNodeKind.LoadGlobal {
+            result_id = self.convertLoadGlobal(ir_node);
+        } else if ir_node.kind == IRNodeKind.StoreGlobal {
+            result_id = self.convertStoreGlobal(ir_node);
+        } else if ir_node.kind == IRNodeKind.AddrGlobal {
+            result_id = self.convertAddrGlobal(ir_node);
+        } else if ir_node.kind == IRNodeKind.FuncAddr {
+            result_id = self.convertFuncAddr(ir_node);
+        } else if ir_node.kind == IRNodeKind.Load {
+            result_id = self.convertLoad(ir_node);
+        } else if ir_node.kind == IRNodeKind.Store {
+            result_id = self.convertStore(ir_node);
+        } else if ir_node.kind == IRNodeKind.FieldLocal {
+            result_id = self.convertFieldLocal(ir_node);
+        } else if ir_node.kind == IRNodeKind.FieldValue {
+            result_id = self.convertFieldValue(ir_node);
+        } else if ir_node.kind == IRNodeKind.StoreFieldLocal {
+            result_id = self.convertStoreFieldLocal(ir_node);
+        } else if ir_node.kind == IRNodeKind.StoreField {
+            result_id = self.convertStoreField(ir_node);
+        } else if ir_node.kind == IRNodeKind.IndexLocal {
+            result_id = self.convertIndexLocal(ir_node);
+        } else if ir_node.kind == IRNodeKind.IndexValue {
+            result_id = self.convertIndexValue(ir_node);
+        } else if ir_node.kind == IRNodeKind.StoreIndexLocal {
+            result_id = self.convertStoreIndexLocal(ir_node);
+        } else if ir_node.kind == IRNodeKind.StoreIndexValue {
+            result_id = self.convertStoreIndexValue(ir_node);
+        } else if ir_node.kind == IRNodeKind.MakeString {
+            result_id = self.convertMakeString(ir_node);
+        } else if ir_node.kind == IRNodeKind.MakeSlice {
+            result_id = self.convertMakeSlice(ir_node);
+        } else if ir_node.kind == IRNodeKind.SlicePtr {
+            result_id = self.convertSlicePtr(ir_node);
+        } else if ir_node.kind == IRNodeKind.SliceLen {
+            result_id = self.convertSliceLen(ir_node);
+        } else if ir_node.kind == IRNodeKind.Call {
+            result_id = self.convertCall(ir_node);
+        } else if ir_node.kind == IRNodeKind.CallIndirect {
+            result_id = self.convertCallIndirect(ir_node);
+        } else if ir_node.kind == IRNodeKind.StrConcat {
+            result_id = self.convertStrConcat(ir_node);
+        } else if ir_node.kind == IRNodeKind.Select {
+            result_id = self.convertSelect(ir_node);
+        } else if ir_node.kind == IRNodeKind.Branch {
+            self.convertBranch(ir_node);
+            result_id = INVALID_ID;
+        } else if ir_node.kind == IRNodeKind.Jump {
+            self.convertJump(ir_node);
+            result_id = INVALID_ID;
+        } else if ir_node.kind == IRNodeKind.Return {
+            self.convertReturn(ir_node);
+            result_id = INVALID_ID;
+        }
+    
+        // Cache the result and set source position for debug info
+        if result_id != INVALID_ID {
+            self.cacheNode(ir_idx, result_id);
+            // Copy source position from IR node to SSA value for DWARF line tables
+            let result_val: *Value = self.func.getValue( result_id);
+            result_val.pos = ir_node.pos;
+        }
+    
+        return result_id;
+    }
+
+    fn getValue(self: *SSABuilder, value_id: i64) *Value {
+        return self.func.getValue( value_id);
+    }
+
+    fn getOperandValue(self: *SSABuilder, relative_ir_idx: i64) *Value {
+        let abs_idx: i64 = self.ir_nodes_start + relative_ir_idx;
+        let value_id: i64 = self.getCached(abs_idx);
+        return self.func.getValue( value_id);
+    }
+
+    fn convertConstInt(self: *SSABuilder, ir_node: *IRNode) i64 {
+        let val: *Value = self.func.emitConstInt( ir_node.value, TYPE_I64);
+        self.assignReg(val);
+        return val.id;
+    }
+
+    fn convertConstString(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // String literal: left=str_start, right=str_len in source
+        let val: *Value = self.func.emitConstString( ir_node.left, ir_node.right);
+        self.assignReg(val);
+        return val.id;
+    }
+
+    fn convertConstBool(self: *SSABuilder, ir_node: *IRNode) i64 {
+        let val: *Value = self.func.emitConstBool( ir_node.value != 0);
+        self.assignReg(val);
+        return val.id;
+    }
+
+    fn convertBinary(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // left and right are relative IR indices
+        let left_val: *Value = self.getOperandValue(ir_node.left);
+        let right_val: *Value = self.getOperandValue(ir_node.right);
+        let ssa_op: Op = Op_fromIRBinaryOp(ir_node.op);
+        let val: *Value = self.func.emitBinary( ssa_op, left_val, right_val, TYPE_I64);
+        self.assignReg(val);
+        return val.id;
+    }
+
+    fn convertUnary(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Unary op: left is operand (relative IR index), op is the operator
+        let operand_val: *Value = self.getOperandValue(ir_node.left);
+        let ssa_op: Op = Op_fromIRUnaryOp(ir_node.op);
+        let val: *Value = self.func.newValue( ssa_op, TYPE_I64);
+        val.addArg( operand_val);
+        self.assignReg(val);
+        return val.id;
+    }
+
+    fn convertLoadLocal(self: *SSABuilder, ir_node: *IRNode) i64 {
+        let loc_idx: i64 = ir_node.left;
+        let load_val: *Value = self.func.emitLoadLocal( loc_idx);
+        self.assignReg(load_val);
+        return load_val.id;
+    }
+
+    fn convertStoreLocal(self: *SSABuilder, ir_node: *IRNode) i64 {
+        let loc_idx: i64 = ir_node.left;
+        // right is relative IR index of value to store
+        let value_val: *Value = self.getOperandValue(ir_node.right);
+    
+        // BUG-019 FIX: For struct types, use Op.Move to copy the data
+        // Following Zig ssa_builder.zig:228-233:
+        //   const is_large_struct = (local_type_info == .struct_type) and (type_size > 16);
+        //   if (is_large_struct) { const move_val = try func.newValue(.move, ...); }
+        //
+        // When the value is an address of a struct (from index_value, field_value, etc.),
+        // we need to copy the struct data to the local, not just store the address.
+        let local: *Local = self.func.getLocal( loc_idx);
+        var is_struct: bool = false;
+        var struct_size: i64 = 0;
+        if self.type_registry != null and local.type_idx > 0 {
+            let local_type: *Type = TypeRegistry_get(self.type_registry, local.type_idx);
+            if local_type.kind == TypeKind.Struct {
+                is_struct = true;
+                struct_size = local.size;
             }
         }
-
-        i = i + 1;
-    }
-    i64list_deinit(&arg_value_ids);
-    i64list_deinit(&arg_local_indices);
-
-    // Step 4.5: Initialize node_values cache for O(1) lookup
-    // Size needed = number of IR nodes for this function
-    let nodes_needed: i64 = b.ir_nodes_end - b.ir_nodes_start;
-    // Grow if needed
-    while nodes_needed > b.node_values_cap {
-        let new_cap: i64 = b.node_values_cap * 2;
-        let old_ptr: *i64 = sb_node_values;
-        sb_node_values = realloc_i64(old_ptr, sb_node_values_cap, new_cap);
-        sb_node_values_cap = new_cap;
-        b.node_values = sb_node_values;
-        b.node_values_cap = new_cap;
-    }
-    // Initialize all entries to INVALID_ID
-    var nv_idx: i64 = 0;
-    while nv_idx < nodes_needed {
-        (b.node_values + nv_idx).* = INVALID_ID;
-        nv_idx = nv_idx + 1;
+    
+        if is_struct and struct_size > 8 {
+            // Struct type: emit Op.Move to copy data from source to dest
+            // dest = address of local
+            let dest_addr: *Value = self.func.newValue( Op.LocalAddr, TYPE_I64);
+            dest_addr.aux_int = loc_idx;
+            self.assignReg(dest_addr);
+    
+            // source = value_val (which should be an address for struct types)
+            // Move: (dest, source) with aux_int = size
+            let move_val: *Value = self.func.newValue( Op.Move, TYPE_VOID);
+            move_val.aux_int = struct_size;
+            move_val.addArg2( dest_addr, value_val);
+            return move_val.id;
+        }
+    
+        // Non-struct: use normal store
+        let store_val: *Value = self.func.emitStoreLocal( loc_idx, value_val);
+        // Stores don't need registers (they write to memory)
+        return store_val.id;
     }
 
-    // Step 5: Convert IR nodes to SSA
-    // Track current IR block for block transitions
-    var current_ir_block: i64 = 0;
-    ir_idx = b.ir_nodes_start;
-    while ir_idx < b.ir_nodes_end {
-        let ir_node: *IRNode = b.ir_nodes + ir_idx;
+    fn convertAddrLocal(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Address of local variable: left = local index
+        let loc_idx: i64 = ir_node.left;
+        let addr_val: *Value = self.func.newValue( Op.LocalAddr, TYPE_I64);
+        addr_val.aux_int = loc_idx;
+        self.assignReg(addr_val);
+        return addr_val.id;
+    }
 
-        // Handle block transitions
-        if ir_node.block_id != current_ir_block {
-            current_ir_block = ir_node.block_id;
-            let ssa_block: i64 = SSABuilder_getSSABlock(b, current_ir_block);
-            if ssa_block >= 0 {
-                SSABuilder_setBlock(b, ssa_block);
+    fn convertLoadGlobal(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Load global variable: left = global index
+        let global_idx: i64 = ir_node.left;
+        let load_val: *Value = self.func.newValue( Op.GlobalLoad, ir_node.type_idx);
+        load_val.aux_int = global_idx;
+        self.assignReg(load_val);
+        return load_val.id;
+    }
+
+    fn convertStoreGlobal(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Store to global variable: left = global index, right = value expr
+        let global_idx: i64 = ir_node.left;
+        let val: *Value = self.getOperandValue(ir_node.right);
+        let store_val: *Value = self.func.newValue( Op.GlobalStore, TYPE_I64);
+        store_val.aux_int = global_idx;
+        store_val.addArg( val);
+        self.assignReg(store_val);
+        return store_val.id;
+    }
+
+    fn convertAddrGlobal(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Address of global variable: left = global index
+        let global_idx: i64 = ir_node.left;
+        let addr_val: *Value = self.func.newValue( Op.GlobalAddr, TYPE_I64);
+        addr_val.aux_int = global_idx;
+        self.assignReg(addr_val);
+        return addr_val.id;
+    }
+
+    fn convertFuncAddr(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Address of function: func_name_start, func_name_len
+        let addr_val: *Value = self.func.newValue( Op.Addr, TYPE_I64);
+        // Store function name position in aux fields (same as Call)
+        addr_val.aux_int = ir_node.func_name_start;
+        addr_val.aux_ptr = ir_node.func_name_len;
+        self.assignReg(addr_val);
+        return addr_val.id;
+    }
+
+    fn convertLoad(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Load from pointer: left = ptr expr (relative IR index)
+        // Use the IR node's type_idx to preserve byte types (u8, i8)
+        let ptr_val: *Value = self.getOperandValue(ir_node.left);
+        let load_val: *Value = self.func.newValue( Op.Load, ir_node.type_idx);
+        load_val.addArg( ptr_val);
+        self.assignReg(load_val);
+        return load_val.id;
+    }
+
+    fn convertStore(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Store to pointer: left = ptr expr, right = value expr (relative)
+        let ptr_val: *Value = self.getOperandValue(ir_node.left);
+        let val_val: *Value = self.getOperandValue(ir_node.right);
+        let store_val: *Value = self.func.newValue( Op.Store, TYPE_VOID);
+        store_val.addArg2( ptr_val, val_val);
+        // Stores don't need registers
+        return store_val.id;
+    }
+
+    fn convertFieldLocal(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Access field of local struct: left = local_idx, right = offset
+        // Following Zig ssa_builder.zig:1027-1061
+        let loc_idx: i64 = ir_node.left;
+        let offset: i64 = ir_node.right;
+    
+        // 1. Get address of local
+        let addr_val: *Value = self.func.newValue( Op.LocalAddr, TYPE_I64);
+        addr_val.aux_int = loc_idx;
+    
+        // 2. Add offset to get field address
+        let off_val: *Value = self.func.newValue( Op.OffPtr, TYPE_I64);
+        off_val.addArg( addr_val);
+        off_val.aux_int = offset;
+    
+        // Check if result is a struct or array - if so, return address (no load)
+        // Both structs and arrays are inline data, not pointers, so we return
+        // the address for further field access or indexing.
+        // Following Zig ssa_builder.zig:1042-1051
+        if self.type_registry != null and ir_node.type_idx > 0 {
+            let field_type: *Type = TypeRegistry_get(self.type_registry, ir_node.type_idx);
+            if field_type != null {
+                if field_type.kind == TypeKind.Struct or field_type.kind == TypeKind.Array {
+                    // Nested struct or array - return address for further access
+                    self.assignReg(off_val);
+                    return off_val.id;
+                }
             }
         }
-
-        // Convert this node
-        SSABuilder_convertNode(b, ir_node, ir_idx);
-
-        ir_idx = ir_idx + 1;
+    
+        // 3. Primitive type - load the field value
+        let load_val: *Value = self.func.newValue( Op.Load, ir_node.type_idx);
+        load_val.addArg( off_val);
+        self.assignReg(load_val);
+        return load_val.id;
     }
 
-    // Step 6: Insert phi nodes for forward references
-    // Reference: Zig ssa_builder.zig:455
-    SSABuilder_insertPhis(b);
-
-    // Step 6.5: Verify SSA form
-    // Reference: Zig ssa_builder.zig:459
-    SSABuilder_verify(b);
-
-    // Step 7: Emit return block
-    b.func.emitReturnBlock();
-
-    return 0;
-}
-
-// Convert a single IR node to SSA value(s)
-// Matches Zig's SSABuilder.convertNode() at line 470
-// Returns the SSA value ID, or -1 for control flow nodes
-fn SSABuilder_convertNode(b: *SSABuilder, ir_node: *IRNode, ir_idx: i64) i64 {
-    // Check if already converted (using node_values cache)
-    let cached: i64 = SSABuilder_getCached(b, ir_idx);
-    if cached != INVALID_ID {
-        return cached;
-    }
-
-    // Dispatch based on node kind
-    var result_id: i64 = INVALID_ID;
-
-    if ir_node.kind == IRNodeKind.ConstInt {
-        result_id = SSABuilder_convertConstInt(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.ConstString {
-        result_id = SSABuilder_convertConstString(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.ConstBool {
-        result_id = SSABuilder_convertConstBool(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.Binary {
-        result_id = SSABuilder_convertBinary(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.Unary {
-        result_id = SSABuilder_convertUnary(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.LoadLocal {
-        result_id = SSABuilder_convertLoadLocal(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.StoreLocal {
-        result_id = SSABuilder_convertStoreLocal(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.AddrLocal {
-        result_id = SSABuilder_convertAddrLocal(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.LoadGlobal {
-        result_id = SSABuilder_convertLoadGlobal(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.StoreGlobal {
-        result_id = SSABuilder_convertStoreGlobal(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.AddrGlobal {
-        result_id = SSABuilder_convertAddrGlobal(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.FuncAddr {
-        result_id = SSABuilder_convertFuncAddr(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.Load {
-        result_id = SSABuilder_convertLoad(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.Store {
-        result_id = SSABuilder_convertStore(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.FieldLocal {
-        result_id = SSABuilder_convertFieldLocal(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.FieldValue {
-        result_id = SSABuilder_convertFieldValue(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.StoreFieldLocal {
-        result_id = SSABuilder_convertStoreFieldLocal(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.StoreField {
-        result_id = SSABuilder_convertStoreField(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.IndexLocal {
-        result_id = SSABuilder_convertIndexLocal(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.IndexValue {
-        result_id = SSABuilder_convertIndexValue(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.StoreIndexLocal {
-        result_id = SSABuilder_convertStoreIndexLocal(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.StoreIndexValue {
-        result_id = SSABuilder_convertStoreIndexValue(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.MakeString {
-        result_id = SSABuilder_convertMakeString(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.MakeSlice {
-        result_id = SSABuilder_convertMakeSlice(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.SlicePtr {
-        result_id = SSABuilder_convertSlicePtr(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.SliceLen {
-        result_id = SSABuilder_convertSliceLen(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.Call {
-        result_id = SSABuilder_convertCall(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.CallIndirect {
-        result_id = SSABuilder_convertCallIndirect(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.StrConcat {
-        result_id = SSABuilder_convertStrConcat(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.Select {
-        result_id = SSABuilder_convertSelect(b, ir_node);
-    } else if ir_node.kind == IRNodeKind.Branch {
-        SSABuilder_convertBranch(b, ir_node);
-        result_id = INVALID_ID;
-    } else if ir_node.kind == IRNodeKind.Jump {
-        SSABuilder_convertJump(b, ir_node);
-        result_id = INVALID_ID;
-    } else if ir_node.kind == IRNodeKind.Return {
-        SSABuilder_convertReturn(b, ir_node);
-        result_id = INVALID_ID;
-    }
-
-    // Cache the result and set source position for debug info
-    if result_id != INVALID_ID {
-        SSABuilder_cacheNode(b, ir_idx, result_id);
-        // Copy source position from IR node to SSA value for DWARF line tables
-        let result_val: *Value = b.func.getValue( result_id);
-        result_val.pos = ir_node.pos;
-    }
-
-    return result_id;
-}
-
-// ============================================================================
-// IR Node Converters
-// Each function converts a specific IR node kind to SSA values
-// Reference: Zig's SSABuilder.convertNode() and main.cot's conversion loop
-// ============================================================================
-
-// Helper: Get SSA value by ID
-fn SSABuilder_getValue(b: *SSABuilder, value_id: i64) *Value {
-    return b.func.getValue( value_id);
-}
-
-// Helper: Get cached SSA value ID for an IR node, computing absolute index
-fn SSABuilder_getOperandValue(b: *SSABuilder, relative_ir_idx: i64) *Value {
-    let abs_idx: i64 = b.ir_nodes_start + relative_ir_idx;
-    let value_id: i64 = SSABuilder_getCached(b, abs_idx);
-    return b.func.getValue( value_id);
-}
-
-// --- Constants ---
-
-fn SSABuilder_convertConstInt(b: *SSABuilder, ir_node: *IRNode) i64 {
-    let val: *Value = b.func.emitConstInt( ir_node.value, TYPE_I64);
-    SSABuilder_assignReg(b, val);
-    return val.id;
-}
-
-fn SSABuilder_convertConstString(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // String literal: left=str_start, right=str_len in source
-    let val: *Value = b.func.emitConstString( ir_node.left, ir_node.right);
-    SSABuilder_assignReg(b, val);
-    return val.id;
-}
-
-fn SSABuilder_convertConstBool(b: *SSABuilder, ir_node: *IRNode) i64 {
-    let val: *Value = b.func.emitConstBool( ir_node.value != 0);
-    SSABuilder_assignReg(b, val);
-    return val.id;
-}
-
-// --- Binary/Unary Operations ---
-
-fn SSABuilder_convertBinary(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // left and right are relative IR indices
-    let left_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-    let right_val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
-    let ssa_op: Op = Op_fromIRBinaryOp(ir_node.op);
-    let val: *Value = b.func.emitBinary( ssa_op, left_val, right_val, TYPE_I64);
-    SSABuilder_assignReg(b, val);
-    return val.id;
-}
-
-fn SSABuilder_convertUnary(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Unary op: left is operand (relative IR index), op is the operator
-    let operand_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-    let ssa_op: Op = Op_fromIRUnaryOp(ir_node.op);
-    let val: *Value = b.func.newValue( ssa_op, TYPE_I64);
-    val.addArg( operand_val);
-    SSABuilder_assignReg(b, val);
-    return val.id;
-}
-
-// --- Local Variable Access ---
-
-fn SSABuilder_convertLoadLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
-    let loc_idx: i64 = ir_node.left;
-    let load_val: *Value = b.func.emitLoadLocal( loc_idx);
-    SSABuilder_assignReg(b, load_val);
-    return load_val.id;
-}
-
-fn SSABuilder_convertStoreLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
-    let loc_idx: i64 = ir_node.left;
-    // right is relative IR index of value to store
-    let value_val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
-
-    // BUG-019 FIX: For struct types, use Op.Move to copy the data
-    // Following Zig ssa_builder.zig:228-233:
-    //   const is_large_struct = (local_type_info == .struct_type) and (type_size > 16);
-    //   if (is_large_struct) { const move_val = try func.newValue(.move, ...); }
-    //
-    // When the value is an address of a struct (from index_value, field_value, etc.),
-    // we need to copy the struct data to the local, not just store the address.
-    let local: *Local = b.func.getLocal( loc_idx);
-    var is_struct: bool = false;
-    var struct_size: i64 = 0;
-    if b.type_registry != null and local.type_idx > 0 {
-        let local_type: *Type = TypeRegistry_get(b.type_registry, local.type_idx);
-        if local_type.kind == TypeKind.Struct {
-            is_struct = true;
-            struct_size = local.size;
-        }
-    }
-
-    if is_struct and struct_size > 8 {
-        // Struct type: emit Op.Move to copy data from source to dest
-        // dest = address of local
-        let dest_addr: *Value = b.func.newValue( Op.LocalAddr, TYPE_I64);
-        dest_addr.aux_int = loc_idx;
-        SSABuilder_assignReg(b, dest_addr);
-
-        // source = value_val (which should be an address for struct types)
-        // Move: (dest, source) with aux_int = size
-        let move_val: *Value = b.func.newValue( Op.Move, TYPE_VOID);
-        move_val.aux_int = struct_size;
-        move_val.addArg2( dest_addr, value_val);
-        return move_val.id;
-    }
-
-    // Non-struct: use normal store
-    let store_val: *Value = b.func.emitStoreLocal( loc_idx, value_val);
-    // Stores don't need registers (they write to memory)
-    return store_val.id;
-}
-
-fn SSABuilder_convertAddrLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Address of local variable: left = local index
-    let loc_idx: i64 = ir_node.left;
-    let addr_val: *Value = b.func.newValue( Op.LocalAddr, TYPE_I64);
-    addr_val.aux_int = loc_idx;
-    SSABuilder_assignReg(b, addr_val);
-    return addr_val.id;
-}
-
-// --- Global Variable Operations ---
-
-fn SSABuilder_convertLoadGlobal(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Load global variable: left = global index
-    let global_idx: i64 = ir_node.left;
-    let load_val: *Value = b.func.newValue( Op.GlobalLoad, ir_node.type_idx);
-    load_val.aux_int = global_idx;
-    SSABuilder_assignReg(b, load_val);
-    return load_val.id;
-}
-
-fn SSABuilder_convertStoreGlobal(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Store to global variable: left = global index, right = value expr
-    let global_idx: i64 = ir_node.left;
-    let val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
-    let store_val: *Value = b.func.newValue( Op.GlobalStore, TYPE_I64);
-    store_val.aux_int = global_idx;
-    store_val.addArg( val);
-    SSABuilder_assignReg(b, store_val);
-    return store_val.id;
-}
-
-fn SSABuilder_convertAddrGlobal(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Address of global variable: left = global index
-    let global_idx: i64 = ir_node.left;
-    let addr_val: *Value = b.func.newValue( Op.GlobalAddr, TYPE_I64);
-    addr_val.aux_int = global_idx;
-    SSABuilder_assignReg(b, addr_val);
-    return addr_val.id;
-}
-
-// Convert function address (for function pointers)
-// Following Zig: src/frontend/ssa_builder.zig (FuncAddr handling)
-fn SSABuilder_convertFuncAddr(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Address of function: func_name_start, func_name_len
-    let addr_val: *Value = b.func.newValue( Op.Addr, TYPE_I64);
-    // Store function name position in aux fields (same as Call)
-    addr_val.aux_int = ir_node.func_name_start;
-    addr_val.aux_ptr = ir_node.func_name_len;
-    SSABuilder_assignReg(b, addr_val);
-    return addr_val.id;
-}
-
-// --- Pointer Operations ---
-
-fn SSABuilder_convertLoad(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Load from pointer: left = ptr expr (relative IR index)
-    // Use the IR node's type_idx to preserve byte types (u8, i8)
-    let ptr_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-    let load_val: *Value = b.func.newValue( Op.Load, ir_node.type_idx);
-    load_val.addArg( ptr_val);
-    SSABuilder_assignReg(b, load_val);
-    return load_val.id;
-}
-
-fn SSABuilder_convertStore(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Store to pointer: left = ptr expr, right = value expr (relative)
-    let ptr_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-    let val_val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
-    let store_val: *Value = b.func.newValue( Op.Store, TYPE_VOID);
-    store_val.addArg2( ptr_val, val_val);
-    // Stores don't need registers
-    return store_val.id;
-}
-
-// --- Field Access ---
-
-fn SSABuilder_convertFieldLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Access field of local struct: left = local_idx, right = offset
-    // Following Zig ssa_builder.zig:1027-1061
-    let loc_idx: i64 = ir_node.left;
-    let offset: i64 = ir_node.right;
-
-    // 1. Get address of local
-    let addr_val: *Value = b.func.newValue( Op.LocalAddr, TYPE_I64);
-    addr_val.aux_int = loc_idx;
-
-    // 2. Add offset to get field address
-    let off_val: *Value = b.func.newValue( Op.OffPtr, TYPE_I64);
-    off_val.addArg( addr_val);
-    off_val.aux_int = offset;
-
-    // Check if result is a struct or array - if so, return address (no load)
-    // Both structs and arrays are inline data, not pointers, so we return
-    // the address for further field access or indexing.
-    // Following Zig ssa_builder.zig:1042-1051
-    if b.type_registry != null and ir_node.type_idx > 0 {
-        let field_type: *Type = TypeRegistry_get(b.type_registry, ir_node.type_idx);
-        if field_type != null {
-            if field_type.kind == TypeKind.Struct or field_type.kind == TypeKind.Array {
-                // Nested struct or array - return address for further access
-                SSABuilder_assignReg(b, off_val);
-                return off_val.id;
+    fn convertFieldValue(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Access field via computed address: left = base_expr, right = offset
+        // Following Zig ssa_builder.zig:1108-1130
+        let base_val: *Value = self.getOperandValue(ir_node.left);
+        let offset: i64 = ir_node.right;
+    
+        // 1. Add offset to base to get field address
+        let off_val: *Value = self.func.newValue( Op.OffPtr, TYPE_I64);
+        off_val.addArg( base_val);
+        off_val.aux_int = offset;
+    
+        // Check if result is a struct or array - if so, return address (no load)
+        // Both structs and arrays are inline data, not pointers, so we return
+        // the address for further field access or indexing.
+        // Following Zig ssa_builder.zig:1118-1126
+        if self.type_registry != null and ir_node.type_idx > 0 {
+            let field_type: *Type = TypeRegistry_get(self.type_registry, ir_node.type_idx);
+            if field_type != null {
+                if field_type.kind == TypeKind.Struct or field_type.kind == TypeKind.Array {
+                    // Nested struct or array - return address for further access
+                    self.assignReg(off_val);
+                    return off_val.id;
+                }
             }
         }
+    
+        // 2. Primitive type - load the field value
+        let load_val: *Value = self.func.newValue( Op.Load, ir_node.type_idx);
+        load_val.addArg( off_val);
+        self.assignReg(load_val);
+        return load_val.id;
     }
 
-    // 3. Primitive type - load the field value
-    let load_val: *Value = b.func.newValue( Op.Load, ir_node.type_idx);
-    load_val.addArg( off_val);
-    SSABuilder_assignReg(b, load_val);
-    return load_val.id;
-}
+    fn convertStoreFieldLocal(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Store to field of local struct: left = local_idx, right = offset, value = stored_expr
+        let loc_idx: i64 = ir_node.left;
+        let offset: i64 = ir_node.right;
+        let val_val: *Value = self.getOperandValue(ir_node.value);
+    
+        // 1. Get address of local
+        let addr_val: *Value = self.func.newValue( Op.LocalAddr, TYPE_I64);
+        addr_val.aux_int = loc_idx;
+        self.assignReg(addr_val);
+    
+        // 2. Add offset to get field address
+        let off_val: *Value = self.func.newValue( Op.OffPtr, TYPE_I64);
+        off_val.addArg( addr_val);
+        off_val.aux_int = offset;
+        self.assignReg(off_val);
+    
+        // 3. Store the value
+        let store_val: *Value = self.func.newValue( Op.Store, TYPE_VOID);
+        store_val.addArg2( off_val, val_val);
+        return store_val.id;
+    }
 
-fn SSABuilder_convertFieldValue(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Access field via computed address: left = base_expr, right = offset
-    // Following Zig ssa_builder.zig:1108-1130
-    let base_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-    let offset: i64 = ir_node.right;
+    fn convertStoreField(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Store to field via computed address: left = base_expr, right = offset, value = stored_expr
+        let base_val: *Value = self.getOperandValue(ir_node.left);
+        let offset: i64 = ir_node.right;
+        let val_val: *Value = self.getOperandValue(ir_node.value);
+    
+        // 1. Add offset to base to get field address
+        let off_val: *Value = self.func.newValue( Op.OffPtr, TYPE_I64);
+        off_val.addArg( base_val);
+        off_val.aux_int = offset;
+        self.assignReg(off_val);
+    
+        // 2. Store the value
+        let store_val: *Value = self.func.newValue( Op.Store, TYPE_VOID);
+        store_val.addArg2( off_val, val_val);
+        return store_val.id;
+    }
 
-    // 1. Add offset to base to get field address
-    let off_val: *Value = b.func.newValue( Op.OffPtr, TYPE_I64);
-    off_val.addArg( base_val);
-    off_val.aux_int = offset;
+    fn convertIndexLocal(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Index into local array: left = local_idx, right = index_expr, value = elem_size
+        let loc_idx: i64 = ir_node.left;
+        let idx_val: *Value = self.getOperandValue(ir_node.right);
+        let elem_size: i64 = ir_node.value;
+    
+        // 1. Get address of local array
+        let addr_val: *Value = self.func.newValue( Op.LocalAddr, TYPE_I64);
+        addr_val.aux_int = loc_idx;
+        self.assignReg(addr_val);
+    
+        // 2. Compute byte offset: index * elem_size
+        let size_val: *Value = self.func.emitConstInt( elem_size, TYPE_I64);
+        self.assignReg(size_val);
+        let offset_val: *Value = self.func.emitBinary( Op.Mul64, idx_val, size_val, TYPE_I64);
+        self.assignReg(offset_val);
+    
+        // 3. Add offset to base address
+        let ptr_val: *Value = self.func.emitBinary( Op.AddPtr, addr_val, offset_val, TYPE_I64);
+        self.assignReg(ptr_val);
+    
+        // 4. Load the element value
+        let load_val: *Value = self.func.newValue( Op.Load, ir_node.type_idx);
+        load_val.addArg( ptr_val);
+        self.assignReg(load_val);
+        return load_val.id;
+    }
 
-    // Check if result is a struct or array - if so, return address (no load)
-    // Both structs and arrays are inline data, not pointers, so we return
-    // the address for further field access or indexing.
-    // Following Zig ssa_builder.zig:1118-1126
-    if b.type_registry != null and ir_node.type_idx > 0 {
-        let field_type: *Type = TypeRegistry_get(b.type_registry, ir_node.type_idx);
-        if field_type != null {
-            if field_type.kind == TypeKind.Struct or field_type.kind == TypeKind.Array {
-                // Nested struct or array - return address for further access
-                SSABuilder_assignReg(b, off_val);
-                return off_val.id;
+    fn convertIndexValue(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Index via computed address: left = base_expr, right = index_expr, value = elem_size
+        // Following Zig ssa_builder.zig:1308-1346
+        let base_val: *Value = self.getOperandValue(ir_node.left);
+        let idx_val: *Value = self.getOperandValue(ir_node.right);
+        let elem_size: i64 = ir_node.value;
+    
+        // 1. Compute byte offset: index * elem_size
+        let size_val: *Value = self.func.emitConstInt( elem_size, TYPE_I64);
+        self.assignReg(size_val);
+        let offset_val: *Value = self.func.emitBinary( Op.Mul64, idx_val, size_val, TYPE_I64);
+        self.assignReg(offset_val);
+    
+        // 2. Add offset to base address
+        let ptr_val: *Value = self.func.emitBinary( Op.AddPtr, base_val, offset_val, TYPE_I64);
+        self.assignReg(ptr_val);
+    
+        // 3. For struct types, return address without loading
+        // Following Zig ssa_builder.zig:1333-1337:
+        //   const elem_type = self.type_registry.get(node.type_idx);
+        //   if (elem_type == .struct_type) { break :blk elem_addr; }
+        // Structs need address for field access, not loaded value
+        if self.type_registry != null and ir_node.type_idx > 0 {
+            let elem_type: *Type = TypeRegistry_get(self.type_registry, ir_node.type_idx);
+            if elem_type.kind == TypeKind.Struct {
+                return ptr_val.id;
             }
         }
+    
+        // 4. Load the element value for primitives
+        let load_val: *Value = self.func.newValue( Op.Load, ir_node.type_idx);
+        load_val.addArg( ptr_val);
+        self.assignReg(load_val);
+        return load_val.id;
     }
 
-    // 2. Primitive type - load the field value
-    let load_val: *Value = b.func.newValue( Op.Load, ir_node.type_idx);
-    load_val.addArg( off_val);
-    SSABuilder_assignReg(b, load_val);
-    return load_val.id;
-}
-
-fn SSABuilder_convertStoreFieldLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Store to field of local struct: left = local_idx, right = offset, value = stored_expr
-    let loc_idx: i64 = ir_node.left;
-    let offset: i64 = ir_node.right;
-    let val_val: *Value = SSABuilder_getOperandValue(b, ir_node.value);
-
-    // 1. Get address of local
-    let addr_val: *Value = b.func.newValue( Op.LocalAddr, TYPE_I64);
-    addr_val.aux_int = loc_idx;
-    SSABuilder_assignReg(b, addr_val);
-
-    // 2. Add offset to get field address
-    let off_val: *Value = b.func.newValue( Op.OffPtr, TYPE_I64);
-    off_val.addArg( addr_val);
-    off_val.aux_int = offset;
-    SSABuilder_assignReg(b, off_val);
-
-    // 3. Store the value
-    let store_val: *Value = b.func.newValue( Op.Store, TYPE_VOID);
-    store_val.addArg2( off_val, val_val);
-    return store_val.id;
-}
-
-fn SSABuilder_convertStoreField(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Store to field via computed address: left = base_expr, right = offset, value = stored_expr
-    let base_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-    let offset: i64 = ir_node.right;
-    let val_val: *Value = SSABuilder_getOperandValue(b, ir_node.value);
-
-    // 1. Add offset to base to get field address
-    let off_val: *Value = b.func.newValue( Op.OffPtr, TYPE_I64);
-    off_val.addArg( base_val);
-    off_val.aux_int = offset;
-    SSABuilder_assignReg(b, off_val);
-
-    // 2. Store the value
-    let store_val: *Value = b.func.newValue( Op.Store, TYPE_VOID);
-    store_val.addArg2( off_val, val_val);
-    return store_val.id;
-}
-
-// --- Array Indexing ---
-
-fn SSABuilder_convertIndexLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Index into local array: left = local_idx, right = index_expr, value = elem_size
-    let loc_idx: i64 = ir_node.left;
-    let idx_val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
-    let elem_size: i64 = ir_node.value;
-
-    // 1. Get address of local array
-    let addr_val: *Value = b.func.newValue( Op.LocalAddr, TYPE_I64);
-    addr_val.aux_int = loc_idx;
-    SSABuilder_assignReg(b, addr_val);
-
-    // 2. Compute byte offset: index * elem_size
-    let size_val: *Value = b.func.emitConstInt( elem_size, TYPE_I64);
-    SSABuilder_assignReg(b, size_val);
-    let offset_val: *Value = b.func.emitBinary( Op.Mul64, idx_val, size_val, TYPE_I64);
-    SSABuilder_assignReg(b, offset_val);
-
-    // 3. Add offset to base address
-    let ptr_val: *Value = b.func.emitBinary( Op.AddPtr, addr_val, offset_val, TYPE_I64);
-    SSABuilder_assignReg(b, ptr_val);
-
-    // 4. Load the element value
-    let load_val: *Value = b.func.newValue( Op.Load, ir_node.type_idx);
-    load_val.addArg( ptr_val);
-    SSABuilder_assignReg(b, load_val);
-    return load_val.id;
-}
-
-fn SSABuilder_convertIndexValue(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Index via computed address: left = base_expr, right = index_expr, value = elem_size
-    // Following Zig ssa_builder.zig:1308-1346
-    let base_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-    let idx_val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
-    let elem_size: i64 = ir_node.value;
-
-    // 1. Compute byte offset: index * elem_size
-    let size_val: *Value = b.func.emitConstInt( elem_size, TYPE_I64);
-    SSABuilder_assignReg(b, size_val);
-    let offset_val: *Value = b.func.emitBinary( Op.Mul64, idx_val, size_val, TYPE_I64);
-    SSABuilder_assignReg(b, offset_val);
-
-    // 2. Add offset to base address
-    let ptr_val: *Value = b.func.emitBinary( Op.AddPtr, base_val, offset_val, TYPE_I64);
-    SSABuilder_assignReg(b, ptr_val);
-
-    // 3. For struct types, return address without loading
-    // Following Zig ssa_builder.zig:1333-1337:
-    //   const elem_type = self.type_registry.get(node.type_idx);
-    //   if (elem_type == .struct_type) { break :blk elem_addr; }
-    // Structs need address for field access, not loaded value
-    if b.type_registry != null and ir_node.type_idx > 0 {
-        let elem_type: *Type = TypeRegistry_get(b.type_registry, ir_node.type_idx);
-        if elem_type.kind == TypeKind.Struct {
-            return ptr_val.id;
-        }
+    fn convertStoreIndexLocal(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Store to local array element: left = local_idx, right = index_expr, value = stored_expr, op = elem_size
+        let loc_idx: i64 = ir_node.left;
+        let idx_val: *Value = self.getOperandValue(ir_node.right);
+        let val_val: *Value = self.getOperandValue(ir_node.value);
+        let elem_size: i64 = ir_node.op;
+    
+        // 1. Get address of local array
+        let addr_val: *Value = self.func.newValue( Op.LocalAddr, TYPE_I64);
+        addr_val.aux_int = loc_idx;
+        self.assignReg(addr_val);
+    
+        // 2. Compute byte offset: index * elem_size
+        let size_val: *Value = self.func.emitConstInt( elem_size, TYPE_I64);
+        self.assignReg(size_val);
+        let offset_val: *Value = self.func.emitBinary( Op.Mul64, idx_val, size_val, TYPE_I64);
+        self.assignReg(offset_val);
+    
+        // 3. Add offset to base address
+        let ptr_val: *Value = self.func.emitBinary( Op.AddPtr, addr_val, offset_val, TYPE_I64);
+        self.assignReg(ptr_val);
+    
+        // 4. Store the value
+        // BUG FIX: Propagate elem_size to Store for correct sized store instruction
+        // Without this, codegen uses 64-bit STR for byte arrays, corrupting stack
+        let store_val: *Value = self.func.newValue( Op.Store, TYPE_VOID);
+        store_val.addArg2( ptr_val, val_val);
+        store_val.aux_int = elem_size;  // Store element size for codegen
+        return store_val.id;
     }
 
-    // 4. Load the element value for primitives
-    let load_val: *Value = b.func.newValue( Op.Load, ir_node.type_idx);
-    load_val.addArg( ptr_val);
-    SSABuilder_assignReg(b, load_val);
-    return load_val.id;
-}
+    fn convertStoreIndexValue(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Store via indexed address: left = base_expr, right = index_expr, value = stored_expr, op = elem_size
+        let base_val: *Value = self.getOperandValue(ir_node.left);
+        let idx_val: *Value = self.getOperandValue(ir_node.right);
+        let val_val: *Value = self.getOperandValue(ir_node.value);
+        let elem_size: i64 = ir_node.op;
+    
+        // 1. Compute byte offset: index * elem_size
+        let size_val: *Value = self.func.emitConstInt( elem_size, TYPE_I64);
+        self.assignReg(size_val);
+        let offset_val: *Value = self.func.emitBinary( Op.Mul64, idx_val, size_val, TYPE_I64);
+        self.assignReg(offset_val);
+    
+        // 2. Add offset to base address
+        let ptr_val: *Value = self.func.emitBinary( Op.AddPtr, base_val, offset_val, TYPE_I64);
+        self.assignReg(ptr_val);
+    
+        // 3. Store the value
+        // BUG FIX: Propagate elem_size to Store for correct sized store instruction
+        let store_val: *Value = self.func.newValue( Op.Store, TYPE_VOID);
+        store_val.addArg2( ptr_val, val_val);
+        store_val.aux_int = elem_size;  // Store element size for codegen
+        return store_val.id;
+    }
 
-fn SSABuilder_convertStoreIndexLocal(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Store to local array element: left = local_idx, right = index_expr, value = stored_expr, op = elem_size
-    let loc_idx: i64 = ir_node.left;
-    let idx_val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
-    let val_val: *Value = SSABuilder_getOperandValue(b, ir_node.value);
-    let elem_size: i64 = ir_node.op;
+    fn convertMakeString(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // @string(ptr, len): left=ptr_expr, right=len_expr (relative IR indices)
+        let ptr_val: *Value = self.getOperandValue(ir_node.left);
+        let len_val: *Value = self.getOperandValue(ir_node.right);
+        let make_val: *Value = self.func.newValue( Op.StringMake, TYPE_STRING);
+        make_val.addArg2( ptr_val, len_val);
+        self.assignReg(make_val);
+        return make_val.id;
+    }
 
-    // 1. Get address of local array
-    let addr_val: *Value = b.func.newValue( Op.LocalAddr, TYPE_I64);
-    addr_val.aux_int = loc_idx;
-    SSABuilder_assignReg(b, addr_val);
+    fn convertMakeSlice(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Slice creation: left=ptr_expr, right=len_expr (relative IR indices)
+        let ptr_val: *Value = self.getOperandValue(ir_node.left);
+        let len_val: *Value = self.getOperandValue(ir_node.right);
+        let make_val: *Value = self.func.newValue( Op.SliceMake, TYPE_I64);
+        make_val.addArg2( ptr_val, len_val);
+        self.assignReg(make_val);
+        return make_val.id;
+    }
 
-    // 2. Compute byte offset: index * elem_size
-    let size_val: *Value = b.func.emitConstInt( elem_size, TYPE_I64);
-    SSABuilder_assignReg(b, size_val);
-    let offset_val: *Value = b.func.emitBinary( Op.Mul64, idx_val, size_val, TYPE_I64);
-    SSABuilder_assignReg(b, offset_val);
+    fn convertSlicePtr(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Extract pointer from slice: left=slice_expr (relative IR index)
+        let slice_val: *Value = self.getOperandValue(ir_node.left);
+        let ptr_val: *Value = self.func.newValue( Op.SlicePtr, TYPE_I64);
+        ptr_val.addArg( slice_val);
+        self.assignReg(ptr_val);
+        return ptr_val.id;
+    }
 
-    // 3. Add offset to base address
-    let ptr_val: *Value = b.func.emitBinary( Op.AddPtr, addr_val, offset_val, TYPE_I64);
-    SSABuilder_assignReg(b, ptr_val);
+    fn convertSliceLen(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Extract length from slice: left=slice_expr (relative IR index)
+        let slice_val: *Value = self.getOperandValue(ir_node.left);
+        let len_val: *Value = self.func.newValue( Op.SliceLen, TYPE_I64);
+        len_val.addArg( slice_val);
+        self.assignReg(len_val);
+        return len_val.id;
+    }
 
-    // 4. Store the value
-    // BUG FIX: Propagate elem_size to Store for correct sized store instruction
-    // Without this, codegen uses 64-bit STR for byte arrays, corrupting stack
-    let store_val: *Value = b.func.newValue( Op.Store, TYPE_VOID);
-    store_val.addArg2( ptr_val, val_val);
-    store_val.aux_int = elem_size;  // Store element size for codegen
-    return store_val.id;
-}
-
-fn SSABuilder_convertStoreIndexValue(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Store via indexed address: left = base_expr, right = index_expr, value = stored_expr, op = elem_size
-    let base_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-    let idx_val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
-    let val_val: *Value = SSABuilder_getOperandValue(b, ir_node.value);
-    let elem_size: i64 = ir_node.op;
-
-    // 1. Compute byte offset: index * elem_size
-    let size_val: *Value = b.func.emitConstInt( elem_size, TYPE_I64);
-    SSABuilder_assignReg(b, size_val);
-    let offset_val: *Value = b.func.emitBinary( Op.Mul64, idx_val, size_val, TYPE_I64);
-    SSABuilder_assignReg(b, offset_val);
-
-    // 2. Add offset to base address
-    let ptr_val: *Value = b.func.emitBinary( Op.AddPtr, base_val, offset_val, TYPE_I64);
-    SSABuilder_assignReg(b, ptr_val);
-
-    // 3. Store the value
-    // BUG FIX: Propagate elem_size to Store for correct sized store instruction
-    let store_val: *Value = b.func.newValue( Op.Store, TYPE_VOID);
-    store_val.addArg2( ptr_val, val_val);
-    store_val.aux_int = elem_size;  // Store element size for codegen
-    return store_val.id;
-}
-
-// --- Slice/String Builtins ---
-
-fn SSABuilder_convertMakeString(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // @string(ptr, len): left=ptr_expr, right=len_expr (relative IR indices)
-    let ptr_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-    let len_val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
-    let make_val: *Value = b.func.newValue( Op.StringMake, TYPE_STRING);
-    make_val.addArg2( ptr_val, len_val);
-    SSABuilder_assignReg(b, make_val);
-    return make_val.id;
-}
-
-fn SSABuilder_convertMakeSlice(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Slice creation: left=ptr_expr, right=len_expr (relative IR indices)
-    let ptr_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-    let len_val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
-    let make_val: *Value = b.func.newValue( Op.SliceMake, TYPE_I64);
-    make_val.addArg2( ptr_val, len_val);
-    SSABuilder_assignReg(b, make_val);
-    return make_val.id;
-}
-
-fn SSABuilder_convertSlicePtr(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Extract pointer from slice: left=slice_expr (relative IR index)
-    let slice_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-    let ptr_val: *Value = b.func.newValue( Op.SlicePtr, TYPE_I64);
-    ptr_val.addArg( slice_val);
-    SSABuilder_assignReg(b, ptr_val);
-    return ptr_val.id;
-}
-
-fn SSABuilder_convertSliceLen(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Extract length from slice: left=slice_expr (relative IR index)
-    let slice_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-    let len_val: *Value = b.func.newValue( Op.SliceLen, TYPE_I64);
-    len_val.addArg( slice_val);
-    SSABuilder_assignReg(b, len_val);
-    return len_val.id;
-}
-
-// --- Function Call ---
-
-fn SSABuilder_convertCall(b: *SSABuilder, ir_node: *IRNode) i64 {
-    let val: *Value = b.func.emitCall(
-                                     ir_node.func_name_start,
-                                     ir_node.func_name_len,
-                                     ir_node.type_idx);
-    var arg_idx: i64 = 0;
-    while arg_idx < ir_node.call_args.count {
-        let arg_ir_rel: i64 = i64list_get(&ir_node.call_args, arg_idx);
-        // Validate arg index
-        if arg_ir_rel < 0 {
-            print("SSA ERROR: Invalid arg ir_rel=");
-            print(arg_ir_rel);
-            print(" for call arg ");
-            print(arg_idx);
-            print(" in ");
-            // Print current function name
-            if b.source != null and b.func.name_start >= 0 and b.func.name_len > 0 {
-                write(1, b.source + b.func.name_start, b.func.name_len);
+    fn convertCall(self: *SSABuilder, ir_node: *IRNode) i64 {
+        let val: *Value = self.func.emitCall(
+                                         ir_node.func_name_start,
+                                         ir_node.func_name_len,
+                                         ir_node.type_idx);
+        var arg_idx: i64 = 0;
+        while arg_idx < ir_node.call_args.count {
+            let arg_ir_rel: i64 = i64list_get(&ir_node.call_args, arg_idx);
+            // Validate arg index
+            if arg_ir_rel < 0 {
+                print("SSA ERROR: Invalid arg ir_rel=");
+                print(arg_ir_rel);
+                print(" for call arg ");
+                print(arg_idx);
+                print(" in ");
+                // Print current function name
+                if self.source != null and self.func.name_start >= 0 and self.func.name_len > 0 {
+                    write(1, self.source + self.func.name_start, self.func.name_len);
+                }
+                print(" calling <callee>");
+                // Print callee name disabled for now to debug crash
+                // if ir_node.func_name_start != 0 and ir_node.func_name_len > 0 {
+                //     write(1, @intToPtr(*u8, ir_node.func_name_start), ir_node.func_name_len);
+                // }
+                print("\n");
+                arg_idx = arg_idx + 1;
+                continue;
             }
-            print(" calling <callee>");
-            // Print callee name disabled for now to debug crash
-            // if ir_node.func_name_start != 0 and ir_node.func_name_len > 0 {
-            //     write(1, @intToPtr(*u8, ir_node.func_name_start), ir_node.func_name_len);
-            // }
-            print("\n");
+            let abs_idx: i64 = self.ir_nodes_start + arg_ir_rel;
+            let arg_ir_node: *IRNode = self.ir_nodes + abs_idx;
+            let arg_value_id: i64 = self.convertNode(arg_ir_node, abs_idx);
+            let arg_val: *Value = self.func.getValue( arg_value_id);
+            val.addArg( arg_val);
             arg_idx = arg_idx + 1;
-            continue;
         }
-        let abs_idx: i64 = b.ir_nodes_start + arg_ir_rel;
-        let arg_ir_node: *IRNode = b.ir_nodes + abs_idx;
-        let arg_value_id: i64 = SSABuilder_convertNode(b, arg_ir_node, abs_idx);
-        let arg_val: *Value = b.func.getValue( arg_value_id);
-        val.addArg( arg_val);
-        arg_idx = arg_idx + 1;
+        self.assignReg(val);
+        return val.id;
     }
-    SSABuilder_assignReg(b, val);
-    return val.id;
-}
 
-// Convert indirect call through function pointer (Go: ClosureCall)
-// Following Zig pattern: src/frontend/ssa_builder.zig:930-945
-fn SSABuilder_convertCallIndirect(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Create ClosureCall value
-    let val: *Value = b.func.emitCallIndirect( TYPE_I64);
-
-    // First argument is the function pointer (ir_node.left)
-    // Use convertNode pattern like Zig
-    let fn_ptr_abs_idx: i64 = b.ir_nodes_start + ir_node.left;
-    let fn_ptr_ir_node: *IRNode = b.ir_nodes + fn_ptr_abs_idx;
-    let fn_ptr_value_id: i64 = SSABuilder_convertNode(b, fn_ptr_ir_node, fn_ptr_abs_idx);
-    let fn_ptr_val: *Value = b.func.getValue( fn_ptr_value_id);
-    val.addArg( fn_ptr_val);
-
-    // Add remaining arguments - call convertNode for each arg (matches Zig)
-    var arg_idx: i64 = 0;
-    while arg_idx < ir_node.call_args.count {
-        let arg_ir_rel: i64 = i64list_get(&ir_node.call_args, arg_idx);
-        let abs_idx: i64 = b.ir_nodes_start + arg_ir_rel;
-        let arg_ir_node: *IRNode = b.ir_nodes + abs_idx;
-        let arg_value_id: i64 = SSABuilder_convertNode(b, arg_ir_node, abs_idx);
-        let arg_val: *Value = b.func.getValue( arg_value_id);
-        val.addArg( arg_val);
-        arg_idx = arg_idx + 1;
-    }
-    SSABuilder_assignReg(b, val);
-    return val.id;
-}
-
-// --- String Concatenation ---
-// Following Zig pattern: src/frontend/ssa_builder.zig:851-859
-// Creates StringConcat SSA value with 4 args: ptr1, len1, ptr2, len2
-
-fn SSABuilder_convertStrConcat(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Create StringConcat value (returns string type)
-    let val: *Value = b.func.newValue( Op.StringConcat, TYPE_STRING);
-
-    // Convert and add the 4 args: ptr1, len1, ptr2, len2
-    var arg_idx: i64 = 0;
-    while arg_idx < ir_node.call_args.count {
-        let arg_ir_rel: i64 = i64list_get(&ir_node.call_args, arg_idx);
-        if arg_ir_rel < 0 {
+    fn convertCallIndirect(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Create ClosureCall value
+        let val: *Value = self.func.emitCallIndirect( TYPE_I64);
+    
+        // First argument is the function pointer (ir_node.left)
+        // Use convertNode pattern like Zig
+        let fn_ptr_abs_idx: i64 = self.ir_nodes_start + ir_node.left;
+        let fn_ptr_ir_node: *IRNode = self.ir_nodes + fn_ptr_abs_idx;
+        let fn_ptr_value_id: i64 = self.convertNode(fn_ptr_ir_node, fn_ptr_abs_idx);
+        let fn_ptr_val: *Value = self.func.getValue( fn_ptr_value_id);
+        val.addArg( fn_ptr_val);
+    
+        // Add remaining arguments - call convertNode for each arg (matches Zig)
+        var arg_idx: i64 = 0;
+        while arg_idx < ir_node.call_args.count {
+            let arg_ir_rel: i64 = i64list_get(&ir_node.call_args, arg_idx);
+            let abs_idx: i64 = self.ir_nodes_start + arg_ir_rel;
+            let arg_ir_node: *IRNode = self.ir_nodes + abs_idx;
+            let arg_value_id: i64 = self.convertNode(arg_ir_node, abs_idx);
+            let arg_val: *Value = self.func.getValue( arg_value_id);
+            val.addArg( arg_val);
             arg_idx = arg_idx + 1;
-            continue;
         }
-        let abs_idx: i64 = b.ir_nodes_start + arg_ir_rel;
-        let arg_ir_node: *IRNode = b.ir_nodes + abs_idx;
-        let arg_value_id: i64 = SSABuilder_convertNode(b, arg_ir_node, abs_idx);
-        let arg_val: *Value = b.func.getValue( arg_value_id);
-        val.addArg( arg_val);
-        arg_idx = arg_idx + 1;
+        self.assignReg(val);
+        return val.id;
     }
 
-    SSABuilder_assignReg(b, val);
-    return val.id;
-}
-
-// --- Select (Ternary) ---
-
-fn SSABuilder_convertSelect(b: *SSABuilder, ir_node: *IRNode) i64 {
-    // Select: left = cond, right = true_val, value = false_val
-    let cond_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-    let true_val: *Value = SSABuilder_getOperandValue(b, ir_node.right);
-    let false_val: *Value = SSABuilder_getOperandValue(b, ir_node.value);
-    let val: *Value = b.func.emitSelect( cond_val, true_val, false_val, TYPE_I64);
-    SSABuilder_assignReg(b, val);
-    return val.id;
-}
-
-// --- Control Flow ---
-
-fn SSABuilder_convertBranch(b: *SSABuilder, ir_node: *IRNode) {
-    // left is relative IR index of condition
-    let cond_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-    let then_block: i64 = ir_node.right;
-    let else_block: i64 = ir_node.value;
-    b.func.emitIf( cond_val, then_block, else_block);
-}
-
-fn SSABuilder_convertJump(b: *SSABuilder, ir_node: *IRNode) {
-    let target_block: i64 = ir_node.left;
-    b.func.emitJump( target_block);
-}
-
-fn SSABuilder_convertReturn(b: *SSABuilder, ir_node: *IRNode) {
-    if ir_node.left >= 0 {
-        let ret_val: *Value = SSABuilder_getOperandValue(b, ir_node.left);
-        b.func.emitReturn( ret_val);
-    } else {
-        // Void return - emit return with no value
-        let void_ret: *Value = b.func.newValue( Op.Return, TYPE_VOID);
+    fn convertStrConcat(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Create StringConcat value (returns string type)
+        let val: *Value = self.func.newValue( Op.StringConcat, TYPE_STRING);
+    
+        // Convert and add the 4 args: ptr1, len1, ptr2, len2
+        var arg_idx: i64 = 0;
+        while arg_idx < ir_node.call_args.count {
+            let arg_ir_rel: i64 = i64list_get(&ir_node.call_args, arg_idx);
+            if arg_ir_rel < 0 {
+                arg_idx = arg_idx + 1;
+                continue;
+            }
+            let abs_idx: i64 = self.ir_nodes_start + arg_ir_rel;
+            let arg_ir_node: *IRNode = self.ir_nodes + abs_idx;
+            let arg_value_id: i64 = self.convertNode(arg_ir_node, abs_idx);
+            let arg_val: *Value = self.func.getValue( arg_value_id);
+            val.addArg( arg_val);
+            arg_idx = arg_idx + 1;
+        }
+    
+        self.assignReg(val);
+        return val.id;
     }
-}
 
-// ============================================================================
-// Block Definitions Lookup
-// ============================================================================
+    fn convertSelect(self: *SSABuilder, ir_node: *IRNode) i64 {
+        // Select: left = cond, right = true_val, value = false_val
+        let cond_val: *Value = self.getOperandValue(ir_node.left);
+        let true_val: *Value = self.getOperandValue(ir_node.right);
+        let false_val: *Value = self.getOperandValue(ir_node.value);
+        let val: *Value = self.func.emitSelect( cond_val, true_val, false_val, TYPE_I64);
+        self.assignReg(val);
+        return val.id;
+    }
 
-// Get BlockDefs for a specific SSA block
-// OPTIMIZED: O(1) direct indexing by block_id (like Zig's HashMap)
-fn SSABuilder_getBlockDefs(b: *SSABuilder, block_id: i64) *BlockDefs {
-    // Bounds check
-    if block_id < 0 or block_id >= b.all_defs_cap {
+    fn convertBranch(self: *SSABuilder, ir_node: *IRNode) {
+        // left is relative IR index of condition
+        let cond_val: *Value = self.getOperandValue(ir_node.left);
+        let then_block: i64 = ir_node.right;
+        let else_block: i64 = ir_node.value;
+        self.func.emitIf( cond_val, then_block, else_block);
+    }
+
+    fn convertJump(self: *SSABuilder, ir_node: *IRNode) {
+        let target_block: i64 = ir_node.left;
+        self.func.emitJump( target_block);
+    }
+
+    fn convertReturn(self: *SSABuilder, ir_node: *IRNode) {
+        if ir_node.left >= 0 {
+            let ret_val: *Value = self.getOperandValue(ir_node.left);
+            self.func.emitReturn( ret_val);
+        } else {
+            // Void return - emit return with no value
+            let void_ret: *Value = self.func.newValue( Op.Return, TYPE_VOID);
+        }
+    }
+
+    fn getBlockDefs(self: *SSABuilder, block_id: i64) *BlockDefs {
+        // Bounds check
+        if block_id < 0 or block_id >= self.all_defs_cap {
+            return null;
+        }
+        let bd: *BlockDefs = self.all_defs + block_id;
+        if bd.initialized {
+            return bd;
+        }
         return null;
     }
-    let bd: *BlockDefs = b.all_defs + block_id;
-    if bd.initialized {
-        return bd;
-    }
-    return null;
-}
 
-// Copy definitions from one block to another (for control flow merge)
-fn SSABuilder_copyDefs(b: *SSABuilder, from_block: i64, to_block: i64) {
-    let from: *BlockDefs = SSABuilder_getBlockDefs(b, from_block);
-    let to: *BlockDefs = SSABuilder_getBlockDefs(b, to_block);
-
-    if from == null or to == null { return; }
-
-    // Copy all defined variables (iterate through all indices)
-    var var_idx: i64 = 0;
-    while var_idx < from.values_cap {
-        let value_id: i64 = (from.values + var_idx).*;
-        if value_id != INVALID_ID {
-            BlockDefs_set(to, var_idx, value_id);
+    fn copyDefs(self: *SSABuilder, from_block: i64, to_block: i64) {
+        let from: *BlockDefs = self.getBlockDefs(from_block);
+        let to: *BlockDefs = self.getBlockDefs(to_block);
+    
+        if from == null or to == null { return; }
+    
+        // Copy all defined variables (iterate through all indices)
+        var var_idx: i64 = 0;
+        while var_idx < from.values_cap {
+            let value_id: i64 = (from.values + var_idx).*;
+            if value_id != INVALID_ID {
+                BlockDefs_set(to, var_idx, value_id);
+            }
+            var_idx = var_idx + 1;
         }
-        var_idx = var_idx + 1;
     }
-}
 
-// ============================================================================
-// SSA Verification (following Zig ssa_builder.zig:1826-1875)
-// ============================================================================
-
-// Verify the SSA function is well-formed.
-// Returns true if valid, false if errors found.
-// Checks:
-// 1. Phi placement - phis must be at start of block
-// 2. Phi arg count - must match predecessor count
-// 3. No unresolved FwdRefs
-// 4. Block termination - ret has no successors, if has 2 successors and control
-fn SSABuilder_verify(b: *SSABuilder) bool {
-    let f: *Func = b.func;
-    var errors_found: bool = false;
-
-    var block_idx: i64 = 0;
-    while block_idx < f.blocks_count {
-        let block: *Block = f.blocks + block_idx;
-
-        // Check values in this block
-        var seen_non_phi: bool = false;
-        var val_idx: i64 = block.values_start;
-        while val_idx < block.values_start + block.values_count {
-            let v: *Value = f.values + val_idx;
-
-            // Check 1: Phi placement
-            if v.op == Op.Phi {
-                if seen_non_phi {
-                    // Error: phi after non-phi value
+    fn verify(self: *SSABuilder) bool {
+        let f: *Func = self.func;
+        var errors_found: bool = false;
+    
+        var block_idx: i64 = 0;
+        while block_idx < f.blocks_count {
+            let block: *Block = f.blocks + block_idx;
+    
+            // Check values in this block
+            var seen_non_phi: bool = false;
+            var val_idx: i64 = block.values_start;
+            while val_idx < block.values_start + block.values_count {
+                let v: *Value = f.values + val_idx;
+    
+                // Check 1: Phi placement
+                if v.op == Op.Phi {
+                    if seen_non_phi {
+                        // Error: phi after non-phi value
+                        errors_found = true;
+                    }
+                    // Check 2: Phi arg count matches predecessors
+                    if v.args.count != block.preds.count {
+                        errors_found = true;
+                    }
+                } else {
+                    seen_non_phi = true;
+                }
+    
+                // Check 3: No unresolved FwdRefs
+                if v.op == Op.FwdRef {
                     errors_found = true;
                 }
-                // Check 2: Phi arg count matches predecessors
-                if v.args.count != block.preds.count {
+    
+                val_idx = val_idx + 1;
+            }
+    
+            // Check 4: Block termination
+            if block.kind == BlockKind.Return {
+                // Return blocks should have no successors
+                if block.succs_count != 0 {
                     errors_found = true;
                 }
-            } else {
-                seen_non_phi = true;
+            } else if block.kind == BlockKind.If {
+                // If blocks must have exactly 2 successors
+                if block.succs_count != 2 {
+                    errors_found = true;
+                }
+                // Must have a control value (condition)
+                if block.control < 0 {
+                    errors_found = true;
+                }
             }
-
-            // Check 3: No unresolved FwdRefs
-            if v.op == Op.FwdRef {
-                errors_found = true;
-            }
-
-            val_idx = val_idx + 1;
+            // Plain blocks: allow 0 or 1 successors (single-block functions, etc.)
+    
+            block_idx = block_idx + 1;
         }
-
-        // Check 4: Block termination
-        if block.kind == BlockKind.Return {
-            // Return blocks should have no successors
-            if block.succs_count != 0 {
-                errors_found = true;
-            }
-        } else if block.kind == BlockKind.If {
-            // If blocks must have exactly 2 successors
-            if block.succs_count != 2 {
-                errors_found = true;
-            }
-            // Must have a control value (condition)
-            if block.control < 0 {
-                errors_found = true;
-            }
-        }
-        // Plain blocks: allow 0 or 1 successors (single-block functions, etc.)
-
-        block_idx = block_idx + 1;
+    
+        return not errors_found;
     }
 
-    return not errors_found;
 }
