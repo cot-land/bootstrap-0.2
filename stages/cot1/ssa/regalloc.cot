@@ -269,7 +269,7 @@ fn RegAlloc_spillReg(ra: *RegAllocState, reg: i64) {
     vs.spill_used = true;
 
     // CRITICAL: Set the Value's spill_slot so genssa knows to emit store/load
-    let v: *Value = Func_getValue(ra.func, value_id);
+    let v: *Value = ra.func.getValue( value_id);
     v.spill_slot = vs.spill;
 
     // Clear register - value is now only on stack
@@ -290,7 +290,7 @@ fn RegAlloc_assignReg(ra: *RegAllocState, value_id: i64, reg: i64) {
     vs.regs = vs.regs | (1 << reg);
 
     // CRITICAL: Also set the Value's reg field so genssa can use it
-    let v: *Value = Func_getValue(ra.func, value_id);
+    let v: *Value = ra.func.getValue( value_id);
     v.reg = reg;
 
     // Mark register as used for current instruction
@@ -380,7 +380,7 @@ fn RegAlloc_allocatePhis(ra: *RegAllocState, f: *Func, block: *Block, primary_pr
 
     var vi: i64 = 0;
     while vi < block.values_count {
-        let v: *Value = Func_getValue(f, block.values_start + vi);
+        let v: *Value = f.getValue( block.values_start + vi);
         if v.op == Op.Phi {
             i64list_append(&phi_ids, v.id);
         } else {
@@ -409,7 +409,7 @@ fn RegAlloc_allocatePhis(ra: *RegAllocState, f: *Func, block: *Block, primary_pr
     // Pass 1: Try to reuse primary predecessor's register
     i = 0;
     while i < phi_ids.count {
-        let phi: *Value = Func_getValue(f, i64list_get(&phi_ids, i));
+        let phi: *Value = f.getValue( i64list_get(&phi_ids, i));
         if primary_pred_idx >= 0 and primary_pred_idx < phi.args.count {
             let arg_id: i64 = Value_getArg(phi, primary_pred_idx);
             if arg_id >= 0 and arg_id < ra.val_states_count {
@@ -571,7 +571,7 @@ fn RegAlloc_processBlock(ra: *RegAllocState, f: *Func, block: *Block) {
     // Process remaining values in order
     var vi: i64 = 0;
     while vi < block.values_count {
-        let v: *Value = Func_getValue(f, block.values_start + vi);
+        let v: *Value = f.getValue( block.values_start + vi);
         // Skip phis - already processed by allocatePhis
         if v.op == Op.Phi {
             vi = vi + 1;
@@ -588,7 +588,7 @@ fn RegAlloc_run(ra: *RegAllocState, f: *Func) i64 {
     // Process blocks in order
     var b: i64 = 0;
     while b < f.blocks_count {
-        let block: *Block = Func_getBlock(f, b);
+        let block: *Block = f.getBlock( b);
         RegAlloc_processBlock(ra, f, block);
         b = b + 1;
     }

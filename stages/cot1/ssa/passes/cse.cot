@@ -22,7 +22,7 @@
 fn cse(f: *Func) {
     var b: i64 = 0;
     while b < f.blocks_count {
-        let block: *Block = Func_getBlock(f, b);
+        let block: *Block = f.getBlock( b);
         cseBlock(f, block);
         b = b + 1;
     }
@@ -33,7 +33,7 @@ fn cseBlock(f: *Func, block: *Block) {
     // For each value, look for an earlier equivalent value
     var vi: i64 = 0;
     while vi < block.values_count {
-        let v: *Value = Func_getValue(f, block.values_start + vi);
+        let v: *Value = f.getValue( block.values_start + vi);
 
         // Skip values that can't be CSE'd
         if not canCSE(v) {
@@ -44,7 +44,7 @@ fn cseBlock(f: *Func, block: *Block) {
         // Look for an earlier equivalent value in this block
         var wi: i64 = 0;
         while wi < vi {
-            let w: *Value = Func_getValue(f, block.values_start + wi);
+            let w: *Value = f.getValue( block.values_start + wi);
 
             if valuesEquivalent(f, v, w) {
                 // Found a duplicate! Replace uses of v with w within this block only
@@ -138,7 +138,7 @@ fn replaceUsesInBlock(f: *Func, block: *Block, old_id: i64, new_id: i64) i64 {
     // Only scan values within this block
     var vi: i64 = 0;
     while vi < block.values_count {
-        let v: *Value = Func_getValue(f, block.values_start + vi);
+        let v: *Value = f.getValue( block.values_start + vi);
 
         // Don't modify the value being replaced
         if v.id == old_id {

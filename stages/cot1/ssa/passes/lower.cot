@@ -37,7 +37,7 @@ fn fitsImm12(n: i64) bool {
 fn lower(f: *Func) {
     var b: i64 = 0;
     while b < f.blocks_count {
-        let block: *Block = Func_getBlock(f, b);
+        let block: *Block = f.getBlock( b);
         lowerBlock(f, block);
         b = b + 1;
     }
@@ -47,14 +47,14 @@ fn lower(f: *Func) {
 fn lowerBlock(f: *Func, block: *Block) {
     var vi: i64 = 0;
     while vi < block.values_count {
-        let v: *Value = Func_getValue(f, block.values_start + vi);
+        let v: *Value = f.getValue( block.values_start + vi);
 
         // Pattern 1: Mul by power of 2 → Shl
         // x * 2^n → x << n
         if v.op == Op.Mul64 and v.args.count == 2 {
             let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
-                let right: *Value = Func_getValue(f, right_id);
+                let right: *Value = f.getValue( right_id);
                 if right.op == Op.ConstInt and isPowerOf2(right.aux_int) {
                     let shift_amount: i64 = log2(right.aux_int);
 
@@ -77,12 +77,12 @@ fn lowerBlock(f: *Func, block: *Block) {
         if v.op == Op.Mul64 and v.args.count == 2 {
             let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
-                let right: *Value = Func_getValue(f, right_id);
+                let right: *Value = f.getValue( right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
                     // Decrement use counts on args
                     let left_id: i64 = Value_getArg(v, 0);
                     if left_id >= 0 {
-                        let left: *Value = Func_getValue(f, left_id);
+                        let left: *Value = f.getValue( left_id);
                         left.uses = left.uses - 1;
                     }
                     right.uses = right.uses - 1;
@@ -99,7 +99,7 @@ fn lowerBlock(f: *Func, block: *Block) {
         if v.op == Op.Mul64 and v.args.count == 2 {
             let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
-                let right: *Value = Func_getValue(f, right_id);
+                let right: *Value = f.getValue( right_id);
                 if right.op == Op.ConstInt and right.aux_int == 1 {
                     let left_id: i64 = Value_getArg(v, 0);
 
@@ -118,7 +118,7 @@ fn lowerBlock(f: *Func, block: *Block) {
         if v.op == Op.Add64 and v.args.count == 2 {
             let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
-                let right: *Value = Func_getValue(f, right_id);
+                let right: *Value = f.getValue( right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
                     let left_id: i64 = Value_getArg(v, 0);
 
@@ -135,7 +135,7 @@ fn lowerBlock(f: *Func, block: *Block) {
         if v.op == Op.Sub64 and v.args.count == 2 {
             let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
-                let right: *Value = Func_getValue(f, right_id);
+                let right: *Value = f.getValue( right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
                     let left_id: i64 = Value_getArg(v, 0);
 
@@ -152,7 +152,7 @@ fn lowerBlock(f: *Func, block: *Block) {
         if v.op == Op.And64 and v.args.count == 2 {
             let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
-                let right: *Value = Func_getValue(f, right_id);
+                let right: *Value = f.getValue( right_id);
                 if right.op == Op.ConstInt and right.aux_int == -1 {
                     let left_id: i64 = Value_getArg(v, 0);
 
@@ -169,7 +169,7 @@ fn lowerBlock(f: *Func, block: *Block) {
         if v.op == Op.Or64 and v.args.count == 2 {
             let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
-                let right: *Value = Func_getValue(f, right_id);
+                let right: *Value = f.getValue( right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
                     let left_id: i64 = Value_getArg(v, 0);
 
@@ -186,7 +186,7 @@ fn lowerBlock(f: *Func, block: *Block) {
         if v.op == Op.Xor64 and v.args.count == 2 {
             let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
-                let right: *Value = Func_getValue(f, right_id);
+                let right: *Value = f.getValue( right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
                     let left_id: i64 = Value_getArg(v, 0);
 
@@ -203,7 +203,7 @@ fn lowerBlock(f: *Func, block: *Block) {
         if (v.op == Op.Shl64 or v.op == Op.Shr64 or v.op == Op.Sar64) and v.args.count == 2 {
             let right_id: i64 = Value_getArg(v, 1);
             if right_id >= 0 {
-                let right: *Value = Func_getValue(f, right_id);
+                let right: *Value = f.getValue( right_id);
                 if right.op == Op.ConstInt and right.aux_int == 0 {
                     let left_id: i64 = Value_getArg(v, 0);
 
@@ -222,8 +222,8 @@ fn lowerBlock(f: *Func, block: *Block) {
             let left_id: i64 = Value_getArg(v, 0);
             let right_id: i64 = Value_getArg(v, 1);
             if left_id >= 0 and right_id >= 0 {
-                let left: *Value = Func_getValue(f, left_id);
-                let right: *Value = Func_getValue(f, right_id);
+                let left: *Value = f.getValue( left_id);
+                let right: *Value = f.getValue( right_id);
                 if left.op == Op.ConstInt and right.op == Op.ConstInt {
                     // Both are constants - fold
                     var result: i64 = 0;
@@ -252,8 +252,8 @@ fn lowerBlock(f: *Func, block: *Block) {
             let left_id: i64 = Value_getArg(v, 0);
             let right_id: i64 = Value_getArg(v, 1);
             if left_id >= 0 and right_id >= 0 {
-                let left: *Value = Func_getValue(f, left_id);
-                let right: *Value = Func_getValue(f, right_id);
+                let left: *Value = f.getValue( left_id);
+                let right: *Value = f.getValue( right_id);
                 if left.op == Op.ConstInt and right.op == Op.ConstInt {
                     var result: i64 = 0;
                     if v.op == Op.And64 {
@@ -279,8 +279,8 @@ fn lowerBlock(f: *Func, block: *Block) {
             let left_id: i64 = Value_getArg(v, 0);
             let right_id: i64 = Value_getArg(v, 1);
             if left_id >= 0 and right_id >= 0 {
-                let left: *Value = Func_getValue(f, left_id);
-                let right: *Value = Func_getValue(f, right_id);
+                let left: *Value = f.getValue( left_id);
+                let right: *Value = f.getValue( right_id);
                 if left.op == Op.ConstInt and right.op == Op.ConstInt {
                     // Only fold if shift amount is reasonable
                     if right.aux_int >= 0 and right.aux_int < 64 {
@@ -309,8 +309,8 @@ fn lowerBlock(f: *Func, block: *Block) {
             let left_id: i64 = Value_getArg(v, 0);
             let right_id: i64 = Value_getArg(v, 1);
             if left_id >= 0 and right_id >= 0 {
-                let left: *Value = Func_getValue(f, left_id);
-                let right: *Value = Func_getValue(f, right_id);
+                let left: *Value = f.getValue( left_id);
+                let right: *Value = f.getValue( right_id);
                 if left.op == Op.ConstInt and right.op == Op.ConstInt {
                     var result: i64 = 0;
                     if v.op == Op.Eq64 {
@@ -343,7 +343,7 @@ fn lowerBlock(f: *Func, block: *Block) {
             let left_id: i64 = Value_getArg(v, 0);
             let right_id: i64 = Value_getArg(v, 1);
             if left_id == right_id and left_id >= 0 {
-                let arg: *Value = Func_getValue(f, left_id);
+                let arg: *Value = f.getValue( left_id);
                 // Decrement uses by 2 (both args point to same value)
                 arg.uses = arg.uses - 2;
 
@@ -359,7 +359,7 @@ fn lowerBlock(f: *Func, block: *Block) {
             let left_id: i64 = Value_getArg(v, 0);
             let right_id: i64 = Value_getArg(v, 1);
             if left_id == right_id and left_id >= 0 {
-                let arg: *Value = Func_getValue(f, left_id);
+                let arg: *Value = f.getValue( left_id);
                 arg.uses = arg.uses - 2;
 
                 v.op = Op.ConstInt;
@@ -374,7 +374,7 @@ fn lowerBlock(f: *Func, block: *Block) {
             let left_id: i64 = Value_getArg(v, 0);
             let right_id: i64 = Value_getArg(v, 1);
             if left_id == right_id and left_id >= 0 {
-                let arg: *Value = Func_getValue(f, left_id);
+                let arg: *Value = f.getValue( left_id);
                 // One use remains (for Copy), one removed
                 arg.uses = arg.uses - 1;
 
@@ -389,7 +389,7 @@ fn lowerBlock(f: *Func, block: *Block) {
             let left_id: i64 = Value_getArg(v, 0);
             let right_id: i64 = Value_getArg(v, 1);
             if left_id == right_id and left_id >= 0 {
-                let arg: *Value = Func_getValue(f, left_id);
+                let arg: *Value = f.getValue( left_id);
                 arg.uses = arg.uses - 1;
 
                 v.op = Op.Copy;
@@ -402,11 +402,11 @@ fn lowerBlock(f: *Func, block: *Block) {
         if v.op == Op.Neg64 and v.args.count == 1 {
             let arg_id: i64 = Value_getArg(v, 0);
             if arg_id >= 0 {
-                let arg: *Value = Func_getValue(f, arg_id);
+                let arg: *Value = f.getValue( arg_id);
                 if arg.op == Op.Neg64 and arg.args.count == 1 {
                     let inner_id: i64 = Value_getArg(arg, 0);
                     if inner_id >= 0 {
-                        let inner: *Value = Func_getValue(f, inner_id);
+                        let inner: *Value = f.getValue( inner_id);
                         // v now directly uses inner instead of arg
                         arg.uses = arg.uses - 1;
                         inner.uses = inner.uses + 1;

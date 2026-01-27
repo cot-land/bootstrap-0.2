@@ -662,7 +662,7 @@ fn GenState_reloadSpilledArgs(gs: *GenState, v: *Value) {
     while i < v.args.count {
         let arg_id: i64 = Value_getArg(v, i);
         if arg_id >= 0 and arg_id < f.values_count {
-            let arg: *Value = Func_getValue(f, arg_id);
+            let arg: *Value = f.getValue( arg_id);
             GenState_emitReload(gs, arg);
         }
         i = i + 1;
@@ -680,7 +680,7 @@ fn GenState_generate(gs: *GenState) i64 {
 
     // BUG-054: Check if this function returns >16B (needs hidden return pointer)
     // Following Zig: src/codegen/arm64.zig:493-522
-    let ret_size: i64 = Func_getReturnTypeSize(f);
+    let ret_size: i64 = f.getReturnTypeSize();
     if ret_size > 16 {
         gs.has_hidden_return = true;
     } else {
@@ -745,7 +745,7 @@ fn GenState_generate(gs: *GenState) i64 {
         }
         gs.current_block = block_id;
 
-        let block: *Block = Func_getBlock(f, block_id);
+        let block: *Block = f.getBlock( block_id);
 
         // Process each value in the block
         t_tmp = get_time_ns();
@@ -790,7 +790,7 @@ fn GenState_blockValues(gs: *GenState, block: *Block) {
     var i: i64 = 0;
     while i < block.values_count {
         let value_id: i64 = block.values_start + i;
-        let v: *Value = Func_getValue(f, value_id);
+        let v: *Value = f.getValue( value_id);
 
         // In entry block of main(), insert crash handler after param setup
         // The param setup ops are: Arg, LocalAddr, Store, Phi, Nop
@@ -1041,7 +1041,7 @@ fn GenState_zeroExt(gs: *GenState, v: *Value, src_bits: i64) {
 
     // Get source value
     let arg_id: i64 = Value_getArg(v, 0);
-    let arg_val: *Value = Func_getValue(f, arg_id);
+    let arg_val: *Value = f.getValue( arg_id);
     let rn: i64 = arg_val.reg;
     if rn < 0 { rn = rd; }
 
@@ -1069,7 +1069,7 @@ fn GenState_signExt(gs: *GenState, v: *Value, src_bits: i64) {
 
     // Get source value
     let arg_id: i64 = Value_getArg(v, 0);
-    let arg_val: *Value = Func_getValue(f, arg_id);
+    let arg_val: *Value = f.getValue( arg_id);
     let rn: i64 = arg_val.reg;
     if rn < 0 { rn = rd; }
 
@@ -1095,7 +1095,7 @@ fn GenState_trunc(gs: *GenState, v: *Value, dst_bits: i64) {
 
     // Get source value
     let arg_id: i64 = Value_getArg(v, 0);
-    let arg_val: *Value = Func_getValue(f, arg_id);
+    let arg_val: *Value = f.getValue( arg_id);
     let rn: i64 = arg_val.reg;
     if rn < 0 { rn = rd; }
 
@@ -1148,7 +1148,7 @@ fn GenState_stringMake(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let ptr_val: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let ptr_val: *Value = f.getValue( Value_getArg(v, 0));
 
     // Move ptr to destination register
     if ptr_val.reg >= 0 and ptr_val.reg != rd {
@@ -1166,7 +1166,7 @@ fn GenState_sliceMake(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let ptr_val: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let ptr_val: *Value = f.getValue( Value_getArg(v, 0));
 
     // Move ptr to destination register
     if ptr_val.reg >= 0 and ptr_val.reg != rd {
@@ -1183,7 +1183,7 @@ fn GenState_slicePtr(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let slice_val: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let slice_val: *Value = f.getValue( Value_getArg(v, 0));
 
     // For call results: ptr is in x0 (first return value)
     // For slice_make: ptr is args[0]
@@ -1195,7 +1195,7 @@ fn GenState_slicePtr(gs: *GenState, v: *Value) {
         }
     } else if slice_val.op == Op.SliceMake or slice_val.op == Op.StringMake {
         // slice_make/string_make: ptr is args[0]
-        let ptr_val: *Value = Func_getValue(f, Value_getArg(slice_val, 0));
+        let ptr_val: *Value = f.getValue( Value_getArg(slice_val, 0));
         if ptr_val.reg >= 0 and ptr_val.reg != rd {
             GenState_emitInst(gs, ARM64_encodeMovReg(rd, ptr_val.reg));
         }
@@ -1237,7 +1237,7 @@ fn GenState_sliceLen(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let slice_val: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let slice_val: *Value = f.getValue( Value_getArg(v, 0));
 
     // For call results: len is in x1 (second return value)
     // For slice_make: len is args[1]
@@ -1249,7 +1249,7 @@ fn GenState_sliceLen(gs: *GenState, v: *Value) {
         }
     } else if slice_val.op == Op.SliceMake or slice_val.op == Op.StringMake {
         // slice_make/string_make: len is args[1]
-        let len_val: *Value = Func_getValue(f, Value_getArg(slice_val, 1));
+        let len_val: *Value = f.getValue( Value_getArg(slice_val, 1));
         if len_val.reg >= 0 and len_val.reg != rd {
             GenState_emitInst(gs, ARM64_encodeMovReg(rd, len_val.reg));
         }
@@ -1262,11 +1262,11 @@ fn GenState_sliceLen(gs: *GenState, v: *Value) {
         // Load of a string/slice local: len is at offset 8 from base
         // Check if type is TYPE_STRING or TYPE_SLICE (16-byte composite)
         if slice_val.type_idx == TYPE_STRING or slice_val.type_idx == TYPE_SLICE {
-            let addr_val: *Value = Func_getValue(f, Value_getArg(slice_val, 0));
+            let addr_val: *Value = f.getValue( Value_getArg(slice_val, 0));
             if addr_val.op == Op.LocalAddr {
                 // Direct SP-relative load from offset + 8
                 let local_idx: i64 = addr_val.aux_int;
-                let local: *Local = Func_getLocal(f, local_idx);
+                let local: *Local = f.getLocal( local_idx);
                 let len_offset: i64 = local.offset + 8;
                 GenState_emitInst(gs, encode_ldr(rd, SP, len_offset));
             } else {
@@ -1295,8 +1295,8 @@ fn GenState_add(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
-    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
+    let arg0: *Value = f.getValue( Value_getArg(v, 0));
+    let arg1: *Value = f.getValue( Value_getArg(v, 1));
 
     // Check if arg1 is a small constant
     if arg1.op == Op.ConstInt and arg1.aux_int >= 0 and arg1.aux_int <= 4095 {
@@ -1311,8 +1311,8 @@ fn GenState_sub(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
-    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
+    let arg0: *Value = f.getValue( Value_getArg(v, 0));
+    let arg1: *Value = f.getValue( Value_getArg(v, 1));
 
     if arg1.op == Op.ConstInt and arg1.aux_int >= 0 and arg1.aux_int <= 4095 {
         GenState_emitInst(gs, encode_sub_imm(rd, arg0.reg, arg1.aux_int));
@@ -1326,8 +1326,8 @@ fn GenState_mul(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
-    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
+    let arg0: *Value = f.getValue( Value_getArg(v, 0));
+    let arg1: *Value = f.getValue( Value_getArg(v, 1));
 
     GenState_emitInst(gs, encode_mul(rd, arg0.reg, arg1.reg));
 }
@@ -1337,8 +1337,8 @@ fn GenState_div(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
-    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
+    let arg0: *Value = f.getValue( Value_getArg(v, 0));
+    let arg1: *Value = f.getValue( Value_getArg(v, 1));
 
     GenState_emitInst(gs, encode_sdiv(rd, arg0.reg, arg1.reg));
 }
@@ -1351,8 +1351,8 @@ fn GenState_mod(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
-    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
+    let arg0: *Value = f.getValue( Value_getArg(v, 0));
+    let arg1: *Value = f.getValue( Value_getArg(v, 1));
 
     let rn: i64 = arg0.reg;  // dividend (a)
     let rm: i64 = arg1.reg;  // divisor (b)
@@ -1370,8 +1370,8 @@ fn GenState_and(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
-    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
+    let arg0: *Value = f.getValue( Value_getArg(v, 0));
+    let arg1: *Value = f.getValue( Value_getArg(v, 1));
 
     GenState_emitInst(gs, ARM64_and(rd, arg0.reg, arg1.reg));
 }
@@ -1381,8 +1381,8 @@ fn GenState_or(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
-    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
+    let arg0: *Value = f.getValue( Value_getArg(v, 0));
+    let arg1: *Value = f.getValue( Value_getArg(v, 1));
 
     GenState_emitInst(gs, ARM64_or(rd, arg0.reg, arg1.reg));
 }
@@ -1392,8 +1392,8 @@ fn GenState_xor(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
-    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
+    let arg0: *Value = f.getValue( Value_getArg(v, 0));
+    let arg1: *Value = f.getValue( Value_getArg(v, 1));
 
     GenState_emitInst(gs, ARM64_xor(rd, arg0.reg, arg1.reg));
 }
@@ -1403,8 +1403,8 @@ fn GenState_shl(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
-    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
+    let arg0: *Value = f.getValue( Value_getArg(v, 0));
+    let arg1: *Value = f.getValue( Value_getArg(v, 1));
 
     GenState_emitInst(gs, encode_lsl_reg(rd, arg0.reg, arg1.reg));
 }
@@ -1414,8 +1414,8 @@ fn GenState_shr(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
-    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
+    let arg0: *Value = f.getValue( Value_getArg(v, 0));
+    let arg1: *Value = f.getValue( Value_getArg(v, 1));
 
     GenState_emitInst(gs, encode_asr_reg(rd, arg0.reg, arg1.reg));  // Signed shift right
 }
@@ -1425,7 +1425,7 @@ fn GenState_neg(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let arg0: *Value = f.getValue( Value_getArg(v, 0));
 
     // NEG Xd, Xn = SUB Xd, XZR, Xn
     GenState_emitInst(gs, encode_sub_reg(rd, XZR, arg0.reg));
@@ -1437,7 +1437,7 @@ fn GenState_bitnot(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let arg0: *Value = f.getValue( Value_getArg(v, 0));
 
     // MVN Xd, Xn = ORN Xd, XZR, Xn
     GenState_emitInst(gs, encode_orn(rd, XZR, arg0.reg));
@@ -1449,7 +1449,7 @@ fn GenState_logical_not(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let arg0: *Value = f.getValue( Value_getArg(v, 0));
 
     // CMP Xn, #0
     // CSET Xd, EQ (set Xd = 1 if zero, 0 if non-zero)
@@ -1474,8 +1474,8 @@ fn GenState_compare(gs: *GenState, v: *Value, cond: i64) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
-    let arg1: *Value = Func_getValue(f, Value_getArg(v, 1));
+    let arg0: *Value = f.getValue( Value_getArg(v, 0));
+    let arg1: *Value = f.getValue( Value_getArg(v, 1));
 
     // Compare and set result
     GenState_emitInst(gs, ARM64_cmp(arg0.reg, arg1.reg));
@@ -1489,9 +1489,9 @@ fn GenState_select(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let cond_val: *Value = Func_getValue(f, Value_getArg(v, 0));
-    let true_val: *Value = Func_getValue(f, Value_getArg(v, 1));
-    let false_val: *Value = Func_getValue(f, Value_getArg(v, 2));
+    let cond_val: *Value = f.getValue( Value_getArg(v, 0));
+    let true_val: *Value = f.getValue( Value_getArg(v, 1));
+    let false_val: *Value = f.getValue( Value_getArg(v, 2));
 
     // Compare condition with 0
     GenState_emitInst(gs, encode_cmp_imm(cond_val.reg, 0));
@@ -1505,7 +1505,7 @@ fn GenState_load(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let addr: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let addr: *Value = f.getValue( Value_getArg(v, 0));
 
     // Check if we need byte-sized load (TYPE_U8 = 6, TYPE_I8 = 2)
     // IMPORTANT: Also check SOURCE type (from LocalAddr), not just Load value type
@@ -1515,7 +1515,7 @@ fn GenState_load(gs: *GenState, v: *Value) {
     // Check if address is LocalAddr - emit SP-relative load directly
     if addr.op == Op.LocalAddr {
         let local_idx: i64 = addr.aux_int;
-        let local: *Local = Func_getLocal(f, local_idx);
+        let local: *Local = f.getLocal( local_idx);
         // Also check local's type in case Load value type is wrong
         if local.type_idx == 6 or local.type_idx == 2 {
             is_byte = true;
@@ -1529,10 +1529,10 @@ fn GenState_load(gs: *GenState, v: *Value) {
         // OffPtr: base + offset. Check if base is LocalAddr for direct SP-relative load
         let field_offset: i64 = addr.aux_int;
         if addr.args.count > 0 {
-            let base_val: *Value = Func_getValue(f, Value_getArg(addr, 0));
+            let base_val: *Value = f.getValue( Value_getArg(addr, 0));
             if base_val.op == Op.LocalAddr {
                 let local_idx: i64 = base_val.aux_int;
-                let local: *Local = Func_getLocal(f, local_idx);
+                let local: *Local = f.getLocal( local_idx);
                 let total_offset: i64 = local.offset + field_offset;
                 if is_byte {
                     GenState_emitInst(gs, encode_ldrb(rd, SP, total_offset));
@@ -1560,8 +1560,8 @@ fn GenState_load(gs: *GenState, v: *Value) {
 
 fn GenState_store(gs: *GenState, v: *Value) {
     let f: *Func = gs.func;
-    let addr: *Value = Func_getValue(f, Value_getArg(v, 0));
-    let val: *Value = Func_getValue(f, Value_getArg(v, 1));
+    let addr: *Value = f.getValue( Value_getArg(v, 0));
+    let val: *Value = f.getValue( Value_getArg(v, 1));
 
     // Check if we need byte-sized store (TYPE_U8 = 6, TYPE_I8 = 2)
     // IMPORTANT: Check DESTINATION type (from LocalAddr), not source value type
@@ -1577,7 +1577,7 @@ fn GenState_store(gs: *GenState, v: *Value) {
 
     if addr.op == Op.LocalAddr {
         let local_idx: i64 = addr.aux_int;
-        let local: *Local = Func_getLocal(f, local_idx);
+        let local: *Local = f.getLocal( local_idx);
         if local.type_idx == 6 or local.type_idx == 2 {
             is_byte = true;
         }
@@ -1601,7 +1601,7 @@ fn GenState_store(gs: *GenState, v: *Value) {
     // Check if address is LocalAddr - emit SP-relative store directly
     if addr.op == Op.LocalAddr {
         let local_idx: i64 = addr.aux_int;
-        let local: *Local = Func_getLocal(f, local_idx);
+        let local: *Local = f.getLocal( local_idx);
         if is_byte {
             GenState_emitInst(gs, encode_strb(src_reg, SP, local.offset));
         } else {
@@ -1611,10 +1611,10 @@ fn GenState_store(gs: *GenState, v: *Value) {
         // OffPtr: base + offset. Check if base is LocalAddr for direct SP-relative store
         let field_offset: i64 = addr.aux_int;
         if addr.args.count > 0 {
-            let base_val: *Value = Func_getValue(f, Value_getArg(addr, 0));
+            let base_val: *Value = f.getValue( Value_getArg(addr, 0));
             if base_val.op == Op.LocalAddr {
                 let local_idx: i64 = base_val.aux_int;
-                let local: *Local = Func_getLocal(f, local_idx);
+                let local: *Local = f.getLocal( local_idx);
                 let total_offset: i64 = local.offset + field_offset;
                 if is_byte {
                     GenState_emitInst(gs, encode_strb(src_reg, SP, total_offset));
@@ -1648,8 +1648,8 @@ fn GenState_move(gs: *GenState, v: *Value) {
     let f: *Func = gs.func;
     if v.args.count < 2 { return; }
 
-    let dest_val: *Value = Func_getValue(f, Value_getArg(v, 0));
-    let src_val: *Value = Func_getValue(f, Value_getArg(v, 1));
+    let dest_val: *Value = f.getValue( Value_getArg(v, 0));
+    let src_val: *Value = f.getValue( Value_getArg(v, 1));
     let copy_size: i64 = v.aux_int;
 
     // Get dest register - could be LocalAddr or computed address
@@ -1658,7 +1658,7 @@ fn GenState_move(gs: *GenState, v: *Value) {
     if dest_val.op == Op.LocalAddr {
         // Compute local address into X16
         let local_idx: i64 = dest_val.aux_int;
-        let local: *Local = Func_getLocal(f, local_idx);
+        let local: *Local = f.getLocal( local_idx);
         GenState_emitInst(gs, encode_add_imm(X16, SP, local.offset));
     } else if dest_val.reg >= 0 {
         // Use assigned register (may need to reload if stale)
@@ -1671,8 +1671,8 @@ fn GenState_move(gs: *GenState, v: *Value) {
     if src_val.op == Op.AddPtr and src_val.args.count >= 2 {
         // AddPtr: args[0]=base, args[1]=offset
         // We need to regenerate the address calculation
-        let base_v: *Value = Func_getValue(f, Value_getArg(src_val, 0));
-        let off_v: *Value = Func_getValue(f, Value_getArg(src_val, 1));
+        let base_v: *Value = f.getValue( Value_getArg(src_val, 0));
+        let off_v: *Value = f.getValue( Value_getArg(src_val, 1));
 
         // Get base address into X17
         if base_v.op == Op.GlobalAddr {
@@ -1730,7 +1730,7 @@ fn GenState_localAddr(gs: *GenState, v: *Value) {
 
     let f: *Func = gs.func;
     let local_idx: i64 = v.aux_int;
-    let local: *Local = Func_getLocal(f, local_idx);
+    let local: *Local = f.getLocal( local_idx);
 
     // Compute address: SP + offset (no FP setup in simple prologue)
     GenState_emitInst(gs, encode_add_imm(rd, SP, local.offset));
@@ -1847,7 +1847,7 @@ fn GenState_globalStore(gs: *GenState, v: *Value) {
     // Get the value to store from arg[0]
     let f: *Func = gs.func;
     if v.args.count < 1 { return; }
-    let val: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let val: *Value = f.getValue( Value_getArg(v, 0));
     let src_reg: i64 = val.reg;
     if src_reg < 0 { return; }
 
@@ -1892,13 +1892,13 @@ fn GenState_offPtr(gs: *GenState, v: *Value) {
 
     if v.args.count > 0 {
         let base_id: i64 = Value_getArg(v, 0);
-        let base_val: *Value = Func_getValue(f, base_id);
+        let base_val: *Value = f.getValue( base_id);
 
         // Special case: if base is LocalAddr, regenerate it directly
         // This avoids issues with register clobbering
         if base_val.op == Op.LocalAddr {
             let local_idx: i64 = base_val.aux_int;
-            let local: *Local = Func_getLocal(f, local_idx);
+            let local: *Local = f.getLocal( local_idx);
             // Compute address with combined offset: SP + local.offset + field_offset
             let total_offset: i64 = local.offset + offset;
             GenState_emitInst(gs, encode_add_imm(rd, SP, total_offset));
@@ -1946,7 +1946,7 @@ fn GenState_call(gs: *GenState, v: *Value) {
     var i: i64 = 0;
     while i < v.args.count {
         let arg_id: i64 = Value_getArg(v, i);
-        let arg_val: *Value = Func_getValue(f, arg_id);
+        let arg_val: *Value = f.getValue( arg_id);
         i64list_append(&param_types, arg_val.type_idx);
         i = i + 1;
     }
@@ -1970,7 +1970,7 @@ fn GenState_call(gs: *GenState, v: *Value) {
     i = 8;
     while i < v.args.count and i < abi_info.in_params_count {
         let arg_id: i64 = Value_getArg(v, i);
-        let arg_val: *Value = Func_getValue(f, arg_id);
+        let arg_val: *Value = f.getValue( arg_id);
 
         var assignment: ABIParamAssignment = undefined;
         ABIParamResultInfo_getInParam(&abi_info, i, &assignment);
@@ -2019,7 +2019,7 @@ fn GenState_call(gs: *GenState, v: *Value) {
     i = 0;
     while i < v.args.count and i < abi_info.in_params_count and i < 8 {
         let arg_id: i64 = Value_getArg(v, i);
-        let arg_val: *Value = Func_getValue(f, arg_id);
+        let arg_val: *Value = f.getValue( arg_id);
 
         var assignment: ABIParamAssignment = undefined;
         ABIParamResultInfo_getInParam(&abi_info, i, &assignment);
@@ -2070,7 +2070,7 @@ fn GenState_call(gs: *GenState, v: *Value) {
                     let mi_src: i64 = i64list_get(&move_src, mi);
                     let mi_dest: i64 = i64list_get(&move_dest, mi);
                     let mi_val_id: i64 = i64list_get(&move_val_id, mi);
-                    let mi_val: *Value = Func_getValue(f, mi_val_id);
+                    let mi_val: *Value = f.getValue( mi_val_id);
                     if mi_dest >= 0 {
                         // For constants, ALWAYS regenerate regardless of mi_src
                         // (the assigned register may contain a different value now)
@@ -2120,14 +2120,14 @@ fn GenState_call(gs: *GenState, v: *Value) {
                             // BUG-019: LocalAddr as call arg (>16B struct pass-by-reference)
                             // emit ADD dest, SP, #offset to compute local address
                             let local_idx: i64 = mi_val.aux_int;
-                            let local: *Local = Func_getLocal(f, local_idx);
+                            let local: *Local = f.getLocal( local_idx);
                             GenState_emitInst(gs, encode_add_imm(mi_dest, SP, local.offset));
                         } else if mi_val.op == Op.StringPtr or mi_val.op == Op.SlicePtr {
                             // StringPtr/SlicePtr as call arg: need to materialize the ptr
                             // Get the string/slice value and extract ptr
                             if mi_val.args.count >= 1 {
                                 let slice_arg_id: i64 = Value_getArg(mi_val, 0);
-                                let slice_arg: *Value = Func_getValue(f, slice_arg_id);
+                                let slice_arg: *Value = f.getValue( slice_arg_id);
                                 if slice_arg.op == Op.ConstString {
                                     // ConstString: emit ADRP+ADD to load ptr
                                     let str_start: i64 = slice_arg.aux_int;
@@ -2154,17 +2154,17 @@ fn GenState_call(gs: *GenState, v: *Value) {
                             // StringLen/SliceLen as call arg: need to materialize the len
                             if mi_val.args.count >= 1 {
                                 let slice_arg_id: i64 = Value_getArg(mi_val, 0);
-                                let slice_arg: *Value = Func_getValue(f, slice_arg_id);
+                                let slice_arg: *Value = f.getValue( slice_arg_id);
                                 if slice_arg.op == Op.ConstString {
                                     // ConstString: len is stored in aux_ptr
                                     let str_len: i64 = slice_arg.aux_ptr;
                                     GenState_emitInst(gs, ARM64_encodeMovImm(mi_dest, str_len));
                                 } else if slice_arg.op == Op.Load and slice_arg.args.count >= 1 {
                                     // Load of a string local: len is at offset 8 from base
-                                    let addr_val: *Value = Func_getValue(f, Value_getArg(slice_arg, 0));
+                                    let addr_val: *Value = f.getValue( Value_getArg(slice_arg, 0));
                                     if addr_val.op == Op.LocalAddr {
                                         let local_idx: i64 = addr_val.aux_int;
-                                        let local: *Local = Func_getLocal(f, local_idx);
+                                        let local: *Local = f.getLocal( local_idx);
                                         let len_offset: i64 = local.offset + 8;
                                         GenState_emitInst(gs, encode_ldr(mi_dest, SP, len_offset));
                                     } else if addr_val.reg >= 0 {
@@ -2298,7 +2298,7 @@ fn GenState_callIndirect(gs: *GenState, v: *Value) {
     if v.args.count < 1 { return; }
 
     let fn_ptr_id: i64 = Value_getArg(v, 0);
-    let fn_ptr_val: *Value = Func_getValue(f, fn_ptr_id);
+    let fn_ptr_val: *Value = f.getValue( fn_ptr_id);
     let fn_ptr_reg: i64 = fn_ptr_val.reg;
 
     // Use ABI module for proper parameter assignment (skip first arg which is fn_ptr)
@@ -2307,7 +2307,7 @@ fn GenState_callIndirect(gs: *GenState, v: *Value) {
     var i: i64 = 1;  // Start from 1 to skip function pointer
     while i < v.args.count {
         let arg_id: i64 = Value_getArg(v, i);
-        let arg_val: *Value = Func_getValue(f, arg_id);
+        let arg_val: *Value = f.getValue( arg_id);
         i64list_append(&param_types, arg_val.type_idx);
         i = i + 1;
     }
@@ -2323,7 +2323,7 @@ fn GenState_callIndirect(gs: *GenState, v: *Value) {
     i = 1;
     while i < v.args.count and (i - 1) < abi_info.in_params_count {
         let arg_id: i64 = Value_getArg(v, i);
-        let arg_val: *Value = Func_getValue(f, arg_id);
+        let arg_val: *Value = f.getValue( arg_id);
 
         var assignment: ABIParamAssignment = undefined;
         ABIParamResultInfo_getInParam(&abi_info, i - 1, &assignment);
@@ -2380,10 +2380,10 @@ fn GenState_stringConcat(gs: *GenState, v: *Value) {
     }
 
     // Get the arg values
-    let ptr1_val: *Value = Func_getValue(f, Value_getArg(v, 0));
-    let len1_val: *Value = Func_getValue(f, Value_getArg(v, 1));
-    let ptr2_val: *Value = Func_getValue(f, Value_getArg(v, 2));
-    let len2_val: *Value = Func_getValue(f, Value_getArg(v, 3));
+    let ptr1_val: *Value = f.getValue( Value_getArg(v, 0));
+    let len1_val: *Value = f.getValue( Value_getArg(v, 1));
+    let ptr2_val: *Value = f.getValue( Value_getArg(v, 2));
+    let len2_val: *Value = f.getValue( Value_getArg(v, 3));
 
     // Following Zig pattern: use scratch registers x10-x13 to avoid clobbering
     // Then copy to x0-x3 for the call
@@ -2476,7 +2476,7 @@ fn GenState_return(gs: *GenState, v: *Value) {
     // Following Zig: src/codegen/arm64.zig:851-963
     if gs.has_hidden_return and v.args.count > 0 {
         let arg0_id: i64 = Value_getArg(v, 0);
-        let ret_val: *Value = Func_getValue(f, arg0_id);
+        let ret_val: *Value = f.getValue( arg0_id);
 
         // Load hidden return pointer from stack into X17 (temp register)
         // We saved x8 to [sp, #hidden_ret_ptr_offset] in prologue
@@ -2491,20 +2491,20 @@ fn GenState_return(gs: *GenState, v: *Value) {
         if ret_val.op == Op.LocalAddr {
             // Direct local address - compute address
             let local_idx: i64 = ret_val.aux_int;
-            let local: *Local = Func_getLocal(f, local_idx);
+            let local: *Local = f.getLocal( local_idx);
             GenState_emitInst(gs, encode_add_imm(X16, SP, local.offset));
         } else if ret_val.op == Op.Load and ret_val.args.count > 0 {
             // Load operation - get source address from arg[0] (which should be LocalAddr or OffPtr)
-            let addr_val: *Value = Func_getValue(f, Value_getArg(ret_val, 0));
+            let addr_val: *Value = f.getValue( Value_getArg(ret_val, 0));
             if addr_val.op == Op.LocalAddr {
                 let local_idx: i64 = addr_val.aux_int;
-                let local: *Local = Func_getLocal(f, local_idx);
+                let local: *Local = f.getLocal( local_idx);
                 GenState_emitInst(gs, encode_add_imm(X16, SP, local.offset));
             } else if addr_val.op == Op.OffPtr and addr_val.args.count > 0 {
-                let base_val: *Value = Func_getValue(f, Value_getArg(addr_val, 0));
+                let base_val: *Value = f.getValue( Value_getArg(addr_val, 0));
                 if base_val.op == Op.LocalAddr {
                     let local_idx: i64 = base_val.aux_int;
-                    let local: *Local = Func_getLocal(f, local_idx);
+                    let local: *Local = f.getLocal( local_idx);
                     let offset: i64 = addr_val.aux_int;
                     GenState_emitInst(gs, encode_add_imm(X16, SP, local.offset + offset));
                 } else if base_val.reg >= 0 {
@@ -2516,10 +2516,10 @@ fn GenState_return(gs: *GenState, v: *Value) {
             }
         } else if ret_val.op == Op.OffPtr and ret_val.args.count > 0 {
             // Offset from base - check if base is LocalAddr
-            let base_val: *Value = Func_getValue(f, Value_getArg(ret_val, 0));
+            let base_val: *Value = f.getValue( Value_getArg(ret_val, 0));
             if base_val.op == Op.LocalAddr {
                 let local_idx: i64 = base_val.aux_int;
-                let local: *Local = Func_getLocal(f, local_idx);
+                let local: *Local = f.getLocal( local_idx);
                 let offset: i64 = ret_val.aux_int;
                 GenState_emitInst(gs, encode_add_imm(X16, SP, local.offset + offset));
             } else if base_val.reg >= 0 {
@@ -2531,7 +2531,7 @@ fn GenState_return(gs: *GenState, v: *Value) {
         }
 
         // Copy struct data from [src_reg] to [X17] (the hidden return destination)
-        let ret_size: i64 = Func_getReturnTypeSize(f);
+        let ret_size: i64 = f.getReturnTypeSize();
         var copy_off: i64 = 0;
         while copy_off + 8 <= ret_size {
             // LDR X19, [src_reg, #copy_off]
@@ -2553,13 +2553,13 @@ fn GenState_return(gs: *GenState, v: *Value) {
     } else if v.args.count > 0 {
         // Regular return handling (not hidden)
         let arg0_id: i64 = Value_getArg(v, 0);
-        let ret_val: *Value = Func_getValue(f, arg0_id);
+        let ret_val: *Value = f.getValue( arg0_id);
 
         // Check if returning a slice (SliceMake)
         if ret_val.op == Op.SliceMake {
             // Slice return: ptr in X0, len in X1
-            let ptr_val: *Value = Func_getValue(f, Value_getArg(ret_val, 0));
-            let len_val: *Value = Func_getValue(f, Value_getArg(ret_val, 1));
+            let ptr_val: *Value = f.getValue( Value_getArg(ret_val, 0));
+            let len_val: *Value = f.getValue( Value_getArg(ret_val, 1));
             // Move ptr to X0
             if ptr_val.reg >= 0 and ptr_val.reg != X0 {
                 GenState_emitInst(gs, ARM64_encodeMovReg(X0, ptr_val.reg));
@@ -2598,7 +2598,7 @@ fn GenState_copy(gs: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
-    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
+    let arg0: *Value = f.getValue( Value_getArg(v, 0));
 
     if arg0.reg == rd {
         return;  // Same register, no-op
@@ -2647,13 +2647,13 @@ fn GenState_emitPhiMoves(gs: *GenState, current_block: *Block, target_block_id: 
     i = 0;
     while i < target_block.values_count {
         let value_id: i64 = target_block.values_start + i;
-        let v: *Value = Func_getValue(f, value_id);
+        let v: *Value = f.getValue( value_id);
 
         if v.op == Op.Phi {
             // Get the argument for this predecessor
             if pred_idx < v.args.count {
                 let src_id: i64 = Value_getArg(v, pred_idx);
-                let src_val: *Value = Func_getValue(f, src_id);
+                let src_val: *Value = f.getValue( src_id);
 
                 let phi_reg: i64 = v.reg;
                 let src_reg: i64 = src_val.reg;
@@ -2763,7 +2763,7 @@ fn GenState_blockControl(gs: *GenState, block: *Block, next_block: i64) {
         // Conditional branch using CBZ/CBNZ
         // The condition value is in a register (0 = false, 1 = true)
         let f: *Func = gs.func;
-        let cond_val: *Value = Func_getValue(f, block.control);
+        let cond_val: *Value = f.getValue( block.control);
         let cond_reg: i64 = cond_val.reg;
 
         let then_block: i64 = block.succs[0];

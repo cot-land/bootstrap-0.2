@@ -111,6 +111,7 @@ pub const Token = enum(u8) {
     kw_let,
     kw_const,
     kw_struct,
+    kw_impl,
     kw_enum,
     kw_union,
     kw_type,
@@ -294,6 +295,7 @@ const token_strings = blk: {
     strings[@intFromEnum(Token.kw_let)] = "let";
     strings[@intFromEnum(Token.kw_const)] = "const";
     strings[@intFromEnum(Token.kw_struct)] = "struct";
+    strings[@intFromEnum(Token.kw_impl)] = "impl";
     strings[@intFromEnum(Token.kw_enum)] = "enum";
     strings[@intFromEnum(Token.kw_union)] = "union";
     strings[@intFromEnum(Token.kw_type)] = "type";
@@ -343,6 +345,7 @@ pub const keywords = std.StaticStringMap(Token).initComptime(.{
     .{ "let", .kw_let },
     .{ "const", .kw_const },
     .{ "struct", .kw_struct },
+    .{ "impl", .kw_impl },
     .{ "enum", .kw_enum },
     .{ "union", .kw_union },
     .{ "type", .kw_type },

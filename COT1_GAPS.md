@@ -1,12 +1,28 @@
 # cot1 vs Zig Bootstrap Compiler - Functional Analysis
 
-**Last Updated: 2026-01-26**
+**Last Updated: 2026-01-27**
 
 ## Executive Summary
 
 **Overall Functional Coverage: 95%**
 
 cot1 is a near-complete translation of the Zig bootstrap compiler. All critical path functions exist and the compiler successfully self-hosts (cot1-stage1 compiles cot1-stage2).
+
+## Ongoing: Method Syntax Conversion (2026-01-27)
+
+Converting cot1 from function-style (`Func_getBlock(f, id)`) to method syntax (`f.getBlock(id)`).
+
+**Progress:**
+| Phase | Structs | Status |
+|-------|---------|--------|
+| 1a | Func, Local | **Complete** |
+| 1b | GenState | Pending |
+| 1c | Value | Pending |
+| 2a-c | Parser, FuncBuilder, Lowerer | Pending |
+| 3a-d | SSABuilder, TypeRegistry, Scanner, MachOWriter, Block | Pending |
+| 4 | Remaining 20+ structs | Pending |
+
+This conversion improves code readability while maintaining functional equivalence.
 
 Note: Previous estimates based on line counts were misleading. cot1's more verbose syntax (no generics, explicit function naming) means line counts don't reflect functional completeness.
 

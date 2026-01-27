@@ -22,7 +22,7 @@ fn copyelim(f: *Func) {
     // Process each block
     var b: i64 = 0;
     while b < f.blocks_count {
-        let block: *Block = Func_getBlock(f, b);
+        let block: *Block = f.getBlock( b);
         copyelimBlock(f, block);
         b = b + 1;
     }
@@ -32,7 +32,7 @@ fn copyelim(f: *Func) {
 fn copyelimBlock(f: *Func, block: *Block) {
     var vi: i64 = 0;
     while vi < block.values_count {
-        let v: *Value = Func_getValue(f, block.values_start + vi);
+        let v: *Value = f.getValue( block.values_start + vi);
 
         // Look for copy operations with exactly one argument
         if v.op == Op.Copy and v.args.count == 1 {
@@ -43,7 +43,7 @@ fn copyelimBlock(f: *Func, block: *Block) {
 
                 if replaced > 0 {
                     // Update use counts
-                    let src: *Value = Func_getValue(f, src_id);
+                    let src: *Value = f.getValue( src_id);
                     src.uses = src.uses + replaced;
 
                     // The copy itself no longer has uses (they were transferred)
@@ -89,7 +89,7 @@ fn replaceUses(f: *Func, old_id: i64, new_id: i64) i64 {
     // Also check block control values
     var bi: i64 = 0;
     while bi < f.blocks_count {
-        let block: *Block = Func_getBlock(f, bi);
+        let block: *Block = f.getBlock( bi);
         if block.control == old_id {
             block.control = new_id;
             count = count + 1;

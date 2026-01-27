@@ -33,17 +33,17 @@ fn expandCalls(f: *Func, type_pool: *TypeRegistry) {
     // Pass 1: Find and handle wide stores (Store of !canSSA type → Move)
     var b: i64 = 0;
     while b < f.blocks_count {
-        let block: *Block = Func_getBlock(f, b);
+        let block: *Block = f.getBlock( b);
 
         var vi: i64 = 0;
         while vi < block.values_count {
-            let v: *Value = Func_getValue(f, block.values_start + vi);
+            let v: *Value = f.getValue( block.values_start + vi);
 
             // Check for Store of non-SSA type
             if v.op == Op.Store and v.args.count >= 2 {
                 let stored_id: i64 = Value_getArg(v, 1);
                 if stored_id >= 0 {
-                    let stored_val: *Value = Func_getValue(f, stored_id);
+                    let stored_val: *Value = f.getValue( stored_id);
 
                     // Check if stored value is from a call returning large type
                     // Note: SelectN not implemented in cot0 yet
@@ -78,11 +78,11 @@ fn expandCalls(f: *Func, type_pool: *TypeRegistry) {
 fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
     var b: i64 = 0;
     while b < f.blocks_count {
-        let block: *Block = Func_getBlock(f, b);
+        let block: *Block = f.getBlock( b);
 
         var vi: i64 = 0;
         while vi < block.values_count {
-            let v: *Value = Func_getValue(f, block.values_start + vi);
+            let v: *Value = f.getValue( block.values_start + vi);
 
             // Only process Call and ClosureCall values
             if v.op != Op.Call and v.op != Op.ClosureCall {
@@ -109,7 +109,7 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
                     continue;
                 }
 
-                let arg: *Value = Func_getValue(f, arg_id);
+                let arg: *Value = f.getValue( arg_id);
 
                 // STRING: Decompose string arguments into ptr and len
                 // Reference: expand_calls.zig:361-406
@@ -126,8 +126,8 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
 
                         // Update use counts
                         arg.uses = arg.uses - 1;
-                        let ptr_val: *Value = Func_getValue(f, ptr_id);
-                        let len_val: *Value = Func_getValue(f, len_id);
+                        let ptr_val: *Value = f.getValue( ptr_id);
+                        let len_val: *Value = f.getValue( len_id);
                         ptr_val.uses = ptr_val.uses + 1;
                         len_val.uses = len_val.uses + 1;
                     } else {
@@ -136,11 +136,11 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
                         let saved_block: i64 = f.current_block;
                         f.current_block = block.id;
 
-                        let ptr_val: *Value = Func_newValue(f, Op.StringPtr, TYPE_I64);
+                        let ptr_val: *Value = f.newValue( Op.StringPtr, TYPE_I64);
                         Value_addArg(ptr_val, arg);  // arg is the string value
                         let ptr_val_id: i64 = ptr_val.id;
 
-                        let len_val: *Value = Func_newValue(f, Op.StringLen, TYPE_I64);
+                        let len_val: *Value = f.newValue( Op.StringLen, TYPE_I64);
                         Value_addArg(len_val, arg);  // arg is the string value
                         let len_val_id: i64 = len_val.id;
 
@@ -171,7 +171,7 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
 
                         // Update use counts
                         arg.uses = arg.uses - 1;
-                        let source_addr: *Value = Func_getValue(f, source_addr_id);
+                        let source_addr: *Value = f.getValue( source_addr_id);
                         source_addr.uses = source_addr.uses + 1;
 
                         i64list_append(&new_args, source_addr_id);
@@ -193,7 +193,7 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
                 var i: i64 = 0;
                 while i < new_args.count {
                     let new_arg_id: i64 = i64list_get(&new_args, i);
-                    let new_arg: *Value = Func_getValue(f, new_arg_id);
+                    let new_arg: *Value = f.getValue( new_arg_id);
                     // Don't increment use count - already handled above
                     i64list_append(&v.args, new_arg_id);
                     i = i + 1;
@@ -213,11 +213,11 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
 fn applyDecRules(f: *Func) {
     var b: i64 = 0;
     while b < f.blocks_count {
-        let block: *Block = Func_getBlock(f, b);
+        let block: *Block = f.getBlock( b);
 
         var vi: i64 = 0;
         while vi < block.values_count {
-            let v: *Value = Func_getValue(f, block.values_start + vi);
+            let v: *Value = f.getValue( block.values_start + vi);
 
             // string_ptr(string_make(ptr, len)) → copy(ptr)
             // slice_ptr(slice_make(ptr, len)) → copy(ptr)
@@ -225,7 +225,7 @@ fn applyDecRules(f: *Func) {
                 if v.args.count >= 1 {
                     let arg_id: i64 = Value_getArg(v, 0);
                     if arg_id >= 0 {
-                        let arg: *Value = Func_getValue(f, arg_id);
+                        let arg: *Value = f.getValue( arg_id);
                         if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args.count >= 1 {
                             let ptr_id: i64 = Value_getArg(arg, 0);
 
@@ -239,7 +239,7 @@ fn applyDecRules(f: *Func) {
 
                             // Increment new arg's use count
                             if ptr_id >= 0 {
-                                let ptr_val: *Value = Func_getValue(f, ptr_id);
+                                let ptr_val: *Value = f.getValue( ptr_id);
                                 ptr_val.uses = ptr_val.uses + 1;
                             }
                         }
@@ -253,7 +253,7 @@ fn applyDecRules(f: *Func) {
                 if v.args.count >= 1 {
                     let arg_id: i64 = Value_getArg(v, 0);
                     if arg_id >= 0 {
-                        let arg: *Value = Func_getValue(f, arg_id);
+                        let arg: *Value = f.getValue( arg_id);
                         if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args.count >= 2 {
                             let len_id: i64 = Value_getArg(arg, 1);
 
@@ -267,7 +267,7 @@ fn applyDecRules(f: *Func) {
 
                             // Increment new arg's use count
                             if len_id >= 0 {
-                                let len_val: *Value = Func_getValue(f, len_id);
+                                let len_val: *Value = f.getValue( len_id);
                                 len_val.uses = len_val.uses + 1;
                             }
                         }

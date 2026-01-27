@@ -511,7 +511,7 @@ fn BlockLiveness_computeNextCall(bl: *BlockLiveness, f: *Func, block: *Block) {
     var i: i64 = count;
     while i > 0 {
         i = i - 1;
-        let v: *Value = Func_getValue(f, start + i);
+        let v: *Value = f.getValue( start + i);
 
         // Check if this is a call
         if Op_isCallOp(v.op) {
@@ -531,13 +531,13 @@ fn Liveness_processSuccessorPhis(lm: *LiveMap, f: *Func, block: *Block) {
         let succ_id: i64 = block.succs[s];
         if succ_id == INVALID_BLOCK { s = s + 1; continue; }
 
-        let succ: *Block = Func_getBlock(f, succ_id);
+        let succ: *Block = f.getBlock( succ_id);
         let delta: i64 = Block_branchDistance(block, succ_id);
 
         // Find phi nodes in successor
         var vi: i64 = 0;
         while vi < succ.values_count {
-            let v: *Value = Func_getValue(f, succ.values_start + vi);
+            let v: *Value = f.getValue( succ.values_start + vi);
             if v.op != Op.Phi { vi = vi + 1; continue; }
 
             // Phi input from this edge
@@ -546,7 +546,7 @@ fn Liveness_processSuccessorPhis(lm: *LiveMap, f: *Func, block: *Block) {
             if s < v.args.count {
                 let arg_id: i64 = Value_getArg(v, s);
                 if arg_id != INVALID_ID {
-                    let arg: *Value = Func_getValue(f, arg_id);
+                    let arg: *Value = f.getValue( arg_id);
                     if Value_needsRegister(arg) {
                         LiveMap_set(lm, arg_id, delta, 0);
                     }
@@ -591,7 +591,7 @@ fn Liveness_processBlockLiveness(lr: *LivenessResult, f: *Func, block: *Block,
 
     // Add control value to live set
     if block.control != INVALID_ID {
-        let ctrl: *Value = Func_getValue(f, block.control);
+        let ctrl: *Value = f.getValue( block.control);
         if Value_needsRegister(ctrl) {
             LiveMap_set(lm, block.control, block_len, 0);
         }
@@ -600,7 +600,7 @@ fn Liveness_processBlockLiveness(lr: *LivenessResult, f: *Func, block: *Block,
     // Process values in reverse order (bottom to top)
     i = block_len - 1;
     while i >= 0 {
-        let v: *Value = Func_getValue(f, block.values_start + i);
+        let v: *Value = f.getValue( block.values_start + i);
 
         // Value is defined here - remove from live set
         LiveMap_remove(lm, v.id);
@@ -618,7 +618,7 @@ fn Liveness_processBlockLiveness(lr: *LivenessResult, f: *Func, block: *Block,
         while a < v.args.count {
             let arg_id: i64 = Value_getArg(v, a);
             if arg_id != INVALID_ID {
-                let arg: *Value = Func_getValue(f, arg_id);
+                let arg: *Value = f.getValue( arg_id);
                 if Value_needsRegister(arg) {
                     LiveMap_set(lm, arg_id, i, 0);
                 }
@@ -634,7 +634,7 @@ fn Liveness_processBlockLiveness(lr: *LivenessResult, f: *Func, block: *Block,
         let pred_id: i64 = Block_getPred(block, p);
         if pred_id == INVALID_BLOCK { p = p + 1; continue; }
 
-        let pred: *Block = Func_getBlock(f, pred_id);
+        let pred: *Block = f.getBlock( pred_id);
         let pred_bl: *BlockLiveness = LivenessResult_getBlock(lr, pred_id);
         let delta: i64 = Block_branchDistance(pred, block.id);
 
@@ -693,7 +693,7 @@ fn Liveness_compute(lr: *LivenessResult, f: *Func, lm: *LiveMap) i64 {
         let bl: *BlockLiveness = LivenessResult_addBlock(lr, b);
 
         // Compute nextCall array (allocates dynamically)
-        let block: *Block = Func_getBlock(f, b);
+        let block: *Block = f.getBlock( b);
         BlockLiveness_computeNextCall(bl, f, block);
 
         b = b + 1;
@@ -712,7 +712,7 @@ fn Liveness_compute(lr: *LivenessResult, f: *Func, lm: *LiveMap) i64 {
         // Process blocks in reverse order (postorder-ish)
         b = f.blocks_count - 1;
         while b >= 0 {
-            let block: *Block = Func_getBlock(f, b);
+            let block: *Block = f.getBlock( b);
             let result: i64 = Liveness_processBlockLiveness(lr, f, block, lm);
             if result != 0 {
                 changed = 1;

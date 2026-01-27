@@ -285,6 +285,18 @@ pub const Type = union(enum) {
 };
 
 // =========================================
+// Method Info (for impl blocks)
+// =========================================
+
+/// Information about a method registered for a type.
+pub const MethodInfo = struct {
+    name: []const u8, // Method name (e.g., "getBlock")
+    func_name: []const u8, // Synthesized function name (e.g., "Func_getBlock")
+    func_type: TypeIndex, // Function type
+    receiver_is_ptr: bool, // Whether receiver is a pointer
+};
+
+// =========================================
 // Type Registry (type interning)
 // =========================================
 
@@ -296,6 +308,9 @@ pub const TypeRegistry = struct {
 
     /// Map from type name to index (for named types like structs, enums).
     name_map: std.StringHashMap(TypeIndex),
+
+    /// Map from type name to its methods (for impl blocks).
+    method_registry: std.StringHashMap(std.ArrayListUnmanaged(MethodInfo)),
 
     // Pre-registered basic type indices
     pub const INVALID: TypeIndex = 0;
@@ -387,6 +402,7 @@ pub const TypeRegistry = struct {
             .types = .{},
             .allocator = allocator,
             .name_map = std.StringHashMap(TypeIndex).init(allocator),
+            .method_registry = std.StringHashMap(std.ArrayListUnmanaged(MethodInfo)).init(allocator),
         };
 
         // Register basic types in order
@@ -442,6 +458,33 @@ pub const TypeRegistry = struct {
     pub fn deinit(self: *TypeRegistry) void {
         self.types.deinit(self.allocator);
         self.name_map.deinit();
+        // Clean up method_registry
+        var it = self.method_registry.valueIterator();
+        while (it.next()) |list| {
+            list.deinit(self.allocator);
+        }
+        self.method_registry.deinit();
+    }
+
+    /// Register a method for a type (used by impl blocks).
+    pub fn registerMethod(self: *TypeRegistry, type_name: []const u8, method: MethodInfo) !void {
+        const gop = try self.method_registry.getOrPut(type_name);
+        if (!gop.found_existing) {
+            gop.value_ptr.* = .{};
+        }
+        try gop.value_ptr.append(self.allocator, method);
+    }
+
+    /// Look up a method for a type by name.
+    pub fn lookupMethod(self: *const TypeRegistry, type_name: []const u8, method_name: []const u8) ?MethodInfo {
+        if (self.method_registry.get(type_name)) |methods| {
+            for (methods.items) |method| {
+                if (std.mem.eql(u8, method.name, method_name)) {
+                    return method;
+                }
+            }
+        }
+        return null;
     }
 
     /// Get a type by index.

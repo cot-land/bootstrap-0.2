@@ -221,3 +221,34 @@ Initial target is macOS ARM64 only. Other targets after self-hosting.
 ### 5. No Generics (Yet)
 
 Generics deferred until after self-hosting. Current type system is simple: primitives, pointers, arrays, structs, enums, functions.
+
+### 6. Impl Blocks and Method Syntax (2026-01-27)
+
+The Zig compiler supports impl blocks and method call syntax:
+
+```cot
+struct Func {
+    blocks: *Block,
+    blocks_count: i64,
+    // ...
+}
+
+impl Func {
+    fn init(self: *Func, name: i64, len: i64, ret: i64) { ... }
+    fn getBlock(self: *Func, id: i64) *Block { ... }
+    fn newValue(self: *Func, op: Op, type_idx: i64) *Value { ... }
+}
+
+// Usage: method call syntax
+var f: Func = undefined;
+f.init(name_start, name_len, return_type);
+let b: *Block = f.getBlock(block_id);
+```
+
+Key implementation details:
+- Methods in impl blocks are synthesized as `TypeName_methodName` functions
+- Method call `obj.method(args)` desugars to `TypeName_method(&obj, args)`
+- Method registry is stored in TypeRegistry (shared across files)
+- Internal calls within impl blocks must use synthesized names (e.g., `Func_getBlock(self, id)`)
+
+This enables cleaner API design while maintaining compatibility with cot1's function-based model.

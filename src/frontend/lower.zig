@@ -147,6 +147,7 @@ pub const Lowerer = struct {
             .fn_decl => |fn_d| try self.lowerFnDecl(fn_d),
             .var_decl => |var_d| try self.lowerGlobalVarDecl(var_d),
             .struct_decl => |struct_d| try self.lowerStructDecl(struct_d),
+            .impl_block => |impl_b| try self.lowerImplBlock(impl_b),
             .enum_decl, .union_decl, .type_alias => {}, // Type-only, no codegen
             .import_decl, .bad_decl => {},
         }
@@ -240,6 +241,74 @@ pub const Lowerer = struct {
             .span = struct_decl.span,
         };
         try self.builder.addStruct(struct_def);
+    }
+
+    /// Lower impl block by lowering each method with synthesized name TypeName_methodName
+    fn lowerImplBlock(self: *Lowerer, impl_block: ast.ImplBlock) !void {
+        const type_name = impl_block.type_name;
+
+        for (impl_block.methods) |method_idx| {
+            const node = self.tree.getNode(method_idx) orelse continue;
+            const decl = node.asDecl() orelse continue;
+            switch (decl) {
+                .fn_decl => |fn_d| {
+                    // Synthesize method name: TypeName_methodName
+                    const synth_name = try std.fmt.allocPrint(
+                        self.allocator,
+                        "{s}_{s}",
+                        .{ type_name, fn_d.name },
+                    );
+
+                    // Lower the function with synthesized name
+                    try self.lowerMethodWithName(fn_d, synth_name);
+                },
+                else => {},
+            }
+        }
+    }
+
+    /// Lower a function declaration with a custom name (for impl block methods)
+    fn lowerMethodWithName(self: *Lowerer, fn_decl: ast.FnDecl, synth_name: []const u8) !void {
+        // Resolve return type
+        const return_type = if (fn_decl.return_type != null_node)
+            self.resolveTypeNode(fn_decl.return_type)
+        else
+            TypeRegistry.VOID;
+
+        // Start building function with synthesized name
+        self.builder.startFunc(synth_name, TypeRegistry.VOID, return_type, fn_decl.span);
+
+        if (self.builder.func()) |fb| {
+            self.current_func = fb;
+
+            // Clear defer stack for new function scope
+            self.defer_stack.clearRetainingCapacity();
+
+            // Add parameters
+            for (fn_decl.params) |param| {
+                const param_type = self.resolveTypeNode(param.type_expr);
+                const param_size = self.type_reg.sizeOf(param_type);
+                _ = try fb.addParam(param.name, param_type, param_size);
+            }
+
+            // Lower function body
+            if (fn_decl.body != null_node) {
+                _ = try self.lowerBlockNode(fn_decl.body);
+
+                // Add implicit return for void functions
+                if (return_type == TypeRegistry.VOID) {
+                    const needs_ret = fb.needsTerminator();
+                    if (needs_ret) {
+                        try self.emitDeferredExprs(0);
+                        _ = try fb.emitRet(null, fn_decl.span);
+                    }
+                }
+            }
+
+            self.current_func = null;
+        }
+
+        try self.builder.endFunc();
     }
 
     // ========================================================================
@@ -354,7 +423,11 @@ pub const Lowerer = struct {
         // Evaluate return value BEFORE defers (value computed, then defers run)
         var value_node: ?ir.NodeIndex = null;
         if (ret.value != null_node) {
-            value_node = try self.lowerExprNode(ret.value);
+            const lowered = try self.lowerExprNode(ret.value);
+            // Check for null_node sentinel (lowerExprNode returns it on failure)
+            if (lowered != ir.null_node) {
+                value_node = lowered;
+            }
         }
 
         // Emit all deferred expressions in LIFO order (Zig semantics)
@@ -414,6 +487,10 @@ pub const Lowerer = struct {
             } else {
                 debug.log(.lower, "  -> default path", .{});
                 const value_node = try self.lowerExprNode(var_stmt.value);
+                if (value_node == ir.null_node) {
+                    debug.log(.lower, "lowerLocalVarDecl: value lowered to null_node", .{});
+                    return;
+                }
                 _ = try fb.emitStoreLocal(local_idx, value_node, var_stmt.span);
             }
         }
@@ -929,6 +1006,10 @@ pub const Lowerer = struct {
 
         // Lower condition
         const cond_node = try self.lowerExprNode(if_stmt.condition);
+        if (cond_node == ir.null_node) {
+            debug.log(.lower, "lowerIf: condition lowered to null_node", .{});
+            return;
+        }
         _ = try fb.emitBranch(cond_node, then_block, else_block orelse merge_block, if_stmt.span);
 
         // Lower then branch
@@ -965,6 +1046,10 @@ pub const Lowerer = struct {
         // Condition block
         fb.setBlock(cond_block);
         const cond_node = try self.lowerExprNode(while_stmt.condition);
+        if (cond_node == ir.null_node) {
+            debug.log(.lower, "lowerWhile: condition lowered to null_node", .{});
+            return;
+        }
         _ = try fb.emitBranch(cond_node, body_block, exit_block, while_stmt.span);
 
         // Push loop context for break/continue (record defer depth for cleanup)
@@ -1527,7 +1612,15 @@ pub const Lowerer = struct {
         const fb = self.current_func orelse return ir.null_node;
 
         const left = try self.lowerExprNode(bin.left);
+        if (left == ir.null_node) {
+            debug.log(.lower, "lowerBinary: left operand lowered to null_node", .{});
+            return ir.null_node;
+        }
         const right = try self.lowerExprNode(bin.right);
+        if (right == ir.null_node) {
+            debug.log(.lower, "lowerBinary: right operand lowered to null_node", .{});
+            return ir.null_node;
+        }
         const result_type = self.inferBinaryType(bin.op, bin.left, bin.right);
 
         // Special case: string + string → str_concat
@@ -1568,6 +1661,10 @@ pub const Lowerer = struct {
         const fb = self.current_func orelse return ir.null_node;
 
         const operand = try self.lowerExprNode(un.operand);
+        if (operand == ir.null_node) {
+            debug.log(.lower, "lowerUnary: operand lowered to null_node", .{});
+            return ir.null_node;
+        }
         const operand_type_idx = self.inferExprType(un.operand);
         const op = tokenToUnaryOp(un.op);
 
@@ -1949,6 +2046,11 @@ pub const Lowerer = struct {
 
         for (call.args) |arg_idx| {
             const arg_node = try self.lowerExprNode(arg_idx);
+            // Skip null_node sentinel values (indicates lowering failure)
+            if (arg_node == ir.null_node) {
+                debug.log(.lower, "lowerCall: WARNING - arg lowered to null_node, skipping", .{});
+                continue;
+            }
             try args.append(self.allocator, arg_node);
         }
 
@@ -2071,11 +2173,21 @@ pub const Lowerer = struct {
             }
         };
 
+        // Skip if receiver lowering failed
+        if (receiver_val == ir.null_node) {
+            debug.log(.lower, "lowerMethodCall: WARNING - receiver lowered to null_node", .{});
+            return ir.null_node;
+        }
         try args.append(self.allocator, receiver_val);
 
         // Lower the remaining arguments
         for (call.args) |arg_idx| {
             const arg_node = try self.lowerExprNode(arg_idx);
+            // Skip null_node sentinel values (indicates lowering failure)
+            if (arg_node == ir.null_node) {
+                debug.log(.lower, "lowerMethodCall: WARNING - arg lowered to null_node, skipping", .{});
+                continue;
+            }
             try args.append(self.allocator, arg_node);
         }
 
@@ -2253,11 +2365,23 @@ pub const Lowerer = struct {
         const fb = self.current_func orelse return ir.null_node;
 
         const cond = try self.lowerExprNode(if_expr.condition);
+        if (cond == ir.null_node) {
+            debug.log(.lower, "lowerIfExpr: condition lowered to null_node", .{});
+            return ir.null_node;
+        }
         const then_val = try self.lowerExprNode(if_expr.then_branch);
-        const else_val = if (if_expr.else_branch != null_node)
-            try self.lowerExprNode(if_expr.else_branch)
-        else
-            ir.null_node;
+        if (then_val == ir.null_node) {
+            debug.log(.lower, "lowerIfExpr: then_branch lowered to null_node", .{});
+            return ir.null_node;
+        }
+        const else_val = if (if_expr.else_branch != null_node) blk: {
+            const ev = try self.lowerExprNode(if_expr.else_branch);
+            if (ev == ir.null_node) {
+                debug.log(.lower, "lowerIfExpr: else_branch lowered to null_node", .{});
+                break :blk ir.null_node;
+            }
+            break :blk ev;
+        } else ir.null_node;
 
         const result_type = self.inferExprType(if_expr.then_branch);
         return try fb.emitSelect(cond, then_val, else_val, result_type, if_expr.span);

@@ -26,7 +26,7 @@ fn decompose(f: *Func, type_pool: *TypeRegistry) {
 
         var b: i64 = 0;
         while b < f.blocks_count {
-            let block: *Block = Func_getBlock(f, b);
+            let block: *Block = f.getBlock( b);
             if decomposeBlock(f, block, type_pool) {
                 changed = true;
             }
@@ -43,14 +43,14 @@ fn decomposeBlock(f: *Func, block: *Block, type_pool: *TypeRegistry) bool {
 
     var vi: i64 = 0;
     while vi < block.values_count {
-        let v: *Value = Func_getValue(f, block.values_start + vi);
+        let v: *Value = f.getValue( block.values_start + vi);
 
         // Rule 1: string_ptr(string_make(ptr, len)) → copy(ptr)
         // Reference: decompose.zig:146 / dec.rules
         if v.op == Op.StringPtr and v.args.count >= 1 {
             let arg_id: i64 = Value_getArg(v, 0);
             if arg_id >= 0 {
-                let arg: *Value = Func_getValue(f, arg_id);
+                let arg: *Value = f.getValue( arg_id);
                 if arg.op == Op.StringMake and arg.args.count >= 2 {
                     // Get the ptr component (first arg of string_make)
                     let ptr_id: i64 = Value_getArg(arg, 0);
@@ -66,7 +66,7 @@ fn decomposeBlock(f: *Func, block: *Block, type_pool: *TypeRegistry) bool {
 
                     // Increment use count on new arg
                     if ptr_id >= 0 {
-                        let ptr_val: *Value = Func_getValue(f, ptr_id);
+                        let ptr_val: *Value = f.getValue( ptr_id);
                         ptr_val.uses = ptr_val.uses + 1;
                     }
 
@@ -80,7 +80,7 @@ fn decomposeBlock(f: *Func, block: *Block, type_pool: *TypeRegistry) bool {
         if v.op == Op.StringLen and v.args.count >= 1 {
             let arg_id: i64 = Value_getArg(v, 0);
             if arg_id >= 0 {
-                let arg: *Value = Func_getValue(f, arg_id);
+                let arg: *Value = f.getValue( arg_id);
                 if arg.op == Op.StringMake and arg.args.count >= 2 {
                     // Get the len component (second arg of string_make)
                     let len_id: i64 = Value_getArg(arg, 1);
@@ -95,7 +95,7 @@ fn decomposeBlock(f: *Func, block: *Block, type_pool: *TypeRegistry) bool {
 
                     // Increment use count on new arg
                     if len_id >= 0 {
-                        let len_val: *Value = Func_getValue(f, len_id);
+                        let len_val: *Value = f.getValue( len_id);
                         len_val.uses = len_val.uses + 1;
                     }
 
@@ -109,7 +109,7 @@ fn decomposeBlock(f: *Func, block: *Block, type_pool: *TypeRegistry) bool {
         if v.op == Op.SlicePtr and v.args.count >= 1 {
             let arg_id: i64 = Value_getArg(v, 0);
             if arg_id >= 0 {
-                let arg: *Value = Func_getValue(f, arg_id);
+                let arg: *Value = f.getValue( arg_id);
                 if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args.count >= 2 {
                     let ptr_id: i64 = Value_getArg(arg, 0);
 
@@ -120,7 +120,7 @@ fn decomposeBlock(f: *Func, block: *Block, type_pool: *TypeRegistry) bool {
                     i64list_append(&v.args, ptr_id);
 
                     if ptr_id >= 0 {
-                        let ptr_val: *Value = Func_getValue(f, ptr_id);
+                        let ptr_val: *Value = f.getValue( ptr_id);
                         ptr_val.uses = ptr_val.uses + 1;
                     }
 
@@ -133,7 +133,7 @@ fn decomposeBlock(f: *Func, block: *Block, type_pool: *TypeRegistry) bool {
         if v.op == Op.SliceLen and v.args.count >= 1 {
             let arg_id: i64 = Value_getArg(v, 0);
             if arg_id >= 0 {
-                let arg: *Value = Func_getValue(f, arg_id);
+                let arg: *Value = f.getValue( arg_id);
                 if (arg.op == Op.StringMake or arg.op == Op.SliceMake) and arg.args.count >= 2 {
                     let len_id: i64 = Value_getArg(arg, 1);
 
@@ -144,7 +144,7 @@ fn decomposeBlock(f: *Func, block: *Block, type_pool: *TypeRegistry) bool {
                     i64list_append(&v.args, len_id);
 
                     if len_id >= 0 {
-                        let len_val: *Value = Func_getValue(f, len_id);
+                        let len_val: *Value = f.getValue( len_id);
                         len_val.uses = len_val.uses + 1;
                     }
 

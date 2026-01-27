@@ -217,6 +217,7 @@ pub const Parser = struct {
             .kw_var => self.parseVarDecl(false),
             .kw_const => self.parseVarDecl(true),
             .kw_struct => self.parseStructDecl(),
+            .kw_impl => self.parseImplBlock(),
             .kw_enum => self.parseEnumDecl(),
             .kw_union => self.parseUnionDecl(),
             .kw_type => self.parseTypeAlias(),
@@ -379,6 +380,44 @@ pub const Parser = struct {
         return try self.tree.addDecl(.{ .struct_decl = .{
             .name = name,
             .fields = fields,
+            .span = Span.init(start, self.pos()),
+        } });
+    }
+
+    /// Parse impl block: impl TypeName { fn method1() ... fn method2() ... }
+    fn parseImplBlock(self: *Parser) ParseError!?NodeIndex {
+        const start = self.pos();
+        self.advance(); // consume 'impl'
+
+        if (!self.check(.ident)) {
+            self.err.errorWithCode(self.pos(), .e203, "expected type name after 'impl'");
+            return null;
+        }
+        const type_name = self.tok.text;
+        self.advance();
+
+        if (!self.expect(.lbrace)) return null;
+
+        // Parse method declarations
+        var methods = std.ArrayListUnmanaged(NodeIndex){};
+        defer methods.deinit(self.allocator);
+
+        while (!self.check(.rbrace) and !self.check(.eof)) {
+            if (self.check(.kw_fn)) {
+                if (try self.parseFnDecl(false)) |method_idx| {
+                    try methods.append(self.allocator, method_idx);
+                }
+            } else {
+                self.syntaxError("expected 'fn' in impl block");
+                self.advance(); // skip invalid token
+            }
+        }
+
+        if (!self.expect(.rbrace)) return null;
+
+        return try self.tree.addDecl(.{ .impl_block = .{
+            .type_name = type_name,
+            .methods = try self.allocator.dupe(NodeIndex, methods.items),
             .span = Span.init(start, self.pos()),
         } });
     }

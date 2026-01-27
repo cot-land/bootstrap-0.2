@@ -28,7 +28,7 @@ fn earlyDeadcode(f: *Func) {
 
         var b: i64 = 0;
         while b < f.blocks_count {
-            let block: *Block = Func_getBlock(f, b);
+            let block: *Block = f.getBlock( b);
             if earlyDeadcodeBlock(f, block) {
                 changed = true;
             }
@@ -44,7 +44,7 @@ fn earlyDeadcodeBlock(f: *Func, block: *Block) bool {
     var vi: i64 = 0;
 
     while vi < block.values_count {
-        let v: *Value = Func_getValue(f, block.values_start + vi);
+        let v: *Value = f.getValue( block.values_start + vi);
 
         // Skip if value has uses or has side effects
         if v.uses > 0 or Op_hasSideEffects(v.op) {
@@ -64,7 +64,7 @@ fn earlyDeadcodeBlock(f: *Func, block: *Block) bool {
         while ai < v.args.count {
             let arg_id: i64 = Value_getArg(v, ai);
             if arg_id >= 0 and arg_id < f.values_count {
-                let arg: *Value = Func_getValue(f, arg_id);
+                let arg: *Value = f.getValue( arg_id);
                 if arg.uses > 0 {
                     arg.uses = arg.uses - 1;
                     changed = true;

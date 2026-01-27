@@ -157,17 +157,6 @@ pub const Scope = struct {
 };
 
 // =========================================
-// Method Info
-// =========================================
-
-/// Information about a method attached to a type.
-pub const MethodInfo = struct {
-    name: []const u8,
-    func_name: []const u8,
-    func_type: TypeIndex,
-    receiver_is_ptr: bool,
-};
-
 // =========================================
 // Checker (Go's Checker)
 // =========================================
@@ -191,8 +180,6 @@ pub const Checker = struct {
     current_return_type: TypeIndex,
     /// Are we inside a loop? (for break/continue)
     in_loop: bool,
-    /// Method registry: maps type name -> list of methods
-    method_registry: std.StringHashMap(std.ArrayListUnmanaged(MethodInfo)),
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -210,18 +197,11 @@ pub const Checker = struct {
             .expr_types = std.AutoHashMap(NodeIndex, TypeIndex).init(allocator),
             .current_return_type = TypeRegistry.VOID,
             .in_loop = false,
-            .method_registry = std.StringHashMap(std.ArrayListUnmanaged(MethodInfo)).init(allocator),
         };
     }
 
     pub fn deinit(self: *Checker) void {
         self.expr_types.deinit();
-        // Deinit all method lists in the registry
-        var it = self.method_registry.valueIterator();
-        while (it.next()) |methods| {
-            methods.deinit(self.allocator);
-        }
-        self.method_registry.deinit();
     }
 
     // ========================================================================
@@ -279,13 +259,13 @@ pub const Checker = struct {
         }
     }
 
-    /// Collect non-type declarations (fn, var).
+    /// Collect non-type declarations (fn, var, impl_block).
     fn collectNonTypeDecl(self: *Checker, idx: NodeIndex) CheckError!void {
         const node = self.tree.getNode(idx) orelse return;
         const decl = node.asDecl() orelse return;
 
         switch (decl) {
-            .fn_decl, .var_decl => {
+            .fn_decl, .var_decl, .impl_block => {
                 try self.collectDecl(idx);
             },
             else => {},
@@ -403,6 +383,41 @@ pub const Checker = struct {
                 try self.types.registerNamed(t.name, target_type);
             },
             .import_decl, .bad_decl => {},
+            .impl_block => |impl_b| {
+                // Collect methods from impl block - they get added with synthesized names
+                for (impl_b.methods) |method_idx| {
+                    const method_node = self.tree.getNode(method_idx) orelse continue;
+                    const method_decl = method_node.asDecl() orelse continue;
+                    switch (method_decl) {
+                        .fn_decl => |f| {
+                            // Synthesize method name: TypeName_methodName
+                            const synth_name = try std.fmt.allocPrint(
+                                self.allocator,
+                                "{s}_{s}",
+                                .{ impl_b.type_name, f.name },
+                            );
+                            // Build function type
+                            const func_type = try self.buildFuncType(f.params, f.return_type);
+                            try self.scope.define(Symbol.initExtern(
+                                synth_name,
+                                .function,
+                                func_type,
+                                method_idx,
+                                false,
+                                false,
+                            ));
+                            // Also register in method_registry for method call syntax (obj.method())
+                            try self.types.registerMethod(impl_b.type_name, types.MethodInfo{
+                                .name = f.name,
+                                .func_name = synth_name,
+                                .func_type = func_type,
+                                .receiver_is_ptr = true, // impl methods take *Self
+                            });
+                        },
+                        else => {},
+                    }
+                }
+            },
         }
     }
 
@@ -433,12 +448,7 @@ pub const Checker = struct {
             else => return,
         }
 
-        const gop = try self.method_registry.getOrPut(receiver_name);
-        if (!gop.found_existing) {
-            gop.value_ptr.* = .{};
-        }
-
-        try gop.value_ptr.append(self.allocator, MethodInfo{
+        try self.types.registerMethod(receiver_name, types.MethodInfo{
             .name = func_name,
             .func_name = func_name,
             .func_type = func_type,
@@ -447,15 +457,8 @@ pub const Checker = struct {
     }
 
     /// Look up a method for a type by name.
-    pub fn lookupMethod(self: *const Checker, type_name: []const u8, method_name: []const u8) ?MethodInfo {
-        if (self.method_registry.get(type_name)) |methods| {
-            for (methods.items) |method| {
-                if (std.mem.eql(u8, method.name, method_name)) {
-                    return method;
-                }
-            }
-        }
-        return null;
+    pub fn lookupMethod(self: *const Checker, type_name: []const u8, method_name: []const u8) ?types.MethodInfo {
+        return self.types.lookupMethod(type_name, method_name);
     }
 
     // ========================================================================
@@ -471,15 +474,39 @@ pub const Checker = struct {
             .fn_decl => |f| try self.checkFnDecl(f, idx),
             .var_decl => |v| try self.checkVarDecl(v, idx),
             .struct_decl, .enum_decl, .union_decl, .type_alias => {}, // Already processed
+            .impl_block => |impl_b| {
+                // Check each method in the impl block
+                for (impl_b.methods) |method_idx| {
+                    const method_node = self.tree.getNode(method_idx) orelse continue;
+                    const method_decl = method_node.asDecl() orelse continue;
+                    switch (method_decl) {
+                        .fn_decl => |f| {
+                            // Synthesize method name for scope lookup
+                            const synth_name = try std.fmt.allocPrint(
+                                self.allocator,
+                                "{s}_{s}",
+                                .{ impl_b.type_name, f.name },
+                            );
+                            try self.checkFnDeclWithName(f, method_idx, synth_name);
+                        },
+                        else => {},
+                    }
+                }
+            },
             .import_decl, .bad_decl => {},
         }
     }
 
     /// Check function declaration.
     fn checkFnDecl(self: *Checker, f: ast.FnDecl, idx: NodeIndex) CheckError!void {
-        debug.log(.check, "checkFnDecl: {s}", .{f.name});
+        return self.checkFnDeclWithName(f, idx, f.name);
+    }
 
-        const sym = self.scope.lookup(f.name) orelse return;
+    /// Check function declaration with explicit lookup name (for impl block methods).
+    fn checkFnDeclWithName(self: *Checker, f: ast.FnDecl, idx: NodeIndex, lookup_name: []const u8) CheckError!void {
+        debug.log(.check, "checkFnDeclWithName: {s} (lookup: {s})", .{ f.name, lookup_name });
+
+        const sym = self.scope.lookup(lookup_name) orelse return;
         const func_type = self.types.get(sym.type_idx);
         const return_type = switch (func_type) {
             .func => |ft| ft.return_type,

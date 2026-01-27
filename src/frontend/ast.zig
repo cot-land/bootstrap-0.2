@@ -52,6 +52,7 @@ pub const Decl = union(enum) {
     union_decl: UnionDecl,
     type_alias: TypeAlias,
     import_decl: ImportDecl,
+    impl_block: ImplBlock,
     bad_decl: BadDecl,
 
     pub fn span(self: Decl) Span {
@@ -85,6 +86,13 @@ pub const VarDecl = struct {
 pub const StructDecl = struct {
     name: []const u8,
     fields: []const Field,
+    span: Span,
+};
+
+/// impl TypeName { fn method1() ... fn method2() ... }
+pub const ImplBlock = struct {
+    type_name: []const u8,
+    methods: []const NodeIndex, // Indices into extra_data for FnDecl nodes
     span: Span,
 };
 

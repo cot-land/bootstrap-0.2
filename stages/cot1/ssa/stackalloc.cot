@@ -177,12 +177,12 @@ fn StackAllocState_interferes(state: *StackAllocState, a: i64, b: i64) bool {
 fn StackAlloc_markValues(state: *StackAllocState, f: *Func) {
     var b: i64 = 0;
     while b < f.blocks_count {
-        let block: *Block = Func_getBlock(f, b);
+        let block: *Block = f.getBlock( b);
 
         var v: i64 = block.values_start;
         let end: i64 = block.values_start + block.values_count;
         while v < end {
-            let val: *Value = Func_getValue(f, v);
+            let val: *Value = f.getValue( v);
 
             StackAllocState_setDefBlock(state, v, b);
 
@@ -217,12 +217,12 @@ fn StackAlloc_computeLiveness(state: *StackAllocState, f: *Func) {
         // Find all uses
         var b: i64 = 0;
         while b < f.blocks_count {
-            let block: *Block = Func_getBlock(f, b);
+            let block: *Block = f.getBlock( b);
 
             var v: i64 = block.values_start;
             let end: i64 = block.values_start + block.values_count;
             while v < end {
-                let use_val: *Value = Func_getValue(f, v);
+                let use_val: *Value = f.getValue( v);
 
                 // Check if this value uses vid
                 var arg_idx: i64 = 0;
@@ -278,7 +278,7 @@ fn StackAlloc_propagateLiveness(state: *StackAllocState, f: *Func, vid: i64, use
         i64list_append(&visited, bid);
 
         // Mark live at predecessors
-        let block: *Block = Func_getBlock(f, bid);
+        let block: *Block = f.getBlock( bid);
         var p: i64 = 0;
         while p < block.preds.count {
             let pred_id: i64 = Block_getPred(block, p);
@@ -301,7 +301,7 @@ fn StackAlloc_propagateLiveness(state: *StackAllocState, f: *Func, vid: i64, use
 fn StackAlloc_buildInterference(state: *StackAllocState, f: *Func) {
     var b: i64 = 0;
     while b < f.blocks_count {
-        let block: *Block = Func_getBlock(f, b);
+        let block: *Block = f.getBlock( b);
 
         // Collect live values at end of block
         var live: I64List = undefined;
@@ -321,7 +321,7 @@ fn StackAlloc_buildInterference(state: *StackAllocState, f: *Func) {
         // Process values in reverse order
         var val_idx: i64 = block.values_start + block.values_count - 1;
         while val_idx >= block.values_start {
-            let val: *Value = Func_getValue(f, val_idx);
+            let val: *Value = f.getValue( val_idx);
             let vid: i64 = val_idx;
 
             if StackAllocState_needsSlot(state, vid) {
@@ -385,7 +385,7 @@ fn StackAlloc_buildInterference(state: *StackAllocState, f: *Func) {
 fn StackAlloc_allocateLocals(state: *StackAllocState, f: *Func, result: *StackAllocResult) {
     var local_idx: i64 = 0;
     while local_idx < f.locals_count {
-        let local: *Local = Func_getLocal(f, local_idx);
+        let local: *Local = f.getLocal( local_idx);
 
         // Align to 8 bytes
         state.current_offset = (state.current_offset + 7) & (0 - 8);
@@ -408,7 +408,7 @@ fn StackAlloc_allocateSpillSlots(state: *StackAllocState, f: *Func, result: *Sta
             continue;
         }
 
-        let val: *Value = Func_getValue(f, vid);
+        let val: *Value = f.getValue( vid);
         let type_idx: i64 = val.type_idx;
 
         // Try to find an existing slot that doesn't interfere
@@ -513,7 +513,7 @@ fn StackAlloc_run(f: *Func) StackAllocResult {
         // Walk all values and convert slot number -> stack offset
         var vid: i64 = 0;
         while vid < f.values_count {
-            let val: *Value = Func_getValue(f, vid);
+            let val: *Value = f.getValue( vid);
             // Check if this value has a spill slot NUMBER (set by regalloc)
             // Slot numbers are small non-negative integers (0, 1, 2, ...)
             // We need to convert these to actual stack offsets
