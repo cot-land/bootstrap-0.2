@@ -246,9 +246,16 @@ let b: *Block = f.getBlock(block_id);
 ```
 
 Key implementation details:
-- Methods in impl blocks are synthesized as `TypeName_methodName` functions
+- Methods in impl blocks are exported as `TypeName_methodName` symbols
 - Method call `obj.method(args)` desugars to `TypeName_method(&obj, args)`
 - Method registry is stored in TypeRegistry (shared across files)
-- Internal calls within impl blocks must use synthesized names (e.g., `Func_getBlock(self, id)`)
+- Internal method calls within impl blocks use `self.method()` syntax
+
+**Conversion Status (2026-01-27)**: 25 structs now use impl blocks:
+- SSA: Func, Local, Value, ValuePool, Block, SSABuilder, StackAllocState, RegAllocState, DomTree, LiveMap, BlockLiveness, LivenessResult, ABIParamResultInfo, ABIAssignState
+- Frontend: Parser, Lowerer, Checker, ScopePool, FuncBuilder, Scanner, TypeRegistry
+- Codegen: GenState
+- Object: MachOWriter, DebugLineWriter
+- Lib: StrMap
 
 This enables cleaner API design while maintaining compatibility with cot1's function-based model.

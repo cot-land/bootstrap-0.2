@@ -1981,7 +1981,7 @@ fn call(self: *GenState, v: *Value) {
         let arg_val: *Value = f.getValue( arg_id);
 
         var assignment: ABIParamAssignment = undefined;
-        ABIParamResultInfo_getInParam(&abi_info, i, &assignment);
+        abi_info.getInParam( i, &assignment);
 
         if assignment.location == ParamLocation.Stack {
             var src_reg: i64 = arg_val.reg;
@@ -2030,7 +2030,7 @@ fn call(self: *GenState, v: *Value) {
         let arg_val: *Value = f.getValue( arg_id);
 
         var assignment: ABIParamAssignment = undefined;
-        ABIParamResultInfo_getInParam(&abi_info, i, &assignment);
+        abi_info.getInParam( i, &assignment);
 
         if assignment.location == ParamLocation.Register {
             let target_reg: i64 = assignment.reg0;
@@ -2294,7 +2294,7 @@ fn call(self: *GenState, v: *Value) {
     }
 
     // Clean up ABI info
-    ABIParamResultInfo_deinit(&abi_info);
+    abi_info.deinit();
 }
 
 // Indirect function call through function pointer (Go: ClosureCall)
@@ -2334,7 +2334,7 @@ fn callIndirect(self: *GenState, v: *Value) {
         let arg_val: *Value = f.getValue( arg_id);
 
         var assignment: ABIParamAssignment = undefined;
-        ABIParamResultInfo_getInParam(&abi_info, i - 1, &assignment);
+        abi_info.getInParam( i - 1, &assignment);
 
         if assignment.location == ParamLocation.Register {
             let target_reg: i64 = assignment.reg0;
@@ -2372,7 +2372,7 @@ fn callIndirect(self: *GenState, v: *Value) {
     }
 
     // Clean up ABI info
-    ABIParamResultInfo_deinit(&abi_info);
+    abi_info.deinit();
 }
 
 // String concatenation: call __cot_str_concat(ptr1, len1, ptr2, len2)
@@ -2931,7 +2931,7 @@ fn finalize(
         } else {
             name_ptr = @intToPtr(*u8, ir_func.name_start);
         }
-        StrMap_put(&func_offsets, name_ptr, ir_func.name_len, ir_func.code_offset + 1);
+        func_offsets.put( name_ptr, ir_func.name_len, ir_func.code_offset + 1);
         func_idx = func_idx + 1;
     }
 
@@ -2947,7 +2947,7 @@ fn finalize(
 
         // O(1) lookup using hashmap
         let call_name: *u8 = @intToPtr(*u8, cs.func_name_start);
-        let lookup_result: i64 = StrMap_get(&func_offsets, call_name, cs.func_name_len);
+        let lookup_result: i64 = func_offsets.get( call_name, cs.func_name_len);
         let target_offset: i64 = lookup_result - 1;  // Subtract 1 since we added 1 when storing
 
         // Patch BL instruction if target found
@@ -3016,7 +3016,7 @@ fn finalize(
         var is_internal: bool = false;
         if cs2.func_name_start >= 0 {
             let call_name2: *u8 = @intToPtr(*u8, cs2.func_name_start);
-            let lookup2: i64 = StrMap_get(&func_offsets, call_name2, cs2.func_name_len);
+            let lookup2: i64 = func_offsets.get( call_name2, cs2.func_name_len);
             is_internal = lookup2 > 0;  // Non-zero means found (we stored offset+1)
         }
 

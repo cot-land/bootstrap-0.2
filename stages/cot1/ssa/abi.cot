@@ -122,114 +122,128 @@ struct ABIParamResultInfo {
 
 const PARAM_FIELDS: i64 = 6;  // Fields per param in list
 
-fn ABIParamResultInfo_init(info: *ABIParamResultInfo) {
-    i64list_init(&info.in_params);
-    i64list_init(&info.out_params);
-    info.in_params_count = 0;
-    info.out_params_count = 0;
-    info.in_registers_used = 0;
-    info.out_registers_used = 0;
-    info.uses_hidden_return = false;
-    info.hidden_return_size = 0;
-    info.arg_stack_size = 0;
-}
+impl ABIParamResultInfo {
 
-fn ABIParamResultInfo_deinit(info: *ABIParamResultInfo) {
-    i64list_deinit(&info.in_params);
-    i64list_deinit(&info.out_params);
-}
-
-fn ABIParamResultInfo_addInParam(info: *ABIParamResultInfo, a: *ABIParamAssignment) {
-    i64list_append(&info.in_params, a.type_idx);
-    i64list_append(&info.in_params, ParamLocation_toI64(a.location));
-    i64list_append(&info.in_params, a.reg0);
-    i64list_append(&info.in_params, a.reg1);
-    i64list_append(&info.in_params, a.offset);
-    i64list_append(&info.in_params, a.size);
-    info.in_params_count = info.in_params_count + 1;
-}
-
-fn ABIParamResultInfo_addOutParam(info: *ABIParamResultInfo, a: *ABIParamAssignment) {
-    i64list_append(&info.out_params, a.type_idx);
-    i64list_append(&info.out_params, ParamLocation_toI64(a.location));
-    i64list_append(&info.out_params, a.reg0);
-    i64list_append(&info.out_params, a.reg1);
-    i64list_append(&info.out_params, a.offset);
-    i64list_append(&info.out_params, a.size);
-    info.out_params_count = info.out_params_count + 1;
-}
-
-fn ABIParamResultInfo_getInParam(info: *ABIParamResultInfo, n: i64, out: *ABIParamAssignment) {
-    if n < 0 or n >= info.in_params_count {
-        out.* = ABIParamAssignment_init();
-        return;
+    fn init(self: *ABIParamResultInfo) {
+        i64list_init(&self.in_params);
+        i64list_init(&self.out_params);
+        self.in_params_count = 0;
+        self.out_params_count = 0;
+        self.in_registers_used = 0;
+        self.out_registers_used = 0;
+        self.uses_hidden_return = false;
+        self.hidden_return_size = 0;
+        self.arg_stack_size = 0;
     }
-    let base: i64 = n * PARAM_FIELDS;
-    out.type_idx = i64list_get(&info.in_params, base);
-    out.location = ParamLocation_fromI64(i64list_get(&info.in_params, base + 1));
-    out.reg0 = i64list_get(&info.in_params, base + 2);
-    out.reg1 = i64list_get(&info.in_params, base + 3);
-    out.offset = i64list_get(&info.in_params, base + 4);
-    out.size = i64list_get(&info.in_params, base + 5);
-    if out.reg0 >= 0 {
-        out.regs_count = 1;
-        if out.reg1 >= 0 {
-            out.regs_count = 2;
+
+    fn deinit(self: *ABIParamResultInfo) {
+        i64list_deinit(&self.in_params);
+        i64list_deinit(&self.out_params);
+    }
+
+    fn addInParam(self: *ABIParamResultInfo, a: *ABIParamAssignment) {
+        i64list_append(&self.in_params, a.type_idx);
+        i64list_append(&self.in_params, ParamLocation_toI64(a.location));
+        i64list_append(&self.in_params, a.reg0);
+        i64list_append(&self.in_params, a.reg1);
+        i64list_append(&self.in_params, a.offset);
+        i64list_append(&self.in_params, a.size);
+        self.in_params_count = self.in_params_count + 1;
+    }
+
+    fn addOutParam(self: *ABIParamResultInfo, a: *ABIParamAssignment) {
+        i64list_append(&self.out_params, a.type_idx);
+        i64list_append(&self.out_params, ParamLocation_toI64(a.location));
+        i64list_append(&self.out_params, a.reg0);
+        i64list_append(&self.out_params, a.reg1);
+        i64list_append(&self.out_params, a.offset);
+        i64list_append(&self.out_params, a.size);
+        self.out_params_count = self.out_params_count + 1;
+    }
+
+    fn getInParam(self: *ABIParamResultInfo, n: i64, out: *ABIParamAssignment) {
+        if n < 0 or n >= self.in_params_count {
+            out.* = ABIParamAssignment_init();
+            return;
         }
-    } else {
-        out.regs_count = 0;
-    }
-}
-
-fn ABIParamResultInfo_getOutParam(info: *ABIParamResultInfo, n: i64, out: *ABIParamAssignment) {
-    if n < 0 or n >= info.out_params_count {
-        out.* = ABIParamAssignment_init();
-        return;
-    }
-    let base: i64 = n * PARAM_FIELDS;
-    out.type_idx = i64list_get(&info.out_params, base);
-    out.location = ParamLocation_fromI64(i64list_get(&info.out_params, base + 1));
-    out.reg0 = i64list_get(&info.out_params, base + 2);
-    out.reg1 = i64list_get(&info.out_params, base + 3);
-    out.offset = i64list_get(&info.out_params, base + 4);
-    out.size = i64list_get(&info.out_params, base + 5);
-    if out.reg0 >= 0 {
-        out.regs_count = 1;
-        if out.reg1 >= 0 {
-            out.regs_count = 2;
+        let base: i64 = n * PARAM_FIELDS;
+        out.type_idx = i64list_get(&self.in_params, base);
+        out.location = ParamLocation_fromI64(i64list_get(&self.in_params, base + 1));
+        out.reg0 = i64list_get(&self.in_params, base + 2);
+        out.reg1 = i64list_get(&self.in_params, base + 3);
+        out.offset = i64list_get(&self.in_params, base + 4);
+        out.size = i64list_get(&self.in_params, base + 5);
+        if out.reg0 >= 0 {
+            out.regs_count = 1;
+            if out.reg1 >= 0 {
+                out.regs_count = 2;
+            }
+        } else {
+            out.regs_count = 0;
         }
-    } else {
-        out.regs_count = 0;
     }
+
+    fn getOutParam(self: *ABIParamResultInfo, n: i64, out: *ABIParamAssignment) {
+        if n < 0 or n >= self.out_params_count {
+            out.* = ABIParamAssignment_init();
+            return;
+        }
+        let base: i64 = n * PARAM_FIELDS;
+        out.type_idx = i64list_get(&self.out_params, base);
+        out.location = ParamLocation_fromI64(i64list_get(&self.out_params, base + 1));
+        out.reg0 = i64list_get(&self.out_params, base + 2);
+        out.reg1 = i64list_get(&self.out_params, base + 3);
+        out.offset = i64list_get(&self.out_params, base + 4);
+        out.size = i64list_get(&self.out_params, base + 5);
+        if out.reg0 >= 0 {
+            out.regs_count = 1;
+            if out.reg1 >= 0 {
+                out.regs_count = 2;
+            }
+        } else {
+            out.regs_count = 0;
+        }
+    }
+
+    fn argReg(self: *ABIParamResultInfo, n: i64) i64 {
+        if n < 0 or n >= self.in_params_count {
+            return -1;
+        }
+        let base: i64 = n * PARAM_FIELDS;
+        return i64list_get(&self.in_params, base + 2);  // reg0
+    }
+
+    fn resultReg(self: *ABIParamResultInfo, n: i64) i64 {
+        if n < 0 or n >= self.out_params_count {
+            return -1;
+        }
+        let base: i64 = n * PARAM_FIELDS;
+        return i64list_get(&self.out_params, base + 2);  // reg0
+    }
+
+    fn numArgs(self: *ABIParamResultInfo) i64 {
+        return self.in_params_count;
+    }
+
+    fn numResults(self: *ABIParamResultInfo) i64 {
+        return self.out_params_count;
+    }
+
 }
 
-fn ABIParamResultInfo_argReg(info: *ABIParamResultInfo, n: i64) i64 {
-    if n < 0 or n >= info.in_params_count {
-        return -1;
-    }
-    let base: i64 = n * PARAM_FIELDS;
-    return i64list_get(&info.in_params, base + 2);  // reg0
-}
 
-fn ABIParamResultInfo_resultReg(info: *ABIParamResultInfo, n: i64) i64 {
-    if n < 0 or n >= info.out_params_count {
-        return -1;
-    }
-    let base: i64 = n * PARAM_FIELDS;
-    return i64list_get(&info.out_params, base + 2);  // reg0
-}
+
+
+
+
+
+
 
 // Get number of input parameters
 // Reference: Zig's ABIParamResultInfo.numArgs()
-fn ABIParamResultInfo_numArgs(info: *ABIParamResultInfo) i64 {
-    return info.in_params_count;
-}
 
 // Get number of output results
 // Reference: Zig's ABIParamResultInfo.numResults()
-fn ABIParamResultInfo_numResults(info: *ABIParamResultInfo) i64 {
-    return info.out_params_count;
-}
 
 // ============================================================================
 // ABI Analysis State
@@ -240,6 +254,46 @@ struct ABIAssignState {
     stack_offset: i64,
 }
 
+impl ABIAssignState {
+
+    fn resetRegs(self: *ABIAssignState) {
+        self.int_reg_idx = 0;
+    }
+
+    fn tryAllocRegs(self: *ABIAssignState, type_size: i64, out_r0: *i64, out_r1: *i64) i64 {
+        out_r0.* = -1;
+        out_r1.* = -1;
+    
+        if type_size <= 8 and self.int_reg_idx < ARM64_INT_PARAM_REGS {
+            out_r0.* = self.int_reg_idx;
+            self.int_reg_idx = self.int_reg_idx + 1;
+            return 1;
+        }
+    
+        if type_size > 8 and type_size <= 16 {
+            if self.int_reg_idx + 1 < ARM64_INT_PARAM_REGS {
+                out_r0.* = self.int_reg_idx;
+                out_r1.* = self.int_reg_idx + 1;
+                self.int_reg_idx = self.int_reg_idx + 2;
+                return 2;
+            }
+        }
+    
+        return 0;
+    }
+
+    fn allocStack(self: *ABIAssignState, type_size: i64, alignment: i64) i64 {
+        if alignment > 0 {
+            let mask: i64 = alignment - 1;
+            self.stack_offset = (self.stack_offset + mask) & (0 - alignment);
+        }
+        let offset: i64 = self.stack_offset;
+        self.stack_offset = self.stack_offset + type_size;
+        return offset;
+    }
+
+}
+
 fn ABIAssignState_init() ABIAssignState {
     return ABIAssignState{
         .int_reg_idx = 0,
@@ -247,41 +301,8 @@ fn ABIAssignState_init() ABIAssignState {
     };
 }
 
-fn ABIAssignState_resetRegs(state: *ABIAssignState) {
-    state.int_reg_idx = 0;
-}
 
-fn ABIAssignState_tryAllocRegs(state: *ABIAssignState, type_size: i64, out_r0: *i64, out_r1: *i64) i64 {
-    out_r0.* = -1;
-    out_r1.* = -1;
 
-    if type_size <= 8 and state.int_reg_idx < ARM64_INT_PARAM_REGS {
-        out_r0.* = state.int_reg_idx;
-        state.int_reg_idx = state.int_reg_idx + 1;
-        return 1;
-    }
-
-    if type_size > 8 and type_size <= 16 {
-        if state.int_reg_idx + 1 < ARM64_INT_PARAM_REGS {
-            out_r0.* = state.int_reg_idx;
-            out_r1.* = state.int_reg_idx + 1;
-            state.int_reg_idx = state.int_reg_idx + 2;
-            return 2;
-        }
-    }
-
-    return 0;
-}
-
-fn ABIAssignState_allocStack(state: *ABIAssignState, type_size: i64, alignment: i64) i64 {
-    if alignment > 0 {
-        let mask: i64 = alignment - 1;
-        state.stack_offset = (state.stack_offset + mask) & (0 - alignment);
-    }
-    let offset: i64 = state.stack_offset;
-    state.stack_offset = state.stack_offset + type_size;
-    return offset;
-}
 
 // ============================================================================
 // Type Size Helpers
@@ -320,7 +341,7 @@ fn ABI_getTypeAlignment(type_idx: i64) i64 {
 fn ABI_analyzeFunc(info: *ABIParamResultInfo,
                    param_types: *i64, param_count: i64,
                    return_type: i64) {
-    ABIParamResultInfo_init(info);
+    info.init();
 
     var state: ABIAssignState = ABIAssignState_init();
 
@@ -338,7 +359,7 @@ fn ABI_analyzeFunc(info: *ABIParamResultInfo,
 
         var r0: i64 = -1;
         var r1: i64 = -1;
-        let num_regs: i64 = ABIAssignState_tryAllocRegs(&state, param_size, &r0, &r1);
+        let num_regs: i64 = state.tryAllocRegs( param_size, &r0, &r1);
 
         if num_regs > 0 {
             assignment.location = ParamLocation.Register;
@@ -347,10 +368,10 @@ fn ABI_analyzeFunc(info: *ABIParamResultInfo,
             assignment.regs_count = num_regs;
         } else {
             assignment.location = ParamLocation.Stack;
-            assignment.offset = ABIAssignState_allocStack(&state, param_size, param_align);
+            assignment.offset = state.allocStack( param_size, param_align);
         }
 
-        ABIParamResultInfo_addInParam(info, &assignment);
+        info.addInParam( &assignment);
         i = i + 1;
     }
 
@@ -360,7 +381,7 @@ fn ABI_analyzeFunc(info: *ABIParamResultInfo,
     info.arg_stack_size = ABI_alignUp(state.stack_offset, ARM64_STACK_ALIGN);
 
     // Reset for results
-    ABIAssignState_resetRegs(&state);
+    state.resetRegs();
 
     // Analyze return type
     let ret_size: i64 = ABI_getTypeSize(return_type);
@@ -374,7 +395,7 @@ fn ABI_analyzeFunc(info: *ABIParamResultInfo,
             assignment.type_idx = return_type;
             assignment.location = ParamLocation.HiddenPtr;
             assignment.size = ret_size;
-            ABIParamResultInfo_addOutParam(info, &assignment);
+            info.addOutParam( &assignment);
         } else {
             var assignment: ABIParamAssignment = ABIParamAssignment_init();
             assignment.type_idx = return_type;
@@ -382,7 +403,7 @@ fn ABI_analyzeFunc(info: *ABIParamResultInfo,
 
             var r0: i64 = -1;
             var r1: i64 = -1;
-            let num_regs: i64 = ABIAssignState_tryAllocRegs(&state, ret_size, &r0, &r1);
+            let num_regs: i64 = state.tryAllocRegs( ret_size, &r0, &r1);
 
             if num_regs > 0 {
                 assignment.location = ParamLocation.Register;
@@ -391,7 +412,7 @@ fn ABI_analyzeFunc(info: *ABIParamResultInfo,
                 assignment.regs_count = num_regs;
             }
 
-            ABIParamResultInfo_addOutParam(info, &assignment);
+            info.addOutParam( &assignment);
         }
     }
 

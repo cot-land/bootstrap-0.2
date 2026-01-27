@@ -490,15 +490,15 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     var scope_pool: ScopePool = undefined;
     scope_pool.scopes = g_scopes;
     scope_pool.symbols = g_checker_symbols;
-    ScopePool_init(&scope_pool);
+    scope_pool.init();
 
     var checker: Checker = undefined;
-    Checker_init(&checker, &g_type_pool, &scope_pool, pool, g_source);
-    Checker_checkFile(&checker);
+    checker.init(&g_type_pool, &scope_pool, pool, g_source);
+    checker.checkFile();
 
-    if not Checker_ok(&checker) {
+    if not checker.ok() {
         print("  FAIL: Type check errors: ");
-        print(Checker_errors(&checker));
+        print(checker.errors());
         print("\n");
         return 1;
     }
@@ -646,9 +646,9 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // Reference: src/ssa/liveness.zig, driver.zig Phase 4c
         t_tmp = get_time_ns();
         var live_map: LiveMap = undefined;
-        LiveMap_init(&live_map);
+        live_map.init();
         var liveness_result: LivenessResult = undefined;
-        LivenessResult_init(&liveness_result);
+        liveness_result.init();
         Liveness_compute(&liveness_result, &ssa_func, &live_map);
         t_liveness = t_liveness + (get_time_ns() - t_tmp);
 
@@ -656,8 +656,8 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // Reference: src/ssa/regalloc.zig, driver.zig Phase 4c
         t_tmp = get_time_ns();
         var regalloc_state: RegAllocState = undefined;
-        RegAlloc_init(&regalloc_state, &ssa_func, &liveness_result);
-        RegAlloc_run(&regalloc_state, &ssa_func);
+        regalloc_state.init(&ssa_func, &liveness_result);
+        regalloc_state.run(&ssa_func);
         t_regalloc = t_regalloc + (get_time_ns() - t_tmp);
 
         // Compute stack layout using StackAlloc pass
@@ -667,9 +667,9 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
         // Compute dominator tree for the function
         // This sets b.dom (immediate dominator) and b.dom_level (depth) for each block
         var dom_tree: DomTree = undefined;
-        DomTree_init(&dom_tree);
-        DomTree_compute(&dom_tree, &ssa_func);
-        DomTree_deinit(&dom_tree);
+        dom_tree.init();
+        dom_tree.compute(&ssa_func);
+        dom_tree.deinit();
 
         total_blocks = total_blocks + ssa_func.blocks_count;
         total_values = total_values + ssa_func.values_count;

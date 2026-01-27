@@ -226,97 +226,112 @@ struct DebugLineWriter {
     cap: i64,          // Buffer capacity
 }
 
-fn DebugLineWriter_init(w: *DebugLineWriter, buf: *u8, cap: i64) {
-    w.buf = buf;
-    w.count = 0;
-    w.cap = cap;
-}
+impl DebugLineWriter {
 
-fn DebugLineWriter_writeByte(w: *DebugLineWriter, b: i64) {
-    if w.count < w.cap {
-        let p: *u8 = w.buf + w.count;
-        p.* = @intCast(u8, b & 255);
-        w.count = w.count + 1;
+    fn init(self: *DebugLineWriter, buf: *u8, cap: i64) {
+        self.buf = buf;
+        self.count = 0;
+        self.cap = cap;
     }
-}
 
-fn DebugLineWriter_writeU16(w: *DebugLineWriter, val: i64) {
-    DebugLineWriter_writeByte(w, val & 255);
-    DebugLineWriter_writeByte(w, (val >> 8) & 255);
-}
-
-fn DebugLineWriter_writeU32(w: *DebugLineWriter, val: i64) {
-    DebugLineWriter_writeByte(w, val & 255);
-    DebugLineWriter_writeByte(w, (val >> 8) & 255);
-    DebugLineWriter_writeByte(w, (val >> 16) & 255);
-    DebugLineWriter_writeByte(w, (val >> 24) & 255);
-}
-
-fn DebugLineWriter_writeU64(w: *DebugLineWriter, val: i64) {
-    DebugLineWriter_writeU32(w, val & 0xFFFFFFFF);
-    DebugLineWriter_writeU32(w, (val >> 32) & 0xFFFFFFFF);
-}
-
-fn DebugLineWriter_writeULEB128(w: *DebugLineWriter, val: i64) {
-    if w.count + 10 > w.cap {
-        return;
+    fn writeByte(self: *DebugLineWriter, b: i64) {
+        if self.count < self.cap {
+            let p: *u8 = self.buf + self.count;
+            p.* = @intCast(u8, b & 255);
+            self.count = self.count + 1;
+        }
     }
-    let bytes: i64 = DWARF_writeULEB128(w.buf + w.count, val);
-    w.count = w.count + bytes;
+
+    fn writeU16(self: *DebugLineWriter, val: i64) {
+        self.writeByte(val & 255);
+        self.writeByte((val >> 8) & 255);
+    }
+
+    fn writeU32(self: *DebugLineWriter, val: i64) {
+        self.writeByte(val & 255);
+        self.writeByte((val >> 8) & 255);
+        self.writeByte((val >> 16) & 255);
+        self.writeByte((val >> 24) & 255);
+    }
+
+    fn writeU64(self: *DebugLineWriter, val: i64) {
+        self.writeU32(val & 0xFFFFFFFF);
+        self.writeU32((val >> 32) & 0xFFFFFFFF);
+    }
+
+    fn writeULEB128(self: *DebugLineWriter, val: i64) {
+        if self.count + 10 > self.cap {
+            return;
+        }
+        let bytes: i64 = DWARF_writeULEB128(self.buf + self.count, val);
+        self.count = self.count + bytes;
+    }
+
+    fn writeSLEB128(self: *DebugLineWriter, val: i64) {
+        if self.count + 10 > self.cap {
+            return;
+        }
+        let bytes: i64 = DWARF_writeSLEB128(self.buf + self.count, val);
+        self.count = self.count + bytes;
+    }
+
+    fn writeString(self: *DebugLineWriter, s: *u8, len: i64) {
+        var i: i64 = 0;
+        while i < len and self.count < self.cap {
+            let src: *u8 = s + i;
+            let dst: *u8 = self.buf + self.count;
+            dst.* = src.*;
+            self.count = self.count + 1;
+            i = i + 1;
+        }
+        // Null terminator
+        if self.count < self.cap {
+            let p: *u8 = self.buf + self.count;
+            p.* = 0;
+            self.count = self.count + 1;
+        }
+    }
+
+    fn writeZeros(self: *DebugLineWriter, n: i64) {
+        var i: i64 = 0;
+        while i < n {
+            self.writeByte(0);
+            i = i + 1;
+        }
+    }
+
+    fn writeSetAddress(self: *DebugLineWriter, addr: i64) {
+        // Extended opcode format: 0, length (ULEB128), opcode, operand
+        self.writeByte(0);           // Extended opcode marker
+        self.writeULEB128(9);        // Length: 1 (opcode) + 8 (address)
+        self.writeByte(DW_LNE_set_address);
+        self.writeU64(addr);
+    }
+
+    fn writeEndSequence(self: *DebugLineWriter) {
+        self.writeByte(0);           // Extended opcode marker
+        self.writeULEB128(1);        // Length: 1 (opcode only)
+        self.writeByte(DW_LNE_end_sequence);
+    }
+
 }
 
-fn DebugLineWriter_writeSLEB128(w: *DebugLineWriter, val: i64) {
-    if w.count + 10 > w.cap {
-        return;
-    }
-    let bytes: i64 = DWARF_writeSLEB128(w.buf + w.count, val);
-    w.count = w.count + bytes;
-}
 
-fn DebugLineWriter_writeString(w: *DebugLineWriter, s: *u8, len: i64) {
-    var i: i64 = 0;
-    while i < len and w.count < w.cap {
-        let src: *u8 = s + i;
-        let dst: *u8 = w.buf + w.count;
-        dst.* = src.*;
-        w.count = w.count + 1;
-        i = i + 1;
-    }
-    // Null terminator
-    if w.count < w.cap {
-        let p: *u8 = w.buf + w.count;
-        p.* = 0;
-        w.count = w.count + 1;
-    }
-}
 
-fn DebugLineWriter_writeZeros(w: *DebugLineWriter, n: i64) {
-    var i: i64 = 0;
-    while i < n {
-        DebugLineWriter_writeByte(w, 0);
-        i = i + 1;
-    }
-}
+
+
+
+
+
+
 
 // ============================================================================
 // Extended Opcode Helpers
 // ============================================================================
 
 // Write DW_LNE_set_address extended opcode
-fn DebugLineWriter_writeSetAddress(w: *DebugLineWriter, addr: i64) {
-    // Extended opcode format: 0, length (ULEB128), opcode, operand
-    DebugLineWriter_writeByte(w, 0);           // Extended opcode marker
-    DebugLineWriter_writeULEB128(w, 9);        // Length: 1 (opcode) + 8 (address)
-    DebugLineWriter_writeByte(w, DW_LNE_set_address);
-    DebugLineWriter_writeU64(w, addr);
-}
 
 // Write DW_LNE_end_sequence extended opcode
-fn DebugLineWriter_writeEndSequence(w: *DebugLineWriter) {
-    DebugLineWriter_writeByte(w, 0);           // Extended opcode marker
-    DebugLineWriter_writeULEB128(w, 1);        // Length: 1 (opcode only)
-    DebugLineWriter_writeByte(w, DW_LNE_end_sequence);
-}
 
 // ============================================================================
 // Debug Abbrev Generation

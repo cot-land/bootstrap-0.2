@@ -8,21 +8,23 @@
 
 cot1 is a near-complete translation of the Zig bootstrap compiler. All critical path functions exist and the compiler successfully self-hosts (cot1-stage1 compiles cot1-stage2).
 
-## Ongoing: Method Syntax Conversion (2026-01-27)
+## Completed: Method Syntax Conversion (2026-01-27)
 
-Converting cot1 from function-style (`Func_getBlock(f, id)`) to method syntax (`f.getBlock(id)`).
+Converted cot1 from function-style (`Func_getBlock(f, id)`) to method syntax (`f.getBlock(id)`).
 
-**Progress:**
-| Phase | Structs | Status |
-|-------|---------|--------|
-| 1a | Func, Local | **Complete** |
-| 1b | GenState | **Complete** |
-| 1c | Value | Pending |
-| 2a-c | Parser, FuncBuilder, Lowerer | Pending |
-| 3a-d | SSABuilder, TypeRegistry, Scanner, MachOWriter, Block | Pending |
-| 4 | Remaining 20+ structs | Pending |
+**Status: COMPLETE** - 25 structs now use impl blocks with method syntax.
 
-This conversion improves code readability while maintaining functional equivalence.
+| Category | Structs Converted |
+|----------|-------------------|
+| SSA Core | Func, Local, Value, ValuePool, Block |
+| SSA Passes | SSABuilder, StackAllocState, RegAllocState, DomTree |
+| SSA Analysis | LiveMap, BlockLiveness, LivenessResult, ABIParamResultInfo, ABIAssignState |
+| Frontend | Parser, Lowerer, Checker, ScopePool, FuncBuilder, Scanner, TypeRegistry |
+| Codegen | GenState |
+| Object | MachOWriter, DebugLineWriter |
+| Lib | StrMap |
+
+This conversion improves code readability while maintaining functional equivalence. All 754 bootstrap tests pass.
 
 Note: Previous estimates based on line counts were misleading. cot1's more verbose syntax (no generics, explicit function naming) means line counts don't reflect functional completeness.
 
@@ -163,15 +165,15 @@ main.cot
 
 | Stage | Status | Notes |
 |-------|--------|-------|
-| cot1-stage1 | ✓ Works | Zig compiles cot1, 166/166 tests pass |
-| cot1-stage2 | ⚠️ Partial | Parsing works (94008 nodes), crashes in SSA building at scale |
+| cot1-stage1 | ✓ Works | Zig compiles cot1, 754/754 tests pass |
+| cot1-stage2 | ⚠️ Compiles, linking issue | Compiles in 4.3s, linker finds undefined symbol `_` |
 | Individual files | ✓ Works | cot1-stage1 can compile individual cot1 files |
 
-**Progress**: Parser now fully handles all cot1 syntax including `"string".ptr`.
-The self-hosting pipeline successfully:
-- Parses all 48 source files (94008 AST nodes)
-- Lowers to IR (61381 nodes, 1106 functions, 148 globals)
-- Crashes during SSA building (stack overflow suspected at 8MB stack limit)
+**Progress (2026-01-27)**:
+- Stage1 fully working: all 754 bootstrap tests pass
+- Stage2 compilation succeeds (797KB object file, 68K IR nodes, 1269 functions)
+- Stage2 linking fails with undefined symbol `_` (symbol naming bug in cot1 codegen)
+- Suspected cause: method name truncation/mangling issue (`_ter.co_parseType` instead of `Parser_parseType`)
 
 ## Conclusion
 

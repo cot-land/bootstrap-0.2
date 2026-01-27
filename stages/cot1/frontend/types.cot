@@ -389,11 +389,11 @@ impl TypeRegistry {
     }
 
     fn findByName(self: *TypeRegistry, name_ptr: *u8, name_len: i64) i64 {
-        return StrMap_get(&self.name_map, name_ptr, name_len);
+        return self.name_map.get( name_ptr, name_len);
     }
 
     fn lookupByName(self: *TypeRegistry, source: *u8, name_start: i64, name_len: i64) i64 {
-        return StrMap_get(&self.name_map, source + name_start, name_len);
+        return self.name_map.get( source + name_start, name_len);
     }
 
     fn makePointer(self: *TypeRegistry, elem: i64) i64 {
@@ -508,7 +508,7 @@ impl TypeRegistry {
     
         // Register in name map for fast lookup
         if name_len > 0 and self.source != null {
-            StrMap_put(&self.name_map, self.source + name_start, name_len, idx);
+            self.name_map.put( self.source + name_start, name_len, idx);
         }
     
         return idx;
@@ -534,7 +534,7 @@ impl TypeRegistry {
     
         // Register in name map for fast lookup
         if name_len > 0 and self.source != null {
-            StrMap_put(&self.name_map, self.source + name_start, name_len, idx);
+            self.name_map.put( self.source + name_start, name_len, idx);
         }
     
         return idx;
