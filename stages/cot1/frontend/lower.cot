@@ -5714,6 +5714,44 @@ const IR_OP_NOT: i64 = 19;
 const IR_OP_BIT_NOT: i64 = 20;
 
 // ============================================================================
+// TEST HELPER FUNCTIONS
+// ============================================================================
+
+fn test_helper_add(a: i64, b: i64) i64 {
+    return a + b
+}
+
+fn test_helper_identity(x: i64) i64 {
+    return x
+}
+
+fn test_helper_sum8(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64) i64 {
+    return a + b + c + d + e + f + g + h
+}
+
+fn test_helper_sum9(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64) i64 {
+    return a + b + c + d + e + f + g + h + i
+}
+
+fn test_helper_factorial(n: i64) i64 {
+    if n <= 1 {
+        return 1
+    }
+    return n * test_helper_factorial(n - 1)
+}
+
+fn test_helper_void() void {
+    // Does nothing
+}
+
+fn test_helper_fib(n: i64) i64 {
+    if n <= 1 {
+        return n
+    }
+    return test_helper_fib(n - 1) + test_helper_fib(n - 2)
+}
+
+// ============================================================================
 // INLINE TESTS - Arithmetic and Comparisons
 // ============================================================================
 
@@ -5921,4 +5959,37 @@ test "if chain" {
         }
     }
     @assert(result == 42)
+}
+
+// ============================================================================
+// INLINE TESTS - Function Calls
+// ============================================================================
+
+test "simple call" {
+    @assert(test_helper_add(20, 22) == 42)
+}
+
+test "nested call" {
+    @assert(test_helper_add(test_helper_identity(20), test_helper_identity(22)) == 42)
+}
+
+test "8 register args" {
+    @assert(test_helper_sum8(1, 2, 3, 4, 5, 6, 7, 8) == 36)
+}
+
+test "9 args with stack" {
+    @assert(test_helper_sum9(1, 2, 3, 4, 5, 6, 7, 8, 9) == 45)
+}
+
+test "recursion factorial" {
+    @assert(test_helper_factorial(5) == 120)
+}
+
+test "recursion fibonacci" {
+    @assert(test_helper_fib(10) == 55)
+}
+
+test "void call" {
+    test_helper_void()
+    @assert(1 == 1)
 }
