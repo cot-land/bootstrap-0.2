@@ -428,10 +428,10 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     // Phase 1: Scan and count tokens
     var scanner: Scanner = Scanner_init(source);
     var tok_count: i64 = 0;
-    var tok: Token = Scanner_next(&scanner);
+    var tok: Token = scanner.next();
     while tok.kind != TokenType.Eof {
         tok_count = tok_count + 1;
-        tok = Scanner_next(&scanner);
+        tok = scanner.next();
     }
     print("  Tokens: ");
     print(tok_count);

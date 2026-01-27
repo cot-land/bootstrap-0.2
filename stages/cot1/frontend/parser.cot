@@ -47,7 +47,7 @@ impl Parser {
         p.had_error = false;
         p.nest_lev = 0;  // Initialize nesting depth (follows Zig parser.zig:70)
         // Prime the parser with first token
-        p.current = Scanner_next(&p.scanner);
+        p.current = p.scanner.next();
         return p;
     }
 
@@ -57,7 +57,7 @@ impl Parser {
 
     // Advance to next token
     fn advance(self: *Parser)  {
-        self.current = Scanner_next(&self.scanner);
+        self.current = self.scanner.next();
     }
 
     // Check if current token matches expected type (don't consume)
