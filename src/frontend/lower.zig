@@ -61,6 +61,12 @@ pub const Lowerer = struct {
     // Compile-time constant values
     const_values: std.StringHashMap(i64),
 
+    // Test mode: when true, compile test declarations and generate test runner
+    test_mode: bool = false,
+
+    // Collected test names (for test runner generation)
+    test_names: std.ArrayListUnmanaged([]const u8),
+
     /// Error type for lowering operations
     pub const Error = error{OutOfMemory};
 
@@ -101,13 +107,25 @@ pub const Lowerer = struct {
             .loop_stack = .{},
             .defer_stack = .{},
             .const_values = std.StringHashMap(i64).init(allocator),
+            .test_names = .{},
         };
+    }
+
+    /// Set test mode (must be called before lowering)
+    pub fn setTestMode(self: *Lowerer, enabled: bool) void {
+        self.test_mode = enabled;
+    }
+
+    /// Add a test name to the collection (for aggregating across files)
+    pub fn addTestName(self: *Lowerer, name: []const u8) !void {
+        try self.test_names.append(self.allocator, name);
     }
 
     pub fn deinit(self: *Lowerer) void {
         self.loop_stack.deinit(self.allocator);
         self.defer_stack.deinit(self.allocator);
         self.const_values.deinit();
+        self.test_names.deinit(self.allocator);
         self.builder.deinit();
     }
 
@@ -116,6 +134,7 @@ pub const Lowerer = struct {
         self.loop_stack.deinit(self.allocator);
         self.defer_stack.deinit(self.allocator);
         self.const_values.deinit();
+        self.test_names.deinit(self.allocator);
         // Don't deinit builder - it's shared
     }
 
@@ -135,6 +154,47 @@ pub const Lowerer = struct {
         }
     }
 
+    /// Generate test runner main() function after all tests have been collected.
+    /// Called by driver when test_mode is true after all files are lowered.
+    pub fn generateTestRunner(self: *Lowerer) !void {
+        if (self.test_names.items.len == 0) {
+            debug.log(.lower, "No tests to run", .{});
+            return;
+        }
+
+        const span = Span.init(Pos.zero, Pos.zero); // Synthetic span for generated code
+
+        // Start main() function
+        self.builder.startFunc("main", TypeRegistry.VOID, TypeRegistry.I64, span);
+
+        if (self.builder.func()) |fb| {
+            self.current_func = fb;
+
+            // Call each test function in sequence
+            // If a test fails (via @assert -> exit(1)), execution stops there
+            for (self.test_names.items) |test_name| {
+                // Call the test function (no args, void return)
+                var no_args = [_]ir.NodeIndex{};
+                _ = try fb.emitCall(test_name, &no_args, false, TypeRegistry.VOID, span);
+            }
+
+            // Return 0 (all tests passed)
+            const zero = try fb.emitConstInt(0, TypeRegistry.I64, span);
+            _ = try fb.emitRet(zero, span);
+
+            self.current_func = null;
+        }
+
+        try self.builder.endFunc();
+
+        debug.log(.lower, "Generated test runner with {d} tests", .{self.test_names.items.len});
+    }
+
+    /// Get the list of test names (for external use, e.g., printing test output)
+    pub fn getTestNames(self: *const Lowerer) []const []const u8 {
+        return self.test_names.items;
+    }
+
     // ========================================================================
     // Declaration Lowering
     // ========================================================================
@@ -150,6 +210,12 @@ pub const Lowerer = struct {
             .impl_block => |impl_b| try self.lowerImplBlock(impl_b),
             .enum_decl, .union_decl, .type_alias => {}, // Type-only, no codegen
             .import_decl, .bad_decl => {},
+            .test_decl => |test_d| {
+                if (self.test_mode) {
+                    try self.lowerTestDecl(test_d);
+                }
+                // When test_mode is false, tests are silently skipped
+            },
         }
     }
 
@@ -157,6 +223,12 @@ pub const Lowerer = struct {
         // Skip extern functions - they have no body, resolved by linker
         if (fn_decl.is_extern) {
             debug.log(.lower, "Skipping extern function: {s}", .{fn_decl.name});
+            return;
+        }
+
+        // Skip user's main() when in test mode (test runner generates its own main)
+        if (self.test_mode and std.mem.eql(u8, fn_decl.name, "main")) {
+            debug.log(.lower, "Skipping user main() in test mode", .{});
             return;
         }
 
@@ -309,6 +381,65 @@ pub const Lowerer = struct {
         }
 
         try self.builder.endFunc();
+    }
+
+    /// Lower a test declaration as a void function with synthesized name.
+    /// Test "basic addition" { ... } becomes fn test_basic_addition() void { ... }
+    fn lowerTestDecl(self: *Lowerer, test_decl: ast.TestDecl) !void {
+        // Sanitize test name: replace non-alphanumeric with '_'
+        const test_name = try self.sanitizeTestName(test_decl.name);
+
+        // Store for test runner generation
+        try self.test_names.append(self.allocator, test_name);
+
+        // Start building the test function
+        self.builder.startFunc(test_name, TypeRegistry.VOID, TypeRegistry.VOID, test_decl.span);
+
+        if (self.builder.func()) |fb| {
+            self.current_func = fb;
+
+            // Clear defer stack for new function scope
+            self.defer_stack.clearRetainingCapacity();
+
+            // Lower test body (no parameters for tests)
+            if (test_decl.body != null_node) {
+                _ = try self.lowerBlockNode(test_decl.body);
+
+                // Add implicit return (tests are always void)
+                const needs_ret = fb.needsTerminator();
+                if (needs_ret) {
+                    try self.emitDeferredExprs(0);
+                    _ = try fb.emitRet(null, test_decl.span);
+                }
+            }
+
+            self.current_func = null;
+        }
+
+        try self.builder.endFunc();
+    }
+
+    /// Sanitize test name to be a valid function identifier.
+    /// "basic addition" -> "test_basic_addition"
+    fn sanitizeTestName(self: *Lowerer, name: []const u8) ![]const u8 {
+        // Allocate buffer: "test_" prefix + name + null terminator
+        var result = try self.allocator.alloc(u8, 5 + name.len);
+        result[0] = 't';
+        result[1] = 'e';
+        result[2] = 's';
+        result[3] = 't';
+        result[4] = '_';
+
+        // Copy and sanitize: spaces and non-alphanumeric become '_'
+        for (name, 0..) |c, i| {
+            if ((c >= 'a' and c <= 'z') or (c >= 'A' and c <= 'Z') or (c >= '0' and c <= '9')) {
+                result[5 + i] = c;
+            } else {
+                result[5 + i] = '_';
+            }
+        }
+
+        return result;
     }
 
     // ========================================================================
@@ -2616,6 +2747,36 @@ pub const Lowerer = struct {
             const from_type = self.inferExprType(bc.args[0]);
             debug.log(.lower, "@intToPtr({d}, expr) from_type={d} to_type={d}", .{ target_type, from_type, target_type });
             return try fb.emitConvert(operand, from_type, target_type, bc.span);
+        } else if (std.mem.eql(u8, bc.name, "assert")) {
+            // @assert(condition) - if condition is false, exit(1)
+            // Generates: if (!condition) { exit(1); }
+            const condition = try self.lowerExprNode(bc.args[0]);
+            if (condition == ir.null_node) {
+                debug.log(.lower, "@assert: condition lowered to null_node", .{});
+                return ir.null_node;
+            }
+
+            // Create blocks for the conditional
+            const fail_block = try fb.newBlock("assert.fail");
+            const continue_block = try fb.newBlock("assert.cont");
+
+            // Branch: if condition is true, continue; if false, fail
+            _ = try fb.emitBranch(condition, continue_block, fail_block, bc.span);
+
+            // Fail block: call exit(1)
+            fb.setBlock(fail_block);
+            const exit_code = try fb.emitConstInt(1, TypeRegistry.I64, bc.span);
+            var args = [_]ir.NodeIndex{exit_code};
+            _ = try fb.emitCall("exit", &args, false, TypeRegistry.VOID, bc.span);
+            // exit doesn't return, but we need to terminate the block for valid IR
+            // Use a jump that will never execute (exit never returns)
+            _ = try fb.emitJump(continue_block, bc.span);
+
+            // Continue block is where we resume after successful assert
+            fb.setBlock(continue_block);
+
+            debug.log(.lower, "@assert(condition) generated", .{});
+            return ir.null_node; // Assertion is a statement, not an expression
         }
 
         return ir.null_node;

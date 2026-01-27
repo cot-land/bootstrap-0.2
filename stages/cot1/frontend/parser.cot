@@ -1789,6 +1789,29 @@ fn Type_pointee(type_handle: i64) i64 {
         return Node_implBlock(self.pool, type_name_start, type_name_len, methods_start, methods_count, start, end);
     }
 
+    // Parse test declaration: test "name" { body }
+    fn parseTestDecl(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        self.want(TokenType.Test);
+
+        // Test name (string literal required)
+        if not self.check(TokenType.StringLit) {
+            self.had_error = true;
+            return -1;
+        }
+        // Get name excluding quotes: token.start+1 to skip opening quote
+        // token.end is length, so name_len = end - 2 to exclude both quotes
+        let name_start: i64 = self.current.start + 1;
+        let name_len: i64 = self.current.end - 2;
+        self.advance();
+
+        // Body block (required)
+        let body: i64 = self.parseBlock();
+
+        let end: i64 = self.current.start;
+        return Node_testDecl(self.pool, name_start, name_len, body, start, end);
+    }
+
     fn parseStructDecl(self: *Parser) i64 {
         let start: i64 = self.current.start;
         self.want(TokenType.Struct);
@@ -1995,6 +2018,11 @@ fn Type_pointee(type_handle: i64) i64 {
         // cot1: impl block for method syntax
         if self.check(TokenType.Impl) {
             return self.parseImplBlock();
+        }
+
+        // cot1: inline test declaration
+        if self.check(TokenType.Test) {
+            return self.parseTestDecl();
         }
 
         // Error - unexpected token at top level

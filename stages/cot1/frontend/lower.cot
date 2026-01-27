@@ -65,6 +65,36 @@ fn copy_func_name(source: *u8, start: i64, len: i64) i64 {
     return @ptrToInt(buf);
 }
 
+// Get pointer to "memset_zero" string for call emission
+// Following Zig pattern: src/frontend/lower.zig:486 emits call to memset_zero
+fn get_memset_zero_name() i64 {
+    let buf: *u8 = malloc_u8(12);  // "memset_zero" + null
+    (buf + 0).* = 109;   // 'm'
+    (buf + 1).* = 101;   // 'e'
+    (buf + 2).* = 109;   // 'm'
+    (buf + 3).* = 115;   // 's'
+    (buf + 4).* = 101;   // 'e'
+    (buf + 5).* = 116;   // 't'
+    (buf + 6).* = 95;    // '_'
+    (buf + 7).* = 122;   // 'z'
+    (buf + 8).* = 101;   // 'e'
+    (buf + 9).* = 114;   // 'r'
+    (buf + 10).* = 111;  // 'o'
+    (buf + 11).* = 0;    // null
+    return @ptrToInt(buf);
+}
+
+// Get pointer to "exit" string for @assert failure
+fn get_exit_name() i64 {
+    let buf: *u8 = malloc_u8(5);  // "exit" + null
+    (buf + 0).* = 101;   // 'e'
+    (buf + 1).* = 120;   // 'x'
+    (buf + 2).* = 105;   // 'i'
+    (buf + 3).* = 116;   // 't'
+    (buf + 4).* = 0;     // null
+    return @ptrToInt(buf);
+}
+
 // print() and println() are built-in functions that handle strings and integers
 
 // Struct field info for name-based lookup
@@ -180,6 +210,16 @@ struct Lowerer {
     method_registry: *MethodEntry,
     method_registry_count: i64,
     method_registry_cap: i64,
+
+    // Test mode: when true, compile test declarations and generate test runner
+    test_mode: i64,    // 0 = false, 1 = true
+
+    // Collected test names for test runner generation
+    // Each test name is stored as (start, len) pair into synth_names buffer
+    test_name_starts: *i64,
+    test_name_lens: *i64,
+    test_names_count: i64,
+    test_names_cap: i64,
 }
 
 // ============================================================================
@@ -322,6 +362,20 @@ impl Lowerer {
         self.method_registry_cap = 256;
         self.method_registry = malloc_MethodEntry(self.method_registry_cap);
         self.method_registry_count = 0;
+
+        // Initialize test mode (disabled by default)
+        self.test_mode = 0;  // 0 = false
+
+        // Initialize test names storage
+        self.test_names_cap = 64;
+        self.test_name_starts = malloc_i64(self.test_names_cap);
+        self.test_name_lens = malloc_i64(self.test_names_cap);
+        self.test_names_count = 0;
+    }
+
+    // Set test mode (must be called before lowering)
+    fn setTestMode(self: *Lowerer, enabled: i64) {
+        self.test_mode = enabled;
     }
 
     fn registerTypeAlias(self: *Lowerer, name_start: i64, name_len: i64, target_type: i64) {
@@ -650,6 +704,26 @@ impl Lowerer {
         }
         self.constants = realloc_ConstEntry(self.constants, self.constants_cap, new_cap);
         self.constants_cap = new_cap;
+    }
+
+    fn ensureSynthNameCapacity(self: *Lowerer, additional: i64) {
+        let needed: i64 = self.synth_names_count + additional;
+        if needed <= self.synth_names_cap {
+            return;
+        }
+        var new_cap: i64 = self.synth_names_cap * 2;
+        if new_cap < needed {
+            new_cap = needed;
+        }
+        // Allocate new buffer and copy
+        let new_buf: *u8 = malloc_u8(new_cap);
+        var i: i64 = 0;
+        while i < self.synth_names_count {
+            (new_buf + i).* = (self.synth_names + i).*;
+            i = i + 1;
+        }
+        self.synth_names = new_buf;
+        self.synth_names_cap = new_cap;
     }
 
     fn getDeferDepth(self: *Lowerer) i64 {
@@ -1173,7 +1247,30 @@ impl Lowerer {
         }
         t1 = get_time_ns();
         print("    pass2 functions: "); print((t1 - t0) / 1000000); print("ms\n");
-    
+        t0 = t1;
+
+        // Test mode pass: process test declarations
+        if self.test_mode != 0 {
+            i = 0;
+            while i < self.nodes_count {
+                let node: *Node = self.nodes + i;
+                if node.kind == NodeKind.TestDecl {
+                    self.lowerTestDecl(node);
+                }
+                i = i + 1;
+            }
+            t1 = get_time_ns();
+            print("    test declarations: "); print((t1 - t0) / 1000000); print("ms\n");
+            t0 = t1;
+
+            // Generate test runner main()
+            if self.test_names_count > 0 {
+                self.generateTestRunner();
+            }
+            t1 = get_time_ns();
+            print("    test runner gen: "); print((t1 - t0) / 1000000); print("ms\n");
+        }
+
         return self.ir_nodes_count;
     }
 
@@ -1185,7 +1282,22 @@ impl Lowerer {
         // field3 = params_count
         // field4 = ret_type
         // field5 = body (block node index)
-    
+
+        // Skip user's main() when in test mode (test runner generates its own main)
+        if self.test_mode != 0 and node.field1 == 4 {
+            // Check if function name is "main"
+            let name_ptr: *u8 = self.source + node.field0;
+            if name_ptr.* == 109 {           // 'm'
+                if (name_ptr + 1).* == 97 {  // 'a'
+                    if (name_ptr + 2).* == 105 { // 'i'
+                        if (name_ptr + 3).* == 110 { // 'n'
+                            return;  // Skip main() in test mode
+                        }
+                    }
+                }
+            }
+        }
+
         // Ensure capacity for this function's locals and nodes
         // Estimate: params + 100 locals per function should be safe
         let estimated_locals: i64 = node.field3 + 100;
@@ -1330,8 +1442,224 @@ impl Lowerer {
         func_ptr.code_offset = 0;
     
         self.ir_funcs_count = self.ir_funcs_count + 1;
-    
+
         self.current_func = null;
+    }
+
+    // Lower a test declaration as a void function with synthesized name.
+    // test "basic addition" { ... } becomes fn test_basic_addition() void { ... }
+    fn lowerTestDecl(self: *Lowerer, node: *Node) {
+        // TestDecl fields:
+        // field0 = name_start (offset after opening quote in source)
+        // field1 = name_len (length of test name, excluding quotes)
+        // field2 = body (block node index)
+
+        let name_start: i64 = node.field0;
+        let name_len: i64 = node.field1;
+        let body_idx: i64 = node.field2;
+
+        // Sanitize test name and create "test_" + sanitized_name
+        let synth_len: i64 = 5 + name_len;  // "test_" prefix
+        self.ensureSynthNameCapacity(synth_len);
+
+        let synth_name_ptr: i64 = @ptrToInt(self.synth_names) + self.synth_names_count;
+        let synth_start: i64 = self.synth_names_count;
+
+        // Write "test_" prefix
+        (self.synth_names + synth_start).* = 116;      // 't'
+        (self.synth_names + synth_start + 1).* = 101;  // 'e'
+        (self.synth_names + synth_start + 2).* = 115;  // 's'
+        (self.synth_names + synth_start + 3).* = 116;  // 't'
+        (self.synth_names + synth_start + 4).* = 95;   // '_'
+
+        // Copy and sanitize name: spaces and non-alphanumeric become '_'
+        var i: i64 = 0;
+        while i < name_len {
+            let c: u8 = (self.source + name_start + i).*;
+            var out_char: u8 = 95;  // Default to '_'
+            // Check if alphanumeric: a-z, A-Z, 0-9
+            if (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or (c >= 48 and c <= 57) {
+                out_char = c;
+            }
+            (self.synth_names + synth_start + 5 + i).* = out_char;
+            i = i + 1;
+        }
+
+        self.synth_names_count = self.synth_names_count + synth_len;
+
+        // Store test name for test runner generation
+        if self.test_names_count >= self.test_names_cap {
+            // Grow capacity (simple doubling)
+            let new_cap: i64 = self.test_names_cap * 2;
+            let new_starts: *i64 = malloc_i64(new_cap);
+            let new_lens: *i64 = malloc_i64(new_cap);
+            // Copy existing
+            var j: i64 = 0;
+            while j < self.test_names_count {
+                (new_starts + j).* = (self.test_name_starts + j).*;
+                (new_lens + j).* = (self.test_name_lens + j).*;
+                j = j + 1;
+            }
+            self.test_name_starts = new_starts;
+            self.test_name_lens = new_lens;
+            self.test_names_cap = new_cap;
+        }
+        // Store OFFSET (not pointer) - synth_names buffer may be reallocated later
+        (self.test_name_starts + self.test_names_count).* = synth_start;
+        (self.test_name_lens + self.test_names_count).* = synth_len;
+        self.test_names_count = self.test_names_count + 1;
+
+        // Ensure capacity for test function
+        self.ensureLocalsCapacity(100);
+        self.ensureNodesCapacity(500);
+
+        let nodes_start: i64 = self.ir_nodes_count;
+        let locals_start: i64 = self.ir_locals_count;
+
+        // Create function builder for test (void return, no params)
+        var fb: FuncBuilder = undefined;
+        let remaining_locals: i64 = self.ir_locals_cap - self.ir_locals_count;
+        let remaining_nodes: i64 = self.ir_nodes_cap - self.ir_nodes_count;
+
+        fb.init(synth_name_ptr, synth_len,
+                TYPE_VOID,  // Tests are void functions
+                self.ir_locals + self.ir_locals_count,
+                remaining_locals,
+                self.ir_nodes + self.ir_nodes_count,
+                remaining_nodes);
+
+        self.current_func = &fb;
+
+        // Lower test body
+        var body_terminated: bool = false;
+        if body_idx >= 0 {
+            let body_node: *Node = self.nodes + body_idx;
+            body_terminated = self.lowerBlockCheckTerminated(body_node);
+        }
+
+        // Emit implicit void return
+        if not body_terminated {
+            fb.emitReturnVoid();
+        }
+
+        // Update counts
+        self.ir_nodes_count = self.ir_nodes_count + fb.nodes_count;
+        self.ir_locals_count = self.ir_locals_count + fb.locals_count;
+
+        // Record function metadata
+        self.ensureFuncsCapacity(1);
+        let func_ptr: *IRFunc = self.ir_funcs + self.ir_funcs_count;
+
+        // Store NEGATIVE offset (-offset-1) as marker for synth_names
+        // Will be converted to absolute pointer by fixupSynthNames() after all lowering
+        func_ptr.name_start = -synth_start - 1;
+        func_ptr.name_len = synth_len;
+        func_ptr.return_type = TYPE_VOID;
+        func_ptr.nodes_start = nodes_start;
+        func_ptr.nodes_count = fb.nodes_count;
+        func_ptr.locals_start = locals_start;
+        func_ptr.locals_count = fb.locals_count;
+        func_ptr.code_offset = 0;
+
+        self.ir_funcs_count = self.ir_funcs_count + 1;
+        self.current_func = null;
+    }
+
+    // Generate test runner main() function that calls each test
+    fn generateTestRunner(self: *Lowerer) {
+        // Ensure capacity
+        self.ensureLocalsCapacity(16);
+        self.ensureNodesCapacity(self.test_names_count * 10 + 20);
+
+        let nodes_start: i64 = self.ir_nodes_count;
+        let locals_start: i64 = self.ir_locals_count;
+
+        // Create "main" function name
+        self.ensureSynthNameCapacity(4);  // Call FIRST before taking pointer
+        let main_name_offset: i64 = self.synth_names_count;  // Store offset for later fixup
+        (self.synth_names + self.synth_names_count).* = 109;      // 'm'
+        (self.synth_names + self.synth_names_count + 1).* = 97;   // 'a'
+        (self.synth_names + self.synth_names_count + 2).* = 105;  // 'i'
+        (self.synth_names + self.synth_names_count + 3).* = 110;  // 'n'
+        self.synth_names_count = self.synth_names_count + 4;
+
+        var fb: FuncBuilder = undefined;
+        let remaining_locals: i64 = self.ir_locals_cap - self.ir_locals_count;
+        let remaining_nodes: i64 = self.ir_nodes_cap - self.ir_nodes_count;
+
+        // Calculate temp pointer for FuncBuilder (only used during lowering)
+        let main_name_ptr: i64 = @ptrToInt(self.synth_names) + main_name_offset;
+        fb.init(main_name_ptr, 4,
+                TYPE_I64,  // main returns i64
+                self.ir_locals + self.ir_locals_count,
+                remaining_locals,
+                self.ir_nodes + self.ir_nodes_count,
+                remaining_nodes);
+
+        self.current_func = &fb;
+
+        // Call each test function in sequence
+        var i: i64 = 0;
+        while i < self.test_names_count {
+            let test_name_offset: i64 = (self.test_name_starts + i).*;
+            let test_name_len: i64 = (self.test_name_lens + i).*;
+            // Convert offset to absolute pointer (synth_names buffer is stable now)
+            let test_name_ptr: i64 = @ptrToInt(self.synth_names) + test_name_offset;
+
+            // Emit call to test function (no args, void return)
+            var call_args: I64List = undefined;
+            i64list_init(&call_args);  // Empty args list
+            var call_node: IRNode = IRNode_new(IRNodeKind.Call, TYPE_VOID);
+            call_node.func_name_start = test_name_ptr;
+            call_node.func_name_len = test_name_len;
+            call_node.call_args = call_args;
+            fb.emit(call_node);
+
+            i = i + 1;
+        }
+
+        // Return 0 (all tests passed)
+        let zero_idx: i64 = fb.emitConstInt(0);
+        fb.emitReturn(zero_idx);
+
+        // Update counts
+        self.ir_nodes_count = self.ir_nodes_count + fb.nodes_count;
+        self.ir_locals_count = self.ir_locals_count + fb.locals_count;
+
+        // Record function metadata
+        self.ensureFuncsCapacity(1);
+        let func_ptr: *IRFunc = self.ir_funcs + self.ir_funcs_count;
+
+        // Store NEGATIVE offset (-offset-1) as marker for synth_names
+        // Will be converted to absolute pointer by fixupSynthNames() after all lowering
+        func_ptr.name_start = -main_name_offset - 1;
+        func_ptr.name_len = 4;
+        func_ptr.return_type = TYPE_I64;
+        func_ptr.nodes_start = nodes_start;
+        func_ptr.nodes_count = fb.nodes_count;
+        func_ptr.locals_start = locals_start;
+        func_ptr.locals_count = fb.locals_count;
+        func_ptr.code_offset = 0;
+
+        self.ir_funcs_count = self.ir_funcs_count + 1;
+        self.current_func = null;
+    }
+
+    // Fix up synthesized function names after all lowering is complete.
+    // Negative name_start values are markers: -offset-1 means offset into synth_names buffer.
+    // This must be called AFTER all lowering and BEFORE SSA building.
+    fn fixupSynthNames(self: *Lowerer) {
+        var i: i64 = 0;
+        while i < self.ir_funcs_count {
+            let func_ptr: *IRFunc = self.ir_funcs + i;
+            if func_ptr.name_start < 0 {
+                // Decode offset: stored as -offset-1, so offset = -name_start - 1
+                let offset: i64 = -func_ptr.name_start - 1;
+                // Convert to absolute pointer
+                func_ptr.name_start = @ptrToInt(self.synth_names) + offset;
+            }
+            i = i + 1;
+        }
     }
 
     fn lowerMethodWithName(self: *Lowerer, node: *Node, synth_name_ptr: i64, synth_name_len: i64) {
@@ -1761,16 +2089,61 @@ impl Lowerer {
             local.struct_type_start = struct_name_start;
             local.struct_type_len = struct_name_len;
         }
-    
+
+        // Go-style: zero memory for locals without initializers (structs, arrays)
+        // Following Zig: src/frontend/lower.zig:475-486
+        // This fixes stage2 hang where `var t: Token;` left Token.kind as garbage
+        if node.field3 < 0 {
+            // No initializer - zero struct/array types for safety
+            let local: *IRLocal = fb.locals + local_idx;
+            var type_size: i64 = local.size;
+            if type_size <= 0 {
+                type_size = self.type_pool.sizeof(local.type_idx);
+            }
+            // Only zero non-trivial types (size > 8 or struct/array)
+            if type_size > 8 or struct_size > 0 or array_len > 0 {
+                let addr_ir: i64 = fb.emitAddrLocal(local_idx, TYPE_I64);
+                let size_ir: i64 = fb.emitConstInt(type_size);
+                var call_node: IRNode = IRNode_new(IRNodeKind.Call, TYPE_VOID);
+                call_node.func_name_start = get_memset_zero_name();
+                call_node.func_name_len = 11;
+                i64list_append(&call_node.call_args, addr_ir);
+                i64list_append(&call_node.call_args, size_ir);
+                fb.emit(call_node);
+            }
+            return;
+        }
+
         // If there's an initializer, emit store
         if node.field3 >= 0 {
             let init_expr: *Node = self.nodes + node.field3;
     
-            // Skip store for "undefined" initializer - just leave memory uninitialized
-            // This is critical for struct types to avoid loading from address 0
+            // Go-style: zero memory for "undefined" initializer instead of leaving uninitialized
+            // Following Zig: src/frontend/lower.zig:475-486 emits memset_zero call
+            // This prevents non-deterministic behavior from uninitialized stack memory
             if init_expr.kind == NodeKind.Ident {
                 if name_is_undefined(self.source, init_expr.field0, init_expr.field1) {
-                    return;  // Don't emit any store for undefined
+                    // Get local's size
+                    let local: *IRLocal = fb.locals + local_idx;
+                    var type_size: i64 = local.size;
+                    if type_size <= 0 {
+                        // Try getting size from type
+                        type_size = self.type_pool.sizeof(local.type_idx);
+                    }
+                    if type_size > 0 {
+                        // Emit memset_zero(addr, size) call
+                        let addr_ir: i64 = fb.emitAddrLocal(local_idx, TYPE_I64);
+                        let size_ir: i64 = fb.emitConstInt(type_size);
+
+                        // Build call node
+                        var call_node: IRNode = IRNode_new(IRNodeKind.Call, TYPE_VOID);
+                        call_node.func_name_start = get_memset_zero_name();
+                        call_node.func_name_len = 11;  // "memset_zero"
+                        i64list_append(&call_node.call_args, addr_ir);
+                        i64list_append(&call_node.call_args, size_ir);
+                        fb.emit(call_node);
+                    }
+                    return;
                 }
             }
     
@@ -4831,7 +5204,48 @@ impl Lowerer {
                 return self.lowerExpr(ptr_node);
             }
         }
-    
+
+        // @assert(condition) - if condition is false, trigger crash
+        // 'a' = 97, 's' = 115, checking "assert" (length 6)
+        if first_char == 97 and name_len == 6 {  // 'a' and length 6
+            let second_char: u8 = (self.source + name_start + 1).*;
+            if second_char == 115 {  // 's' for "assert"
+                if arg1_idx >= 0 {
+                    // Lower the condition
+                    let cond_node: *Node = self.nodes + arg1_idx;
+                    let condition: i64 = self.lowerExpr(cond_node);
+                    if condition == NULL_NODE { return NULL_NODE; }
+
+                    // Create blocks for conditional
+                    let fail_block: i64 = fb.newBlock();
+                    let continue_block: i64 = fb.newBlock();
+
+                    // Branch: if true continue, if false fail
+                    fb.emitBranch(condition, continue_block, fail_block);
+
+                    // Fail block: call exit(1) by creating a call node
+                    fb.setBlock(fail_block);
+                    let exit_code: i64 = fb.emitConstInt(1);
+                    // Create the exit call manually
+                    var call_args: I64List = undefined;
+                    i64list_init(&call_args);
+                    i64list_append(&call_args, exit_code);
+                    var call_node: IRNode = IRNode_new(IRNodeKind.Call, TYPE_VOID);
+                    call_node.func_name_start = get_exit_name();
+                    call_node.func_name_len = 4;
+                    call_node.call_args = call_args;
+                    fb.emit(call_node);
+                    // Jump to continue (will never execute, but needed for valid IR)
+                    fb.emitJump(continue_block);
+
+                    // Continue block
+                    fb.setBlock(continue_block);
+
+                    return NULL_NODE;  // Assertion is a statement, not expression
+                }
+            }
+        }
+
         return NULL_NODE;
     }
 

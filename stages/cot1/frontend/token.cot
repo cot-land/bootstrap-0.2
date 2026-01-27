@@ -24,6 +24,7 @@ enum TokenType {
     Extern,     // extern
     Type,       // type (cot1: type aliases)
     Impl,       // impl (cot1: impl blocks for method syntax)
+    Test,       // test (cot1: inline tests)
 
     // Keywords - control flow
     Return,     // return
@@ -183,7 +184,7 @@ fn Token_isKeyword(t: TokenType) bool {
     if t == TokenType.Fn or t == TokenType.Let or t == TokenType.Var or
        t == TokenType.Const or t == TokenType.Struct or t == TokenType.Enum or
        t == TokenType.Import or t == TokenType.Extern or t == TokenType.Type or
-       t == TokenType.Impl { return true; }
+       t == TokenType.Impl or t == TokenType.Test { return true; }
     // Control flow keywords
     if t == TokenType.Return or t == TokenType.If or t == TokenType.Else or
        t == TokenType.While or t == TokenType.For or t == TokenType.In or
@@ -246,6 +247,7 @@ fn Token_lookup(text: string) TokenType {
         if text[0] == 110 and text[1] == 117 and text[2] == 108 and text[3] == 108 { return TokenType.Null; }   // null
         if text[0] == 116 and text[1] == 121 and text[2] == 112 and text[3] == 101 { return TokenType.Type; }   // type (cot1)
         if text[0] == 105 and text[1] == 109 and text[2] == 112 and text[3] == 108 { return TokenType.Impl; }   // impl (cot1)
+        if text[0] == 116 and text[1] == 101 and text[2] == 115 and text[3] == 116 { return TokenType.Test; }   // test (cot1)
     }
 
     // Length 5 keywords
@@ -342,5 +344,6 @@ fn Token_string(t: TokenType) string {
     if t == TokenType.Defer { return "defer"; }
     if t == TokenType.Switch { return "switch"; }
     if t == TokenType.Impl { return "impl"; }
+    if t == TokenType.Test { return "test"; }
     return "UNKNOWN";
 }

@@ -139,6 +139,9 @@ var g_output_path: *u8 = null;
 var g_output_path_cap: i64 = 0;
 var g_output_path_len: i64 = 0;
 
+// Test mode flag - set by -test CLI argument
+var g_test_mode: i64 = 0;
+
 // AST storage - nodes are fixed array, children are dynamic
 var g_nodes: *Node = null;
 var g_nodes_cap: i64 = 0;
@@ -527,6 +530,11 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     // Lowerer now self-allocates: defer_stack, type_aliases, label_stack
     lowerer.setGlobals(g_ir_globals, g_ir_globals_cap);
 
+    // Enable test mode if -test flag was passed
+    if g_test_mode != 0 {
+        lowerer.setTestMode(1);
+    }
+
     let ir_count: i64 = lowerer.lowerAll();
 
     // Sync globals from Lowerer after potential reallocations
@@ -540,6 +548,11 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     g_ir_globals_cap = lowerer.ir_globals_cap;
     g_constants = lowerer.constants;
     g_constants_cap = lowerer.constants_cap;
+
+    // Fix up synthesized function names (test functions have offset markers)
+    if g_test_mode != 0 {
+        lowerer.fixupSynthNames();
+    }
 
     print("  IR nodes: ");
     print(ir_count);
@@ -818,8 +831,9 @@ fn strcpy(dest: *u8, src: *u8, max_len: i64) i64 {
 }
 
 fn print_usage() {
-    print("Usage: cot0 <source.cot> -o <output>\n");
+    print("Usage: cot0 [-test] <source.cot> -o <output>\n");
     print("\n");
+    print("  -test         Compile and run inline tests\n");
     print("  <source.cot>  Input Cot source file\n");
     print("  -o <output>   Output object file\n");
 }
@@ -895,20 +909,46 @@ fn main(argc: i64, argv: **u8) i64 {
     // g_import_path_lens now self-allocated by lib/import.cot
 
     // Parse command line arguments
-    // Expected: cot0 <source.cot> -o <output>
-    if argc < 4 {
+    // Expected: cot0 [-test] <source.cot> -o <output>
+
+    // Check for -test flag first
+    var arg_offset: i64 = 0;
+
+    if argc >= 2 {
+        let argv_ptr1: **u8 = argv + 1;
+        let first_arg: *u8 = argv_ptr1.*;
+        // Check if first arg is "-test"
+        if first_arg.* == 45 {   // '-'
+            if (first_arg + 1).* == 116 {  // 't'
+                if (first_arg + 2).* == 101 {  // 'e'
+                    if (first_arg + 3).* == 115 {  // 's'
+                        if (first_arg + 4).* == 116 {  // 't'
+                            if (first_arg + 5).* == 0 {  // null terminator
+                                g_test_mode = 1;
+                                arg_offset = 1;
+                                print("Test mode enabled\n");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let required_args: i64 = 4 + arg_offset;
+    if argc < required_args {
         print("Error: Not enough arguments\n\n");
         print_usage();
         return 1;
     }
 
-    // Get source file path (argv[1])
-    let argv_ptr1: **u8 = argv + 1;
-    let source_path: *u8 = argv_ptr1.*;
+    // Get source file path (argv[1] or argv[2] if -test)
+    let argv_src: **u8 = argv + 1 + arg_offset;
+    let source_path: *u8 = argv_src.*;
 
-    // Check for -o flag (argv[2])
-    let argv_ptr2: **u8 = argv + 2;
-    let flag: *u8 = argv_ptr2.*;
+    // Check for -o flag (argv[2] or argv[3] if -test)
+    let argv_flag: **u8 = argv + 2 + arg_offset;
+    let flag: *u8 = argv_flag.*;
 
     // Build expected flag string
     var dash_o: [3]u8;
@@ -922,9 +962,9 @@ fn main(argc: i64, argv: **u8) i64 {
         return 1;
     }
 
-    // Get output path (argv[3])
-    let argv_ptr3: **u8 = argv + 3;
-    let output_path: *u8 = argv_ptr3.*;
+    // Get output path (argv[3] or argv[4] if -test)
+    let argv_out: **u8 = argv + 3 + arg_offset;
+    let output_path: *u8 = argv_out.*;
     let output_len: i64 = strlen(output_path);
 
     // Copy output path to global buffer (for null-termination)

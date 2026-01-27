@@ -382,7 +382,7 @@ pub const Checker = struct {
                 ));
                 try self.types.registerNamed(t.name, target_type);
             },
-            .import_decl, .bad_decl => {},
+            .import_decl, .bad_decl, .test_decl => {},
             .impl_block => |impl_b| {
                 // Collect methods from impl block - they get added with synthesized names
                 for (impl_b.methods) |method_idx| {
@@ -493,7 +493,7 @@ pub const Checker = struct {
                     }
                 }
             },
-            .import_decl, .bad_decl => {},
+            .import_decl, .bad_decl, .test_decl => {},
         }
     }
 
@@ -1142,6 +1142,17 @@ pub const Checker = struct {
             }
 
             return target_type;
+        } else if (std.mem.eql(u8, bc.name, "assert")) {
+            // @assert(condition) - checks condition at runtime, exits if false
+            const cond_type = try self.checkExpr(bc.args[0]);
+
+            // Condition should be a boolean (or compatible)
+            if (cond_type != TypeRegistry.BOOL and !types.isInteger(self.types.get(cond_type))) {
+                self.err.errorWithCode(bc.span.start, .e300, "@assert requires a boolean condition");
+                return invalid_type;
+            }
+
+            return TypeRegistry.VOID;
         } else {
             self.err.errorWithCode(bc.span.start, .e300, "unknown builtin");
             return invalid_type;

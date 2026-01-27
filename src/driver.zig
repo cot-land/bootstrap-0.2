@@ -64,6 +64,7 @@ pub const Driver = struct {
     allocator: Allocator,
     debug: pipeline_debug.PipelineDebug,
     target: Target = Target.native(),
+    test_mode: bool = false,
 
     pub fn init(allocator: Allocator) Driver {
         return .{
@@ -76,6 +77,11 @@ pub const Driver = struct {
     /// Set the compilation target (architecture + OS).
     pub fn setTarget(self: *Driver, t: Target) void {
         self.target = t;
+    }
+
+    /// Enable test mode (compiles test declarations and generates test runner).
+    pub fn setTestMode(self: *Driver, enabled: bool) void {
+        self.test_mode = enabled;
     }
 
     /// Compile source code to machine code bytes (single file, no imports).
@@ -233,6 +239,10 @@ pub const Driver = struct {
         var shared_builder = ir_mod.Builder.init(self.allocator, &type_reg);
         defer shared_builder.deinit();
 
+        // Collect test names across all files (for test runner generation)
+        var all_test_names = std.ArrayListUnmanaged([]const u8){};
+        defer all_test_names.deinit(self.allocator);
+
         for (parsed_files.items, 0..) |*pf, i| {
             debug.log(.lower, "Lowering: {s}", .{pf.path});
 
@@ -249,6 +259,11 @@ pub const Driver = struct {
                 shared_builder,
             );
 
+            // Set test mode if enabled
+            if (self.test_mode) {
+                lowerer.setTestMode(true);
+            }
+
             // Lower this file - adds functions and globals to shared builder
             lowerer.lowerToBuilder() catch |e| {
                 lowerer.deinitWithoutBuilder(); // Don't free shared builder
@@ -261,6 +276,13 @@ pub const Driver = struct {
                 return error.LowerError;
             }
 
+            // Collect test names from this file (if test mode)
+            if (self.test_mode) {
+                for (lowerer.getTestNames()) |test_name| {
+                    try all_test_names.append(self.allocator, test_name);
+                }
+            }
+
             // Update shared_builder from lowerer (it may have been modified)
             shared_builder = lowerer.builder;
 
@@ -271,6 +293,36 @@ pub const Driver = struct {
             });
 
             lowerer.deinitWithoutBuilder();
+        }
+
+        // If test mode, generate test runner main() function
+        if (self.test_mode and all_test_names.items.len > 0) {
+            debug.log(.lower, "Generating test runner with {} tests", .{all_test_names.items.len});
+
+            // Create a minimal lowerer just for test runner generation
+            // We need a dummy source/tree/checker for the lowerer, but only use the builder
+            var dummy_err = errors_mod.ErrorReporter.init(&parsed_files.items[0].source, null);
+            var runner_lowerer = lower_mod.Lowerer.initWithBuilder(
+                self.allocator,
+                &parsed_files.items[0].tree,
+                &type_reg,
+                &dummy_err,
+                &checkers.items[0],
+                shared_builder,
+            );
+
+            // Add all collected test names
+            for (all_test_names.items) |test_name| {
+                try runner_lowerer.addTestName(test_name);
+            }
+
+            // Generate test runner
+            try runner_lowerer.generateTestRunner();
+
+            // Update shared builder
+            shared_builder = runner_lowerer.builder;
+
+            runner_lowerer.deinitWithoutBuilder();
         }
 
         // Get final IR from shared builder

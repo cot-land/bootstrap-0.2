@@ -53,6 +53,7 @@ pub const Decl = union(enum) {
     type_alias: TypeAlias,
     import_decl: ImportDecl,
     impl_block: ImplBlock,
+    test_decl: TestDecl,
     bad_decl: BadDecl,
 
     pub fn span(self: Decl) Span {
@@ -93,6 +94,13 @@ pub const StructDecl = struct {
 pub const ImplBlock = struct {
     type_name: []const u8,
     methods: []const NodeIndex, // Indices into extra_data for FnDecl nodes
+    span: Span,
+};
+
+/// test "name" { body }
+pub const TestDecl = struct {
+    name: []const u8, // Test name from string literal (without quotes)
+    body: NodeIndex, // Block statement
     span: Span,
 };
 

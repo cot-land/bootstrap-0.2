@@ -734,13 +734,25 @@ fn generate(self: *GenState) i64 {
     // Check if this is the main function (for crash handler insertion)
     // Following Zig pattern: detect "main" by name, insert crash handler after param stores
     self.is_main = false;
-    if f.name_len == 4 and self.source != null {
+    if f.name_len == 4 {
+        // Determine if name_start is an offset (< source_len) or absolute pointer (>= source_len)
+        // Synthesized names (impl methods, test functions) use absolute pointers
+        var name_ptr: *u8 = null;
+        if self.source != null and f.name_start < self.source_len {
+            // Regular function: name_start is offset into source
+            name_ptr = self.source + f.name_start;
+        } else {
+            // Synthesized function: name_start is absolute pointer
+            name_ptr = @intToPtr(*u8, f.name_start);
+        }
         // Check "main": m=109, a=97, i=105, n=110
-        if (self.source + f.name_start).* == 109 {  // 'm'
-            if (self.source + f.name_start + 1).* == 97 {  // 'a'
-                if (self.source + f.name_start + 2).* == 105 {  // 'i'
-                    if (self.source + f.name_start + 3).* == 110 {  // 'n'
-                        self.is_main = true;
+        if name_ptr != null {
+            if name_ptr.* == 109 {  // 'm'
+                if (name_ptr + 1).* == 97 {  // 'a'
+                    if (name_ptr + 2).* == 105 {  // 'i'
+                        if (name_ptr + 3).* == 110 {  // 'n'
+                            self.is_main = true;
+                        }
                     }
                 }
             }

@@ -222,6 +222,7 @@ pub const Parser = struct {
             .kw_union => self.parseUnionDecl(),
             .kw_type => self.parseTypeAlias(),
             .kw_import => self.parseImportDecl(),
+            .kw_test => self.parseTestDecl(),
             else => {
                 self.syntaxError("expected declaration");
                 return null;
@@ -570,6 +571,35 @@ pub const Parser = struct {
 
         return try self.tree.addDecl(.{ .import_decl = .{
             .path = path,
+            .span = Span.init(start, self.pos()),
+        } });
+    }
+
+    /// Parse test declaration: test "name" { body }
+    fn parseTestDecl(self: *Parser) ParseError!?NodeIndex {
+        const start = self.pos();
+        self.advance(); // consume 'test'
+
+        // Test name (string literal required)
+        if (!self.check(.string_lit)) {
+            self.err.errorAt(self.pos(), "expected test name string");
+            return null;
+        }
+        const raw_name = self.tok.text;
+        self.advance();
+
+        // Strip quotes from name: "my test" -> my test
+        const name = if (raw_name.len >= 2 and raw_name[0] == '"' and raw_name[raw_name.len - 1] == '"')
+            raw_name[1 .. raw_name.len - 1]
+        else
+            raw_name;
+
+        // Body block (required)
+        const body = try self.parseBlock() orelse return null;
+
+        return try self.tree.addDecl(.{ .test_decl = .{
+            .name = name,
+            .body = body,
             .span = Span.init(start, self.pos()),
         } });
     }
@@ -1161,6 +1191,21 @@ pub const Parser = struct {
                         .name = builtin_name,
                         .type_arg = null_node,
                         .args = .{ ptr_arg, null_node },
+                        .span = Span.init(start, self.pos()),
+                    } });
+                } else if (std.mem.eql(u8, builtin_name, "assert")) {
+                    // @assert(condition) - single boolean expression argument
+                    const cond_arg = try self.parseExpr() orelse {
+                        self.err.errorWithCode(self.pos(), .e202, "expected condition argument");
+                        return null;
+                    };
+
+                    if (!self.expect(.rparen)) return null;
+
+                    return try self.tree.addExpr(.{ .builtin_call = .{
+                        .name = builtin_name,
+                        .type_arg = null_node,
+                        .args = .{ cond_arg, null_node },
                         .span = Span.init(start, self.pos()),
                     } });
                 } else {

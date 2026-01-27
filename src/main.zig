@@ -211,6 +211,7 @@ pub fn main() !void {
     var input_file: ?[]const u8 = null;
     var output_name: []const u8 = "a.out";
     var compile_target: Target = Target.native();
+    var test_mode: bool = false;
 
     while (args.next()) |arg| {
         if (std.mem.eql(u8, arg, "-o")) {
@@ -218,6 +219,8 @@ pub fn main() !void {
                 std.debug.print("Error: -o requires an argument\n", .{});
                 return;
             };
+        } else if (std.mem.eql(u8, arg, "-test") or std.mem.eql(u8, arg, "--test")) {
+            test_mode = true;
         } else if (std.mem.startsWith(u8, arg, "--target=")) {
             const target_str = arg[9..]; // Skip "--target="
             compile_target = Target.parse(target_str) orelse {
@@ -245,8 +248,10 @@ pub fn main() !void {
     }
 
     const actual_input = input_file orelse {
-        std.debug.print("Usage: cot [--target=<arch-os>] <input.cot> [-o <output>]\n", .{});
-        std.debug.print("Targets: arm64-macos, amd64-linux\n", .{});
+        std.debug.print("Usage: cot [--target=<arch-os>] [-test] <input.cot> [-o <output>]\n", .{});
+        std.debug.print("Options:\n", .{});
+        std.debug.print("  -test           Compile and run inline tests\n", .{});
+        std.debug.print("  --target=<t>    Cross-compile for target (arm64-macos, amd64-linux)\n", .{});
         return;
     };
 
@@ -258,6 +263,9 @@ pub fn main() !void {
     // Compile the file
     var compile_driver = Driver.init(allocator);
     compile_driver.setTarget(compile_target);
+    if (test_mode) {
+        compile_driver.setTestMode(true);
+    }
     const obj_code = compile_driver.compileFile(actual_input) catch |e| {
         std.debug.print("Compilation failed: {any}\n", .{e});
         return;

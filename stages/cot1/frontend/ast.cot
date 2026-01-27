@@ -67,6 +67,7 @@ enum NodeKind {
     ImportDecl,     // import "path";
     TypeAliasDecl,  // type Name = Type; (cot1: field0=name_start, field1=name_len, field2=type_node_idx)
     ImplBlock,      // impl TypeName { fn... } (cot1: field0=type_name_start, field1=type_name_len, field2=methods_start, field3=methods_count)
+    TestDecl,       // test "name" { body } (cot1: field0=name_start, field1=name_len, field2=body_node_idx)
 
     // Member access
     FieldAccess,    // expr.field
@@ -819,6 +820,27 @@ fn Node_implBlock(pool: *NodePool, type_name_start: i64, type_name_len: i64,
     n.field1 = type_name_len;     // Type name length
     n.field2 = methods_start;     // Start index in children array
     n.field3 = methods_count;     // Number of methods
+
+    return idx;
+}
+
+// Create a test declaration node
+// test "name" { body }
+// field0: name_start (offset in source, after opening quote)
+// field1: name_len (length of test name, excluding quotes)
+// field2: body_node_idx (block statement)
+fn Node_testDecl(pool: *NodePool, name_start: i64, name_len: i64,
+                  body: i64, start: i64, end: i64) i64 {
+    let idx: i64 = NodePool_alloc(pool);
+
+    let n: *Node = pool.nodes + idx;
+    n.kind = NodeKind.TestDecl;
+    n.start = start;
+    n.end = end;
+    n.field0 = name_start;   // Test name offset (after quote)
+    n.field1 = name_len;     // Test name length
+    n.field2 = body;         // Body block node index
+    n.field3 = 0;            // Reserved
 
     return idx;
 }
