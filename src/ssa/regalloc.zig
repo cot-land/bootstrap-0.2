@@ -521,7 +521,7 @@ pub const RegAllocState = struct {
 
         // Spill the value in this register
         // Add to pending_spills so caller can insert it at the right position
-        if (try self.spillReg(reg, block, false)) |spill| {
+        if (try self.spillReg(reg, block)) |spill| {
             try self.pending_spills.append(self.allocator, spill);
         }
 
@@ -535,7 +535,7 @@ pub const RegAllocState = struct {
     /// @param for_call: true if evicting for a function call (caller-saved).
     ///                  When true, don't clear home assignment because the value
     ///                  has already been used to set up call arguments.
-    fn spillReg(self: *Self, reg: RegNum, block: *Block, for_call: bool) !?*Value {
+    fn spillReg(self: *Self, reg: RegNum, block: *Block) !?*Value {
         const v = self.regs[reg].v orelse return null;
         const vi = &self.values[v.id];
 
@@ -545,14 +545,10 @@ pub const RegAllocState = struct {
         // Go reference: regalloc.go line 1650
         if (vi.rematerializeable) {
             debug.log(.regalloc, "    evict v{d} from x{d} (rematerializeable, no spill)", .{ v.id, reg });
-            // BUG-021 FIX: Clear home assignment so the original value isn't emitted.
-            // When rematerialized, a NEW value is created with its own home assignment.
-            // The original should not be emitted during codegen.
-            // EXCEPTION: When evicting for a call, the value has already been used
-            // to set up call arguments, so we should NOT clear its home.
-            if (!for_call) {
-                self.f.clearHome(v.id);
-            }
+            // Always clear home for rematerializeable values when evicted.
+            // The register is being reallocated, so the home is stale.
+            // When the value is needed again, it will be rematerialized to a new register.
+            self.f.clearHome(v.id);
         } else if (vi.spill == null) {
             // Create StoreReg if not already spilled
             const spill = try self.f.newValue(.store_reg, v.type_idx, block, v.pos);
@@ -622,6 +618,8 @@ pub const RegAllocState = struct {
             const copy = try self.f.newValue(v.op, v.type_idx, block, v.pos);
             copy.aux_int = v.aux_int; // Copy constant value
             try self.ensureValState(copy);
+            // The copy is also rematerializeable (it's a copy of a rematerializeable value)
+            self.values[copy.id].rematerializeable = true;
             try self.assignReg(copy, reg);
             debug.log(.regalloc, "    rematerialize v{d} -> x{d} (v{d})", .{ v.id, reg, copy.id });
             return copy;
@@ -835,7 +833,15 @@ pub const RegAllocState = struct {
 
             // Ensure arguments are in registers - insert loads BEFORE this value
             // Mark each arg's register as 'used' to prevent spilling it for other args
-            for (v.args, 0..) |arg, i| {
+            // For calls: only first N args need registers (6 for AMD64, 8 for ARM64)
+            // Stack args will be handled by codegen directly from their spill slots
+            const max_reg_args: usize = if (v.op.info().call)
+                self.arg_regs.len
+            else
+                v.args.len;
+            const args_to_load = @min(v.args.len, max_reg_args);
+
+            for (v.args[0..args_to_load], 0..) |arg, i| {
                 if (!self.values[arg.id].inReg()) {
                     const loaded = try self.loadValue(arg, block);
                     if (loaded != arg) {
@@ -872,7 +878,7 @@ pub const RegAllocState = struct {
                     if (self.regs[reg].v != null) {
                         // for_call=true: don't clear home assignment for call eviction
                         // because values have already been used to set up call args
-                        if (try self.spillReg(reg, block, true)) |spill| {
+                        if (try self.spillReg(reg, block)) |spill| {
                             // Insert spill BEFORE the call
                             try new_values.append(self.allocator, spill);
                         }
@@ -899,7 +905,7 @@ pub const RegAllocState = struct {
                         const arg_reg: RegNum = self.arg_regs[arg_idx];
                         if (self.regs[arg_reg].v != null) {
                             // Another value is in this register - need to spill it
-                            if (try self.spillReg(arg_reg, block, false)) |spill| {
+                            if (try self.spillReg(arg_reg, block)) |spill| {
                                 try new_values.append(self.allocator, spill);
                             }
                         }
@@ -913,6 +919,27 @@ pub const RegAllocState = struct {
                 } else {
                     const reg = try self.allocReg(self.allocatable_mask, block);
                     try self.assignReg(v, reg);
+                }
+            }
+
+            // Insert any pending spills from output allocation
+            // These must go BEFORE the value that needs the register
+            // Since v is already in new_values, we need to insert before it
+            if (self.pending_spills.items.len > 0) {
+                // Find where v was inserted (should be last item or close to it)
+                // Insert spills just before v
+                var insert_pos = new_values.items.len;
+                while (insert_pos > 0 and new_values.items[insert_pos - 1] != v) {
+                    insert_pos -= 1;
+                }
+                // Insert spills before v's position
+                if (insert_pos > 0 and new_values.items[insert_pos - 1] == v) {
+                    insert_pos -= 1;
+                    for (self.pending_spills.items) |spill| {
+                        try new_values.insert(self.allocator, insert_pos, spill);
+                        insert_pos += 1;
+                    }
+                    self.pending_spills.clearRetainingCapacity();
                 }
             }
 

@@ -917,10 +917,34 @@ pub const AMD64CodeGen = struct {
         // Handle block terminator
         switch (block.kind) {
             .ret => {
-                // Return block: move control value to RAX and return
+                // Return block: move control value to RAX (and RDX for slices) and return
                 if (block.controlValues().len > 0) {
                     const ret_val = block.controlValues()[0];
-                    try self.moveToRAX(ret_val);
+
+                    // Handle slice returns: ptr in RAX, len in RDX
+                    if (ret_val.op == .slice_make and ret_val.args.len >= 2) {
+                        // Put ptr in RAX
+                        const ptr_val = ret_val.args[0];
+                        const ptr_reg = self.getRegForValue(ptr_val) orelse blk: {
+                            try self.ensureInReg(ptr_val, .rax);
+                            break :blk Reg.rax;
+                        };
+                        if (ptr_reg != .rax) {
+                            try self.emit(3, asm_mod.encodeMovRegReg(.rax, ptr_reg));
+                        }
+                        // Put len in RDX
+                        const len_val = ret_val.args[1];
+                        const len_reg = self.getRegForValue(len_val) orelse blk: {
+                            try self.ensureInReg(len_val, .rdx);
+                            break :blk Reg.rdx;
+                        };
+                        if (len_reg != .rdx) {
+                            try self.emit(3, asm_mod.encodeMovRegReg(.rdx, len_reg));
+                        }
+                        debug.log(.codegen, "      ret slice: ptr={s}->RAX, len={s}->RDX", .{ ptr_reg.name(), len_reg.name() });
+                    } else {
+                        try self.moveToRAX(ret_val);
+                    }
                 }
                 try self.emitEpilogue();
             },
@@ -1578,6 +1602,12 @@ pub const AMD64CodeGen = struct {
                     if (dest_reg != src_reg) {
                         try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, src_reg));
                     }
+                } else if (slice_val.op == .static_call) {
+                    // Call result: slice ptr is in RAX (System V AMD64 ABI)
+                    if (dest_reg != .rax) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, .rax));
+                    }
+                    debug.log(.codegen, "      slice_ptr from call -> RAX to {s}", .{dest_reg.name()});
                 } else {
                     // Load ptr from memory (first 8 bytes of slice)
                     const slice_reg = self.getRegForValue(slice_val) orelse blk: {
@@ -1603,6 +1633,12 @@ pub const AMD64CodeGen = struct {
                     else
                         0;
                     try self.emitLoadImmediate(dest_reg, str_len);
+                } else if (slice_val.op == .static_call) {
+                    // Call result: slice len is in RDX (System V AMD64 ABI)
+                    if (dest_reg != .rdx) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, .rdx));
+                    }
+                    debug.log(.codegen, "      slice_len from call -> RDX to {s}", .{dest_reg.name()});
                 } else {
                     // Load len from memory (offset 8 in slice)
                     const slice_reg = self.getRegForValue(slice_val) orelse blk: {
