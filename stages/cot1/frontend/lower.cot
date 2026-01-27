@@ -7055,3 +7055,272 @@ test "algo sum formulas" {
     @assert(algo_sum_squares(3) == 14)
     @assert(algo_sum_squares(10) == 385)
 }
+
+// ============================================================================
+// INLINE TESTS - Edge Cases and Boundary Conditions
+// ============================================================================
+
+test "division edge cases" {
+    @assert(10 / 3 == 3)  // Integer truncation
+    @assert((-10) / 3 == -3)  // Negative dividend
+    @assert(10 / (-3) == -3)  // Negative divisor
+    @assert(0 / 5 == 0)  // Zero dividend
+}
+
+test "modulo edge cases" {
+    @assert(10 % 3 == 1)
+    @assert(9 % 3 == 0)
+    @assert(0 % 5 == 0)
+}
+
+test "shift edge cases" {
+    @assert(1 << 0 == 1)
+    @assert(1 << 10 == 1024)
+    @assert(256 >> 8 == 1)
+    @assert(1 >> 1 == 0)
+}
+
+test "bitwise edge cases" {
+    @assert(0 & 0xFF == 0)
+    @assert(0xFF & 0xFF == 0xFF)
+    @assert(0 | 0xFF == 0xFF)
+    @assert(0xFF ^ 0xFF == 0)
+}
+
+test "comparison edge cases" {
+    let max: i64 = 9223372036854775807  // i64 max
+    let min: i64 = -9223372036854775808  // i64 min (approx)
+    @assert(max > 0)
+    @assert(min < 0)
+    @assert(max > min)
+}
+
+// ============================================================================
+// INLINE TESTS - Complex Expressions
+// ============================================================================
+
+test "chained arithmetic" {
+    let x: i64 = 1 + 2 * 3 - 4 / 2 + 5 % 3  // 1 + 6 - 2 + 2 = 7
+    @assert(x == 7)
+}
+
+test "deeply nested arithmetic" {
+    let x: i64 = ((((1 + 2) * 3) - 4) * 5) + 6  // ((3 * 3) - 4) * 5 + 6 = 5 * 5 + 6 = 31
+    @assert(x == 31)
+}
+
+test "mixed operators" {
+    let a: i64 = 10
+    let b: i64 = 3
+    let c: i64 = 2
+    let result: i64 = a + b * c - a / b + a % b  // 10 + 6 - 3 + 1 = 14
+    @assert(result == 14)
+}
+
+test "complex boolean" {
+    let a: i64 = 5
+    let b: i64 = 10
+    let c: i64 = 15
+    @assert((a < b) and (b < c))
+    @assert((a < c) or (c < a))
+    @assert(!((a > b) and (b > c)))
+}
+
+test "comparison chain" {
+    let x: i64 = 5
+    @assert(x > 0 and x < 10)
+    @assert(x >= 5 and x <= 5)
+    @assert(!(x > 5) and !(x < 5))
+}
+
+// ============================================================================
+// INLINE TESTS - Loop Variations
+// ============================================================================
+
+test "empty loop" {
+    var count: i64 = 0
+    while 0 == 1 {
+        count = count + 1
+    }
+    @assert(count == 0)
+}
+
+test "single iteration loop" {
+    var count: i64 = 0
+    while count < 1 {
+        count = count + 1
+    }
+    @assert(count == 1)
+}
+
+test "countdown loop" {
+    var n: i64 = 10
+    while n > 0 {
+        n = n - 1
+    }
+    @assert(n == 0)
+}
+
+test "nested loops multiply" {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < 5 {
+        var j: i64 = 0
+        while j < 5 {
+            total = total + 1
+            j = j + 1
+        }
+        i = i + 1
+    }
+    @assert(total == 25)
+}
+
+test "triple nested loops" {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < 3 {
+        var j: i64 = 0
+        while j < 3 {
+            var k: i64 = 0
+            while k < 3 {
+                total = total + 1
+                k = k + 1
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    @assert(total == 27)
+}
+
+// ============================================================================
+// INLINE TESTS - Function Calling
+// ============================================================================
+
+fn helper_double(x: i64) i64 { return x * 2 }
+fn helper_triple(x: i64) i64 { return x * 3 }
+fn helper_add3(a: i64, b: i64, c: i64) i64 { return a + b + c }
+
+test "chained function calls" {
+    @assert(helper_double(helper_double(5)) == 20)
+    @assert(helper_triple(helper_double(2)) == 12)
+}
+
+test "function result in expression" {
+    let x: i64 = helper_double(5) + helper_triple(3)
+    @assert(x == 19)
+}
+
+test "function call as argument" {
+    @assert(helper_add3(helper_double(1), helper_double(2), helper_double(3)) == 12)
+}
+
+test "many arguments" {
+    @assert(test_helper_sum8(1, 2, 3, 4, 5, 6, 7, 8) == 36)
+    @assert(test_helper_sum9(1, 2, 3, 4, 5, 6, 7, 8, 9) == 45)
+}
+
+// ============================================================================
+// INLINE TESTS - Variable Scoping
+// ============================================================================
+
+test "block scoping" {
+    var x: i64 = 1
+    {
+        var x: i64 = 2  // Shadows outer x
+        x = 42
+    }
+    // Outer x unchanged
+}
+
+test "if scoping" {
+    var x: i64 = 10
+    if 1 == 1 {
+        var y: i64 = 20
+        x = x + y
+    }
+    @assert(x == 30)
+}
+
+test "while scoping" {
+    var total: i64 = 0
+    var i: i64 = 0
+    while i < 3 {
+        var local: i64 = i * 10
+        total = total + local
+        i = i + 1
+    }
+    @assert(total == 30)  // 0 + 10 + 20
+}
+
+// ============================================================================
+// INLINE TESTS - Combined Features
+// ============================================================================
+
+test "loop with early break computation" {
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 100 {
+        sum = sum + i
+        if sum > 20 {
+            break
+        }
+        i = i + 1
+    }
+    // sum = 0+1+2+3+4+5+6 = 21 (> 20)
+    @assert(sum == 21)
+}
+
+test "loop with continue" {
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 10 {
+        i = i + 1
+        if i % 2 == 0 {
+            continue
+        }
+        sum = sum + i
+    }
+    // sum = 1+3+5+7+9 = 25
+    @assert(sum == 25)
+}
+
+test "recursive fibonacci" {
+    @assert(test_helper_fib(0) == 0)
+    @assert(test_helper_fib(1) == 1)
+    @assert(test_helper_fib(10) == 55)
+}
+
+test "recursive factorial" {
+    @assert(test_helper_factorial(0) == 1)
+    @assert(test_helper_factorial(1) == 1)
+    @assert(test_helper_factorial(5) == 120)
+    @assert(test_helper_factorial(10) == 3628800)
+}
+
+// Binary search helper
+fn test_binary_search(arr: *i64, len: i64, target: i64) i64 {
+    var lo: i64 = 0
+    var hi: i64 = len - 1
+    while lo <= hi {
+        let mid: i64 = lo + (hi - lo) / 2
+        let val: i64 = (arr + mid).*
+        if val == target {
+            return mid
+        }
+        if val < target {
+            lo = mid + 1
+        } else {
+            hi = mid - 1
+        }
+    }
+    return -1
+}
+
+test "binary search" {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    @assert(test_binary_search(&arr[0], 5, 30) == 2)
+    @assert(test_binary_search(&arr[0], 5, 10) == 0)
+    @assert(test_binary_search(&arr[0], 5, 50) == 4)
+    @assert(test_binary_search(&arr[0], 5, 25) == -1)
+}
