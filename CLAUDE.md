@@ -253,16 +253,44 @@ Verify ALL tests pass. Never use trivial "return 42" tests.
 
 ---
 
-## Current Priority: Fix Stage 2 Crash
+## Current Priority: Compiler Parity Testing (NOT Self-Hosting)
 
-cot1-stage2 compiles in ~2 seconds (was 102 seconds before O(n²) fix). Crashes at startup (SIGSEGV).
+```
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║                                                                               ║
+║   STOP CHASING SELF-HOSTING BUGS. FOCUS ON PARITY FIRST.                      ║
+║                                                                               ║
+║   Problem: 166 tests have been passing for weeks, yet stage1 has major bugs.  ║
+║   This means our tests are TOO SIMPLE to catch real issues.                   ║
+║                                                                               ║
+║   New Strategy:                                                               ║
+║   1. Expand test suite from 166 to 1000+ tests                                ║
+║   2. Compare Zig compiler output vs cot1 compiler output                      ║
+║   3. Fix all differences until 100% parity                                    ║
+║   4. ONLY THEN attempt self-hosting                                           ║
+║                                                                               ║
+║   Self-hosting is OFF THE TABLE until parity testing passes.                  ║
+║                                                                               ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+```
 
-**Performance fix applied (2026-01-26):**
-- Fixed O(n²) `posToLine` in genssa.cot - was scanning from byte 0 for each SSA value
-- Added line offset table with binary search: 101s → 29ms codegen (3500x speedup)
-- Added `func_ret_map` for O(1) return type lookup (373M node comparisons eliminated)
+**Parity Test Location:** `test/parity/`
+- expressions/ - arithmetic, comparisons, bitwise ops
+- control_flow/ - if/else, while, nested conditions
+- functions/ - calls, recursion, many args
+- types/ - structs, pointers, arrays
+- memory/ - malloc, stack allocation
 
-**Remaining crash:** Stage2 crashes in Phase 4/5 (SSA building). Accessing NULL struct pointer (offset 128 from NULL).
+**Run Parity Tests:**
+```bash
+./scripts/verify_parity.sh
+```
+
+**Current Status (2026-01-27):**
+- 12 initial parity tests created
+- All tests PASS functionally
+- Codegen differs (Zig produces different instruction count than cot1)
+- Need to expand to 1000+ tests before investigating codegen differences
 
 ---
 
@@ -334,6 +362,9 @@ Read code for 30+ minutes            Make a fix attempt within 5 min
 zig build
 ./zig-out/bin/cot test/bootstrap/all_tests.cot -o /tmp/t && /tmp/t
 
+# Run parity tests (PRIMARY - do this often!)
+./scripts/verify_parity.sh
+
 # Build cot1-stage1
 ./zig-out/bin/cot stages/cot1/main.cot -o /tmp/cot1-stage1
 
@@ -345,9 +376,8 @@ zig cc /tmp/bt.o runtime/cot_runtime.o -o /tmp/bt -lSystem && /tmp/bt
 /tmp/cot1-stage1 test/stages/cot1/cot1_features.cot -o /tmp/ft.o
 zig cc /tmp/ft.o runtime/cot_runtime.o -o /tmp/ft -lSystem && /tmp/ft
 
-# Build cot1-stage2 (currently crashes at startup)
-/tmp/cot1-stage1 stages/cot1/main.cot -o /tmp/cot1-stage2.o
-zig cc /tmp/cot1-stage2.o runtime/cot_runtime.o -o /tmp/cot1-stage2 -lSystem
+# DO NOT attempt self-hosting until parity tests pass at 1000+ tests
+# /tmp/cot1-stage1 stages/cot1/main.cot -o /tmp/cot1-stage2.o  # DISABLED
 ```
 
 ---
@@ -356,10 +386,11 @@ zig cc /tmp/cot1-stage2.o runtime/cot_runtime.o -o /tmp/cot1-stage2 -lSystem
 
 | Document | Purpose |
 |----------|---------|
-| [SELF_HOSTING.md](SELF_HOSTING.md) | Path to self-hosting with milestones |
+| [TESTING.md](TESTING.md) | **CURRENT PRIORITY** - Parity testing strategy |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Compiler design and key decisions |
 | [REFERENCE.md](REFERENCE.md) | Technical reference (data structures, algorithms) |
 | [COT1_GAPS.md](COT1_GAPS.md) | Functional coverage analysis (95% complete) |
+| [SELF_HOSTING.md](SELF_HOSTING.md) | Path to self-hosting (ON HOLD until parity) |
 
 ---
 
