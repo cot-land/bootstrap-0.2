@@ -935,21 +935,25 @@ fn value(self: *GenState, v: *Value) {
         return;  // Phi nodes handled by register allocator
     }
     if v.op == Op.Arg {
-        // ARM64 ABI: x0-x7 for first 8 args, stack for rest
-        // Following Zig: src/codegen/arm64.zig:1829-1849
         let arg_idx: i64 = v.aux_int;
-        if arg_idx >= 8 {
-            // Stack argument - load from caller's stack frame
-            // Note: We load into x16 here, but GenState_store has special handling
-            // to re-load stack args to avoid conflicts when multiple stack args
-            // are used before any are stored. For non-Store uses (arithmetic, calls),
-            // the value will be in x16 immediately after this load.
-            let byte_offset: i64 = self.frame_size + 16 + (arg_idx - 8) * 8;
-            self.emitInst(encode_ldr(X16, SP, byte_offset));
-            v.reg = X16;
+        if self.target == TARGET_AMD64 {
+            // AMD64 ABI: RDI, RSI, RDX, RCX, R8, R9 for first 6 args, stack for rest
+            if arg_idx >= 6 {
+                // Stack argument - load from caller's stack frame into R10
+                let byte_offset: i64 = self.frame_size + 16 + (arg_idx - 6) * 8;
+                self.emitInstPacked(AMD64_load64(R10, RSP, byte_offset));
+                v.reg = R10;
+            }
+        } else {
+            // ARM64 ABI: x0-x7 for first 8 args, stack for rest
+            if arg_idx >= 8 {
+                // Stack argument - load from caller's stack frame into x16
+                let byte_offset: i64 = self.frame_size + 16 + (arg_idx - 8) * 8;
+                self.emitInst(encode_ldr(X16, SP, byte_offset));
+                v.reg = X16;
+            }
         }
-        // For register arguments (arg_idx < 8), regalloc already assigned
-        // the correct register, so no code needs to be emitted
+        // For register arguments, regalloc already assigned the correct register
         return;
     }
     if v.op == Op.Nop {
