@@ -1311,7 +1311,11 @@ fn stringMake(self: *GenState, v: *Value) {
 
     // Move ptr to destination register
     if ptr_val.reg >= 0 and ptr_val.reg != rd {
-        self.emitInst(ARM64_encodeMovReg(rd, ptr_val.reg));
+        if self.target == TARGET_AMD64 {
+            self.emitInstPacked(AMD64_encodeMovReg(rd, ptr_val.reg));
+        } else {
+            self.emitInst(ARM64_encodeMovReg(rd, ptr_val.reg));
+        }
     }
     // Note: len is in args[1] but for now we just pass ptr
     // Full string support would need to handle the len as well
@@ -1329,7 +1333,11 @@ fn sliceMake(self: *GenState, v: *Value) {
 
     // Move ptr to destination register
     if ptr_val.reg >= 0 and ptr_val.reg != rd {
-        self.emitInst(ARM64_encodeMovReg(rd, ptr_val.reg));
+        if self.target == TARGET_AMD64 {
+            self.emitInstPacked(AMD64_encodeMovReg(rd, ptr_val.reg));
+        } else {
+            self.emitInst(ARM64_encodeMovReg(rd, ptr_val.reg));
+        }
     }
     // Note: len is in args[1] but for now we just pass ptr
     // Full slice support would store (ptr, len) together
@@ -1344,13 +1352,20 @@ fn slicePtr(self: *GenState, v: *Value) {
     let f: *Func = self.func;
     let slice_val: *Value = f.getValue(v.getArg(0));
 
-    // For call results: ptr is in x0 (first return value)
+    // For call results: ptr is in first return register (ARM64: X0, AMD64: RAX)
     // For slice_make: ptr is args[0]
     if slice_val.op == Op.Call or slice_val.op == Op.StringConcat {
-        // Call/StringConcat result: slice/string returned in (x0=ptr, x1=len)
-        // ptr is in x0
-        if rd != X0 {
-            self.emitInst(ARM64_encodeMovReg(rd, X0));
+        // Call/StringConcat result: slice/string returned in (ptr, len)
+        if self.target == TARGET_AMD64 {
+            // AMD64: ptr in RAX
+            if rd != RAX {
+                self.emitInstPacked(AMD64_encodeMovReg(rd, RAX));
+            }
+        } else {
+            // ARM64: ptr in X0
+            if rd != X0 {
+                self.emitInst(ARM64_encodeMovReg(rd, X0));
+            }
         }
     } else if slice_val.op == Op.SliceMake or slice_val.op == Op.StringMake {
         // slice_make/string_make: ptr is args[0]
