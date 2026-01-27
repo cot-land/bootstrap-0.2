@@ -1,8 +1,7 @@
-fn main() i64 {
+test "variable: reuse name" {
     var x: i64 = 10;
     x = x + 5;
     x = x * 2;
     x = x - 10;
-    if x == 20 { return 0; }
-    return 1;
+    @assert(x == 20)
 }

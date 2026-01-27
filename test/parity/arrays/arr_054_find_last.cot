@@ -10,7 +10,7 @@ fn find_last(arr: *i64, n: i64, val: i64) i64 {
     }
     return last_idx;
 }
-fn main() i64 {
+test "array: find last" {
     var arr: *i64 = malloc_i64(6);
     (arr + 0).* = 1;
     (arr + 1).* = 2;
@@ -18,6 +18,5 @@ fn main() i64 {
     (arr + 3).* = 2;
     (arr + 4).* = 1;
     (arr + 5).* = 2;
-    if find_last(arr, 6, 2) == 5 { return 0; }
-    return 1;
+    @assert(find_last(arr, 6, 2) == 5)
 }

@@ -1,2 +1,4 @@
 fn avg(a: i64, b: i64, c: i64) i64 { return (a + b + c) / 3; }
-fn main() i64 { if avg(10, 20, 30) == 20 { return 0; } return 1; }
+test "expression: avg" {
+    @assert(avg(10, 20, 30) == 20)
+}

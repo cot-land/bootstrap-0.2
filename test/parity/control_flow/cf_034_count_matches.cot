@@ -7,4 +7,6 @@ fn count_matches(limit: i64, mod_val: i64) i64 {
     }
     return count;
 }
-fn main() i64 { if count_matches(20, 4) == 5 { return 0; } return 1; }
+test "control flow: count matches" {
+    @assert(count_matches(20, 4) == 5)
+}

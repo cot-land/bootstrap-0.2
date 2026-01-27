@@ -1,4 +1,6 @@
 const WIDTH: i64 = 80;
 const HEIGHT: i64 = 25;
 const AREA: i64 = 2000;
-fn main() i64 { if WIDTH * HEIGHT == AREA { return 0; } return 1; }
+test "type: const expr" {
+    @assert(WIDTH * HEIGHT == AREA)
+}

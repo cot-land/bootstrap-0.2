@@ -3,10 +3,9 @@ var counter: i64 = 0;
 fn increment() void {
     counter = counter + 1;
 }
-fn main() i64 {
+test "type: multi void" {
     increment();
     increment();
     increment();
-    if counter == 3 { return 0; }
-    return 1;
+    @assert(counter == 3)
 }

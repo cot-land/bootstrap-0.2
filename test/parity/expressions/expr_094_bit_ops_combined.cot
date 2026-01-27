@@ -1,7 +1,6 @@
-fn main() i64 {
+test "expression: bit ops combined" {
     var a: i64 = 0b1100;
     var b: i64 = 0b1010;
     var c: i64 = (a & b) | (a ^ b);
-    if c == 0b1110 { return 0; }
-    return 1;
+    @assert(c == 0b1110)
 }

@@ -1,7 +1,6 @@
-fn main() i64 {
+test "expression: bit or" {
     var a: i64 = 0b1100;
     var b: i64 = 0b0011;
     var r: i64 = a | b;
-    if r == 0b1111 { return 0; }
-    return 1;
+    @assert(r == 0b1111)
 }

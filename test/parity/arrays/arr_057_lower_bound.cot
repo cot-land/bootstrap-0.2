@@ -12,13 +12,12 @@ fn lower_bound(arr: *i64, n: i64, target: i64) i64 {
     }
     return lo;
 }
-fn main() i64 {
+test "array: lower bound" {
     var arr: *i64 = malloc_i64(5);
     (arr + 0).* = 10;
     (arr + 1).* = 20;
     (arr + 2).* = 30;
     (arr + 3).* = 40;
     (arr + 4).* = 50;
-    if lower_bound(arr, 5, 25) == 2 { return 0; }
-    return 1;
+    @assert(lower_bound(arr, 5, 25) == 2)
 }

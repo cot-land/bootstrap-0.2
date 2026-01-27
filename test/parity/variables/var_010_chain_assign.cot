@@ -1,8 +1,7 @@
-fn main() i64 {
+test "variable: chain assign" {
     var a: i64 = 5;
     var b: i64 = a;
     var c: i64 = b;
     var d: i64 = c;
-    if d == 5 { return 0; }
-    return 1;
+    @assert(d == 5)
 }

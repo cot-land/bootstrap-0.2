@@ -1,6 +1,6 @@
 struct Point { x: i64, y: i64 }
 struct Line { start: Point, end: Point }
-fn main() i64 {
+test "type: multi struct" {
     var l: Line = undefined;
     l.start.x = 0;
     l.start.y = 0;
@@ -8,6 +8,5 @@ fn main() i64 {
     l.end.y = 10;
     var dx: i64 = l.end.x - l.start.x;
     var dy: i64 = l.end.y - l.start.y;
-    if dx == 10 and dy == 10 { return 0; }
-    return 1;
+    @assert(dx == 10 and dy == 10)
 }

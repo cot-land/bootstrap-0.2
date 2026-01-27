@@ -1,9 +1,8 @@
-fn main() i64 {
+test "variable: nested scope" {
     var x: i64 = 10;
-    if x > 5 {
+    @assert(x > 5 {
         var y: i64 = 20;
         x = x + y;
     }
-    if x == 30 { return 0; }
-    return 1;
+    if x == 30)
 }

@@ -1,5 +1,4 @@
-fn main() i64 {
+test "expression: chain mult" {
     var r: i64 = 1 * 2 * 3 * 4 * 5;
-    if r == 120 { return 0; }
-    return 1;
+    @assert(r == 120)
 }

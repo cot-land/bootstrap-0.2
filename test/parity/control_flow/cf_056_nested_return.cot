@@ -7,10 +7,9 @@ fn check(x: i64, y: i64) i64 {
     }
     return 3;
 }
-fn main() i64 {
+test "control flow: nested return" {
     var r1: i64 = check(1, 1);
     var r2: i64 = check(1, 0 - 1);
     var r3: i64 = check(0 - 1, 1);
-    if r1 == 1 and r2 == 2 and r3 == 3 { return 0; }
-    return 1;
+    @assert(r1 == 1 and r2 == 2 and r3 == 3)
 }

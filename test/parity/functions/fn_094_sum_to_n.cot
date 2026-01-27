@@ -2,7 +2,6 @@ fn sum_to_n(n: i64) i64 {
     if n <= 0 { return 0; }
     return n + sum_to_n(n - 1);
 }
-fn main() i64 {
-    if sum_to_n(10) == 55 { return 0; }
-    return 1;
+test "function: sum to n" {
+    @assert(sum_to_n(10) == 55)
 }

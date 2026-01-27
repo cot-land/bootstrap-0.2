@@ -4,4 +4,6 @@ fn test_locals() i64 {
     var c: i64 = a + b;
     return c;
 }
-fn main() i64 { if test_locals() == 30 { return 0; } return 1; }
+test "type: local vars" {
+    @assert(test_locals() == 30)
+}

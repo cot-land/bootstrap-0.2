@@ -2,4 +2,6 @@ fn countdown(n: i64) i64 {
     if n <= 0 { return 0; }
     return countdown(n - 1);
 }
-fn main() i64 { if countdown(100) == 0 { return 0; } return 1; }
+test "function: tail call" {
+    @assert(countdown(100) == 0)
+}

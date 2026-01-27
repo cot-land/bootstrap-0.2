@@ -1,7 +1,6 @@
-fn main() i64 {
+test "variable: reassign" {
     var x: i64 = 10;
     x = 20;
     x = 30;
-    if x == 30 { return 0; }
-    return 1;
+    @assert(x == 30)
 }

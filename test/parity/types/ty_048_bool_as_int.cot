@@ -1,5 +1,4 @@
-fn main() i64 {
+test "type: bool as int" {
     var b: i64 = 5 > 3;
-    if b == 1 { return 0; }
-    return 1;
+    @assert(b == 1)
 }

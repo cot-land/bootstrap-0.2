@@ -1,2 +1,4 @@
 fn bitnot(x: i64) i64 { return ~x; }
-fn main() i64 { if (bitnot(0) & 0xFF) == 0xFF { return 0; } return 1; }
+test "expression: bitnot" {
+    @assert((bitnot(0) & 0xFF) == 0xFF)
+}

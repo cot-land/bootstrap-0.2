@@ -1,4 +1,6 @@
 fn chain(a: i64, b: i64, c: i64, d: i64) i64 {
     return a + b - c + d - a + b - c + d;
 }
-fn main() i64 { if chain(1, 2, 3, 4) == 6 { return 0; } return 1; }
+test "expression: longchain" {
+    @assert(chain(1, 2, 3, 4) == 6)
+}

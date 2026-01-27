@@ -3,11 +3,10 @@ fn translate(p: *Point, dx: i64, dy: i64) void {
     p.x = p.x + dx;
     p.y = p.y + dy;
 }
-fn main() i64 {
+test "type: struct fn modify" {
     var p: Point = undefined;
     p.x = 10;
     p.y = 20;
     translate(&p, 5, 10);
-    if p.x == 15 and p.y == 30 { return 0; }
-    return 1;
+    @assert(p.x == 15 and p.y == 30)
 }

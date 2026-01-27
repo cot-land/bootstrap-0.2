@@ -6,7 +6,7 @@ fn zero_array(arr: *i64, n: i64) void {
         i = i + 1;
     }
 }
-fn main() i64 {
+test "memory: zero array" {
     var arr: *i64 = malloc_i64(5);
     (arr + 0).* = 1;
     (arr + 1).* = 2;
@@ -15,6 +15,5 @@ fn main() i64 {
     (arr + 4).* = 5;
     zero_array(arr, 5);
     var sum: i64 = (arr + 0).* + (arr + 1).* + (arr + 2).* + (arr + 3).* + (arr + 4).*;
-    if sum == 0 { return 0; }
-    return 1;
+    @assert(sum == 0)
 }

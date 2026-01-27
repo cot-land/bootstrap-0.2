@@ -6,7 +6,7 @@ fn copy_array(src: *i64, dst: *i64, n: i64) void {
         i = i + 1;
     }
 }
-fn main() i64 {
+test "array: copy array" {
     var src: *i64 = malloc_i64(5);
     var dst: *i64 = malloc_i64(5);
     (src + 0).* = 10;
@@ -15,6 +15,5 @@ fn main() i64 {
     (src + 3).* = 40;
     (src + 4).* = 50;
     copy_array(src, dst, 5);
-    if (dst + 2).* == 30 and (dst + 4).* == 50 { return 0; }
-    return 1;
+    @assert((dst + 2).* == 30 and (dst + 4).* == 50)
 }

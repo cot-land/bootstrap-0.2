@@ -3,4 +3,6 @@ fn while_zero() i64 {
     while 0 != 0 { count = count + 1; }
     return count;
 }
-fn main() i64 { if while_zero() == 0 { return 0; } return 1; }
+test "control flow: while zero" {
+    @assert(while_zero() == 0)
+}

@@ -1,11 +1,10 @@
 struct Data { a: i64, b: i64, c: i64, d: i64, e: i64 }
-fn main() i64 {
+test "type: struct 5 fields" {
     var d: Data = undefined;
     d.a = 1;
     d.b = 2;
     d.c = 3;
     d.d = 4;
     d.e = 5;
-    if d.a + d.b + d.c + d.d + d.e == 15 { return 0; }
-    return 1;
+    @assert(d.a + d.b + d.c + d.d + d.e == 15)
 }

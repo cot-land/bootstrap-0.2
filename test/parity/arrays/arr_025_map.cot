@@ -6,13 +6,12 @@ fn map_double(arr: *i64, n: i64) void {
         i = i + 1;
     }
 }
-fn main() i64 {
+test "array: map" {
     var arr: *i64 = malloc_i64(4);
     (arr + 0).* = 1;
     (arr + 1).* = 2;
     (arr + 2).* = 3;
     (arr + 3).* = 4;
     map_double(arr, 4);
-    if (arr + 0).* == 2 and (arr + 3).* == 8 { return 0; }
-    return 1;
+    @assert((arr + 0).* == 2 and (arr + 3).* == 8)
 }

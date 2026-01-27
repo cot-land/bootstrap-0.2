@@ -8,9 +8,8 @@ fn init_powers(arr: *i64, n: i64, base: i64) void {
         i = i + 1;
     }
 }
-fn main() i64 {
+test "memory: powers array" {
     var arr: *i64 = malloc_i64(5);
     init_powers(arr, 5, 2);
-    if (arr + 4).* == 16 { return 0; }
-    return 1;
+    @assert((arr + 4).* == 16)
 }

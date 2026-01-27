@@ -10,13 +10,12 @@ fn find_min_idx(arr: *i64, n: i64) i64 {
     }
     return min_idx;
 }
-fn main() i64 {
+test "array: find min index" {
     var arr: *i64 = malloc_i64(5);
     (arr + 0).* = 30;
     (arr + 1).* = 50;
     (arr + 2).* = 10;
     (arr + 3).* = 40;
     (arr + 4).* = 20;
-    if find_min_idx(arr, 5) == 2 { return 0; }
-    return 1;
+    @assert(find_min_idx(arr, 5) == 2)
 }

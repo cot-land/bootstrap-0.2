@@ -1,4 +1,6 @@
 fn use_all(a: i64, b: i64, c: i64, d: i64) i64 {
     return ((a - b) * c) + d;
 }
-fn main() i64 { if use_all(10, 3, 4, 5) == 33 { return 0; } return 1; }
+test "function: all args" {
+    @assert(use_all(10, 3, 4, 5) == 33)
+}

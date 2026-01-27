@@ -1,5 +1,4 @@
-fn main() i64 {
+test "expression: power of three" {
     var p: i64 = 3 * 3 * 3 * 3;
-    if p == 81 { return 0; }
-    return 1;
+    @assert(p == 81)
 }

@@ -1,10 +1,9 @@
-fn main() i64 {
+test "control flow: while cond complex" {
     var i: i64 = 0;
     var sum: i64 = 0;
     while i < 10 and sum < 20 {
         sum = sum + i;
         i = i + 1;
     }
-    if sum == 21 { return 0; }
-    return 1;
+    @assert(sum == 21)
 }

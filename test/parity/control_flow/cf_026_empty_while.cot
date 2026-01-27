@@ -3,4 +3,6 @@ fn count_to(n: i64) i64 {
     while i < n { i = i + 1; }
     return i;
 }
-fn main() i64 { if count_to(100) == 100 { return 0; } return 1; }
+test "control flow: empty while" {
+    @assert(count_to(100) == 100)
+}

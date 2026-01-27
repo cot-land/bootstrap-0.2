@@ -1,2 +1,4 @@
 fn div_sub(a: i64, b: i64, c: i64) i64 { return a / b - c; }
-fn main() i64 { if div_sub(100, 10, 5) == 5 { return 0; } return 1; }
+test "expression: div sub" {
+    @assert(div_sub(100, 10, 5) == 5)
+}

@@ -3,4 +3,6 @@ fn many_locals() i64 {
     var v5: i64 = 5; var v6: i64 = 6; var v7: i64 = 7; var v8: i64 = 8;
     return v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8;
 }
-fn main() i64 { if many_locals() == 36 { return 0; } return 1; }
+test "memory: many locals" {
+    @assert(many_locals() == 36)
+}

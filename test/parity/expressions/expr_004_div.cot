@@ -1,2 +1,4 @@
 fn div(a: i64, b: i64) i64 { return a / b; }
-fn main() i64 { if div(84, 2) == 42 { return 0; } return 1; }
+test "expression: div" {
+    @assert(div(84, 2) == 42)
+}

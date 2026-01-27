@@ -1,6 +1,5 @@
-fn main() i64 {
+test "expression: unary minus" {
     var x: i64 = 42;
     var y: i64 = 0 - x;
-    if y == 0 - 42 { return 0; }
-    return 1;
+    @assert(y == 0 - 42)
 }

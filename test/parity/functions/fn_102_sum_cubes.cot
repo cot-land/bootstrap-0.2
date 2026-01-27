@@ -7,7 +7,6 @@ fn sum_cubes(n: i64) i64 {
     }
     return sum;
 }
-fn main() i64 {
-    if sum_cubes(4) == 100 { return 0; }
-    return 1;
+test "function: sum cubes" {
+    @assert(sum_cubes(4) == 100)
 }

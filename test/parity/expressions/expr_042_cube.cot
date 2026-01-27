@@ -1,2 +1,4 @@
 fn cube(x: i64) i64 { return x * x * x; }
-fn main() i64 { if cube(4) == 64 { return 0; } return 1; }
+test "expression: cube" {
+    @assert(cube(4) == 64)
+}

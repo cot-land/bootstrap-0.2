@@ -1,10 +1,9 @@
 fn inc(n: i64) i64 { return n + 1; }
 fn double(n: i64) i64 { return n * 2; }
 fn square(n: i64) i64 { return n * n; }
-fn main() i64 {
+test "function: chain call" {
     var x: i64 = inc(3);
     x = double(x);
     x = square(x);
-    if x == 64 { return 0; }
-    return 1;
+    @assert(x == 64)
 }

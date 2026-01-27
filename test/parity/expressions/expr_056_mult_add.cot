@@ -1,2 +1,4 @@
 fn mult_add(a: i64, b: i64, c: i64) i64 { return a * b + c; }
-fn main() i64 { if mult_add(3, 4, 5) == 17 { return 0; } return 1; }
+test "expression: mult add" {
+    @assert(mult_add(3, 4, 5) == 17)
+}

@@ -15,4 +15,6 @@ fn find_product(limit: i64) i64 {
     }
     return result;
 }
-fn main() i64 { if find_product(20) == 21 { return 0; } return 1; }
+test "control flow: break nested" {
+    @assert(find_product(20) == 21)
+}

@@ -9,7 +9,6 @@ fn count_in_range(start: i64, end: i64, divisor: i64) i64 {
     }
     return count;
 }
-fn main() i64 {
-    if count_in_range(1, 100, 7) == 14 { return 0; }
-    return 1;
+test "control flow: count matches" {
+    @assert(count_in_range(1, 100, 7) == 14)
 }

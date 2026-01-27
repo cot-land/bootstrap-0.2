@@ -13,8 +13,7 @@ fn sum_until_threshold() i64 {
     }
     return 0;
 }
-fn main() i64 {
+test "control flow: while break simple" {
     // sum should be 21 when it first exceeds 20 (0+1+2+3+4+5+6=21)
-    if sum_until_threshold() == 21 { return 0; }
-    return 1;
+    @assert(sum_until_threshold() == 21)
 }

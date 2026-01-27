@@ -1,4 +1,6 @@
 fn inc(x: i64) i64 { return x + 1; }
 fn add(a: i64, b: i64) i64 { return a + b; }
 fn both_args(x: i64, y: i64) i64 { return add(inc(x), inc(y)); }
-fn main() i64 { if both_args(5, 10) == 17 { return 0; } return 1; }
+test "function: call both args" {
+    @assert(both_args(5, 10) == 17)
+}

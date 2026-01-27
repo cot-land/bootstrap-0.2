@@ -10,7 +10,7 @@ fn count_less(arr: *i64, n: i64, pivot: i64) i64 {
     }
     return count;
 }
-fn main() i64 {
+test "array: partition" {
     var arr: *i64 = malloc_i64(7);
     (arr + 0).* = 3;
     (arr + 1).* = 1;
@@ -19,6 +19,5 @@ fn main() i64 {
     (arr + 4).* = 5;
     (arr + 5).* = 9;
     (arr + 6).* = 2;
-    if count_less(arr, 7, 4) == 4 { return 0; }
-    return 1;
+    @assert(count_less(arr, 7, 4) == 4)
 }

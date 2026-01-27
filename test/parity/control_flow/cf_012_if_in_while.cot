@@ -7,4 +7,6 @@ fn sum_even(n: i64) i64 {
     }
     return sum;
 }
-fn main() i64 { if sum_even(10) == 30 { return 0; } return 1; }
+test "control flow: if in while" {
+    @assert(sum_even(10) == 30)
+}

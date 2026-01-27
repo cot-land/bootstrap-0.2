@@ -1,6 +1,5 @@
-fn main() i64 {
+test "expression: clear bit" {
     var x: i64 = 255;
     x = x & (255 - 8);
-    if x == 247 { return 0; }
-    return 1;
+    @assert(x == 247)
 }

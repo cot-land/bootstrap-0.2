@@ -6,8 +6,7 @@ fn make_point(x: i64, y: i64) *Point {
     p.y = y;
     return p;
 }
-fn main() i64 {
+test "type: struct fn return" {
     var p: *Point = make_point(10, 20);
-    if p.x == 10 and p.y == 20 { return 0; }
-    return 1;
+    @assert(p.x == 10 and p.y == 20)
 }

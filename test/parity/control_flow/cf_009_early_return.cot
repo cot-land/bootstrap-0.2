@@ -4,4 +4,6 @@ fn find_zero(a: i64, b: i64, c: i64) i64 {
     if c == 0 { return 3; }
     return 0;
 }
-fn main() i64 { if find_zero(1, 0, 1) == 2 { return 0; } return 1; }
+test "control flow: early return" {
+    @assert(find_zero(1, 0, 1) == 2)
+}

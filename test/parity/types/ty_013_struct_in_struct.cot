@@ -1,11 +1,10 @@
 struct Point { x: i64, y: i64 }
 struct Rect { origin: Point, size: Point }
-fn main() i64 {
+test "type: struct in struct" {
     var r: Rect = undefined;
     r.origin.x = 10;
     r.origin.y = 20;
     r.size.x = 100;
     r.size.y = 50;
-    if r.origin.x + r.size.x == 110 { return 0; }
-    return 1;
+    @assert(r.origin.x + r.size.x == 110)
 }

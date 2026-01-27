@@ -2,7 +2,6 @@ fn power(base: i64, exp: i64) i64 {
     if exp == 0 { return 1; }
     return base * power(base, exp - 1);
 }
-fn main() i64 {
-    if power(2, 10) == 1024 { return 0; }
-    return 1;
+test "function: power" {
+    @assert(power(2, 10) == 1024)
 }

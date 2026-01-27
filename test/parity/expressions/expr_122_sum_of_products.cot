@@ -1,5 +1,4 @@
-fn main() i64 {
+test "expression: sum of products" {
     var x: i64 = 2 * 3 + 4 * 5 + 6 * 7;
-    if x == 68 { return 0; }
-    return 1;
+    @assert(x == 68)
 }

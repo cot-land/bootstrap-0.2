@@ -10,13 +10,12 @@ fn find_max(arr: *i64, len: i64) i64 {
     }
     return max;
 }
-fn main() i64 {
+test "array: find max" {
     var arr: *i64 = malloc_i64(5);
     (arr + 0).* = 30;
     (arr + 1).* = 10;
     (arr + 2).* = 50;
     (arr + 3).* = 20;
     (arr + 4).* = 40;
-    if find_max(arr, 5) == 50 { return 0; }
-    return 1;
+    @assert(find_max(arr, 5) == 50)
 }

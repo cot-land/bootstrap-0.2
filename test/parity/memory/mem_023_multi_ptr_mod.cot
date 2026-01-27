@@ -1,10 +1,9 @@
-fn main() i64 {
+test "memory: multi ptr mod" {
     var a: i64 = 1;
     var b: i64 = 2;
     var pa: *i64 = &a;
     var pb: *i64 = &b;
     pa.* = pa.* + pb.*;
     pb.* = pa.* + pb.*;
-    if a + b == 8 { return 0; }
-    return 1;
+    @assert(a + b == 8)
 }

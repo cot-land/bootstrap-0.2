@@ -6,13 +6,12 @@ fn copy_array(src: *i64, dst: *i64, len: i64) void {
         i = i + 1;
     }
 }
-fn main() i64 {
+test "array: copy array" {
     var src: *i64 = malloc_i64(3);
     var dst: *i64 = malloc_i64(3);
     (src + 0).* = 100;
     (src + 1).* = 200;
     (src + 2).* = 300;
     copy_array(src, dst, 3);
-    if (dst + 0).* == 100 and (dst + 1).* == 200 and (dst + 2).* == 300 { return 0; }
-    return 1;
+    @assert((dst + 0).* == 100 and (dst + 1).* == 200 and (dst + 2).* == 300)
 }

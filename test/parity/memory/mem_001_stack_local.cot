@@ -6,4 +6,6 @@ fn test_stack() i64 {
     var e: i64 = 5;
     return a + b + c + d + e;
 }
-fn main() i64 { if test_stack() == 15 { return 0; } return 1; }
+test "memory: stack local" {
+    @assert(test_stack() == 15)
+}

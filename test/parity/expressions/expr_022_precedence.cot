@@ -1,2 +1,4 @@
 fn test_prec() i64 { return 2 + 3 * 4; }
-fn main() i64 { if test_prec() == 14 { return 0; } return 1; }
+test "expression: precedence" {
+    @assert(test_prec() == 14)
+}

@@ -1,5 +1,4 @@
-fn main() i64 {
+test "expression: precedence2" {
     var r: i64 = 20 / 4 + 3 * 2;
-    if r == 11 { return 0; }
-    return 1;
+    @assert(r == 11)
 }

@@ -11,4 +11,6 @@ fn mul_table_sum(n: i64) i64 {
     }
     return sum;
 }
-fn main() i64 { if mul_table_sum(3) == 36 { return 0; } return 1; }
+test "control flow: nested while" {
+    @assert(mul_table_sum(3) == 36)
+}

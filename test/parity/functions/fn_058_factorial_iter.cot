@@ -7,7 +7,6 @@ fn fact_iter(n: i64) i64 {
     }
     return result;
 }
-fn main() i64 {
-    if fact_iter(6) == 720 { return 0; }
-    return 1;
+test "function: factorial iter" {
+    @assert(fact_iter(6) == 720)
 }

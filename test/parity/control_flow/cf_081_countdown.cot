@@ -7,7 +7,6 @@ fn countdown(n: i64) i64 {
     }
     return result;
 }
-fn main() i64 {
-    if countdown(5) == 15 { return 0; }
-    return 1;
+test "control flow: countdown" {
+    @assert(countdown(5) == 15)
 }

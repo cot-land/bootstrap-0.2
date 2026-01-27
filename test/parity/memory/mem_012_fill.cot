@@ -6,7 +6,7 @@ fn fill(arr: *i64, len: i64, val: i64) void {
         i = i + 1;
     }
 }
-fn main() i64 {
+test "memory: fill" {
     var arr: *i64 = malloc_i64(10);
     fill(arr, 10, 42);
     var sum: i64 = 0;
@@ -15,6 +15,5 @@ fn main() i64 {
         sum = sum + (arr + i).*;
         i = i + 1;
     }
-    if sum == 420 { return 0; }
-    return 1;
+    @assert(sum == 420)
 }

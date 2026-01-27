@@ -1,2 +1,4 @@
 fn neg_const() i64 { return -123456; }
-fn main() i64 { if neg_const() == -123456 { return 0; } return 1; }
+test "expression: neg const" {
+    @assert(neg_const() == -123456)
+}

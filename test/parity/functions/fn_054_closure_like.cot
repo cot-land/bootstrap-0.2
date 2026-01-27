@@ -1,11 +1,10 @@
 fn adder(base: i64, x: i64) i64 {
     return base + x;
 }
-fn main() i64 {
+test "function: closure like" {
     var b: i64 = 100;
     var r1: i64 = adder(b, 1);
     var r2: i64 = adder(b, 2);
     var r3: i64 = adder(b, 3);
-    if r1 == 101 and r2 == 102 and r3 == 103 { return 0; }
-    return 1;
+    @assert(r1 == 101 and r2 == 102 and r3 == 103)
 }

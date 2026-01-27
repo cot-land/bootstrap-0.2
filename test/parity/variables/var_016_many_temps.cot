@@ -1,4 +1,4 @@
-fn main() i64 {
+test "variable: many temps" {
     var a: i64 = 1;
     var b: i64 = a + 1;
     var c: i64 = b + 1;
@@ -9,6 +9,5 @@ fn main() i64 {
     var h: i64 = g + 1;
     var i: i64 = h + 1;
     var j: i64 = i + 1;
-    if j == 10 { return 0; }
-    return 1;
+    @assert(j == 10)
 }

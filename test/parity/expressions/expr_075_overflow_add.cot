@@ -2,8 +2,7 @@ fn will_overflow() i64 {
     var big: i64 = 0x7FFFFFFFFFFFFFFF;
     return big + 1;
 }
-fn main() i64 {
+test "expression: overflow add" {
     var result: i64 = will_overflow();
-    if result < 0 { return 0; }
-    return 1;
+    @assert(result < 0)
 }

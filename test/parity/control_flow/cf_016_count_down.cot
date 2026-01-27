@@ -7,4 +7,6 @@ fn count_down(n: i64) i64 {
     }
     return count;
 }
-fn main() i64 { if count_down(10) == 10 { return 0; } return 1; }
+test "control flow: count down" {
+    @assert(count_down(10) == 10)
+}

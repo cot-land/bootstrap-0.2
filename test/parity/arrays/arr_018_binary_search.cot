@@ -11,7 +11,7 @@ fn binary_search(arr: *i64, n: i64, target: i64) i64 {
     }
     return 0 - 1;
 }
-fn main() i64 {
+test "array: binary search" {
     var arr: *i64 = malloc_i64(7);
     (arr + 0).* = 10;
     (arr + 1).* = 20;
@@ -20,6 +20,5 @@ fn main() i64 {
     (arr + 4).* = 50;
     (arr + 5).* = 60;
     (arr + 6).* = 70;
-    if binary_search(arr, 7, 40) == 3 { return 0; }
-    return 1;
+    @assert(binary_search(arr, 7, 40) == 3)
 }

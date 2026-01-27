@@ -16,7 +16,7 @@ fn selection_sort(arr: *i64, n: i64) void {
         i = i + 1;
     }
 }
-fn main() i64 {
+test "array: selection sort" {
     var arr: *i64 = malloc_i64(5);
     (arr + 0).* = 4;
     (arr + 1).* = 2;
@@ -24,6 +24,5 @@ fn main() i64 {
     (arr + 3).* = 1;
     (arr + 4).* = 3;
     selection_sort(arr, 5);
-    if (arr + 0).* == 1 and (arr + 4).* == 5 { return 0; }
-    return 1;
+    @assert((arr + 0).* == 1 and (arr + 4).* == 5)
 }

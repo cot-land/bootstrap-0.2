@@ -1,8 +1,7 @@
-fn main() i64 {
+test "type: ptr to ptr modify" {
     var x: i64 = 10;
     var p: *i64 = &x;
     var pp: **i64 = &p;
     pp.*.* = 100;
-    if x == 100 { return 0; }
-    return 1;
+    @assert(x == 100)
 }

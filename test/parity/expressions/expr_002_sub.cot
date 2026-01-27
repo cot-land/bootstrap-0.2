@@ -3,8 +3,7 @@ fn sub(a: i64, b: i64) i64 {
     return a - b;
 }
 
-fn main() i64 {
+test "expression: sub" {
     let result: i64 = sub(50, 8);
-    if result == 42 { return 0; }
-    return 1;
+    @assert(result == 42)
 }

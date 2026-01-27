@@ -1,2 +1,4 @@
 fn large() i64 { return 1000000000; }
-fn main() i64 { if large() == 1000000000 { return 0; } return 1; }
+test "expression: large const" {
+    @assert(large() == 1000000000)
+}

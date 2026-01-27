@@ -1,10 +1,9 @@
 fn indirect_add(ptr: *i64, val: i64) void {
     ptr.* = ptr.* + val;
 }
-fn main() i64 {
+test "memory: indirect" {
     var x: i64 = 10;
     indirect_add(&x, 5);
     indirect_add(&x, 5);
-    if x == 20 { return 0; }
-    return 1;
+    @assert(x == 20)
 }

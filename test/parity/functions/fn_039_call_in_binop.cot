@@ -1,3 +1,5 @@
 fn double(x: i64) i64 { return x * 2; }
 fn call_in_binop(a: i64, b: i64) i64 { return double(a) + double(b); }
-fn main() i64 { if call_in_binop(3, 4) == 14 { return 0; } return 1; }
+test "function: call in binop" {
+    @assert(call_in_binop(3, 4) == 14)
+}

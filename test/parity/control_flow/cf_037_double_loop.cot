@@ -11,4 +11,6 @@ fn sum_matrix(n: i64) i64 {
     }
     return sum;
 }
-fn main() i64 { if sum_matrix(4) == 100 { return 0; } return 1; }
+test "control flow: double loop" {
+    @assert(sum_matrix(4) == 100)
+}

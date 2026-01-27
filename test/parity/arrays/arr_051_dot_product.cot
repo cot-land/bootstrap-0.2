@@ -8,12 +8,11 @@ fn dot_product(a: *i64, b: *i64, n: i64) i64 {
     }
     return result;
 }
-fn main() i64 {
+test "array: dot product" {
     var a: *i64 = malloc_i64(3);
     var b: *i64 = malloc_i64(3);
     (a + 0).* = 1; (b + 0).* = 4;
     (a + 1).* = 2; (b + 1).* = 5;
     (a + 2).* = 3; (b + 2).* = 6;
-    if dot_product(a, b, 3) == 32 { return 0; }
-    return 1;
+    @assert(dot_product(a, b, 3) == 32)
 }

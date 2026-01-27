@@ -7,7 +7,6 @@ fn sum_range(start: i64, end: i64) i64 {
     }
     return sum;
 }
-fn main() i64 {
-    if sum_range(1, 100) == 5050 { return 0; }
-    return 1;
+test "control flow: sum range" {
+    @assert(sum_range(1, 100) == 5050)
 }

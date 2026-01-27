@@ -1,4 +1,6 @@
 fn cross(x1: i64, y1: i64, x2: i64, y2: i64) i64 {
     return x1 * y2 - y1 * x2;
 }
-fn main() i64 { if cross(2, 3, 4, 5) == -2 { return 0; } return 1; }
+test "expression: cross prod" {
+    @assert(cross(2, 3, 4, 5) == -2)
+}

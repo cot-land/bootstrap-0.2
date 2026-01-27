@@ -1,3 +1,5 @@
 fn add1(x: i64) i64 { return x + 1; }
 fn nested3(x: i64) i64 { return add1(add1(add1(x))); }
-fn main() i64 { if nested3(0) == 3 { return 0; } return 1; }
+test "function: nested call 3" {
+    @assert(nested3(0) == 3)
+}

@@ -7,4 +7,6 @@ fn popcount(n: i64) i64 {
     }
     return count;
 }
-fn main() i64 { if popcount(0xFF) == 8 { return 0; } return 1; }
+test "expression: popcount" {
+    @assert(popcount(0xFF) == 8)
+}

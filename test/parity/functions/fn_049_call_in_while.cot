@@ -1,11 +1,10 @@
 fn square(x: i64) i64 { return x * x; }
-fn main() i64 {
+test "function: call in while" {
     var sum: i64 = 0;
     var i: i64 = 1;
     while i <= 5 {
         sum = sum + square(i);
         i = i + 1;
     }
-    if sum == 55 { return 0; }
-    return 1;
+    @assert(sum == 55)
 }

@@ -1,2 +1,4 @@
 fn shr(a: i64, b: i64) i64 { return a >> b; }
-fn main() i64 { if shr(256, 4) == 16 { return 0; } return 1; }
+test "expression: shr" {
+    @assert(shr(256, 4) == 16)
+}

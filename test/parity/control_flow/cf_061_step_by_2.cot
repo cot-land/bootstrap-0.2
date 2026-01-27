@@ -1,10 +1,9 @@
-fn main() i64 {
+test "control flow: step by 2" {
     var sum: i64 = 0;
     var i: i64 = 0;
     while i < 10 {
         sum = sum + i;
         i = i + 2;
     }
-    if sum == 20 { return 0; }
-    return 1;
+    @assert(sum == 20)
 }

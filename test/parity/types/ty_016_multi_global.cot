@@ -4,8 +4,7 @@ var g_a: i64 = 0;
 var g_b: i64 = 0;
 var g_c: i64 = 0;
 fn sum_globals() i64 { return g_a + g_b + g_c; }
-fn main() i64 {
+test "type: multi global" {
     g_a = 10; g_b = 20; g_c = 30;
-    if sum_globals() == 60 { return 0; }
-    return 1;
+    @assert(sum_globals() == 60)
 }

@@ -1,3 +1,5 @@
 fn add(a: i64, b: i64) i64 { return a + b; }
 fn triple(x: i64) i64 { return x * 3; }
-fn main() i64 { if add(triple(2), triple(3)) == 15 { return 0; } return 1; }
+test "function: call as arg" {
+    @assert(add(triple(2), triple(3)) == 15)
+}

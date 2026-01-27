@@ -11,4 +11,6 @@ fn fib(n: i64) i64 {
     }
     return b;
 }
-fn main() i64 { if fib(10) == 55 { return 0; } return 1; }
+test "function: nth fib" {
+    @assert(fib(10) == 55)
+}

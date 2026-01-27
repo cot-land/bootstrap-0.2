@@ -1,2 +1,4 @@
 fn hex() i64 { return 0xDEADBEEF; }
-fn main() i64 { if hex() == 0xDEADBEEF { return 0; } return 1; }
+test "expression: hex const" {
+    @assert(hex() == 0xDEADBEEF)
+}

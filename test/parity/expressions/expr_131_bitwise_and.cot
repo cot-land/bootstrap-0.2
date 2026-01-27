@@ -1,7 +1,6 @@
-fn main() i64 {
+test "expression: bitwise and" {
     var x: i64 = 15;
     var y: i64 = 9;
     var result: i64 = x & y;
-    if result == 9 { return 0; }
-    return 1;
+    @assert(result == 9)
 }

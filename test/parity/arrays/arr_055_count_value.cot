@@ -10,7 +10,7 @@ fn count_value(arr: *i64, n: i64, val: i64) i64 {
     }
     return count;
 }
-fn main() i64 {
+test "array: count value" {
     var arr: *i64 = malloc_i64(7);
     (arr + 0).* = 1;
     (arr + 1).* = 2;
@@ -19,6 +19,5 @@ fn main() i64 {
     (arr + 4).* = 1;
     (arr + 5).* = 2;
     (arr + 6).* = 1;
-    if count_value(arr, 7, 2) == 3 { return 0; }
-    return 1;
+    @assert(count_value(arr, 7, 2) == 3)
 }

@@ -1,14 +1,13 @@
-fn main() i64 {
+test "variable: flag toggle" {
     var flag: i64 = 0;
     var i: i64 = 0;
     while i < 5 {
-        if flag == 0 {
+    @assert(flag == 0 {
             flag = 1;
         } else {
             flag = 0;
         }
         i = i + 1;
     }
-    if flag == 1 { return 0; }
-    return 1;
+    if flag == 1)
 }

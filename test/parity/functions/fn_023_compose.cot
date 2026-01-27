@@ -1,4 +1,6 @@
 fn add5(x: i64) i64 { return x + 5; }
 fn mul2(x: i64) i64 { return x * 2; }
 fn compose(x: i64) i64 { return mul2(add5(x)); }
-fn main() i64 { if compose(10) == 30 { return 0; } return 1; }
+test "function: compose" {
+    @assert(compose(10) == 30)
+}

@@ -2,4 +2,6 @@ fn sum_rec(n: i64) i64 {
     if n <= 0 { return 0; }
     return n + sum_rec(n - 1);
 }
-fn main() i64 { if sum_rec(10) == 55 { return 0; } return 1; }
+test "function: sum recursive" {
+    @assert(sum_rec(10) == 55)
+}

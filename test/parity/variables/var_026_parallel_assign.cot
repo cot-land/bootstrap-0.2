@@ -1,4 +1,4 @@
-fn main() i64 {
+test "variable: parallel assign" {
     var a: i64 = 1;
     var b: i64 = 2;
     var c: i64 = 3;
@@ -8,6 +8,5 @@ fn main() i64 {
     a = tc;
     b = ta;
     c = tb;
-    if a == 3 and b == 1 and c == 2 { return 0; }
-    return 1;
+    @assert(a == 3 and b == 1 and c == 2)
 }

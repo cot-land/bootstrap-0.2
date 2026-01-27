@@ -1,2 +1,4 @@
 fn le(a: i64, b: i64) i64 { if a <= b { return 1; } return 0; }
-fn main() i64 { if le(5, 5) == 1 { return 0; } return 1; }
+test "expression: cmp le" {
+    @assert(le(5, 5) == 1)
+}

@@ -1,7 +1,6 @@
-fn main() i64 {
+test "expression: mod chain" {
     var x: i64 = 100;
     var r1: i64 = x % 17;
     var r2: i64 = r1 % 5;
-    if r2 == 0 { return 0; }
-    return 1;
+    @assert(r2 == 0)
 }

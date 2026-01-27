@@ -1,6 +1,5 @@
-fn main() i64 {
+test "expression: double neg" {
     var x: i64 = 42;
     var y: i64 = 0 - (0 - x);
-    if y == 42 { return 0; }
-    return 1;
+    @assert(y == 42)
 }

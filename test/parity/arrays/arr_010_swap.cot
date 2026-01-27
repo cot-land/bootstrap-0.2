@@ -4,12 +4,11 @@ fn swap(arr: *i64, i: i64, j: i64) void {
     (arr + i).* = (arr + j).*;
     (arr + j).* = tmp;
 }
-fn main() i64 {
+test "array: swap" {
     var arr: *i64 = malloc_i64(3);
     (arr + 0).* = 10;
     (arr + 1).* = 20;
     (arr + 2).* = 30;
     swap(arr, 0, 2);
-    if (arr + 0).* == 30 and (arr + 2).* == 10 { return 0; }
-    return 1;
+    @assert((arr + 0).* == 30 and (arr + 2).* == 10)
 }

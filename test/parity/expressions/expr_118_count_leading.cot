@@ -10,7 +10,6 @@ fn count_leading_zeros_byte(x: i64) i64 {
     }
     return 8;
 }
-fn main() i64 {
-    if count_leading_zeros_byte(0x20) == 2 { return 0; }
-    return 1;
+test "expression: count leading" {
+    @assert(count_leading_zeros_byte(0x20) == 2)
 }

@@ -7,7 +7,6 @@ fn count_bits(n: i64) i64 {
     }
     return count;
 }
-fn main() i64 {
-    if count_bits(0b11101010) == 5 { return 0; }
-    return 1;
+test "expression: count bits" {
+    @assert(count_bits(0b11101010) == 5)
 }

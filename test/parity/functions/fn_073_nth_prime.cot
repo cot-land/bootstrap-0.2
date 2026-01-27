@@ -21,7 +21,6 @@ fn nth_prime(n: i64) i64 {
     }
     return num;
 }
-fn main() i64 {
-    if nth_prime(10) == 29 { return 0; }
-    return 1;
+test "function: nth prime" {
+    @assert(nth_prime(10) == 29)
 }

@@ -4,12 +4,11 @@ fn swap_ptr(a: *i64, b: *i64) void {
     a.* = b.*;
     b.* = t;
 }
-fn main() i64 {
+test "memory: swap via ptr" {
     var x: *i64 = malloc_i64(1);
     var y: *i64 = malloc_i64(1);
     x.* = 10;
     y.* = 20;
     swap_ptr(x, y);
-    if x.* == 20 and y.* == 10 { return 0; }
-    return 1;
+    @assert(x.* == 20 and y.* == 10)
 }

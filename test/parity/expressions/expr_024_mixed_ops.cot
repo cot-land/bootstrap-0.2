@@ -1,2 +1,4 @@
 fn mixed() i64 { return 10 + 20 * 3 - 5; }
-fn main() i64 { if mixed() == 65 { return 0; } return 1; }
+test "expression: mixed ops" {
+    @assert(mixed() == 65)
+}

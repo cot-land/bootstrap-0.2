@@ -1,2 +1,4 @@
 fn bitcombo(a: i64, b: i64) i64 { return (a & b) | (a ^ b); }
-fn main() i64 { if bitcombo(0xF0, 0x0F) == 0xFF { return 0; } return 1; }
+test "expression: bit combo" {
+    @assert(bitcombo(0xF0, 0x0F) == 0xFF)
+}

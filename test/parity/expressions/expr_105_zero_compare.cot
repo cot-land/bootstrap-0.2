@@ -1,8 +1,8 @@
-fn main() i64 {
+test "expression: zero compare" {
     var x: i64 = 0;
-    var r1: i64 = 0; if x == 0 { r1 = 1; }
+    var r1: i64 = 0;
+    @assert(x == 0 { r1 = 1; }
     var r2: i64 = 0; if x >= 0 { r2 = 1; }
     var r3: i64 = 0; if x <= 0 { r3 = 1; }
-    if r1 == 1 and r2 == 1 and r3 == 1 { return 0; }
-    return 1;
+    if r1 == 1 and r2 == 1 and r3 == 1)
 }

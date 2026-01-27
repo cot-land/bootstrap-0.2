@@ -8,13 +8,12 @@ fn array_sum(arr: *i64, len: i64) i64 {
     }
     return sum;
 }
-fn main() i64 {
+test "memory: array sum" {
     var arr: *i64 = malloc_i64(5);
     (arr + 0).* = 10;
     (arr + 1).* = 20;
     (arr + 2).* = 30;
     (arr + 3).* = 40;
     (arr + 4).* = 50;
-    if array_sum(arr, 5) == 150 { return 0; }
-    return 1;
+    @assert(array_sum(arr, 5) == 150)
 }

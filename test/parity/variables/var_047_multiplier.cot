@@ -1,8 +1,7 @@
-fn main() i64 {
+test "variable: multiplier" {
     var mul: i64 = 1;
     mul = mul * 2;
     mul = mul * 3;
     mul = mul * 7;
-    if mul == 42 { return 0; }
-    return 1;
+    @assert(mul == 42)
 }

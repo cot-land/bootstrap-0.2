@@ -4,7 +4,6 @@ fn any_true(a: i64, b: i64, c: i64) i64 {
     if c != 0 { return 1; }
     return 0;
 }
-fn main() i64 {
-    if any_true(0, 0, 1) == 1 and any_true(0, 0, 0) == 0 { return 0; }
-    return 1;
+test "control flow: any true" {
+    @assert(any_true(0, 0, 1) == 1 and any_true(0, 0, 0) == 0)
 }

@@ -5,12 +5,11 @@ fn classify(n: i64) i64 {
     if n < 100 { return 2; }
     return 3;
 }
-fn main() i64 {
+test "control flow: if else chain" {
     var c1: i64 = classify(0 - 5);
     var c2: i64 = classify(0);
     var c3: i64 = classify(5);
     var c4: i64 = classify(50);
     var c5: i64 = classify(500);
-    if c1 == 0 - 1 and c2 == 0 and c3 == 1 and c4 == 2 and c5 == 3 { return 0; }
-    return 1;
+    @assert(c1 == 0 - 1 and c2 == 0 and c3 == 1 and c4 == 2 and c5 == 3)
 }

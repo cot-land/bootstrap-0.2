@@ -16,7 +16,7 @@ fn count_unique(arr: *i64, n: i64) i64 {
     }
     return count;
 }
-fn main() i64 {
+test "array: unique count" {
     var arr: *i64 = malloc_i64(7);
     (arr + 0).* = 1;
     (arr + 1).* = 2;
@@ -25,6 +25,5 @@ fn main() i64 {
     (arr + 4).* = 2;
     (arr + 5).* = 1;
     (arr + 6).* = 4;
-    if count_unique(arr, 7) == 4 { return 0; }
-    return 1;
+    @assert(count_unique(arr, 7) == 4)
 }

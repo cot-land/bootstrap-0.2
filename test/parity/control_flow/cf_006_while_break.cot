@@ -6,4 +6,6 @@ fn find_first_gt(limit: i64) i64 {
     }
     return i;
 }
-fn main() i64 { if find_first_gt(10) == 11 { return 0; } return 1; }
+test "control flow: while break" {
+    @assert(find_first_gt(10) == 11)
+}

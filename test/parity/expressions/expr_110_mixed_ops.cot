@@ -1,5 +1,4 @@
-fn main() i64 {
+test "expression: mixed ops" {
     var r: i64 = 100 - 50 + 25 - 10 + 5;
-    if r == 70 { return 0; }
-    return 1;
+    @assert(r == 70)
 }

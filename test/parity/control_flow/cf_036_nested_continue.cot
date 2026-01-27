@@ -8,4 +8,6 @@ fn count_odd_in_range(lo: i64, hi: i64) i64 {
     }
     return count;
 }
-fn main() i64 { if count_odd_in_range(1, 10) == 5 { return 0; } return 1; }
+test "control flow: nested continue" {
+    @assert(count_odd_in_range(1, 10) == 5)
+}

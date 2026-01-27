@@ -1,5 +1,4 @@
-fn main() i64 {
+test "type: i64 max" {
     var max: i64 = 9223372036854775807;
-    if max > 0 { return 0; }
-    return 1;
+    @assert(max > 0)
 }

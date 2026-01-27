@@ -8,4 +8,6 @@ fn find_sum_gt(limit: i64) i64 {
     }
     return sum;
 }
-fn main() i64 { if find_sum_gt(50) == 55 { return 0; } return 1; }
+test "control flow: nested break" {
+    @assert(find_sum_gt(50) == 55)
+}

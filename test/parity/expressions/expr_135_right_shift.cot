@@ -1,6 +1,5 @@
-fn main() i64 {
+test "expression: right shift" {
     var x: i64 = 64;
     var result: i64 = x >> 3;
-    if result == 8 { return 0; }
-    return 1;
+    @assert(result == 8)
 }

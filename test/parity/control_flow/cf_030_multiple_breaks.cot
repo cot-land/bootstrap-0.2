@@ -7,4 +7,6 @@ fn first_divisible(n: i64, d1: i64, d2: i64) i64 {
     }
     return i;
 }
-fn main() i64 { if first_divisible(20, 7, 11) == 7 { return 0; } return 1; }
+test "control flow: multiple breaks" {
+    @assert(first_divisible(20, 7, 11) == 7)
+}

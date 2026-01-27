@@ -1,2 +1,4 @@
 fn swap_sub(a: i64, b: i64) i64 { return b - a; }
-fn main() i64 { if swap_sub(3, 10) == 7 { return 0; } return 1; }
+test "function: swap args" {
+    @assert(swap_sub(3, 10) == 7)
+}

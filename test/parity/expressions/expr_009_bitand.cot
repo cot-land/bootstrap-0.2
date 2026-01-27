@@ -1,2 +1,4 @@
 fn bitand(a: i64, b: i64) i64 { return a & b; }
-fn main() i64 { if bitand(0xFF, 0x0F) == 0x0F { return 0; } return 1; }
+test "expression: bitand" {
+    @assert(bitand(0xFF, 0x0F) == 0x0F)
+}

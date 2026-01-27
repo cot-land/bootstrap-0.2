@@ -1,7 +1,6 @@
-fn main() i64 {
+test "expression: mask" {
     var x: i64 = 255;
     var mask: i64 = 15;
     var result: i64 = x & mask;
-    if result == 15 { return 0; }
-    return 1;
+    @assert(result == 15)
 }

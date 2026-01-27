@@ -1,4 +1,4 @@
-fn main() i64 {
+test "control flow: triple loop" {
     var sum: i64 = 0;
     var i: i64 = 0;
     while i < 2 {
@@ -13,6 +13,5 @@ fn main() i64 {
         }
         i = i + 1;
     }
-    if sum == 24 { return 0; }
-    return 1;
+    @assert(sum == 24)
 }

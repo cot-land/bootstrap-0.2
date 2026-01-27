@@ -7,4 +7,6 @@ fn nested_else(a: i64, b: i64) i64 {
         else { return 4; }
     }
 }
-fn main() i64 { if nested_else(-1, 5) == 3 { return 0; } return 1; }
+test "control flow: nested else" {
+    @assert(nested_else(-1, 5) == 3)
+}

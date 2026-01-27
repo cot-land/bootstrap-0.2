@@ -1,7 +1,6 @@
 fn inc_ptr(p: *i64) void { p.* = p.* + 1; }
-fn main() i64 {
+test "memory: ptr param" {
     var x: i64 = 41;
     inc_ptr(&x);
-    if x == 42 { return 0; }
-    return 1;
+    @assert(x == 42)
 }

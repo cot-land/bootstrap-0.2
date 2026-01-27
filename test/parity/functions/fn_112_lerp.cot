@@ -1,7 +1,6 @@
 fn lerp(a: i64, b: i64, t: i64) i64 {
     return a + (b - a) * t / 100;
 }
-fn main() i64 {
-    if lerp(0, 100, 50) == 50 { return 0; }
-    return 1;
+test "function: lerp" {
+    @assert(lerp(0, 100, 50) == 50)
 }

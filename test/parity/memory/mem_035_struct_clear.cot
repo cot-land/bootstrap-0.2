@@ -4,12 +4,11 @@ fn clear_data(d: *Data) void {
     d.b = 0;
     d.c = 0;
 }
-fn main() i64 {
+test "memory: struct clear" {
     var d: Data = undefined;
     d.a = 100;
     d.b = 200;
     d.c = 300;
     clear_data(&d);
-    if d.a == 0 and d.b == 0 and d.c == 0 { return 0; }
-    return 1;
+    @assert(d.a == 0 and d.b == 0 and d.c == 0)
 }

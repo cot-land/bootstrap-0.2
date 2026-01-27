@@ -3,12 +3,11 @@
 // This causes the 64-bit load to include garbage from overlapping stores
 // Zig compiler correctly uses ldrb for u8 loads
 extern fn malloc_u8(size: i64) *u8;
-fn main() i64 {
+test "type: u8" {
     var bytes: *u8 = malloc_u8(4);
     (bytes + 0).* = 65;
     (bytes + 1).* = 66;
     (bytes + 2).* = 67;
     (bytes + 3).* = 0;
-    if (bytes + 0).* == 65 { return 0; }
-    return 1;
+    @assert((bytes + 0).* == 65)
 }

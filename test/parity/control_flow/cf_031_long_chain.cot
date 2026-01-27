@@ -6,4 +6,6 @@ fn classify(x: i64) i64 {
     else if x < 50 { return 4; }
     else { return 5; }
 }
-fn main() i64 { if classify(35) == 3 { return 0; } return 1; }
+test "control flow: long chain" {
+    @assert(classify(35) == 3)
+}

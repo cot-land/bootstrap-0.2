@@ -6,4 +6,6 @@ fn is_even(n: i64) i64 {
     if n == 0 { return 1; }
     return is_odd(n - 1);
 }
-fn main() i64 { if is_even(10) == 1 { return 0; } return 1; }
+test "function: mutual" {
+    @assert(is_even(10) == 1)
+}

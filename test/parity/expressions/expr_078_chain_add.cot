@@ -1,5 +1,4 @@
-fn main() i64 {
+test "expression: chain add" {
     var r: i64 = 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10;
-    if r == 55 { return 0; }
-    return 1;
+    @assert(r == 55)
 }

@@ -9,7 +9,6 @@ fn sum_divisible(n: i64, d: i64) i64 {
     }
     return sum;
 }
-fn main() i64 {
-    if sum_divisible(10, 2) == 30 { return 0; }
-    return 1;
+test "control flow: sum divisible" {
+    @assert(sum_divisible(10, 2) == 30)
 }

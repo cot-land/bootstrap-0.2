@@ -7,7 +7,6 @@ fn digit_sum(n: i64) i64 {
     }
     return sum;
 }
-fn main() i64 {
-    if digit_sum(12345) == 15 { return 0; }
-    return 1;
+test "function: digit sum" {
+    @assert(digit_sum(12345) == 15)
 }

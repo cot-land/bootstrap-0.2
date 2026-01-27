@@ -7,7 +7,6 @@ fn sum_of_squares(n: i64) i64 {
     }
     return sum;
 }
-fn main() i64 {
-    if sum_of_squares(10) == 385 { return 0; }
-    return 1;
+test "function: sum sq" {
+    @assert(sum_of_squares(10) == 385)
 }

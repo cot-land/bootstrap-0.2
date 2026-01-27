@@ -1,2 +1,4 @@
 fn shift_chain(x: i64) i64 { return ((x << 2) >> 1) << 1; }
-fn main() i64 { if shift_chain(1) == 4 { return 0; } return 1; }
+test "expression: shift chain" {
+    @assert(shift_chain(1) == 4)
+}

@@ -5,4 +5,6 @@ fn classify(x: i64) i64 {
     }
     return 0;
 }
-fn main() i64 { if classify(5) == 1 { return 0; } return 1; }
+test "control flow: nested if" {
+    @assert(classify(5) == 1)
+}

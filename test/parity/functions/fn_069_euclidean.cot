@@ -8,7 +8,6 @@ fn gcd_euclid(a: i64, b: i64) i64 {
     }
     return x;
 }
-fn main() i64 {
-    if gcd_euclid(48, 18) == 6 { return 0; }
-    return 1;
+test "function: euclidean" {
+    @assert(gcd_euclid(48, 18) == 6)
 }

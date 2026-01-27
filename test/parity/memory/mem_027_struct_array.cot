@@ -1,6 +1,6 @@
 struct Point { x: i64, y: i64 }
 extern fn malloc_struct(size: i64, count: i64) *Point;
-fn main() i64 {
+test "memory: struct array" {
     var points: *Point = malloc_struct(16, 3);
     (points + 0).x = 1;
     (points + 0).y = 2;
@@ -9,6 +9,5 @@ fn main() i64 {
     (points + 2).x = 5;
     (points + 2).y = 6;
     var sum: i64 = (points + 0).x + (points + 1).x + (points + 2).x;
-    if sum == 9 { return 0; }
-    return 1;
+    @assert(sum == 9)
 }

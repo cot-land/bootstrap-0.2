@@ -5,9 +5,8 @@ fn init_data(d: *Data, v: i64) void {
     d.c = v * 3;
     d.d = v * 4;
 }
-fn main() i64 {
+test "memory: struct init all" {
     var d: Data = undefined;
     init_data(&d, 10);
-    if d.a == 10 and d.b == 20 and d.c == 30 and d.d == 40 { return 0; }
-    return 1;
+    @assert(d.a == 10 and d.b == 20 and d.c == 30 and d.d == 40)
 }

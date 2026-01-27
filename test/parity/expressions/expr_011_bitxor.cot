@@ -1,2 +1,4 @@
 fn bitxor(a: i64, b: i64) i64 { return a ^ b; }
-fn main() i64 { if bitxor(0xFF, 0x0F) == 0xF0 { return 0; } return 1; }
+test "expression: bitxor" {
+    @assert(bitxor(0xFF, 0x0F) == 0xF0)
+}

@@ -10,4 +10,6 @@ fn reverse8(n: i64) i64 {
     }
     return result;
 }
-fn main() i64 { if reverse8(0b10110000) == 0b00001101 { return 0; } return 1; }
+test "expression: reverse bits" {
+    @assert(reverse8(0b10110000) == 0b00001101)
+}

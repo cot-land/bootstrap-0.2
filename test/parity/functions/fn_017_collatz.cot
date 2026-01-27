@@ -8,4 +8,6 @@ fn collatz_steps(n: i64) i64 {
     }
     return steps;
 }
-fn main() i64 { if collatz_steps(6) == 8 { return 0; } return 1; }
+test "function: collatz" {
+    @assert(collatz_steps(6) == 8)
+}

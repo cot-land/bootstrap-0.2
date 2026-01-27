@@ -1,3 +1,5 @@
 fn inner(x: i64) i64 { return x * 2; }
 fn outer(x: i64) i64 { return inner(x) + 1; }
-fn main() i64 { if outer(20) == 41 { return 0; } return 1; }
+test "expression: nested" {
+    @assert(outer(20) == 41)
+}

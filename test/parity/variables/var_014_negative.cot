@@ -1,6 +1,5 @@
-fn main() i64 {
+test "variable: negative" {
     var x: i64 = 0 - 42;
     var y: i64 = 0 - x;
-    if y == 42 { return 0; }
-    return 1;
+    @assert(y == 42)
 }

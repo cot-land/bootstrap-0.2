@@ -1,7 +1,6 @@
-fn main() i64 {
+test "expression: sum squares expr" {
     var a: i64 = 3;
     var b: i64 = 4;
     var sum: i64 = a * a + b * b;
-    if sum == 25 { return 0; }
-    return 1;
+    @assert(sum == 25)
 }

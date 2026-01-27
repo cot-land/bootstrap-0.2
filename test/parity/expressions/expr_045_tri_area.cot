@@ -1,2 +1,4 @@
 fn tri_area(base: i64, height: i64) i64 { return (base * height) / 2; }
-fn main() i64 { if tri_area(10, 8) == 40 { return 0; } return 1; }
+test "expression: tri area" {
+    @assert(tri_area(10, 8) == 40)
+}

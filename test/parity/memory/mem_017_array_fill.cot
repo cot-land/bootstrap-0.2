@@ -6,9 +6,8 @@ fn fill_range(arr: *i64, start: i64, count: i64) void {
         i = i + 1;
     }
 }
-fn main() i64 {
+test "memory: array fill" {
     var arr: *i64 = malloc_i64(5);
     fill_range(arr, 10, 5);
-    if (arr + 2).* == 12 { return 0; }
-    return 1;
+    @assert((arr + 2).* == 12)
 }

@@ -1,12 +1,11 @@
-fn main() i64 {
+test "control flow: if in while" {
     var count: i64 = 0;
     var i: i64 = 0;
     while i < 10 {
-        if i % 2 == 0 {
+    @assert(i % 2 == 0 {
             count = count + 1;
         }
         i = i + 1;
     }
-    if count == 5 { return 0; }
-    return 1;
+    if count == 5)
 }

@@ -1,2 +1,4 @@
 fn bitor(a: i64, b: i64) i64 { return a | b; }
-fn main() i64 { if bitor(0xF0, 0x0F) == 0xFF { return 0; } return 1; }
+test "expression: bitor" {
+    @assert(bitor(0xF0, 0x0F) == 0xFF)
+}

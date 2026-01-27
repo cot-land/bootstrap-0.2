@@ -7,4 +7,6 @@ fn sum_digits(n: i64) i64 {
     }
     return sum;
 }
-fn main() i64 { if sum_digits(12345) == 15 { return 0; } return 1; }
+test "control flow: sum digits" {
+    @assert(sum_digits(12345) == 15)
+}

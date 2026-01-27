@@ -1,7 +1,6 @@
 fn triangle(n: i64) i64 {
     return n * (n + 1) / 2;
 }
-fn main() i64 {
-    if triangle(10) == 55 { return 0; }
-    return 1;
+test "function: triangle" {
+    @assert(triangle(10) == 55)
 }

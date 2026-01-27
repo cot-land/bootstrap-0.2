@@ -10,7 +10,6 @@ fn classify_char(c: i64) i64 {
     }
     return 0;
 }
-fn main() i64 {
-    if classify_char(65) == 2 { return 0; }
-    return 1;
+test "control flow: cascade return" {
+    @assert(classify_char(65) == 2)
 }

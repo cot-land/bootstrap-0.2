@@ -1,2 +1,4 @@
 const MAGIC: i64 = 42;
-fn main() i64 { if MAGIC == 42 { return 0; } return 1; }
+test "type: const" {
+    @assert(MAGIC == 42)
+}

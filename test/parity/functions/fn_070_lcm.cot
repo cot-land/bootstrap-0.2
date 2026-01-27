@@ -11,7 +11,6 @@ fn gcd(a: i64, b: i64) i64 {
 fn lcm(a: i64, b: i64) i64 {
     return (a / gcd(a, b)) * b;
 }
-fn main() i64 {
-    if lcm(12, 18) == 36 { return 0; }
-    return 1;
+test "function: lcm" {
+    @assert(lcm(12, 18) == 36)
 }

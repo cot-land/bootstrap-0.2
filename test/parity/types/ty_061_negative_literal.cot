@@ -1,5 +1,4 @@
-fn main() i64 {
+test "type: negative literal" {
     var x: i64 = 0 - 42;
-    if x == 0 - 42 { return 0; }
-    return 1;
+    @assert(x == 0 - 42)
 }

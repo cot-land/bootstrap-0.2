@@ -9,13 +9,12 @@ fn is_prime(n: i64) i64 {
     }
     return 1;
 }
-fn main() i64 {
+test "control flow: count primes" {
     var count: i64 = 0;
     var n: i64 = 2;
     while n <= 100 {
         count = count + is_prime(n);
         n = n + 1;
     }
-    if count == 25 { return 0; }
-    return 1;
+    @assert(count == 25)
 }

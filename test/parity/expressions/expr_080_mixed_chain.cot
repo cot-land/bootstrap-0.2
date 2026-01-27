@@ -1,5 +1,4 @@
-fn main() i64 {
+test "expression: mixed chain" {
     var r: i64 = 10 + 20 * 2 - 30 / 3;
-    if r == 40 { return 0; }
-    return 1;
+    @assert(r == 40)
 }

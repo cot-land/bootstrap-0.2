@@ -1,4 +1,4 @@
-fn main() i64 {
+test "memory: ptr swap" {
     var a: i64 = 10;
     var b: i64 = 20;
     var pa: *i64 = &a;
@@ -6,6 +6,5 @@ fn main() i64 {
     var tmp: *i64 = pa;
     pa = pb;
     pb = tmp;
-    if pa.* == 20 and pb.* == 10 { return 0; }
-    return 1;
+    @assert(pa.* == 20 and pb.* == 10)
 }

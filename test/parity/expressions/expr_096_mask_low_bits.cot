@@ -1,7 +1,6 @@
-fn main() i64 {
+test "expression: mask low bits" {
     var x: i64 = 0b11111111;
     var mask: i64 = 0b00001111;
     var low: i64 = x & mask;
-    if low == 0b00001111 { return 0; }
-    return 1;
+    @assert(low == 0b00001111)
 }

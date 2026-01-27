@@ -6,7 +6,7 @@ fn diff(arr: *i64, out: *i64, n: i64) void {
         i = i + 1;
     }
 }
-fn main() i64 {
+test "array: diff array" {
     var arr: *i64 = malloc_i64(5);
     var out: *i64 = malloc_i64(4);
     (arr + 0).* = 1;
@@ -15,6 +15,5 @@ fn main() i64 {
     (arr + 3).* = 10;
     (arr + 4).* = 15;
     diff(arr, out, 5);
-    if (out + 0).* == 2 and (out + 3).* == 5 { return 0; }
-    return 1;
+    @assert((out + 0).* == 2 and (out + 3).* == 5)
 }

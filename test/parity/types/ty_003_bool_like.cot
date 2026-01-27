@@ -1,2 +1,4 @@
 fn to_bool(x: i64) i64 { if x != 0 { return 1; } return 0; }
-fn main() i64 { if to_bool(42) == 1 { return 0; } return 1; }
+test "type: bool like" {
+    @assert(to_bool(42) == 1)
+}

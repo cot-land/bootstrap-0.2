@@ -1,6 +1,5 @@
 fn double(x: i64) i64 { return x * 2; }
-fn main() i64 {
+test "function: call result expr" {
     var r: i64 = double(5) + double(10);
-    if r == 30 { return 0; }
-    return 1;
+    @assert(r == 30)
 }

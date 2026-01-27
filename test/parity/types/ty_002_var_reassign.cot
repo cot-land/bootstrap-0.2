@@ -4,4 +4,6 @@ fn test_reassign() i64 {
     x = x * 2;
     return x;
 }
-fn main() i64 { if test_reassign() == 30 { return 0; } return 1; }
+test "type: var reassign" {
+    @assert(test_reassign() == 30)
+}

@@ -1,7 +1,6 @@
-fn main() i64 {
+test "expression: bit xor" {
     var a: i64 = 0b1111;
     var b: i64 = 0b1010;
     var r: i64 = a ^ b;
-    if r == 0b0101 { return 0; }
-    return 1;
+    @assert(r == 0b0101)
 }

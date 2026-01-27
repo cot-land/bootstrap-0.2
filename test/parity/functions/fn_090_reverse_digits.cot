@@ -5,7 +5,6 @@ fn reverse_helper(n: i64, acc: i64) i64 {
 fn reverse_digits(n: i64) i64 {
     return reverse_helper(n, 0);
 }
-fn main() i64 {
-    if reverse_digits(12345) == 54321 { return 0; }
-    return 1;
+test "function: reverse digits" {
+    @assert(reverse_digits(12345) == 54321)
 }

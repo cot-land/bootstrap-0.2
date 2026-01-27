@@ -9,11 +9,10 @@ fn norm_squared(arr: *i64, n: i64) i64 {
     }
     return sum;
 }
-fn main() i64 {
+test "array: norm squared" {
     var arr: *i64 = malloc_i64(3);
     (arr + 0).* = 3;
     (arr + 1).* = 4;
     (arr + 2).* = 0;
-    if norm_squared(arr, 3) == 25 { return 0; }
-    return 1;
+    @assert(norm_squared(arr, 3) == 25)
 }

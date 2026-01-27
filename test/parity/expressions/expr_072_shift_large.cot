@@ -1,2 +1,4 @@
 fn shift_large(x: i64) i64 { return x << 32; }
-fn main() i64 { if shift_large(1) == 0x100000000 { return 0; } return 1; }
+test "expression: shift large" {
+    @assert(shift_large(1) == 0x100000000)
+}

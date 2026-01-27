@@ -1,6 +1,5 @@
-fn main() i64 {
+test "expression: square expr" {
     var x: i64 = 7;
     var sq: i64 = x * x;
-    if sq == 49 { return 0; }
-    return 1;
+    @assert(sq == 49)
 }

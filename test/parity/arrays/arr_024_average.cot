@@ -8,13 +8,12 @@ fn average(arr: *i64, n: i64) i64 {
     }
     return sum / n;
 }
-fn main() i64 {
+test "array: average" {
     var arr: *i64 = malloc_i64(5);
     (arr + 0).* = 10;
     (arr + 1).* = 20;
     (arr + 2).* = 30;
     (arr + 3).* = 40;
     (arr + 4).* = 50;
-    if average(arr, 5) == 30 { return 0; }
-    return 1;
+    @assert(average(arr, 5) == 30)
 }

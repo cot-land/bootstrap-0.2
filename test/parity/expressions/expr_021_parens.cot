@@ -1,2 +1,4 @@
 fn calc(a: i64, b: i64, c: i64) i64 { return (a + b) * c; }
-fn main() i64 { if calc(2, 3, 4) == 20 { return 0; } return 1; }
+test "expression: parens" {
+    @assert(calc(2, 3, 4) == 20)
+}

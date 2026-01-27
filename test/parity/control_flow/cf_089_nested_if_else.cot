@@ -17,7 +17,6 @@ fn grade(score: i64) i64 {
         }
     }
 }
-fn main() i64 {
-    if grade(85) == 3 { return 0; }
-    return 1;
+test "control flow: nested if else" {
+    @assert(grade(85) == 3)
 }

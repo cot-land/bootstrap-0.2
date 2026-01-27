@@ -1,5 +1,5 @@
 extern fn malloc_i64(count: i64) *i64;
-fn main() i64 {
+test "memory: ptr advance" {
     var arr: *i64 = malloc_i64(5);
     (arr + 0).* = 10;
     (arr + 1).* = 20;
@@ -13,6 +13,5 @@ fn main() i64 {
         sum = sum + (p + i).*;
         i = i + 1;
     }
-    if sum == 150 { return 0; }
-    return 1;
+    @assert(sum == 150)
 }

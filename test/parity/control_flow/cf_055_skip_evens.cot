@@ -9,7 +9,6 @@ fn sum_odds(n: i64) i64 {
     }
     return sum;
 }
-fn main() i64 {
-    if sum_odds(10) == 25 { return 0; }
-    return 1;
+test "control flow: skip evens" {
+    @assert(sum_odds(10) == 25)
 }

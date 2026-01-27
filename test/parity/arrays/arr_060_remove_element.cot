@@ -11,7 +11,7 @@ fn remove_elem(arr: *i64, n: i64, val: i64) i64 {
     }
     return write;
 }
-fn main() i64 {
+test "array: remove element" {
     var arr: *i64 = malloc_i64(5);
     (arr + 0).* = 1;
     (arr + 1).* = 2;
@@ -19,6 +19,5 @@ fn main() i64 {
     (arr + 3).* = 2;
     (arr + 4).* = 4;
     var new_len: i64 = remove_elem(arr, 5, 2);
-    if new_len == 3 { return 0; }
-    return 1;
+    @assert(new_len == 3)
 }

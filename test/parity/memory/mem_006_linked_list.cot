@@ -9,13 +9,12 @@ fn sum_list(head: *Node) i64 {
     }
     return sum;
 }
-fn main() i64 {
+test "memory: linked list" {
     var n1: *Node = malloc_struct(16);
     var n2: *Node = malloc_struct(16);
     var n3: *Node = malloc_struct(16);
     n1.value = 1; n1.next = n2;
     n2.value = 2; n2.next = n3;
     n3.value = 3; n3.next = null;
-    if sum_list(n1) == 6 { return 0; }
-    return 1;
+    @assert(sum_list(n1) == 6)
 }

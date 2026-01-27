@@ -22,13 +22,12 @@ fn second_largest(arr: *i64, n: i64) i64 {
     }
     return second;
 }
-fn main() i64 {
+test "array: second largest" {
     var arr: *i64 = malloc_i64(5);
     (arr + 0).* = 10;
     (arr + 1).* = 50;
     (arr + 2).* = 30;
     (arr + 3).* = 40;
     (arr + 4).* = 20;
-    if second_largest(arr, 5) == 40 { return 0; }
-    return 1;
+    @assert(second_largest(arr, 5) == 40)
 }

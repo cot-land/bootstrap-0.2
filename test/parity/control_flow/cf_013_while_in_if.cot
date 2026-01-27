@@ -10,4 +10,6 @@ fn conditional_sum(do_sum: i64, n: i64) i64 {
     }
     return 0;
 }
-fn main() i64 { if conditional_sum(1, 5) == 15 { return 0; } return 1; }
+test "control flow: while in if" {
+    @assert(conditional_sum(1, 5) == 15)
+}

@@ -1,2 +1,4 @@
 fn shift_zero(x: i64) i64 { return x << 0; }
-fn main() i64 { if shift_zero(42) == 42 { return 0; } return 1; }
+test "expression: shift zero" {
+    @assert(shift_zero(42) == 42)
+}

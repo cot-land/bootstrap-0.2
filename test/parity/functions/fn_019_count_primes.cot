@@ -16,4 +16,6 @@ fn count_primes(n: i64) i64 {
     }
     return count;
 }
-fn main() i64 { if count_primes(20) == 8 { return 0; } return 1; }
+test "function: count primes" {
+    @assert(count_primes(20) == 8)
+}

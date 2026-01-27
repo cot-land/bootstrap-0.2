@@ -1,8 +1,7 @@
-fn main() i64 {
+test "expression: swap bytes" {
     var x: i64 = 0x1234;
     var lo: i64 = x & 0xFF;
     var hi: i64 = (x >> 8) & 0xFF;
     var swapped: i64 = (lo << 8) | hi;
-    if swapped == 0x3412 { return 0; }
-    return 1;
+    @assert(swapped == 0x3412)
 }

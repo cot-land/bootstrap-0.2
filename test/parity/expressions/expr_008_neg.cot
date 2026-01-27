@@ -1,2 +1,4 @@
 fn neg(x: i64) i64 { return -x; }
-fn main() i64 { if neg(42) == -42 { return 0; } return 1; }
+test "expression: neg" {
+    @assert(neg(42) == -42)
+}

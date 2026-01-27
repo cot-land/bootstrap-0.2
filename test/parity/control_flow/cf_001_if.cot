@@ -1,2 +1,4 @@
 fn check(x: i64) i64 { if x > 0 { return 1; } return 0; }
-fn main() i64 { if check(5) == 1 { return 0; } return 1; }
+test "control flow: if" {
+    @assert(check(5) == 1)
+}

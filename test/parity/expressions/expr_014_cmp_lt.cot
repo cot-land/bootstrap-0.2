@@ -1,2 +1,4 @@
 fn lt(a: i64, b: i64) i64 { if a < b { return 1; } return 0; }
-fn main() i64 { if lt(5, 10) == 1 { return 0; } return 1; }
+test "expression: cmp lt" {
+    @assert(lt(5, 10) == 1)
+}

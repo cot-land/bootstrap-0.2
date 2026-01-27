@@ -1,8 +1,7 @@
 fn extract_byte(x: i64, pos: i64) i64 {
     return (x >> (pos * 8)) & 0xFF;
 }
-fn main() i64 {
+test "expression: bit extract" {
     var x: i64 = 0x12345678;
-    if extract_byte(x, 0) == 0x78 { return 0; }
-    return 1;
+    @assert(extract_byte(x, 0) == 0x78)
 }

@@ -5,4 +5,6 @@ fn arith_assign() i64 {
     x = x - 10;
     return x;
 }
-fn main() i64 { if arith_assign() == 20 { return 0; } return 1; }
+test "expression: arith assign" {
+    @assert(arith_assign() == 20)
+}

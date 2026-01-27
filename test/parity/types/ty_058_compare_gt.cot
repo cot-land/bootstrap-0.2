@@ -1,6 +1,5 @@
-fn main() i64 {
+test "type: compare gt" {
     var a: i64 = 10;
     var b: i64 = 5;
-    if a > b { return 0; }
-    return 1;
+    @assert(a > b)
 }

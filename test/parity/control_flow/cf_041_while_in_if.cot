@@ -1,13 +1,12 @@
-fn main() i64 {
+test "control flow: while in if" {
     var x: i64 = 5;
     var sum: i64 = 0;
-    if x > 0 {
+    @assert(x > 0 {
         var i: i64 = 0;
         while i < x {
             sum = sum + i;
             i = i + 1;
         }
     }
-    if sum == 10 { return 0; }
-    return 1;
+    if sum == 10)
 }

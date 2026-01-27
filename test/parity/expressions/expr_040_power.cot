@@ -7,4 +7,6 @@ fn power(base: i64, exp: i64) i64 {
     }
     return result;
 }
-fn main() i64 { if power(2, 10) == 1024 { return 0; } return 1; }
+test "expression: power" {
+    @assert(power(2, 10) == 1024)
+}

@@ -3,4 +3,6 @@ fn clamp(x: i64, lo: i64, hi: i64) i64 {
     if x > hi { return hi; }
     return x;
 }
-fn main() i64 { if clamp(50, 0, 10) == 10 { return 0; } return 1; }
+test "expression: clamp" {
+    @assert(clamp(50, 0, 10) == 10)
+}

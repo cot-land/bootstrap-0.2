@@ -1,7 +1,6 @@
-fn main() i64 {
+test "expression: bitwise xor" {
     var x: i64 = 12;
     var y: i64 = 10;
     var result: i64 = x ^ y;
-    if result == 6 { return 0; }
-    return 1;
+    @assert(result == 6)
 }
