@@ -3892,6 +3892,16 @@ fn Lowerer_lowerFieldAccess(l: *Lowerer, node: *Node) i64 {
 
                                 if final_info != null {
                                     total_offset = total_offset + final_info.offset;
+                                    // BUG FIX: Check if root local is a pointer type
+                                    // For pointers: load pointer, then access field through it
+                                    // For values: access field directly from local
+                                    let root_local: *IRLocal = fb.locals + root_local_idx;
+                                    let root_type: *Type = TypeRegistry_get(l.type_pool, root_local.type_idx);
+                                    if root_type != null and root_type.kind == TypeKind.Pointer {
+                                        // Pointer to struct - load the pointer first
+                                        let ptr_val: i64 = FuncBuilder_emitLoadLocal(fb, root_local_idx);
+                                        return FuncBuilder_emitFieldValue(fb, ptr_val, total_offset, TYPE_I64);
+                                    }
                                     return FuncBuilder_emitFieldLocal(fb, root_local_idx, total_offset, TYPE_I64);
                                 }
                             }
@@ -4466,6 +4476,16 @@ fn Lowerer_lowerFieldAssign(l: *Lowerer, target: *Node, value_idx: i64) i64 {
 
                                 if final_info != null {
                                     total_offset = total_offset + final_info.offset;
+                                    // BUG FIX: Check if root local is a pointer type
+                                    // For pointers: load pointer, then store field through it
+                                    // For values: store field directly to local
+                                    let root_local: *IRLocal = fb.locals + root_local_idx;
+                                    let root_type: *Type = TypeRegistry_get(l.type_pool, root_local.type_idx);
+                                    if root_type != null and root_type.kind == TypeKind.Pointer {
+                                        // Pointer to struct - load the pointer first
+                                        let ptr_val: i64 = FuncBuilder_emitLoadLocal(fb, root_local_idx);
+                                        return FuncBuilder_emitStoreField(fb, ptr_val, total_offset, value_idx);
+                                    }
                                     return FuncBuilder_emitStoreFieldLocal(fb, root_local_idx, total_offset, value_idx);
                                 }
                             }
