@@ -32,2006 +32,2010 @@ struct Parser {
 // Zig uses 10000, following parser.zig:53
 const LIMIT_NEST_LEV: i64 = 10000;
 
-// ============================================================================
-// Parser Initialization
-// ============================================================================
+impl Parser {
 
-fn Parser_init(source: string, pool: *NodePool, type_registry: *TypeRegistry) Parser {
-    var p: Parser;
-    p.source = source;
-    p.scanner = Scanner_init(source);
-    p.pool = pool;
-    p.type_registry = type_registry;
-    p.had_error = false;
-    p.nest_lev = 0;  // Initialize nesting depth (follows Zig parser.zig:70)
-    // Prime the parser with first token
-    p.current = Scanner_next(&p.scanner);
-    return p;
-}
+    // ============================================================================
+    // Parser Initialization
+    // ============================================================================
 
-// ============================================================================
-// Token Consumption Helpers (following Go's pattern)
-// ============================================================================
-
-// Advance to next token
-fn Parser_advance(p: *Parser) {
-    p.current = Scanner_next(&p.scanner);
-}
-
-// Check if current token matches expected type (don't consume)
-fn Parser_check(p: *Parser, expected: TokenType) bool {
-    return p.current.kind == expected;
-}
-
-// Consume current token if it matches (returns true if consumed)
-fn Parser_got(p: *Parser, expected: TokenType) bool {
-    if Parser_check(p, expected) {
-        Parser_advance(p);
-        return true;
+    fn init(source: string, pool: *NodePool, type_registry: *TypeRegistry) Parser {
+        var p: Parser;
+        p.source = source;
+        p.scanner = Scanner_init(source);
+        p.pool = pool;
+        p.type_registry = type_registry;
+        p.had_error = false;
+        p.nest_lev = 0;  // Initialize nesting depth (follows Zig parser.zig:70)
+        // Prime the parser with first token
+        p.current = Scanner_next(&p.scanner);
+        return p;
     }
-    return false;
-}
 
-// Require current token to match (error if not)
-fn Parser_want(p: *Parser, expected: TokenType) bool {
-    if Parser_got(p, expected) {
-        return true;
-    }
-    p.had_error = true;
-    return false;
-}
-
-// Check for end of file
-fn Parser_atEnd(p: *Parser) bool {
-    return p.current.kind == TokenType.Eof;
-}
-
-// ============================================================================
-// Nesting Depth Protection (following Zig parser.zig:166-179)
-// ============================================================================
-
-// Increment nesting level with overflow protection
-// Returns true if OK, false if exceeded maximum (sets had_error)
-fn Parser_incNest(p: *Parser) bool {
-    p.nest_lev = p.nest_lev + 1;
-    if p.nest_lev > LIMIT_NEST_LEV {
-        p.had_error = true;
-        return false;  // Exceeded maximum nesting depth
-    }
-    return true;
-}
-
-// Decrement nesting level
-fn Parser_decNest(p: *Parser) {
-    p.nest_lev = p.nest_lev - 1;
-}
-
-// Peek ahead to check if token AFTER current is a dot (for struct literal detection)
-// This temporarily advances and restores scanner state
-fn Parser_peekNextIsDot(p: *Parser) bool {
-    // Save scanner position and token fields individually (avoid struct copy issues)
-    let saved_pos: i64 = p.scanner.pos;
-    let saved_kind: TokenType = p.current.kind;
-    let saved_start: i64 = p.current.start;
-    let saved_end: i64 = p.current.end;
+    // ============================================================================
+    // Token Consumption Helpers (following Go's pattern)
+    // ============================================================================
 
     // Advance to next token
-    Parser_advance(p);
-    let is_dot: bool = p.current.kind == TokenType.Dot;
+    fn advance(self: *Parser)  {
+        self.current = Scanner_next(&self.scanner);
+    }
 
-    // Restore scanner position and token fields
-    p.scanner.pos = saved_pos;
-    p.current.kind = saved_kind;
-    p.current.start = saved_start;
-    p.current.end = saved_end;
+    // Check if current token matches expected type (don't consume)
+    fn check(self: *Parser, expected: TokenType) bool {
+        return self.current.kind == expected;
+    }
 
-    return is_dot;
-}
-
-// ============================================================================
-// Operator Helpers (using precedence from ast.cot)
-// ============================================================================
-
-// Get precedence of current token using ast.cot's Token_precedence
-fn Parser_prec(p: *Parser) i64 {
-    return token_precedence(p.current.kind);
-}
-
-// Get BinaryOp as i64 from current token using ast.cot's Token_toBinaryOp
-fn Parser_binopInt(p: *Parser) i64 {
-    return Token_toBinaryOp(p.current.kind);
-}
-
-// ============================================================================
-// Type Parsing
-// ============================================================================
-
-// Resolve a type expression node to a TypeRegistry index
-// This is a simplified version of resolve_type_expr from lower.cot,
-// used during parsing to create function types.
-fn Parser_resolveTypeNode(p: *Parser, type_node_idx: i64) i64 {
-    if type_node_idx < 0 { return TYPE_I64; }
-
-    let node: *Node = NodePool_get(p.pool, type_node_idx);
-
-    // TypeExprNamed: resolve by checking name in source
-    if node.kind == NodeKind.TypeExprNamed {
-        let name_start: i64 = node.field0;
-        let name_len: i64 = node.field1;
-
-        // Check built-in types by examining source characters
-        if name_len == 3 {
-            let c0: u8 = p.source[name_start];
-            let c1: u8 = p.source[name_start + 1];
-            let c2: u8 = p.source[name_start + 2];
-            // i64
-            if c0 == 105 and c1 == 54 and c2 == 52 { return TYPE_I64; }
-            // i32
-            if c0 == 105 and c1 == 51 and c2 == 50 { return TYPE_I32; }
+    // Consume current token if it matches (returns true if consumed)
+    fn got(self: *Parser, expected: TokenType) bool {
+        if self.check(expected) {
+            self.advance();
+            return true;
         }
-        if name_len == 2 {
-            let c0: u8 = p.source[name_start];
-            let c1: u8 = p.source[name_start + 1];
-            // u8
-            if c0 == 117 and c1 == 56 { return TYPE_U8; }
+        return false;
+    }
+
+    // Require current token to match (error if not)
+    fn want(self: *Parser, expected: TokenType) bool {
+        if self.got(expected) {
+            return true;
         }
-        if name_len == 4 {
-            let c0: u8 = p.source[name_start];
-            // bool
-            if c0 == 98 { return TYPE_BOOL; }
-            // void
-            if c0 == 118 { return TYPE_VOID; }
+        self.had_error = true;
+        return false;
+    }
+
+    // Check for end of file
+    fn atEnd(self: *Parser) bool {
+        return self.current.kind == TokenType.Eof;
+    }
+
+    // ============================================================================
+    // Nesting Depth Protection (following Zig parser.zig:166-179)
+    // ============================================================================
+
+    // Increment nesting level with overflow protection
+    // Returns true if OK, false if exceeded maximum (sets had_error)
+    fn incNest(self: *Parser) bool {
+        self.nest_lev = self.nest_lev + 1;
+        if self.nest_lev > LIMIT_NEST_LEV {
+            self.had_error = true;
+            return false;  // Exceeded maximum nesting depth
         }
-        // Default to i64 for unknown types
+        return true;
+    }
+
+    // Decrement nesting level
+    fn decNest(self: *Parser)  {
+        self.nest_lev = self.nest_lev - 1;
+    }
+
+    // Peek ahead to check if token AFTER current is a dot (for struct literal detection)
+    // This temporarily advances and restores scanner state
+    fn peekNextIsDot(self: *Parser) bool {
+        // Save scanner position and token fields individually (avoid struct copy issues)
+        let saved_pos: i64 = self.scanner.pos;
+        let saved_kind: TokenType = self.current.kind;
+        let saved_start: i64 = self.current.start;
+        let saved_end: i64 = self.current.end;
+
+        // Advance to next token
+        self.advance();
+        let is_dot: bool = self.current.kind == TokenType.Dot;
+
+        // Restore scanner position and token fields
+        self.scanner.pos = saved_pos;
+        self.current.kind = saved_kind;
+        self.current.start = saved_start;
+        self.current.end = saved_end;
+
+        return is_dot;
+    }
+
+    // ============================================================================
+    // Operator Helpers (using precedence from ast.cot)
+    // ============================================================================
+
+    // Get precedence of current token using ast.cot's Token_precedence
+    fn prec(self: *Parser) i64 {
+        return token_precedence(self.current.kind);
+    }
+
+    // Get BinaryOp as i64 from current token using ast.cot's Token_toBinaryOp
+    fn binopInt(self: *Parser) i64 {
+        return Token_toBinaryOp(self.current.kind);
+    }
+
+    // ============================================================================
+    // Type Parsing
+    // ============================================================================
+
+    // Resolve a type expression node to a TypeRegistry index
+    // This is a simplified version of resolve_type_expr from lower.cot,
+    // used during parsing to create function types.
+    fn resolveTypeNode(self: *Parser, type_node_idx: i64) i64 {
+        if type_node_idx < 0 { return TYPE_I64; }
+
+        let node: *Node = NodePool_get(self.pool, type_node_idx);
+
+        // TypeExprNamed: resolve by checking name in source
+        if node.kind == NodeKind.TypeExprNamed {
+            let name_start: i64 = node.field0;
+            let name_len: i64 = node.field1;
+
+            // Check built-in types by examining source characters
+            if name_len == 3 {
+                let c0: u8 = self.source[name_start];
+                let c1: u8 = self.source[name_start + 1];
+                let c2: u8 = self.source[name_start + 2];
+                // i64
+                if c0 == 105 and c1 == 54 and c2 == 52 { return TYPE_I64; }
+                // i32
+                if c0 == 105 and c1 == 51 and c2 == 50 { return TYPE_I32; }
+            }
+            if name_len == 2 {
+                let c0: u8 = self.source[name_start];
+                let c1: u8 = self.source[name_start + 1];
+                // u8
+                if c0 == 117 and c1 == 56 { return TYPE_U8; }
+            }
+            if name_len == 4 {
+                let c0: u8 = self.source[name_start];
+                // bool
+                if c0 == 98 { return TYPE_BOOL; }
+                // void
+                if c0 == 118 { return TYPE_VOID; }
+            }
+            // Default to i64 for unknown types
+            return TYPE_I64;
+        }
+
+        // TypeExprPointer: *T
+        if node.kind == NodeKind.TypeExprPointer {
+            let inner_type: i64 = self.resolveTypeNode(node.field0);
+            return TypeRegistry_makePointer(self.type_registry, inner_type);
+        }
+
+        // TypeExprFunc: already resolved
+        if node.kind == NodeKind.TypeExprFunc {
+            return node.field1;  // Pre-resolved type index
+        }
+
+        // Default to i64
         return TYPE_I64;
     }
 
-    // TypeExprPointer: *T
-    if node.kind == NodeKind.TypeExprPointer {
-        let inner_type: i64 = Parser_resolveTypeNode(p, node.field0);
-        return TypeRegistry_makePointer(p.type_registry, inner_type);
-    }
+    // Parse a type and return a TypeExpr AST node index
+    // Types: i64 | i32 | u8 | bool | void | string | *T | [N]T | []T | TypeName
+    // Reference: src/frontend/parser.zig parseType()
+    // Returns AST node index (TypeExpr node), NOT a TypeRegistry index
+    fn parseType(self: *Parser) i64 {
+        let kind: TokenType = self.current.kind;
+        let type_start: i64 = self.current.start;
 
-    // TypeExprFunc: already resolved
-    if node.kind == NodeKind.TypeExprFunc {
-        return node.field1;  // Pre-resolved type index
-    }
-
-    // Default to i64
-    return TYPE_I64;
-}
-
-// Parse a type and return a TypeExpr AST node index
-// Types: i64 | i32 | u8 | bool | void | string | *T | [N]T | []T | TypeName
-// Reference: src/frontend/parser.zig parseType()
-// Returns AST node index (TypeExpr node), NOT a TypeRegistry index
-fn Parser_parseType(p: *Parser) i64 {
-    let kind: TokenType = p.current.kind;
-    let type_start: i64 = p.current.start;
-
-    // cot1: Optional type: ?T
-    // Reference: Zig's Sema.zig zirOptionalType()
-    if kind == TokenType.Question {
-        Parser_advance(p);  // consume '?'
-        let inner: i64 = Parser_parseType(p);
-        return Node_typeExprOptional(p.pool, inner, type_start, p.current.start);
-    }
-
-    // cot1: Error union type: !T
-    // Reference: Zig's error_union_type in Type.zig
-    // Syntax: !T means "anyerror!T" (can return error or T)
-    if kind == TokenType.Bang {
-        Parser_advance(p);  // consume '!'
-        let payload: i64 = Parser_parseType(p);
-        return Node_typeExprErrorUnion(p.pool, payload, type_start, p.current.start);
-    }
-
-    // Built-in types - create TypeExprNamed node with type name
-    // The checker will resolve "i64" -> TYPE_I64, etc.
-    if kind == TokenType.I64 {
-        Parser_advance(p);
-        return Node_typeExprNamed(p.pool, type_start, 3, type_start, type_start + 3);  // "i64"
-    }
-    if kind == TokenType.I32 {
-        Parser_advance(p);
-        return Node_typeExprNamed(p.pool, type_start, 3, type_start, type_start + 3);  // "i32"
-    }
-    if kind == TokenType.U8 {
-        Parser_advance(p);
-        return Node_typeExprNamed(p.pool, type_start, 2, type_start, type_start + 2);  // "u8"
-    }
-    if kind == TokenType.Bool {
-        Parser_advance(p);
-        return Node_typeExprNamed(p.pool, type_start, 4, type_start, type_start + 4);  // "bool"
-    }
-    if kind == TokenType.Void {
-        Parser_advance(p);
-        return Node_typeExprNamed(p.pool, type_start, 4, type_start, type_start + 4);  // "void"
-    }
-    if kind == TokenType.String {
-        Parser_advance(p);
-        return Node_typeExprNamed(p.pool, type_start, 6, type_start, type_start + 6);  // "string"
-    }
-
-    // Pointer type: *T
-    // Reference: parser.zig line 554-560
-    if kind == TokenType.Star {
-        Parser_advance(p);
-        let inner: i64 = Parser_parseType(p);
-        return Node_typeExprPointer(p.pool, inner, type_start, p.current.start);
-    }
-
-    // Array type: [size]T or slice type: []T
-    // Reference: parser.zig line 563-580
-    if kind == TokenType.LBracket {
-        Parser_advance(p);  // consume '['
-
-        // Check for slice type []T (empty brackets)
-        if Parser_check(p, TokenType.RBracket) {
-            Parser_advance(p);  // consume ']'
-            let elem: i64 = Parser_parseType(p);
-            return Node_typeExprSlice(p.pool, elem, type_start, p.current.start);
+        // cot1: Optional type: ?T
+        // Reference: Zig's Sema.zig zirOptionalType()
+        if kind == TokenType.Question {
+            self.advance();  // consume '?'
+            let inner: i64 = self.parseType();
+            return Node_typeExprOptional(self.pool, inner, type_start, self.current.start);
         }
 
-        // Array type [size]T - parse size as integer literal node
-        var size_node: i64 = NULL_NODE;
-        if Parser_check(p, TokenType.Int) {
-            // Create IntLit node for the size
-            let size_start: i64 = p.current.start;
-            let size_end: i64 = p.current.end;
-            // Parse the integer value
-            var array_size: i64 = 0;
-            var arr_i: i64 = size_start;
-            while arr_i < size_start + size_end {
-                let arr_c: u8 = p.source[arr_i];
-                if arr_c >= 48 and arr_c <= 57 {
-                    array_size = array_size * 10 + (arr_c - 48);
+        // cot1: Error union type: !T
+        // Reference: Zig's error_union_type in Type.zig
+        // Syntax: !T means "anyerror!T" (can return error or T)
+        if kind == TokenType.Bang {
+            self.advance();  // consume '!'
+            let payload: i64 = self.parseType();
+            return Node_typeExprErrorUnion(self.pool, payload, type_start, self.current.start);
+        }
+
+        // Built-in types - create TypeExprNamed node with type name
+        // The checker will resolve "i64" -> TYPE_I64, etc.
+        if kind == TokenType.I64 {
+            self.advance();
+            return Node_typeExprNamed(self.pool, type_start, 3, type_start, type_start + 3);  // "i64"
+        }
+        if kind == TokenType.I32 {
+            self.advance();
+            return Node_typeExprNamed(self.pool, type_start, 3, type_start, type_start + 3);  // "i32"
+        }
+        if kind == TokenType.U8 {
+            self.advance();
+            return Node_typeExprNamed(self.pool, type_start, 2, type_start, type_start + 2);  // "u8"
+        }
+        if kind == TokenType.Bool {
+            self.advance();
+            return Node_typeExprNamed(self.pool, type_start, 4, type_start, type_start + 4);  // "bool"
+        }
+        if kind == TokenType.Void {
+            self.advance();
+            return Node_typeExprNamed(self.pool, type_start, 4, type_start, type_start + 4);  // "void"
+        }
+        if kind == TokenType.String {
+            self.advance();
+            return Node_typeExprNamed(self.pool, type_start, 6, type_start, type_start + 6);  // "string"
+        }
+
+        // Pointer type: *T
+        // Reference: parser.zig line 554-560
+        if kind == TokenType.Star {
+            self.advance();
+            let inner: i64 = self.parseType();
+            return Node_typeExprPointer(self.pool, inner, type_start, self.current.start);
+        }
+
+        // Array type: [size]T or slice type: []T
+        // Reference: parser.zig line 563-580
+        if kind == TokenType.LBracket {
+            self.advance();  // consume '['
+
+            // Check for slice type []T (empty brackets)
+            if self.check(TokenType.RBracket) {
+                self.advance();  // consume ']'
+                let elem: i64 = self.parseType();
+                return Node_typeExprSlice(self.pool, elem, type_start, self.current.start);
+            }
+
+            // Array type [size]T - parse size as integer literal node
+            var size_node: i64 = NULL_NODE;
+            if self.check(TokenType.Int) {
+                // Create IntLit node for the size
+                let size_start: i64 = self.current.start;
+                let size_end: i64 = self.current.end;
+                // Parse the integer value
+                var array_size: i64 = 0;
+                var arr_i: i64 = size_start;
+                while arr_i < size_start + size_end {
+                    let arr_c: u8 = self.source[arr_i];
+                    if arr_c >= 48 and arr_c <= 57 {
+                        array_size = array_size * 10 + (arr_c - 48);
+                    }
+                    arr_i = arr_i + 1;
                 }
-                arr_i = arr_i + 1;
-            }
-            size_node = Node_intLit(p.pool, array_size, size_start, size_end);
-            Parser_advance(p);
-        } else {
-            p.had_error = true;
-        }
-        Parser_want(p, TokenType.RBracket);  // consume ']'
-        let elem: i64 = Parser_parseType(p);
-        return Node_typeExprArray(p.pool, size_node, elem, type_start, p.current.start);
-    }
-
-    // User-defined type (struct/enum name) - create TypeExprNamed
-    // Reference: parser.zig line 583-616
-    if kind == TokenType.Ident {
-        let name_start: i64 = p.current.start;
-        // Calculate name length
-        var name_len: i64 = 0;
-        var pos: i64 = name_start;
-        while true {
-            let c: u8 = p.source[pos];
-            if (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or
-               (c >= 48 and c <= 57) or c == 95 {
-                name_len = name_len + 1;
-                pos = pos + 1;
+                size_node = Node_intLit(self.pool, array_size, size_start, size_end);
+                self.advance();
             } else {
-                break;
+                self.had_error = true;
             }
+            self.want(TokenType.RBracket);  // consume ']'
+            let elem: i64 = self.parseType();
+            return Node_typeExprArray(self.pool, size_node, elem, type_start, self.current.start);
         }
-        Parser_advance(p);
-        // Create TypeExprNamed - will be resolved by checker after all types are registered
-        return Node_typeExprNamed(p.pool, name_start, name_len, name_start, name_start + name_len);
+
+        // User-defined type (struct/enum name) - create TypeExprNamed
+        // Reference: parser.zig line 583-616
+        if kind == TokenType.Ident {
+            let name_start: i64 = self.current.start;
+            // Calculate name length
+            var name_len: i64 = 0;
+            var pos: i64 = name_start;
+            while true {
+                let c: u8 = self.source[pos];
+                if (c >= 97 and c <= 122) or (c >= 65 and c <= 90) or
+                   (c >= 48 and c <= 57) or c == 95 {
+                    name_len = name_len + 1;
+                    pos = pos + 1;
+                } else {
+                    break;
+                }
+            }
+            self.advance();
+            // Create TypeExprNamed - will be resolved by checker after all types are registered
+            return Node_typeExprNamed(self.pool, name_start, name_len, name_start, name_start + name_len);
+        }
+
+        // Function type: fn(params) -> ret
+        // Following Zig pattern: src/frontend/parser.zig parseType()
+        if kind == TokenType.Fn {
+            self.advance();  // consume 'fn'
+            self.want(TokenType.LParen);  // consume '('
+
+            // Parse parameter types and resolve them to TypeRegistry indices
+            var param_types: I64List = undefined;
+            i64list_init(&param_types);
+
+            while not self.check(TokenType.RParen) and not self.check(TokenType.Eof) {
+                let param_type_node: i64 = self.parseType();
+                // Resolve parameter type to TypeRegistry index
+                let param_type_idx: i64 = self.resolveTypeNode(param_type_node);
+                i64list_append(&param_types, param_type_idx);
+
+                if not self.check(TokenType.Comma) {
+                    break;
+                }
+                self.advance();  // consume ','
+            }
+
+            self.want(TokenType.RParen);  // consume ')'
+
+            // Parse return type
+            var ret_type_node: i64 = -1;
+            var ret_type_idx: i64 = TYPE_VOID;
+            if self.check(TokenType.Arrow) {
+                self.advance();  // consume '->'
+                ret_type_node = self.parseType();
+                ret_type_idx = self.resolveTypeNode(ret_type_node);
+            } else {
+                // No arrow - return type follows directly (like `fn(i64, i64) i64`)
+                ret_type_node = self.parseType();
+                ret_type_idx = self.resolveTypeNode(ret_type_node);
+            }
+
+            // Create function type in TypeRegistry
+            let func_type_idx: i64 = TypeRegistry_makeFunc(self.type_registry, 0, param_types.count, ret_type_idx);
+
+            // Return TypeExprFunc node with pre-resolved type index
+            let end_pos: i64 = self.current.start;
+            i64list_deinit(&param_types);
+            return Node_typeExprFunc(self.pool, ret_type_node, func_type_idx, type_start, end_pos);
+        }
+
+        // Error - unexpected token
+        self.had_error = true;
+        // Return a placeholder void type
+        return Node_typeExprNamed(self.pool, 0, 4, 0, 4);  // "void"
     }
 
-    // Function type: fn(params) -> ret
-    // Following Zig pattern: src/frontend/parser.zig parseType()
-    if kind == TokenType.Fn {
-        Parser_advance(p);  // consume 'fn'
-        Parser_want(p, TokenType.LParen);  // consume '('
-
-        // Parse parameter types and resolve them to TypeRegistry indices
-        var param_types: I64List = undefined;
-        i64list_init(&param_types);
-
-        while not Parser_check(p, TokenType.RParen) and not Parser_check(p, TokenType.Eof) {
-            let param_type_node: i64 = Parser_parseType(p);
-            // Resolve parameter type to TypeRegistry index
-            let param_type_idx: i64 = Parser_resolveTypeNode(p, param_type_node);
-            i64list_append(&param_types, param_type_idx);
-
-            if not Parser_check(p, TokenType.Comma) {
-                break;
-            }
-            Parser_advance(p);  // consume ','
-        }
-
-        Parser_want(p, TokenType.RParen);  // consume ')'
-
-        // Parse return type
-        var ret_type_node: i64 = -1;
-        var ret_type_idx: i64 = TYPE_VOID;
-        if Parser_check(p, TokenType.Arrow) {
-            Parser_advance(p);  // consume '->'
-            ret_type_node = Parser_parseType(p);
-            ret_type_idx = Parser_resolveTypeNode(p, ret_type_node);
-        } else {
-            // No arrow - return type follows directly (like `fn(i64, i64) i64`)
-            ret_type_node = Parser_parseType(p);
-            ret_type_idx = Parser_resolveTypeNode(p, ret_type_node);
-        }
-
-        // Create function type in TypeRegistry
-        let func_type_idx: i64 = TypeRegistry_makeFunc(p.type_registry, 0, param_types.count, ret_type_idx);
-
-        // Return TypeExprFunc node with pre-resolved type index
-        let end_pos: i64 = p.current.start;
-        i64list_deinit(&param_types);
-        return Node_typeExprFunc(p.pool, ret_type_node, func_type_idx, type_start, end_pos);
-    }
-
-    // Error - unexpected token
-    p.had_error = true;
-    // Return a placeholder void type
-    return Node_typeExprNamed(p.pool, 0, 4, 0, 4);  // "void"
-}
-
-// Helper to check if type is a pointer type
+    // Helper to check if type is a pointer type
 fn Type_isPointer(type_handle: i64) bool {
     return type_handle >= PTYPE_PTR_BASE and type_handle < PTYPE_USER_BASE;
 }
 
-// Helper to get pointee type from pointer type
+    // Helper to get pointee type from pointer type
 fn Type_pointee(type_handle: i64) i64 {
     return type_handle - PTYPE_PTR_BASE;
 }
 
-// ============================================================================
-// Primitive Expression Parsing
-// ============================================================================
+    // ============================================================================
+    // Primitive Expression Parsing
+    // ============================================================================
 
-// Parse integer literal: 42, 0xFF, 0b1010, 0o777
-// Following Zig: src/frontend/parser.zig number parsing
-fn Parser_parseIntLit(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    let len: i64 = p.current.end;
+    // Parse integer literal: 42, 0xFF, 0b1010, 0o777
+    // Following Zig: src/frontend/parser.zig number parsing
+    fn parseIntLit(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        let len: i64 = self.current.end;
 
-    // Parse the integer value from source
-    var value: i64 = 0;
-    var i: i64 = start;
+        // Parse the integer value from source
+        var value: i64 = 0;
+        var i: i64 = start;
 
-    // Check for 0x, 0b, 0o prefix
-    if len >= 2 and p.source[start] == 48 {  // starts with '0'
-        let prefix: u8 = p.source[start + 1];
-        if prefix == 120 or prefix == 88 {  // 'x' or 'X' - hex
-            i = start + 2;
-            while i < start + len {
-                let c: u8 = p.source[i];
-                if c >= 48 and c <= 57 {  // '0'-'9'
-                    value = value * 16 + (c - 48);
-                } else if c >= 65 and c <= 70 {  // 'A'-'F'
-                    value = value * 16 + (c - 55);
-                } else if c >= 97 and c <= 102 {  // 'a'-'f'
-                    value = value * 16 + (c - 87);
-                }
-                i = i + 1;
-            }
-            Parser_advance(p);
-            return Node_intLit(p.pool, value, start, start + len);
-        } else if prefix == 98 or prefix == 66 {  // 'b' or 'B' - binary
-            i = start + 2;
-            while i < start + len {
-                let c: u8 = p.source[i];
-                if c == 48 or c == 49 {  // '0' or '1'
-                    value = value * 2 + (c - 48);
-                }
-                i = i + 1;
-            }
-            Parser_advance(p);
-            return Node_intLit(p.pool, value, start, start + len);
-        } else if prefix == 111 or prefix == 79 {  // 'o' or 'O' - octal
-            i = start + 2;
-            while i < start + len {
-                let c: u8 = p.source[i];
-                if c >= 48 and c <= 55 {  // '0'-'7'
-                    value = value * 8 + (c - 48);
-                }
-                i = i + 1;
-            }
-            Parser_advance(p);
-            return Node_intLit(p.pool, value, start, start + len);
-        }
-    }
-
-    // Decimal number
-    while i < start + len {
-        let c: u8 = p.source[i];
-        if c >= 48 and c <= 57 {  // '0' - '9'
-            value = value * 10 + (c - 48);
-        }
-        i = i + 1;
-    }
-
-    Parser_advance(p);
-    return Node_intLit(p.pool, value, start, start + len);
-}
-
-// Parse identifier: foo (not including call - that's handled separately)
-fn Parser_parseIdentOnly(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    let length: i64 = p.current.end;
-    Parser_advance(p);
-    return Node_ident(p.pool, start, length, start, start + length);
-}
-
-// ============================================================================
-// Primary Expression Parsing (no recursion)
-// ============================================================================
-
-// Parse atom: int_lit | bool_lit | ident (without call or parens)
-fn Parser_parseAtom(p: *Parser) i64 {
-    let kind: TokenType = p.current.kind;
-
-    // Integer literal
-    if kind == TokenType.Int {
-        return Parser_parseIntLit(p);
-    }
-
-    // String literal: "hello"
-    if kind == TokenType.StringLit {
-        let start: i64 = p.current.start;
-        let length: i64 = p.current.end;
-        // String content starts after opening quote
-        let str_start: i64 = start + 1;
-        // String content length is length - 2 (for both quotes)
-        let str_len: i64 = length - 2;
-        Parser_advance(p);
-        return Node_stringLit(p.pool, str_start, str_len, start, start + length);
-    }
-
-    // Character literal: 'A' or '\n'
-    if kind == TokenType.CharLit {
-        let start: i64 = p.current.start;
-        let length: i64 = p.current.end;
-        // Get the character value (skip opening quote)
-        let char_offset: i64 = start + 1;
-        let first_char: u8 = p.source[char_offset];
-        var char_value: i64 = 0;
-        if first_char == 92 {  // backslash - escape sequence
-            let escaped: u8 = p.source[char_offset + 1];
-            if escaped == 110 { char_value = 10; }       // \n -> newline
-            else if escaped == 116 { char_value = 9; }   // \t -> tab
-            else if escaped == 114 { char_value = 13; }  // \r -> carriage return
-            else if escaped == 48 { char_value = 0; }    // \0 -> null
-            else if escaped == 92 { char_value = 92; }   // \\ -> backslash
-            else if escaped == 39 { char_value = 39; }   // \' -> single quote
-            else { char_value = @intCast(i64, escaped); }
-        } else {
-            char_value = @intCast(i64, first_char);
-        }
-        Parser_advance(p);
-        return Node_intLit(p.pool, char_value, start, start + length);
-    }
-
-    // Boolean literal: true
-    if kind == TokenType.True {
-        let start: i64 = p.current.start;
-        let end: i64 = p.current.start + p.current.end;
-        Parser_advance(p);
-        return Node_intLit(p.pool, 1, start, end);  // true = 1
-    }
-
-    // Boolean literal: false
-    if kind == TokenType.False {
-        let start: i64 = p.current.start;
-        let end: i64 = p.current.start + p.current.end;
-        Parser_advance(p);
-        return Node_intLit(p.pool, 0, start, end);  // false = 0
-    }
-
-    // Null literal: null
-    // Following Zig compiler pattern: null is a zero-valued pointer
-    if kind == TokenType.Null {
-        let start: i64 = p.current.start;
-        let end: i64 = p.current.start + p.current.end;
-        Parser_advance(p);
-        return Node_intLit(p.pool, 0, start, end);  // null = 0 (null pointer)
-    }
-
-    // Array literal: [elem1, elem2, ...]
-    if kind == TokenType.LBracket {
-        let start: i64 = p.current.start;
-        Parser_advance(p);  // consume '['
-
-        // Parse elements
-        let elements_start: i64 = NodePool_childrenCount(p.pool);
-        var elements_count: i64 = 0;
-
-        // Check for empty array []
-        if not Parser_check(p, TokenType.RBracket) {
-            // Parse first element
-            let first: i64 = Parser_parseExpr(p);
-            Node_addChild(p.pool, first);
-            elements_count = elements_count + 1;
-
-            // Parse remaining elements
-            while Parser_check(p, TokenType.Comma) {
-                Parser_advance(p);  // consume ','
-                if Parser_check(p, TokenType.RBracket) {
-                    break;  // Allow trailing comma
-                }
-                let elem: i64 = Parser_parseExpr(p);
-                Node_addChild(p.pool, elem);
-                elements_count = elements_count + 1;
-            }
-        }
-
-        let end_pos: i64 = p.current.start + p.current.end;
-        Parser_want(p, TokenType.RBracket);  // consume ']'
-
-        return Node_arrayLit(p.pool, elements_start, elements_count, start, end_pos);
-    }
-
-    // Identifier
-    if kind == TokenType.Ident {
-        return Parser_parseIdentOnly(p);
-    }
-
-    // Error - unexpected token - advance to prevent infinite loop
-    p.had_error = true;
-    Parser_advance(p);  // CRITICAL: advance past bad token for error recovery
-    return Node_intLit(p.pool, 0, 0, 0);  // Return dummy node
-}
-
-// ============================================================================
-// Helper to create binary node with int op
-// ============================================================================
-
-fn Parser_makeBinaryNode(p: *Parser, op_int: i64, left: i64, right: i64) i64 {
-    let left_node: *Node = Node_get(p.pool, left);
-    let right_node: *Node = Node_get(p.pool, right);
-    // Use direct enum values to avoid potential compiler issues with enum variables
-    // Arithmetic
-    if op_int == 0 { return Node_binary(p.pool, BinaryOp.Add, left, right, left_node.start, right_node.end); }
-    if op_int == 1 { return Node_binary(p.pool, BinaryOp.Sub, left, right, left_node.start, right_node.end); }
-    if op_int == 2 { return Node_binary(p.pool, BinaryOp.Mul, left, right, left_node.start, right_node.end); }
-    if op_int == 3 { return Node_binary(p.pool, BinaryOp.Div, left, right, left_node.start, right_node.end); }
-    if op_int == 4 { return Node_binary(p.pool, BinaryOp.Mod, left, right, left_node.start, right_node.end); }
-    // Comparison
-    if op_int == 5 { return Node_binary(p.pool, BinaryOp.Equal, left, right, left_node.start, right_node.end); }
-    if op_int == 6 { return Node_binary(p.pool, BinaryOp.NotEqual, left, right, left_node.start, right_node.end); }
-    if op_int == 7 { return Node_binary(p.pool, BinaryOp.Less, left, right, left_node.start, right_node.end); }
-    if op_int == 8 { return Node_binary(p.pool, BinaryOp.LessEq, left, right, left_node.start, right_node.end); }
-    if op_int == 9 { return Node_binary(p.pool, BinaryOp.Greater, left, right, left_node.start, right_node.end); }
-    if op_int == 10 { return Node_binary(p.pool, BinaryOp.GreaterEq, left, right, left_node.start, right_node.end); }
-    // Logical
-    if op_int == 11 { return Node_binary(p.pool, BinaryOp.And, left, right, left_node.start, right_node.end); }
-    if op_int == 12 { return Node_binary(p.pool, BinaryOp.Or, left, right, left_node.start, right_node.end); }
-    // Bitwise
-    if op_int == 13 { return Node_binary(p.pool, BinaryOp.BitAnd, left, right, left_node.start, right_node.end); }
-    if op_int == 14 { return Node_binary(p.pool, BinaryOp.BitOr, left, right, left_node.start, right_node.end); }
-    if op_int == 15 { return Node_binary(p.pool, BinaryOp.BitXor, left, right, left_node.start, right_node.end); }
-    if op_int == 16 { return Node_binary(p.pool, BinaryOp.Shl, left, right, left_node.start, right_node.end); }
-    if op_int == 17 { return Node_binary(p.pool, BinaryOp.Shr, left, right, left_node.start, right_node.end); }
-
-    return Node_binary(p.pool, BinaryOp.Add, left, right, left_node.start, right_node.end);
-}
-
-// ============================================================================
-// Expression Parsing (with precedence climbing)
-// ============================================================================
-
-// Parse expression inside parens (inline to avoid recursion issues)
-fn Parser_parseParenInner(p: *Parser) i64 {
-    var inner: i64 = Parser_parseUnary(p);  // Use Parser_parseUnary to handle nested parens, unary ops
-    var cur_prec: i64 = Parser_prec(p);
-
-    // Continue with binary operators inside parens
-    while cur_prec > 0 {
-        var op1_int: i64 = Parser_binopInt(p);
-        var op1_prec: i64 = cur_prec;
-        Parser_advance(p);
-        var right1: i64 = Parser_parseUnary(p);  // Also use Parser_parseUnary for right operands
-
-        // Handle higher precedence on right
-        var right_prec: i64 = Parser_prec(p);
-        while right_prec > op1_prec {
-            var op2_int: i64 = Parser_binopInt(p);
-            Parser_advance(p);
-            var right2: i64 = Parser_parseUnary(p);  // Use Parser_parseUnary for nested parens
-            right1 = Parser_makeBinaryNode(p, op2_int, right1, right2);
-            right_prec = Parser_prec(p);
-        }
-
-        inner = Parser_makeBinaryNode(p, op1_int, inner, right1);
-        cur_prec = Parser_prec(p);
-    }
-
-    return inner;
-}
-
-// Parse a single argument expression (inline)
-// NOTE: Uses Parser_parseUnary (not Parser_parseAtom) to handle field access, calls, etc.
-fn Parser_parseArgExpr(p: *Parser) i64 {
-    var arg: i64 = Parser_parseUnary(p);
-    var arg_cur_prec: i64 = Parser_prec(p);
-
-    while arg_cur_prec > 0 {
-        var arg_op_int: i64 = Parser_binopInt(p);
-        var arg_op_prec: i64 = arg_cur_prec;
-        Parser_advance(p);
-        var arg_right: i64 = Parser_parseUnary(p);
-
-        var arg_right_prec: i64 = Parser_prec(p);
-        while arg_right_prec > arg_op_prec {
-            var arg_op2_int: i64 = Parser_binopInt(p);
-            Parser_advance(p);
-            var arg_right2: i64 = Parser_parseUnary(p);
-            arg_right = Parser_makeBinaryNode(p, arg_op2_int, arg_right, arg_right2);
-            arg_right_prec = Parser_prec(p);
-        }
-
-        arg = Parser_makeBinaryNode(p, arg_op_int, arg, arg_right);
-        arg_cur_prec = Parser_prec(p);
-    }
-
-    return arg;
-}
-
-// Parse unary/primary expression including calls, parens, and unary ops
-fn Parser_parseUnary(p: *Parser) i64 {
-    let kind: TokenType = p.current.kind;
-
-    // Unary negation: -expr
-    if kind == TokenType.Minus {
-        let start: i64 = p.current.start;
-        Parser_advance(p);
-        let operand: i64 = Parser_parseUnary(p);  // Recursive for chained unary
-        return Node_unary(p.pool, UnaryOp.Neg, operand, start, p.current.start);
-    }
-
-    // Logical NOT: !expr or not expr
-    if kind == TokenType.Bang or kind == TokenType.Not {
-        let start: i64 = p.current.start;
-        Parser_advance(p);
-        let operand: i64 = Parser_parseUnary(p);
-        return Node_unary(p.pool, UnaryOp.Not, operand, start, p.current.start);
-    }
-
-    // Bitwise NOT: ~expr
-    if kind == TokenType.Tilde {
-        let start: i64 = p.current.start;
-        Parser_advance(p);
-        let operand: i64 = Parser_parseUnary(p);
-        return Node_unary(p.pool, UnaryOp.BitNot, operand, start, p.current.start);
-    }
-
-    // Address-of: &expr
-    if kind == TokenType.Amp {
-        let start: i64 = p.current.start;
-        Parser_advance(p);
-        let operand: i64 = Parser_parseUnary(p);
-        return Node_addressOf(p.pool, operand, start, p.current.start);
-    }
-
-    // Switch expression: switch x { 1 => a, else => b }
-    if kind == TokenType.Switch {
-        return Parser_parseSwitchExpr(p);
-    }
-
-    // Builtin call: @string(ptr, len), @intCast(type, val), @sizeOf(type)
-    if kind == TokenType.At {
-        let start: i64 = p.current.start;
-        Parser_advance(p);  // Consume '@'
-
-        // Parse builtin name (must be an identifier OR the keyword "string")
-        // Note: "string" is tokenized as TokenType.String, not Ident
-        let name_start: i64 = p.current.start;
-        let name_len: i64 = p.current.end;  // Token.end is the length
-        let TypeInfo_isString_keyword: bool = p.current.kind == TokenType.String;
-        if TypeInfo_isString_keyword {
-            Parser_advance(p);  // Consume "string" keyword
-        } else {
-            Parser_want(p, TokenType.Ident);
-        }
-
-        Parser_want(p, TokenType.LParen);
-
-        // Determine which builtin based on name length and characters
-        var type_arg: i64 = 0 - 1;
-        var arg1: i64 = 0 - 1;
-        var arg2: i64 = 0 - 1;
-
-        // @string(ptr, len) - two expression args
-        // Note: TypeInfo_isString_keyword is set above when we parsed the builtin name
-        if TypeInfo_isString_keyword {
-            // "string" - parse two expr args
-            arg1 = Parser_parseExpr(p);
-            Parser_want(p, TokenType.Comma);
-            arg2 = Parser_parseExpr(p);
-        }
-        // @intCast(type, val) - type arg + expr arg
-        else if name_len == 7 and p.source[name_start] == 105 and p.source[name_start + 1] == 110 and
-                p.source[name_start + 2] == 116 and p.source[name_start + 3] == 67 and
-                p.source[name_start + 4] == 97 and p.source[name_start + 5] == 115 and
-                p.source[name_start + 6] == 116 {
-            // "intCast" - parse type then expr
-            type_arg = Parser_parseType(p);
-            Parser_want(p, TokenType.Comma);
-            arg1 = Parser_parseExpr(p);
-        }
-        // @intToPtr(type, val) - type arg + expr arg (converts i64 to pointer)
-        else if name_len == 8 and p.source[name_start] == 105 and p.source[name_start + 1] == 110 and
-                p.source[name_start + 2] == 116 and p.source[name_start + 3] == 84 and
-                p.source[name_start + 4] == 111 and p.source[name_start + 5] == 80 and
-                p.source[name_start + 6] == 116 and p.source[name_start + 7] == 114 {
-            // "intToPtr" - parse type then expr
-            type_arg = Parser_parseType(p);
-            Parser_want(p, TokenType.Comma);
-            arg1 = Parser_parseExpr(p);
-        }
-        // @sizeOf(type) - just type arg
-        else if name_len == 6 and p.source[name_start] == 115 and p.source[name_start + 1] == 105 and
-                p.source[name_start + 2] == 122 and p.source[name_start + 3] == 101 and
-                p.source[name_start + 4] == 79 and p.source[name_start + 5] == 102 {
-            // "sizeOf" - parse just type
-            type_arg = Parser_parseType(p);
-        }
-        // @alignOf(type) - just type arg
-        else if name_len == 7 and p.source[name_start] == 97 and p.source[name_start + 1] == 108 and
-                p.source[name_start + 2] == 105 and p.source[name_start + 3] == 103 and
-                p.source[name_start + 4] == 110 and p.source[name_start + 5] == 79 and
-                p.source[name_start + 6] == 102 {
-            // "alignOf" - parse just type
-            type_arg = Parser_parseType(p);
-        }
-        // Unknown builtin - just parse args generically (2 expressions)
-        else {
-            arg1 = Parser_parseExpr(p);
-            if Parser_check(p, TokenType.Comma) {
-                Parser_advance(p);
-                arg2 = Parser_parseExpr(p);
-            }
-        }
-
-        Parser_want(p, TokenType.RParen);
-
-        return Node_builtinCall(p.pool, name_start, name_len, type_arg, arg1, arg2, start, p.current.start);
-    }
-
-    // Parenthesized expression
-    if kind == TokenType.LParen {
-        Parser_advance(p);
-        var result: i64 = Parser_parseParenInner(p);
-        Parser_want(p, TokenType.RParen);
-
-        // Handle postfix operations on parenthesized expression: (expr).*, (expr).field, (expr)[idx]
-        var paren_done: bool = false;
-        while not paren_done {
-            if Parser_check(p, TokenType.Dot) {
-                Parser_advance(p);  // Consume '.'
-
-                if Parser_check(p, TokenType.Star) {
-                    // Dereference: (expr).*
-                    let result_node: *Node = Node_get(p.pool, result);
-                    Parser_advance(p);  // Consume '*'
-                    result = Node_deref(p.pool, result, result_node.start, p.current.start);
-                } else {
-                    // Field access: (expr).field
-                    let field_start: i64 = p.current.start;
-                    let field_len: i64 = p.current.end;
-                    Parser_want(p, TokenType.Ident);
-
-                    let result_node: *Node = Node_get(p.pool, result);
-                    result = Node_fieldAccess(p.pool, result, field_start, field_len,
-                                              result_node.start, p.current.start);
-                }
-            }
-            else if Parser_check(p, TokenType.LBracket) {
-                // Index: (expr)[index]
-                let result_node: *Node = Node_get(p.pool, result);
-                let idx_start: i64 = result_node.start;
-                Parser_advance(p);  // Consume '['
-                let idx_expr: i64 = Parser_parseExpr(p);
-                let end: i64 = p.current.start + p.current.end;
-                Parser_want(p, TokenType.RBracket);
-                result = Node_index(p.pool, result, idx_expr, idx_start, end);
-            }
-            else {
-                paren_done = true;
-            }
-        }
-        return result;
-    }
-
-    // Identifier - check for call or field access
-    if kind == TokenType.Ident {
-        var result: i64 = Parser_parseIdentOnly(p);
-
-        // Loop to handle chained postfix operations: foo.bar.baz, Type.Variant, foo()
-        var done: bool = false;
-        while not done {
-            // Check for field access or dereference: expr.field or expr.*
-            if Parser_check(p, TokenType.Dot) {
-                Parser_advance(p);  // Consume '.'
-
-                // Check for dereference: expr.*
-                if Parser_check(p, TokenType.Star) {
-                    let result_node: *Node = Node_get(p.pool, result);
-                    Parser_advance(p);  // Consume '*'
-                    result = Node_deref(p.pool, result, result_node.start, p.current.start);
-                } else {
-                    // Field/variant name
-                    let field_start: i64 = p.current.start;
-                    let field_len: i64 = p.current.end;
-                    Parser_want(p, TokenType.Ident);
-
-                    let result_node: *Node = Node_get(p.pool, result);
-                    result = Node_fieldAccess(p.pool, result, field_start, field_len,
-                                              result_node.start, p.current.start);
-                }
-            }
-            // Check for function call
-            else if Parser_check(p, TokenType.LParen) {
-                let call_start: i64 = p.current.start;
-                Parser_advance(p);  // Consume '('
-
-                // NOTE: Do NOT capture args_start here! Inner calls add to children.
-                // We use temporary storage and add children AFTER parsing all args.
-                // BUG-062 FIX: Use dynamic list for unlimited arguments (was limited to 16)
-                var arg_indices: I64List = undefined;
-                i64list_init(&arg_indices);
-
-                // Parse argument list
-                if not Parser_check(p, TokenType.RParen) {
-                    // First argument
-                    let first_arg: i64 = Parser_parseArgExpr(p);
-                    i64list_append(&arg_indices, first_arg);
-
-                    // Additional arguments
-                    while Parser_got(p, TokenType.Comma) {
-                        let next_arg: i64 = Parser_parseArgExpr(p);
-                        i64list_append(&arg_indices, next_arg);
+        // Check for 0x, 0b, 0o prefix
+        if len >= 2 and self.source[start] == 48 {  // starts with '0'
+            let prefix: u8 = self.source[start + 1];
+            if prefix == 120 or prefix == 88 {  // 'x' or 'X' - hex
+                i = start + 2;
+                while i < start + len {
+                    let c: u8 = self.source[i];
+                    if c >= 48 and c <= 57 {  // '0'-'9'
+                        value = value * 16 + (c - 48);
+                    } else if c >= 65 and c <= 70 {  // 'A'-'F'
+                        value = value * 16 + (c - 55);
+                    } else if c >= 97 and c <= 102 {  // 'a'-'f'
+                        value = value * 16 + (c - 87);
                     }
-                }
-
-                // NOW capture args_start - after all inner calls have completed
-                let args_start: i64 = NodePool_childrenCount(p.pool);
-                let args_count: i64 = arg_indices.count;
-
-                // Add arguments to children array
-                var i: i64 = 0;
-                while i < args_count {
-                    Node_addChild(p.pool, i64list_get(&arg_indices, i));
                     i = i + 1;
                 }
-
-                i64list_deinit(&arg_indices);
-
-                let end: i64 = p.current.start + p.current.end;
-                Parser_want(p, TokenType.RParen);
-
-                result = Node_call(p.pool, result, args_start, args_count, call_start, end);
+                self.advance();
+                return Node_intLit(self.pool, value, start, start + len);
+            } else if prefix == 98 or prefix == 66 {  // 'b' or 'B' - binary
+                i = start + 2;
+                while i < start + len {
+                    let c: u8 = self.source[i];
+                    if c == 48 or c == 49 {  // '0' or '1'
+                        value = value * 2 + (c - 48);
+                    }
+                    i = i + 1;
+                }
+                self.advance();
+                return Node_intLit(self.pool, value, start, start + len);
+            } else if prefix == 111 or prefix == 79 {  // 'o' or 'O' - octal
+                i = start + 2;
+                while i < start + len {
+                    let c: u8 = self.source[i];
+                    if c >= 48 and c <= 55 {  // '0'-'7'
+                        value = value * 8 + (c - 48);
+                    }
+                    i = i + 1;
+                }
+                self.advance();
+                return Node_intLit(self.pool, value, start, start + len);
             }
-            // Check for array indexing or slicing: expr[index] or expr[start:end]
-            // Following Zig compiler pattern from src/frontend/parser.zig:760-802
-            else if Parser_check(p, TokenType.LBracket) {
-                let result_node: *Node = Node_get(p.pool, result);
-                let start: i64 = result_node.start;
-                Parser_advance(p);  // Consume '['
+        }
 
-                if Parser_check(p, TokenType.Colon) {
-                    // Slice from beginning: arr[:end]
-                    Parser_advance(p);  // Consume ':'
-                    var slice_end: i64 = -1;
-                    if not Parser_check(p, TokenType.RBracket) {
-                        slice_end = Parser_parseExpr(p);
-                    }
-                    let end: i64 = p.current.start + p.current.end;
-                    Parser_want(p, TokenType.RBracket);
-                    result = Node_slice(p.pool, result, -1, slice_end, start, end);
-                } else {
-                    // Parse start/index expression
-                    let start_or_idx: i64 = Parser_parseExpr(p);
+        // Decimal number
+        while i < start + len {
+            let c: u8 = self.source[i];
+            if c >= 48 and c <= 57 {  // '0' - '9'
+                value = value * 10 + (c - 48);
+            }
+            i = i + 1;
+        }
 
-                    if Parser_check(p, TokenType.Colon) {
-                        // Slice: arr[start:end] or arr[start:]
-                        Parser_advance(p);  // Consume ':'
-                        var slice_end: i64 = -1;
-                        if not Parser_check(p, TokenType.RBracket) {
-                            slice_end = Parser_parseExpr(p);
-                        }
-                        let end: i64 = p.current.start + p.current.end;
-                        Parser_want(p, TokenType.RBracket);
-                        result = Node_slice(p.pool, result, start_or_idx, slice_end, start, end);
-                    } else {
-                        // Simple index: arr[index]
-                        let end: i64 = p.current.start + p.current.end;
-                        Parser_want(p, TokenType.RBracket);
-                        result = Node_index(p.pool, result, start_or_idx, start, end);
+        self.advance();
+        return Node_intLit(self.pool, value, start, start + len);
+    }
+
+    // Parse identifier: foo (not including call - that's handled separately)
+    fn parseIdentOnly(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        let length: i64 = self.current.end;
+        self.advance();
+        return Node_ident(self.pool, start, length, start, start + length);
+    }
+
+    // ============================================================================
+    // Primary Expression Parsing (no recursion)
+    // ============================================================================
+
+    // Parse atom: int_lit | bool_lit | ident (without call or parens)
+    fn parseAtom(self: *Parser) i64 {
+        let kind: TokenType = self.current.kind;
+
+        // Integer literal
+        if kind == TokenType.Int {
+            return self.parseIntLit();
+        }
+
+        // String literal: "hello"
+        if kind == TokenType.StringLit {
+            let start: i64 = self.current.start;
+            let length: i64 = self.current.end;
+            // String content starts after opening quote
+            let str_start: i64 = start + 1;
+            // String content length is length - 2 (for both quotes)
+            let str_len: i64 = length - 2;
+            self.advance();
+            return Node_stringLit(self.pool, str_start, str_len, start, start + length);
+        }
+
+        // Character literal: 'A' or '\n'
+        if kind == TokenType.CharLit {
+            let start: i64 = self.current.start;
+            let length: i64 = self.current.end;
+            // Get the character value (skip opening quote)
+            let char_offset: i64 = start + 1;
+            let first_char: u8 = self.source[char_offset];
+            var char_value: i64 = 0;
+            if first_char == 92 {  // backslash - escape sequence
+                let escaped: u8 = self.source[char_offset + 1];
+                if escaped == 110 { char_value = 10; }       // \n -> newline
+                else if escaped == 116 { char_value = 9; }   // \t -> tab
+                else if escaped == 114 { char_value = 13; }  // \r -> carriage return
+                else if escaped == 48 { char_value = 0; }    // \0 -> null
+                else if escaped == 92 { char_value = 92; }   // \\ -> backslash
+                else if escaped == 39 { char_value = 39; }   // \' -> single quote
+                else { char_value = @intCast(i64, escaped); }
+            } else {
+                char_value = @intCast(i64, first_char);
+            }
+            self.advance();
+            return Node_intLit(self.pool, char_value, start, start + length);
+        }
+
+        // Boolean literal: true
+        if kind == TokenType.True {
+            let start: i64 = self.current.start;
+            let end: i64 = self.current.start + self.current.end;
+            self.advance();
+            return Node_intLit(self.pool, 1, start, end);  // true = 1
+        }
+
+        // Boolean literal: false
+        if kind == TokenType.False {
+            let start: i64 = self.current.start;
+            let end: i64 = self.current.start + self.current.end;
+            self.advance();
+            return Node_intLit(self.pool, 0, start, end);  // false = 0
+        }
+
+        // Null literal: null
+        // Following Zig compiler pattern: null is a zero-valued pointer
+        if kind == TokenType.Null {
+            let start: i64 = self.current.start;
+            let end: i64 = self.current.start + self.current.end;
+            self.advance();
+            return Node_intLit(self.pool, 0, start, end);  // null = 0 (null pointer)
+        }
+
+        // Array literal: [elem1, elem2, ...]
+        if kind == TokenType.LBracket {
+            let start: i64 = self.current.start;
+            self.advance();  // consume '['
+
+            // Parse elements
+            let elements_start: i64 = NodePool_childrenCount(self.pool);
+            var elements_count: i64 = 0;
+
+            // Check for empty array []
+            if not self.check(TokenType.RBracket) {
+                // Parse first element
+                let first: i64 = self.parseExpr();
+                Node_addChild(self.pool, first);
+                elements_count = elements_count + 1;
+
+                // Parse remaining elements
+                while self.check(TokenType.Comma) {
+                    self.advance();  // consume ','
+                    if self.check(TokenType.RBracket) {
+                        break;  // Allow trailing comma
                     }
+                    let elem: i64 = self.parseExpr();
+                    Node_addChild(self.pool, elem);
+                    elements_count = elements_count + 1;
                 }
             }
-            // Check for struct literal: TypeName{ .field = value, ... }
-            // IMPORTANT: Only if next token after '{' is '.' (to distinguish from blocks)
-            else if Parser_check(p, TokenType.LBrace) and Parser_peekNextIsDot(p) {
-                // result should be an Ident node (the type name)
-                let result_node: *Node = Node_get(p.pool, result);
-                if result_node.kind == NodeKind.Ident {
-                    let type_name_start: i64 = result_node.field0;
-                    let type_name_len: i64 = result_node.field1;
-                    let lit_start: i64 = result_node.start;
 
-                    Parser_advance(p);  // Consume '{'
+            let end_pos: i64 = self.current.start + self.current.end;
+            self.want(TokenType.RBracket);  // consume ']'
 
-                    // Record start of field initializers in children array
-                    let fields_start: i64 = NodePool_childrenCount(p.pool);
-                    var fields_count: i64 = 0;
+            return Node_arrayLit(self.pool, elements_start, elements_count, start, end_pos);
+        }
 
-                    // Parse field initializers: .field = value, ...
-                    while not Parser_check(p, TokenType.RBrace) {
-                        let field_start: i64 = p.current.start;
+        // Identifier
+        if kind == TokenType.Ident {
+            return self.parseIdentOnly();
+        }
 
-                        // Expect '.'
-                        Parser_want(p, TokenType.Dot);
+        // Error - unexpected token - advance to prevent infinite loop
+        self.had_error = true;
+        self.advance();  // CRITICAL: advance past bad token for error recovery
+        return Node_intLit(self.pool, 0, 0, 0);  // Return dummy node
+    }
 
-                        // Field name
-                        let fname_start: i64 = p.current.start;
-                        let fname_len: i64 = p.current.end;  // Token.end is the length
-                        Parser_want(p, TokenType.Ident);
+    // ============================================================================
+    // Helper to create binary node with int op
+    // ============================================================================
 
-                        // Expect '='
-                        Parser_want(p, TokenType.Eq);
+    fn makeBinaryNode(self: *Parser, op_int: i64, left: i64, right: i64) i64 {
+        let left_node: *Node = Node_get(self.pool, left);
+        let right_node: *Node = Node_get(self.pool, right);
+        // Use direct enum values to avoid potential compiler issues with enum variables
+        // Arithmetic
+        if op_int == 0 { return Node_binary(self.pool, BinaryOp.Add, left, right, left_node.start, right_node.end); }
+        if op_int == 1 { return Node_binary(self.pool, BinaryOp.Sub, left, right, left_node.start, right_node.end); }
+        if op_int == 2 { return Node_binary(self.pool, BinaryOp.Mul, left, right, left_node.start, right_node.end); }
+        if op_int == 3 { return Node_binary(self.pool, BinaryOp.Div, left, right, left_node.start, right_node.end); }
+        if op_int == 4 { return Node_binary(self.pool, BinaryOp.Mod, left, right, left_node.start, right_node.end); }
+        // Comparison
+        if op_int == 5 { return Node_binary(self.pool, BinaryOp.Equal, left, right, left_node.start, right_node.end); }
+        if op_int == 6 { return Node_binary(self.pool, BinaryOp.NotEqual, left, right, left_node.start, right_node.end); }
+        if op_int == 7 { return Node_binary(self.pool, BinaryOp.Less, left, right, left_node.start, right_node.end); }
+        if op_int == 8 { return Node_binary(self.pool, BinaryOp.LessEq, left, right, left_node.start, right_node.end); }
+        if op_int == 9 { return Node_binary(self.pool, BinaryOp.Greater, left, right, left_node.start, right_node.end); }
+        if op_int == 10 { return Node_binary(self.pool, BinaryOp.GreaterEq, left, right, left_node.start, right_node.end); }
+        // Logical
+        if op_int == 11 { return Node_binary(self.pool, BinaryOp.And, left, right, left_node.start, right_node.end); }
+        if op_int == 12 { return Node_binary(self.pool, BinaryOp.Or, left, right, left_node.start, right_node.end); }
+        // Bitwise
+        if op_int == 13 { return Node_binary(self.pool, BinaryOp.BitAnd, left, right, left_node.start, right_node.end); }
+        if op_int == 14 { return Node_binary(self.pool, BinaryOp.BitOr, left, right, left_node.start, right_node.end); }
+        if op_int == 15 { return Node_binary(self.pool, BinaryOp.BitXor, left, right, left_node.start, right_node.end); }
+        if op_int == 16 { return Node_binary(self.pool, BinaryOp.Shl, left, right, left_node.start, right_node.end); }
+        if op_int == 17 { return Node_binary(self.pool, BinaryOp.Shr, left, right, left_node.start, right_node.end); }
 
-                        // Field value expression
-                        let fvalue: i64 = Parser_parseExpr(p);
+        return Node_binary(self.pool, BinaryOp.Add, left, right, left_node.start, right_node.end);
+    }
 
-                        let field_end: i64 = p.current.start;
-                        let finit: i64 = Node_fieldInit(p.pool, fname_start, fname_len,
-                                                         fvalue, field_start, field_end);
-                        Node_addChild(p.pool, finit);
-                        fields_count = fields_count + 1;
+    // ============================================================================
+    // Expression Parsing (with precedence climbing)
+    // ============================================================================
 
-                        // Optional trailing comma
-                        if not Parser_check(p, TokenType.RBrace) {
-                            Parser_want(p, TokenType.Comma);
+    // Parse expression inside parens (inline to avoid recursion issues)
+    fn parseParenInner(self: *Parser) i64 {
+        var inner: i64 = self.parseUnary();  // Use Parser_parseUnary to handle nested parens, unary ops
+        var cur_prec: i64 = self.prec();
+
+        // Continue with binary operators inside parens
+        while cur_prec > 0 {
+            var op1_int: i64 = self.binopInt();
+            var op1_prec: i64 = cur_prec;
+            self.advance();
+            var right1: i64 = self.parseUnary();  // Also use Parser_parseUnary for right operands
+
+            // Handle higher precedence on right
+            var right_prec: i64 = self.prec();
+            while right_prec > op1_prec {
+                var op2_int: i64 = self.binopInt();
+                self.advance();
+                var right2: i64 = self.parseUnary();  // Use Parser_parseUnary for nested parens
+                right1 = self.makeBinaryNode(op2_int, right1, right2);
+                right_prec = self.prec();
+            }
+
+            inner = self.makeBinaryNode(op1_int, inner, right1);
+            cur_prec = self.prec();
+        }
+
+        return inner;
+    }
+
+    // Parse a single argument expression (inline)
+    // NOTE: Uses Parser_parseUnary (not Parser_parseAtom) to handle field access, calls, etc.
+    fn parseArgExpr(self: *Parser) i64 {
+        var arg: i64 = self.parseUnary();
+        var arg_cur_prec: i64 = self.prec();
+
+        while arg_cur_prec > 0 {
+            var arg_op_int: i64 = self.binopInt();
+            var arg_op_prec: i64 = arg_cur_prec;
+            self.advance();
+            var arg_right: i64 = self.parseUnary();
+
+            var arg_right_prec: i64 = self.prec();
+            while arg_right_prec > arg_op_prec {
+                var arg_op2_int: i64 = self.binopInt();
+                self.advance();
+                var arg_right2: i64 = self.parseUnary();
+                arg_right = self.makeBinaryNode(arg_op2_int, arg_right, arg_right2);
+                arg_right_prec = self.prec();
+            }
+
+            arg = self.makeBinaryNode(arg_op_int, arg, arg_right);
+            arg_cur_prec = self.prec();
+        }
+
+        return arg;
+    }
+
+    // Parse unary/primary expression including calls, parens, and unary ops
+    fn parseUnary(self: *Parser) i64 {
+        let kind: TokenType = self.current.kind;
+
+        // Unary negation: -expr
+        if kind == TokenType.Minus {
+            let start: i64 = self.current.start;
+            self.advance();
+            let operand: i64 = self.parseUnary();  // Recursive for chained unary
+            return Node_unary(self.pool, UnaryOp.Neg, operand, start, self.current.start);
+        }
+
+        // Logical NOT: !expr or not expr
+        if kind == TokenType.Bang or kind == TokenType.Not {
+            let start: i64 = self.current.start;
+            self.advance();
+            let operand: i64 = self.parseUnary();
+            return Node_unary(self.pool, UnaryOp.Not, operand, start, self.current.start);
+        }
+
+        // Bitwise NOT: ~expr
+        if kind == TokenType.Tilde {
+            let start: i64 = self.current.start;
+            self.advance();
+            let operand: i64 = self.parseUnary();
+            return Node_unary(self.pool, UnaryOp.BitNot, operand, start, self.current.start);
+        }
+
+        // Address-of: &expr
+        if kind == TokenType.Amp {
+            let start: i64 = self.current.start;
+            self.advance();
+            let operand: i64 = self.parseUnary();
+            return Node_addressOf(self.pool, operand, start, self.current.start);
+        }
+
+        // Switch expression: switch x { 1 => a, else => b }
+        if kind == TokenType.Switch {
+            return self.parseSwitchExpr();
+        }
+
+        // Builtin call: @string(ptr, len), @intCast(type, val), @sizeOf(type)
+        if kind == TokenType.At {
+            let start: i64 = self.current.start;
+            self.advance();  // Consume '@'
+
+            // Parse builtin name (must be an identifier OR the keyword "string")
+            // Note: "string" is tokenized as TokenType.String, not Ident
+            let name_start: i64 = self.current.start;
+            let name_len: i64 = self.current.end;  // Token.end is the length
+            let TypeInfo_isString_keyword: bool = self.current.kind == TokenType.String;
+            if TypeInfo_isString_keyword {
+                self.advance();  // Consume "string" keyword
+            } else {
+                self.want(TokenType.Ident);
+            }
+
+            self.want(TokenType.LParen);
+
+            // Determine which builtin based on name length and characters
+            var type_arg: i64 = 0 - 1;
+            var arg1: i64 = 0 - 1;
+            var arg2: i64 = 0 - 1;
+
+            // @string(ptr, len) - two expression args
+            // Note: TypeInfo_isString_keyword is set above when we parsed the builtin name
+            if TypeInfo_isString_keyword {
+                // "string" - parse two expr args
+                arg1 = self.parseExpr();
+                self.want(TokenType.Comma);
+                arg2 = self.parseExpr();
+            }
+            // @intCast(type, val) - type arg + expr arg
+            else if name_len == 7 and self.source[name_start] == 105 and self.source[name_start + 1] == 110 and
+                    self.source[name_start + 2] == 116 and self.source[name_start + 3] == 67 and
+                    self.source[name_start + 4] == 97 and self.source[name_start + 5] == 115 and
+                    self.source[name_start + 6] == 116 {
+                // "intCast" - parse type then expr
+                type_arg = self.parseType();
+                self.want(TokenType.Comma);
+                arg1 = self.parseExpr();
+            }
+            // @intToPtr(type, val) - type arg + expr arg (converts i64 to pointer)
+            else if name_len == 8 and self.source[name_start] == 105 and self.source[name_start + 1] == 110 and
+                    self.source[name_start + 2] == 116 and self.source[name_start + 3] == 84 and
+                    self.source[name_start + 4] == 111 and self.source[name_start + 5] == 80 and
+                    self.source[name_start + 6] == 116 and self.source[name_start + 7] == 114 {
+                // "intToPtr" - parse type then expr
+                type_arg = self.parseType();
+                self.want(TokenType.Comma);
+                arg1 = self.parseExpr();
+            }
+            // @sizeOf(type) - just type arg
+            else if name_len == 6 and self.source[name_start] == 115 and self.source[name_start + 1] == 105 and
+                    self.source[name_start + 2] == 122 and self.source[name_start + 3] == 101 and
+                    self.source[name_start + 4] == 79 and self.source[name_start + 5] == 102 {
+                // "sizeOf" - parse just type
+                type_arg = self.parseType();
+            }
+            // @alignOf(type) - just type arg
+            else if name_len == 7 and self.source[name_start] == 97 and self.source[name_start + 1] == 108 and
+                    self.source[name_start + 2] == 105 and self.source[name_start + 3] == 103 and
+                    self.source[name_start + 4] == 110 and self.source[name_start + 5] == 79 and
+                    self.source[name_start + 6] == 102 {
+                // "alignOf" - parse just type
+                type_arg = self.parseType();
+            }
+            // Unknown builtin - just parse args generically (2 expressions)
+            else {
+                arg1 = self.parseExpr();
+                if self.check(TokenType.Comma) {
+                    self.advance();
+                    arg2 = self.parseExpr();
+                }
+            }
+
+            self.want(TokenType.RParen);
+
+            return Node_builtinCall(self.pool, name_start, name_len, type_arg, arg1, arg2, start, self.current.start);
+        }
+
+        // Parenthesized expression
+        if kind == TokenType.LParen {
+            self.advance();
+            var result: i64 = self.parseParenInner();
+            self.want(TokenType.RParen);
+
+            // Handle postfix operations on parenthesized expression: (expr).*, (expr).field, (expr)[idx]
+            var paren_done: bool = false;
+            while not paren_done {
+                if self.check(TokenType.Dot) {
+                    self.advance();  // Consume '.'
+
+                    if self.check(TokenType.Star) {
+                        // Dereference: (expr).*
+                        let result_node: *Node = Node_get(self.pool, result);
+                        self.advance();  // Consume '*'
+                        result = Node_deref(self.pool, result, result_node.start, self.current.start);
+                    } else {
+                        // Field access: (expr).field
+                        let field_start: i64 = self.current.start;
+                        let field_len: i64 = self.current.end;
+                        self.want(TokenType.Ident);
+
+                        let result_node: *Node = Node_get(self.pool, result);
+                        result = Node_fieldAccess(self.pool, result, field_start, field_len,
+                                                  result_node.start, self.current.start);
+                    }
+                }
+                else if self.check(TokenType.LBracket) {
+                    // Index: (expr)[index]
+                    let result_node: *Node = Node_get(self.pool, result);
+                    let idx_start: i64 = result_node.start;
+                    self.advance();  // Consume '['
+                    let idx_expr: i64 = self.parseExpr();
+                    let end: i64 = self.current.start + self.current.end;
+                    self.want(TokenType.RBracket);
+                    result = Node_index(self.pool, result, idx_expr, idx_start, end);
+                }
+                else {
+                    paren_done = true;
+                }
+            }
+            return result;
+        }
+
+        // Identifier - check for call or field access
+        if kind == TokenType.Ident {
+            var result: i64 = self.parseIdentOnly();
+
+            // Loop to handle chained postfix operations: foo.bar.baz, Type.Variant, foo()
+            var done: bool = false;
+            while not done {
+                // Check for field access or dereference: expr.field or expr.*
+                if self.check(TokenType.Dot) {
+                    self.advance();  // Consume '.'
+
+                    // Check for dereference: expr.*
+                    if self.check(TokenType.Star) {
+                        let result_node: *Node = Node_get(self.pool, result);
+                        self.advance();  // Consume '*'
+                        result = Node_deref(self.pool, result, result_node.start, self.current.start);
+                    } else {
+                        // Field/variant name
+                        let field_start: i64 = self.current.start;
+                        let field_len: i64 = self.current.end;
+                        self.want(TokenType.Ident);
+
+                        let result_node: *Node = Node_get(self.pool, result);
+                        result = Node_fieldAccess(self.pool, result, field_start, field_len,
+                                                  result_node.start, self.current.start);
+                    }
+                }
+                // Check for function call
+                else if self.check(TokenType.LParen) {
+                    let call_start: i64 = self.current.start;
+                    self.advance();  // Consume '('
+
+                    // NOTE: Do NOT capture args_start here! Inner calls add to children.
+                    // We use temporary storage and add children AFTER parsing all args.
+                    // BUG-062 FIX: Use dynamic list for unlimited arguments (was limited to 16)
+                    var arg_indices: I64List = undefined;
+                    i64list_init(&arg_indices);
+
+                    // Parse argument list
+                    if not self.check(TokenType.RParen) {
+                        // First argument
+                        let first_arg: i64 = self.parseArgExpr();
+                        i64list_append(&arg_indices, first_arg);
+
+                        // Additional arguments
+                        while self.got(TokenType.Comma) {
+                            let next_arg: i64 = self.parseArgExpr();
+                            i64list_append(&arg_indices, next_arg);
                         }
                     }
 
-                    let lit_end: i64 = p.current.start + p.current.end;
-                    Parser_want(p, TokenType.RBrace);
+                    // NOW capture args_start - after all inner calls have completed
+                    let args_start: i64 = NodePool_childrenCount(self.pool);
+                    let args_count: i64 = arg_indices.count;
 
-                    result = Node_structLit(p.pool, type_name_start, type_name_len,
-                                            fields_start, fields_count, lit_start, lit_end);
-                } else {
-                    // Not an identifier, can't be struct literal
+                    // Add arguments to children array
+                    var i: i64 = 0;
+                    while i < args_count {
+                        Node_addChild(self.pool, i64list_get(&arg_indices, i));
+                        i = i + 1;
+                    }
+
+                    i64list_deinit(&arg_indices);
+
+                    let end: i64 = self.current.start + self.current.end;
+                    self.want(TokenType.RParen);
+
+                    result = Node_call(self.pool, result, args_start, args_count, call_start, end);
+                }
+                // Check for array indexing or slicing: expr[index] or expr[start:end]
+                // Following Zig compiler pattern from src/frontend/parser.zig:760-802
+                else if self.check(TokenType.LBracket) {
+                    let result_node: *Node = Node_get(self.pool, result);
+                    let start: i64 = result_node.start;
+                    self.advance();  // Consume '['
+
+                    if self.check(TokenType.Colon) {
+                        // Slice from beginning: arr[:end]
+                        self.advance();  // Consume ':'
+                        var slice_end: i64 = -1;
+                        if not self.check(TokenType.RBracket) {
+                            slice_end = self.parseExpr();
+                        }
+                        let end: i64 = self.current.start + self.current.end;
+                        self.want(TokenType.RBracket);
+                        result = Node_slice(self.pool, result, -1, slice_end, start, end);
+                    } else {
+                        // Parse start/index expression
+                        let start_or_idx: i64 = self.parseExpr();
+
+                        if self.check(TokenType.Colon) {
+                            // Slice: arr[start:end] or arr[start:]
+                            self.advance();  // Consume ':'
+                            var slice_end: i64 = -1;
+                            if not self.check(TokenType.RBracket) {
+                                slice_end = self.parseExpr();
+                            }
+                            let end: i64 = self.current.start + self.current.end;
+                            self.want(TokenType.RBracket);
+                            result = Node_slice(self.pool, result, start_or_idx, slice_end, start, end);
+                        } else {
+                            // Simple index: arr[index]
+                            let end: i64 = self.current.start + self.current.end;
+                            self.want(TokenType.RBracket);
+                            result = Node_index(self.pool, result, start_or_idx, start, end);
+                        }
+                    }
+                }
+                // Check for struct literal: TypeName{ .field = value, ... }
+                // IMPORTANT: Only if next token after '{' is '.' (to distinguish from blocks)
+                else if self.check(TokenType.LBrace) and self.peekNextIsDot() {
+                    // result should be an Ident node (the type name)
+                    let result_node: *Node = Node_get(self.pool, result);
+                    if result_node.kind == NodeKind.Ident {
+                        let type_name_start: i64 = result_node.field0;
+                        let type_name_len: i64 = result_node.field1;
+                        let lit_start: i64 = result_node.start;
+
+                        self.advance();  // Consume '{'
+
+                        // Record start of field initializers in children array
+                        let fields_start: i64 = NodePool_childrenCount(self.pool);
+                        var fields_count: i64 = 0;
+
+                        // Parse field initializers: .field = value, ...
+                        while not self.check(TokenType.RBrace) {
+                            let field_start: i64 = self.current.start;
+
+                            // Expect '.'
+                            self.want(TokenType.Dot);
+
+                            // Field name
+                            let fname_start: i64 = self.current.start;
+                            let fname_len: i64 = self.current.end;  // Token.end is the length
+                            self.want(TokenType.Ident);
+
+                            // Expect '='
+                            self.want(TokenType.Eq);
+
+                            // Field value expression
+                            let fvalue: i64 = self.parseExpr();
+
+                            let field_end: i64 = self.current.start;
+                            let finit: i64 = Node_fieldInit(self.pool, fname_start, fname_len,
+                                                             fvalue, field_start, field_end);
+                            Node_addChild(self.pool, finit);
+                            fields_count = fields_count + 1;
+
+                            // Optional trailing comma
+                            if not self.check(TokenType.RBrace) {
+                                self.want(TokenType.Comma);
+                            }
+                        }
+
+                        let lit_end: i64 = self.current.start + self.current.end;
+                        self.want(TokenType.RBrace);
+
+                        result = Node_structLit(self.pool, type_name_start, type_name_len,
+                                                fields_start, fields_count, lit_start, lit_end);
+                    } else {
+                        // Not an identifier, can't be struct literal
+                        done = true;
+                    }
+                }
+                else {
                     done = true;
                 }
             }
+            return result;
+        }
+
+        // Other atoms - with postfix handling for string literals, etc.
+        var result: i64 = self.parseAtom();
+
+        // Handle postfix operations on atoms: "string".ptr, "string".len, etc.
+        var atom_done: bool = false;
+        while not atom_done {
+            if self.check(TokenType.Dot) {
+                self.advance();  // Consume '.'
+
+                if self.check(TokenType.Star) {
+                    // Dereference: expr.*
+                    let result_node: *Node = Node_get(self.pool, result);
+                    self.advance();  // Consume '*'
+                    result = Node_deref(self.pool, result, result_node.start, self.current.start);
+                } else {
+                    // Field access: "string".ptr or "string".len
+                    let field_start: i64 = self.current.start;
+                    let field_len: i64 = self.current.end;
+                    self.want(TokenType.Ident);
+
+                    let result_node: *Node = Node_get(self.pool, result);
+                    result = Node_fieldAccess(self.pool, result, field_start, field_len,
+                                              result_node.start, self.current.start);
+                }
+            }
+            else if self.check(TokenType.LBracket) {
+                // Index: expr[index]
+                let result_node: *Node = Node_get(self.pool, result);
+                let idx_start: i64 = result_node.start;
+                self.advance();  // Consume '['
+                let idx_expr: i64 = self.parseExpr();
+                let end: i64 = self.current.start + self.current.end;
+                self.want(TokenType.RBracket);
+                result = Node_index(self.pool, result, idx_expr, idx_start, end);
+            }
             else {
-                done = true;
+                atom_done = true;
             }
         }
         return result;
     }
 
-    // Other atoms - with postfix handling for string literals, etc.
-    var result: i64 = Parser_parseAtom(p);
+    // Parse binary expression with precedence climbing
+    // Following Go's binaryExpr pattern from parser.go:865-882
+    // Nesting check follows Zig parser.zig:661-663
+    fn parseBinaryExpr(self: *Parser, left: i64, min_prec: i64) i64 {
+        // Nesting depth protection (follows Zig parser.zig:662-663)
+        if not self.incNest() {
+            return left;  // Exceeded max depth, return what we have
+        }
+        defer self.decNest();
 
-    // Handle postfix operations on atoms: "string".ptr, "string".len, etc.
-    var atom_done: bool = false;
-    while not atom_done {
-        if Parser_check(p, TokenType.Dot) {
-            Parser_advance(p);  // Consume '.'
+        var x: i64 = left;
+        var bin_cur_prec: i64 = self.prec();
 
-            if Parser_check(p, TokenType.Star) {
-                // Dereference: expr.*
-                let result_node: *Node = Node_get(p.pool, result);
-                Parser_advance(p);  // Consume '*'
-                result = Node_deref(p.pool, result, result_node.start, p.current.start);
+        // While current operator has higher precedence than minimum
+        while bin_cur_prec > min_prec {
+            var bin_op_int: i64 = self.binopInt();
+            var bin_op_prec: i64 = bin_cur_prec;
+
+            self.advance();  // Consume operator
+
+            // Parse right operand
+            var right: i64 = self.parseUnary();
+
+            // Handle higher-precedence operators on the right
+            right = self.parseBinaryExpr(right, bin_op_prec);
+
+            // Create binary node
+            x = self.makeBinaryNode(bin_op_int, x, right);
+            bin_cur_prec = self.prec();
+        }
+
+        return x;
+    }
+
+    // Parse any expression
+    fn parseExpr(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        let left: i64 = self.parseUnary();
+        let expr: i64 = self.parseBinaryExpr(left, 0);
+
+        // Check for assignment: expr = value
+        if self.got(TokenType.Eq) {
+            let value: i64 = self.parseExpr();  // Right-associative
+            let end: i64 = self.current.start;
+            return Node_assign(self.pool, expr, value, start, end);
+        }
+
+        // Check for compound assignments: +=, -=, *=, /=, &=, |=
+        // Desugar: x op= y => x = x op y
+        var op: BinaryOp = BinaryOp.Add;  // Default, will be set below
+        var is_compound: bool = false;
+
+        if self.got(TokenType.PlusEq) {
+            op = BinaryOp.Add;
+            is_compound = true;
+        } else if self.got(TokenType.MinusEq) {
+            op = BinaryOp.Sub;
+            is_compound = true;
+        } else if self.got(TokenType.StarEq) {
+            op = BinaryOp.Mul;
+            is_compound = true;
+        } else if self.got(TokenType.SlashEq) {
+            op = BinaryOp.Div;
+            is_compound = true;
+        } else if self.got(TokenType.AmpEq) {
+            op = BinaryOp.BitAnd;
+            is_compound = true;
+        } else if self.got(TokenType.PipeEq) {
+            op = BinaryOp.BitOr;
+            is_compound = true;
+        }
+
+        if is_compound {
+            let rhs: i64 = self.parseExpr();
+            let end: i64 = self.current.start;
+            // Create binary expression: expr op rhs
+            let binary: i64 = Node_binary(self.pool, op, expr, rhs, start, end);
+            // Create assignment: expr = binary
+            return Node_assign(self.pool, expr, binary, start, end);
+        }
+
+        return expr;
+    }
+
+    // ============================================================================
+    // Statement Parsing
+    // ============================================================================
+
+    // Parse return statement: return expr;
+    fn parseReturnStmt(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        self.want(TokenType.Return);
+
+        // Optional return value - check if next token looks like no value
+        // (semicolon, closing brace, or statement-starting keywords)
+        var value: i64 = -1;
+        let k: TokenType = self.current.kind;
+        let no_value: bool = k == TokenType.Semi or k == TokenType.RBrace or
+                             k == TokenType.Return or k == TokenType.Let or
+                             k == TokenType.Var or k == TokenType.If or
+                             k == TokenType.While or k == TokenType.For or
+                             k == TokenType.Break or k == TokenType.Continue;
+        if not no_value {
+            value = self.parseExpr();
+        }
+
+        let end: i64 = self.current.start + self.current.end;
+        self.got(TokenType.Semi);  // Optional semicolon
+
+        return Node_return(self.pool, value, start, end);
+    }
+
+    // Parse variable declaration: let name: type = expr; OR var name: type = expr;
+    fn parseVarDecl(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+
+        // Check if 'let', 'const', or 'var'
+        // is_let: 0 = var (mutable), 1 = let (immutable), 2 = const (compile-time const)
+        var is_let: i64 = 0;
+        if self.check(TokenType.Let) {
+            is_let = 1;
+            self.advance();
+        } else if self.check(TokenType.Const) {
+            is_let = 2;  // const treated as immutable like let
+            self.advance();
+        } else {
+            self.want(TokenType.Var);
+        }
+
+        // Variable name
+        let name_start: i64 = self.current.start;
+        let name_len: i64 = self.current.end;
+        self.want(TokenType.Ident);
+
+        // Type annotation (required for now)
+        var type_start: i64 = 0;
+        var type_handle: i64 = PTYPE_I64;  // Default to i64
+        if self.got(TokenType.Colon) {
+            type_start = self.current.start;
+            type_handle = self.parseType();
+        }
+
+        // Optional initializer
+        var init_expr: i64 = -1;
+        if self.got(TokenType.Eq) {
+            init_expr = self.parseExpr();
+        }
+
+        let end: i64 = self.current.start + self.current.end;
+        self.got(TokenType.Semi);  // Optional semicolon
+
+        return Node_varDecl(self.pool, is_let, name_start, name_len, type_start, type_handle, init_expr, start, end);
+    }
+
+    // Parse switch expression: switch x { 1 => a, 2 => b, else => c }
+    // Following Zig compiler pattern from src/frontend/parser.zig:parseSwitchExpr
+    fn parseSwitchExpr(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        self.want(TokenType.Switch);
+
+        // Parse subject expression
+        let subject: i64 = self.parseUnary();
+
+        self.want(TokenType.LBrace);
+
+        // Track cases - store case nodes temporarily (max 16 cases)
+        var case0: i64 = -1;
+        var case1: i64 = -1;
+        var case2: i64 = -1;
+        var case3: i64 = -1;
+        var case4: i64 = -1;
+        var case5: i64 = -1;
+        var case6: i64 = -1;
+        var case7: i64 = -1;
+        var case8: i64 = -1;
+        var case9: i64 = -1;
+        var case10: i64 = -1;
+        var case11: i64 = -1;
+        var case12: i64 = -1;
+        var case13: i64 = -1;
+        var case14: i64 = -1;
+        var case15: i64 = -1;
+        var case_count: i64 = 0;
+        var else_body: i64 = -1;
+
+        while not self.check(TokenType.RBrace) and not self.atEnd() {
+            let case_start: i64 = self.current.start;
+
+            // Check for else case
+            if self.got(TokenType.Else) {
+                self.want(TokenType.FatArrow);
+                else_body = self.parseExpr();
+                self.got(TokenType.Comma);  // Optional trailing comma
             } else {
-                // Field access: "string".ptr or "string".len
-                let field_start: i64 = p.current.start;
-                let field_len: i64 = p.current.end;
-                Parser_want(p, TokenType.Ident);
+                // Parse case patterns (comma-separated until =>)
+                var pat0: i64 = -1;
+                var pat1: i64 = -1;
+                var pat2: i64 = -1;
+                var pat3: i64 = -1;
+                var pat_count: i64 = 0;
 
-                let result_node: *Node = Node_get(p.pool, result);
-                result = Node_fieldAccess(p.pool, result, field_start, field_len,
-                                          result_node.start, p.current.start);
-            }
-        }
-        else if Parser_check(p, TokenType.LBracket) {
-            // Index: expr[index]
-            let result_node: *Node = Node_get(p.pool, result);
-            let idx_start: i64 = result_node.start;
-            Parser_advance(p);  // Consume '['
-            let idx_expr: i64 = Parser_parseExpr(p);
-            let end: i64 = p.current.start + p.current.end;
-            Parser_want(p, TokenType.RBracket);
-            result = Node_index(p.pool, result, idx_expr, idx_start, end);
-        }
-        else {
-            atom_done = true;
-        }
-    }
-    return result;
-}
+                // First pattern
+                pat0 = self.parseUnary();
+                pat_count = 1;
 
-// Parse binary expression with precedence climbing
-// Following Go's binaryExpr pattern from parser.go:865-882
-// Nesting check follows Zig parser.zig:661-663
-fn Parser_parseBinaryExpr(p: *Parser, left: i64, min_prec: i64) i64 {
-    // Nesting depth protection (follows Zig parser.zig:662-663)
-    if not Parser_incNest(p) {
-        return left;  // Exceeded max depth, return what we have
-    }
-    defer Parser_decNest(p);
-
-    var x: i64 = left;
-    var bin_cur_prec: i64 = Parser_prec(p);
-
-    // While current operator has higher precedence than minimum
-    while bin_cur_prec > min_prec {
-        var bin_op_int: i64 = Parser_binopInt(p);
-        var bin_op_prec: i64 = bin_cur_prec;
-
-        Parser_advance(p);  // Consume operator
-
-        // Parse right operand
-        var right: i64 = Parser_parseUnary(p);
-
-        // Handle higher-precedence operators on the right
-        right = Parser_parseBinaryExpr(p, right, bin_op_prec);
-
-        // Create binary node
-        x = Parser_makeBinaryNode(p, bin_op_int, x, right);
-        bin_cur_prec = Parser_prec(p);
-    }
-
-    return x;
-}
-
-// Parse any expression
-fn Parser_parseExpr(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    let left: i64 = Parser_parseUnary(p);
-    let expr: i64 = Parser_parseBinaryExpr(p, left, 0);
-
-    // Check for assignment: expr = value
-    if Parser_got(p, TokenType.Eq) {
-        let value: i64 = Parser_parseExpr(p);  // Right-associative
-        let end: i64 = p.current.start;
-        return Node_assign(p.pool, expr, value, start, end);
-    }
-
-    // Check for compound assignments: +=, -=, *=, /=, &=, |=
-    // Desugar: x op= y => x = x op y
-    var op: BinaryOp = BinaryOp.Add;  // Default, will be set below
-    var is_compound: bool = false;
-
-    if Parser_got(p, TokenType.PlusEq) {
-        op = BinaryOp.Add;
-        is_compound = true;
-    } else if Parser_got(p, TokenType.MinusEq) {
-        op = BinaryOp.Sub;
-        is_compound = true;
-    } else if Parser_got(p, TokenType.StarEq) {
-        op = BinaryOp.Mul;
-        is_compound = true;
-    } else if Parser_got(p, TokenType.SlashEq) {
-        op = BinaryOp.Div;
-        is_compound = true;
-    } else if Parser_got(p, TokenType.AmpEq) {
-        op = BinaryOp.BitAnd;
-        is_compound = true;
-    } else if Parser_got(p, TokenType.PipeEq) {
-        op = BinaryOp.BitOr;
-        is_compound = true;
-    }
-
-    if is_compound {
-        let rhs: i64 = Parser_parseExpr(p);
-        let end: i64 = p.current.start;
-        // Create binary expression: expr op rhs
-        let binary: i64 = Node_binary(p.pool, op, expr, rhs, start, end);
-        // Create assignment: expr = binary
-        return Node_assign(p.pool, expr, binary, start, end);
-    }
-
-    return expr;
-}
-
-// ============================================================================
-// Statement Parsing
-// ============================================================================
-
-// Parse return statement: return expr;
-fn Parser_parseReturnStmt(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    Parser_want(p, TokenType.Return);
-
-    // Optional return value - check if next token looks like no value
-    // (semicolon, closing brace, or statement-starting keywords)
-    var value: i64 = -1;
-    let k: TokenType = p.current.kind;
-    let no_value: bool = k == TokenType.Semi or k == TokenType.RBrace or
-                         k == TokenType.Return or k == TokenType.Let or
-                         k == TokenType.Var or k == TokenType.If or
-                         k == TokenType.While or k == TokenType.For or
-                         k == TokenType.Break or k == TokenType.Continue;
-    if not no_value {
-        value = Parser_parseExpr(p);
-    }
-
-    let end: i64 = p.current.start + p.current.end;
-    Parser_got(p, TokenType.Semi);  // Optional semicolon
-
-    return Node_return(p.pool, value, start, end);
-}
-
-// Parse variable declaration: let name: type = expr; OR var name: type = expr;
-fn Parser_parseVarDecl(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-
-    // Check if 'let', 'const', or 'var'
-    // is_let: 0 = var (mutable), 1 = let (immutable), 2 = const (compile-time const)
-    var is_let: i64 = 0;
-    if Parser_check(p, TokenType.Let) {
-        is_let = 1;
-        Parser_advance(p);
-    } else if Parser_check(p, TokenType.Const) {
-        is_let = 2;  // const treated as immutable like let
-        Parser_advance(p);
-    } else {
-        Parser_want(p, TokenType.Var);
-    }
-
-    // Variable name
-    let name_start: i64 = p.current.start;
-    let name_len: i64 = p.current.end;
-    Parser_want(p, TokenType.Ident);
-
-    // Type annotation (required for now)
-    var type_start: i64 = 0;
-    var type_handle: i64 = PTYPE_I64;  // Default to i64
-    if Parser_got(p, TokenType.Colon) {
-        type_start = p.current.start;
-        type_handle = Parser_parseType(p);
-    }
-
-    // Optional initializer
-    var init_expr: i64 = -1;
-    if Parser_got(p, TokenType.Eq) {
-        init_expr = Parser_parseExpr(p);
-    }
-
-    let end: i64 = p.current.start + p.current.end;
-    Parser_got(p, TokenType.Semi);  // Optional semicolon
-
-    return Node_varDecl(p.pool, is_let, name_start, name_len, type_start, type_handle, init_expr, start, end);
-}
-
-// Parse switch expression: switch x { 1 => a, 2 => b, else => c }
-// Following Zig compiler pattern from src/frontend/parser.zig:parseSwitchExpr
-fn Parser_parseSwitchExpr(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    Parser_want(p, TokenType.Switch);
-
-    // Parse subject expression
-    let subject: i64 = Parser_parseUnary(p);
-
-    Parser_want(p, TokenType.LBrace);
-
-    // Track cases - store case nodes temporarily (max 16 cases)
-    var case0: i64 = -1;
-    var case1: i64 = -1;
-    var case2: i64 = -1;
-    var case3: i64 = -1;
-    var case4: i64 = -1;
-    var case5: i64 = -1;
-    var case6: i64 = -1;
-    var case7: i64 = -1;
-    var case8: i64 = -1;
-    var case9: i64 = -1;
-    var case10: i64 = -1;
-    var case11: i64 = -1;
-    var case12: i64 = -1;
-    var case13: i64 = -1;
-    var case14: i64 = -1;
-    var case15: i64 = -1;
-    var case_count: i64 = 0;
-    var else_body: i64 = -1;
-
-    while not Parser_check(p, TokenType.RBrace) and not Parser_atEnd(p) {
-        let case_start: i64 = p.current.start;
-
-        // Check for else case
-        if Parser_got(p, TokenType.Else) {
-            Parser_want(p, TokenType.FatArrow);
-            else_body = Parser_parseExpr(p);
-            Parser_got(p, TokenType.Comma);  // Optional trailing comma
-        } else {
-            // Parse case patterns (comma-separated until =>)
-            var pat0: i64 = -1;
-            var pat1: i64 = -1;
-            var pat2: i64 = -1;
-            var pat3: i64 = -1;
-            var pat_count: i64 = 0;
-
-            // First pattern
-            pat0 = Parser_parseUnary(p);
-            pat_count = 1;
-
-            // Additional patterns
-            while Parser_check(p, TokenType.Comma) and not Parser_check(p, TokenType.FatArrow) {
-                Parser_advance(p);  // Consume comma
-                if Parser_check(p, TokenType.FatArrow) or Parser_check(p, TokenType.Else) {
-                    break;
+                // Additional patterns
+                while self.check(TokenType.Comma) and not self.check(TokenType.FatArrow) {
+                    self.advance();  // Consume comma
+                    if self.check(TokenType.FatArrow) or self.check(TokenType.Else) {
+                        break;
+                    }
+                    if pat_count == 1 { pat1 = self.parseUnary(); }
+                    else if pat_count == 2 { pat2 = self.parseUnary(); }
+                    else if pat_count == 3 { pat3 = self.parseUnary(); }
+                    pat_count = pat_count + 1;
                 }
-                if pat_count == 1 { pat1 = Parser_parseUnary(p); }
-                else if pat_count == 2 { pat2 = Parser_parseUnary(p); }
-                else if pat_count == 3 { pat3 = Parser_parseUnary(p); }
-                pat_count = pat_count + 1;
-            }
 
-            Parser_want(p, TokenType.FatArrow);
-            let body: i64 = Parser_parseExpr(p);
+                self.want(TokenType.FatArrow);
+                let body: i64 = self.parseExpr();
 
-            // Add patterns to children
-            let patterns_start: i64 = NodePool_childrenCount(p.pool);
-            if pat_count >= 1 { Node_addChild(p.pool, pat0); }
-            if pat_count >= 2 { Node_addChild(p.pool, pat1); }
-            if pat_count >= 3 { Node_addChild(p.pool, pat2); }
-            if pat_count >= 4 { Node_addChild(p.pool, pat3); }
+                // Add patterns to children
+                let patterns_start: i64 = NodePool_childrenCount(self.pool);
+                if pat_count >= 1 { Node_addChild(self.pool, pat0); }
+                if pat_count >= 2 { Node_addChild(self.pool, pat1); }
+                if pat_count >= 3 { Node_addChild(self.pool, pat2); }
+                if pat_count >= 4 { Node_addChild(self.pool, pat3); }
 
-            // Create case node
-            let case_node: i64 = Node_switchCase(p.pool, patterns_start, pat_count,
-                                                   body, case_start, p.current.start);
+                // Create case node
+                let case_node: i64 = Node_switchCase(self.pool, patterns_start, pat_count,
+                                                       body, case_start, self.current.start);
 
-            // Store case node
-            if case_count == 0 { case0 = case_node; }
-            else if case_count == 1 { case1 = case_node; }
-            else if case_count == 2 { case2 = case_node; }
-            else if case_count == 3 { case3 = case_node; }
-            else if case_count == 4 { case4 = case_node; }
-            else if case_count == 5 { case5 = case_node; }
-            else if case_count == 6 { case6 = case_node; }
-            else if case_count == 7 { case7 = case_node; }
-            else if case_count == 8 { case8 = case_node; }
-            else if case_count == 9 { case9 = case_node; }
-            else if case_count == 10 { case10 = case_node; }
-            else if case_count == 11 { case11 = case_node; }
-            else if case_count == 12 { case12 = case_node; }
-            else if case_count == 13 { case13 = case_node; }
-            else if case_count == 14 { case14 = case_node; }
-            else if case_count == 15 { case15 = case_node; }
-            case_count = case_count + 1;
+                // Store case node
+                if case_count == 0 { case0 = case_node; }
+                else if case_count == 1 { case1 = case_node; }
+                else if case_count == 2 { case2 = case_node; }
+                else if case_count == 3 { case3 = case_node; }
+                else if case_count == 4 { case4 = case_node; }
+                else if case_count == 5 { case5 = case_node; }
+                else if case_count == 6 { case6 = case_node; }
+                else if case_count == 7 { case7 = case_node; }
+                else if case_count == 8 { case8 = case_node; }
+                else if case_count == 9 { case9 = case_node; }
+                else if case_count == 10 { case10 = case_node; }
+                else if case_count == 11 { case11 = case_node; }
+                else if case_count == 12 { case12 = case_node; }
+                else if case_count == 13 { case13 = case_node; }
+                else if case_count == 14 { case14 = case_node; }
+                else if case_count == 15 { case15 = case_node; }
+                case_count = case_count + 1;
 
-            Parser_got(p, TokenType.Comma);  // Optional trailing comma
-        }
-    }
-
-    Parser_want(p, TokenType.RBrace);
-
-    // Add cases to children array
-    let cases_start: i64 = NodePool_childrenCount(p.pool);
-    if case_count >= 1 { Node_addChild(p.pool, case0); }
-    if case_count >= 2 { Node_addChild(p.pool, case1); }
-    if case_count >= 3 { Node_addChild(p.pool, case2); }
-    if case_count >= 4 { Node_addChild(p.pool, case3); }
-    if case_count >= 5 { Node_addChild(p.pool, case4); }
-    if case_count >= 6 { Node_addChild(p.pool, case5); }
-    if case_count >= 7 { Node_addChild(p.pool, case6); }
-    if case_count >= 8 { Node_addChild(p.pool, case7); }
-    if case_count >= 9 { Node_addChild(p.pool, case8); }
-    if case_count >= 10 { Node_addChild(p.pool, case9); }
-    if case_count >= 11 { Node_addChild(p.pool, case10); }
-    if case_count >= 12 { Node_addChild(p.pool, case11); }
-    if case_count >= 13 { Node_addChild(p.pool, case12); }
-    if case_count >= 14 { Node_addChild(p.pool, case13); }
-    if case_count >= 15 { Node_addChild(p.pool, case14); }
-    if case_count >= 16 { Node_addChild(p.pool, case15); }
-
-    let end: i64 = p.current.start;
-    return Node_switchExpr(p.pool, subject, cases_start, case_count, else_body, start, end);
-}
-
-// Parse if statement: if expr { body } [else { body }]
-fn Parser_parseIfStmt(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    Parser_want(p, TokenType.If);
-
-    // Condition expression (no parens required like Go/Cot)
-    let cond: i64 = Parser_parseExpr(p);
-
-    // Then body (block required)
-    let then_body: i64 = Parser_parseBlock(p);
-
-    // Optional else clause
-    var else_body: i64 = -1;
-    if Parser_got(p, TokenType.Else) {
-        // Check for 'else if' (chain)
-        if Parser_check(p, TokenType.If) {
-            // Recursively parse if-else-if chain
-            else_body = Parser_parseIfStmt(p);
-        } else {
-            // Plain else block
-            else_body = Parser_parseBlock(p);
-        }
-    }
-
-    let end: i64 = p.current.start;
-    return Node_ifStmt(p.pool, cond, then_body, else_body, start, end);
-}
-
-// Parse while statement: while expr { body }
-// cot1: Supports labeled while loops: label: while expr { body }
-// label_start/label_len passed from caller (0,0 if no label)
-fn Parser_parseWhileStmt(p: *Parser, label_start: i64, label_len: i64) i64 {
-    let start: i64 = p.current.start;
-    Parser_want(p, TokenType.While);
-
-    // Condition expression
-    let cond: i64 = Parser_parseExpr(p);
-
-    // Body block
-    let body: i64 = Parser_parseBlock(p);
-
-    let end: i64 = p.current.start;
-    return Node_whileStmt(p.pool, cond, body, label_start, label_len, start, end);
-}
-
-// Parse for-in statement: for item in array { body }
-// Following Zig compiler pattern from src/frontend/parser.zig:parseForStmt
-fn Parser_parseForStmt(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    Parser_want(p, TokenType.For);
-
-    // Loop variable (binding)
-    let binding_start: i64 = p.current.start;
-    let binding_len: i64 = p.current.end;
-    Parser_want(p, TokenType.Ident);
-
-    // Expect 'in' keyword
-    Parser_want(p, TokenType.In);
-
-    // Iterable expression (array or slice)
-    let iterable: i64 = Parser_parseExpr(p);
-
-    // Body block
-    let body: i64 = Parser_parseBlock(p);
-
-    let end: i64 = p.current.start;
-    return Node_forStmt(p.pool, binding_start, binding_len, iterable, body, start, end);
-}
-
-// Parse expression statement: expr;
-fn Parser_parseExprStmt(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    let expr: i64 = Parser_parseExpr(p);
-    let end: i64 = p.current.start + p.current.end;
-    Parser_got(p, TokenType.Semi);  // Optional semicolon
-    return Node_exprStmt(p.pool, expr, start, end);
-}
-
-// Parse a statement (dispatch based on token)
-fn Parser_parseStmt(p: *Parser) i64 {
-    let kind: TokenType = p.current.kind;
-
-    // Return statement
-    if kind == TokenType.Return {
-        return Parser_parseReturnStmt(p);
-    }
-
-    // Variable declarations (let, var, const)
-    if kind == TokenType.Let or kind == TokenType.Var or kind == TokenType.Const {
-        return Parser_parseVarDecl(p);
-    }
-
-    // Control flow statements
-    if kind == TokenType.If {
-        return Parser_parseIfStmt(p);
-    }
-
-    if kind == TokenType.While {
-        return Parser_parseWhileStmt(p, 0, 0);  // No label
-    }
-
-    // cot1: Labeled while - identifier followed by colon followed by while
-    // Syntax: label: while condition { body }
-    // Note: cot1 parser has no token lookahead, so we use save/restore
-    if kind == TokenType.Ident {
-        // Save parser state for potential restore
-        let saved_scanner_pos: i64 = p.scanner.pos;
-        let saved_current_kind: TokenType = p.current.kind;
-        let saved_current_start: i64 = p.current.start;
-        let saved_current_end: i64 = p.current.end;
-        let label_start: i64 = p.current.start;
-        let label_len: i64 = p.current.end;
-
-        Parser_advance(p);  // consume identifier
-        if p.current.kind == TokenType.Colon {
-            Parser_advance(p);  // consume colon
-            if p.current.kind == TokenType.While {
-                // This is a labeled while loop
-                return Parser_parseWhileStmt(p, label_start, label_len);
-            }
-            // Not labeled while - restore parser state
-            p.scanner.pos = saved_scanner_pos;
-            p.current.kind = saved_current_kind;
-            p.current.start = saved_current_start;
-            p.current.end = saved_current_end;
-        } else {
-            // Not colon after identifier - restore parser state
-            p.scanner.pos = saved_scanner_pos;
-            p.current.kind = saved_current_kind;
-            p.current.start = saved_current_start;
-            p.current.end = saved_current_end;
-        }
-    }
-
-    if kind == TokenType.For {
-        return Parser_parseForStmt(p);
-    }
-
-    // Break statement - cot1: supports break :label;
-    if kind == TokenType.Break {
-        let start: i64 = p.current.start;
-        Parser_advance(p);
-        // Check for optional :label
-        var label_start: i64 = 0;
-        var label_len: i64 = 0;
-        if p.current.kind == TokenType.Colon {
-            Parser_advance(p);  // consume colon
-            if p.current.kind == TokenType.Ident {
-                label_start = p.current.start;
-                label_len = p.current.end;
-                Parser_advance(p);  // consume label
+                self.got(TokenType.Comma);  // Optional trailing comma
             }
         }
-        Parser_got(p, TokenType.Semi);  // Optional semicolon
-        return Node_breakStmt(p.pool, label_start, label_len, start, p.current.start);
+
+        self.want(TokenType.RBrace);
+
+        // Add cases to children array
+        let cases_start: i64 = NodePool_childrenCount(self.pool);
+        if case_count >= 1 { Node_addChild(self.pool, case0); }
+        if case_count >= 2 { Node_addChild(self.pool, case1); }
+        if case_count >= 3 { Node_addChild(self.pool, case2); }
+        if case_count >= 4 { Node_addChild(self.pool, case3); }
+        if case_count >= 5 { Node_addChild(self.pool, case4); }
+        if case_count >= 6 { Node_addChild(self.pool, case5); }
+        if case_count >= 7 { Node_addChild(self.pool, case6); }
+        if case_count >= 8 { Node_addChild(self.pool, case7); }
+        if case_count >= 9 { Node_addChild(self.pool, case8); }
+        if case_count >= 10 { Node_addChild(self.pool, case9); }
+        if case_count >= 11 { Node_addChild(self.pool, case10); }
+        if case_count >= 12 { Node_addChild(self.pool, case11); }
+        if case_count >= 13 { Node_addChild(self.pool, case12); }
+        if case_count >= 14 { Node_addChild(self.pool, case13); }
+        if case_count >= 15 { Node_addChild(self.pool, case14); }
+        if case_count >= 16 { Node_addChild(self.pool, case15); }
+
+        let end: i64 = self.current.start;
+        return Node_switchExpr(self.pool, subject, cases_start, case_count, else_body, start, end);
     }
 
-    // Continue statement - cot1: supports continue :label;
-    if kind == TokenType.Continue {
-        let start: i64 = p.current.start;
-        Parser_advance(p);
-        // Check for optional :label
-        var label_start: i64 = 0;
-        var label_len: i64 = 0;
-        if p.current.kind == TokenType.Colon {
-            Parser_advance(p);  // consume colon
-            if p.current.kind == TokenType.Ident {
-                label_start = p.current.start;
-                label_len = p.current.end;
-                Parser_advance(p);  // consume label
+    // Parse if statement: if expr { body } [else { body }]
+    fn parseIfStmt(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        self.want(TokenType.If);
+
+        // Condition expression (no parens required like Go/Cot)
+        let cond: i64 = self.parseExpr();
+
+        // Then body (block required)
+        let then_body: i64 = self.parseBlock();
+
+        // Optional else clause
+        var else_body: i64 = -1;
+        if self.got(TokenType.Else) {
+            // Check for 'else if' (chain)
+            if self.check(TokenType.If) {
+                // Recursively parse if-else-if chain
+                else_body = self.parseIfStmt();
+            } else {
+                // Plain else block
+                else_body = self.parseBlock();
             }
         }
-        Parser_got(p, TokenType.Semi);  // Optional semicolon
-        return Node_continueStmt(p.pool, label_start, label_len, start, p.current.start);
+
+        let end: i64 = self.current.start;
+        return Node_ifStmt(self.pool, cond, then_body, else_body, start, end);
     }
 
-    // Defer statement: defer expr;
-    // Reference: Zig lower.zig:314-318 defer_stmt
-    if kind == TokenType.Defer {
-        let start: i64 = p.current.start;
-        Parser_advance(p);
-        let expr: i64 = Parser_parseExpr(p);
-        Parser_got(p, TokenType.Semi);  // Optional semicolon
-        return Node_deferStmt(p.pool, expr, start, p.current.start);
+    // Parse while statement: while expr { body }
+    // cot1: Supports labeled while loops: label: while expr { body }
+    // label_start/label_len passed from caller (0,0 if no label)
+    fn parseWhileStmt(self: *Parser, label_start: i64, label_len: i64) i64 {
+        let start: i64 = self.current.start;
+        self.want(TokenType.While);
+
+        // Condition expression
+        let cond: i64 = self.parseExpr();
+
+        // Body block
+        let body: i64 = self.parseBlock();
+
+        let end: i64 = self.current.start;
+        return Node_whileStmt(self.pool, cond, body, label_start, label_len, start, end);
     }
 
-    // Standalone block: { stmt* }
-    if kind == TokenType.LBrace {
-        return Parser_parseBlock(p);
+    // Parse for-in statement: for item in array { body }
+    // Following Zig compiler pattern from src/frontend/parser.zig:parseForStmt
+    fn parseForStmt(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        self.want(TokenType.For);
+
+        // Loop variable (binding)
+        let binding_start: i64 = self.current.start;
+        let binding_len: i64 = self.current.end;
+        self.want(TokenType.Ident);
+
+        // Expect 'in' keyword
+        self.want(TokenType.In);
+
+        // Iterable expression (array or slice)
+        let iterable: i64 = self.parseExpr();
+
+        // Body block
+        let body: i64 = self.parseBlock();
+
+        let end: i64 = self.current.start;
+        return Node_forStmt(self.pool, binding_start, binding_len, iterable, body, start, end);
     }
 
-    // Default: expression statement
-    return Parser_parseExprStmt(p);
-}
-
-// Parse block: { stmt* }
-// NOTE: We must collect statement indices first, THEN add them to children.
-// This is because nested blocks (e.g., if body) add their children during parsing,
-// which would interleave with our children if we add them as we go.
-fn Parser_parseBlock(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    Parser_want(p, TokenType.LBrace);
-
-    // Dynamic storage for statement indices (no fixed limit)
-    var stmt_indices: I64List = undefined;
-    i64list_init(&stmt_indices);
-
-    // Parse statements until '}'
-    while not Parser_check(p, TokenType.RBrace) and not Parser_atEnd(p) {
-        let stmt: i64 = Parser_parseStmt(p);
-        i64list_append(&stmt_indices, stmt);
+    // Parse expression statement: expr;
+    fn parseExprStmt(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        let expr: i64 = self.parseExpr();
+        let end: i64 = self.current.start + self.current.end;
+        self.got(TokenType.Semi);  // Optional semicolon
+        return Node_exprStmt(self.pool, expr, start, end);
     }
 
-    let end: i64 = p.current.start + p.current.end;
-    Parser_want(p, TokenType.RBrace);
+    // Parse a statement (dispatch based on token)
+    fn parseStmt(self: *Parser) i64 {
+        let kind: TokenType = self.current.kind;
 
-    // NOW add children - this ensures stmts_start is correct even with nested blocks
-    let stmts_start: i64 = NodePool_childrenCount(p.pool);
-    var i: i64 = 0;
-    while i < stmt_indices.count {
-        Node_addChild(p.pool, i64list_get(&stmt_indices, i));
-        i = i + 1;
+        // Return statement
+        if kind == TokenType.Return {
+            return self.parseReturnStmt();
+        }
+
+        // Variable declarations (let, var, const)
+        if kind == TokenType.Let or kind == TokenType.Var or kind == TokenType.Const {
+            return self.parseVarDecl();
+        }
+
+        // Control flow statements
+        if kind == TokenType.If {
+            return self.parseIfStmt();
+        }
+
+        if kind == TokenType.While {
+            return self.parseWhileStmt(0, 0);  // No label
+        }
+
+        // cot1: Labeled while - identifier followed by colon followed by while
+        // Syntax: label: while condition { body }
+        // Note: cot1 parser has no token lookahead, so we use save/restore
+        if kind == TokenType.Ident {
+            // Save parser state for potential restore
+            let saved_scanner_pos: i64 = self.scanner.pos;
+            let saved_current_kind: TokenType = self.current.kind;
+            let saved_current_start: i64 = self.current.start;
+            let saved_current_end: i64 = self.current.end;
+            let label_start: i64 = self.current.start;
+            let label_len: i64 = self.current.end;
+
+            self.advance();  // consume identifier
+            if self.current.kind == TokenType.Colon {
+                self.advance();  // consume colon
+                if self.current.kind == TokenType.While {
+                    // This is a labeled while loop
+                    return self.parseWhileStmt(label_start, label_len);
+                }
+                // Not labeled while - restore parser state
+                self.scanner.pos = saved_scanner_pos;
+                self.current.kind = saved_current_kind;
+                self.current.start = saved_current_start;
+                self.current.end = saved_current_end;
+            } else {
+                // Not colon after identifier - restore parser state
+                self.scanner.pos = saved_scanner_pos;
+                self.current.kind = saved_current_kind;
+                self.current.start = saved_current_start;
+                self.current.end = saved_current_end;
+            }
+        }
+
+        if kind == TokenType.For {
+            return self.parseForStmt();
+        }
+
+        // Break statement - cot1: supports break :label;
+        if kind == TokenType.Break {
+            let start: i64 = self.current.start;
+            self.advance();
+            // Check for optional :label
+            var label_start: i64 = 0;
+            var label_len: i64 = 0;
+            if self.current.kind == TokenType.Colon {
+                self.advance();  // consume colon
+                if self.current.kind == TokenType.Ident {
+                    label_start = self.current.start;
+                    label_len = self.current.end;
+                    self.advance();  // consume label
+                }
+            }
+            self.got(TokenType.Semi);  // Optional semicolon
+            return Node_breakStmt(self.pool, label_start, label_len, start, self.current.start);
+        }
+
+        // Continue statement - cot1: supports continue :label;
+        if kind == TokenType.Continue {
+            let start: i64 = self.current.start;
+            self.advance();
+            // Check for optional :label
+            var label_start: i64 = 0;
+            var label_len: i64 = 0;
+            if self.current.kind == TokenType.Colon {
+                self.advance();  // consume colon
+                if self.current.kind == TokenType.Ident {
+                    label_start = self.current.start;
+                    label_len = self.current.end;
+                    self.advance();  // consume label
+                }
+            }
+            self.got(TokenType.Semi);  // Optional semicolon
+            return Node_continueStmt(self.pool, label_start, label_len, start, self.current.start);
+        }
+
+        // Defer statement: defer expr;
+        // Reference: Zig lower.zig:314-318 defer_stmt
+        if kind == TokenType.Defer {
+            let start: i64 = self.current.start;
+            self.advance();
+            let expr: i64 = self.parseExpr();
+            self.got(TokenType.Semi);  // Optional semicolon
+            return Node_deferStmt(self.pool, expr, start, self.current.start);
+        }
+
+        // Standalone block: { stmt* }
+        if kind == TokenType.LBrace {
+            return self.parseBlock();
+        }
+
+        // Default: expression statement
+        return self.parseExprStmt();
     }
 
-    let result: i64 = Node_block(p.pool, stmts_start, stmt_indices.count, start, end);
-    i64list_deinit(&stmt_indices);
-    return result;
-}
+    // Parse block: { stmt* }
+    // NOTE: We must collect statement indices first, THEN add them to children.
+    // This is because nested blocks (e.g., if body) add their children during parsing,
+    // which would interleave with our children if we add them as we go.
+    fn parseBlock(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        self.want(TokenType.LBrace);
 
-// ============================================================================
-// Declaration Parsing
-// ============================================================================
+        // Dynamic storage for statement indices (no fixed limit)
+        var stmt_indices: I64List = undefined;
+        i64list_init(&stmt_indices);
 
-// Parse parameter: name: type
-fn Parser_parseParam(p: *Parser) i64 {
-    let start: i64 = p.current.start;
+        // Parse statements until '}'
+        while not self.check(TokenType.RBrace) and not self.atEnd() {
+            let stmt: i64 = self.parseStmt();
+            i64list_append(&stmt_indices, stmt);
+        }
 
-    // Parameter name
-    let name_start: i64 = p.current.start;
-    let name_len: i64 = p.current.end;
-    Parser_want(p, TokenType.Ident);
+        let end: i64 = self.current.start + self.current.end;
+        self.want(TokenType.RBrace);
 
-    // Colon
-    Parser_want(p, TokenType.Colon);
+        // NOW add children - this ensures stmts_start is correct even with nested blocks
+        let stmts_start: i64 = NodePool_childrenCount(self.pool);
+        var i: i64 = 0;
+        while i < stmt_indices.count {
+            Node_addChild(self.pool, i64list_get(&stmt_indices, i));
+            i = i + 1;
+        }
 
-    // Type (use Parser_parseType for all types)
-    let type_start: i64 = p.current.start;
-    let type_handle: i64 = Parser_parseType(p);
-    let type_len: i64 = p.current.start - type_start;  // Calculate length from position
+        let result: i64 = Node_block(self.pool, stmts_start, stmt_indices.count, start, end);
+        i64list_deinit(&stmt_indices);
+        return result;
+    }
 
-    let end: i64 = p.current.start;
-    // Note: we store type_handle in type_len field for now (type_start is unused for built-in types)
-    return Node_param(p.pool, name_start, name_len, type_start, type_handle, start, end);
-}
+    // ============================================================================
+    // Declaration Parsing
+    // ============================================================================
 
-// Parse extern function declaration: extern fn name(params) ret_type;
-fn Parser_parseExternFnDecl(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    Parser_want(p, TokenType.Extern);
-    Parser_want(p, TokenType.Fn);
+    // Parse parameter: name: type
+    fn parseParam(self: *Parser) i64 {
+        let start: i64 = self.current.start;
 
-    // Function name
-    let name_start: i64 = p.current.start;
-    let name_len: i64 = p.current.end;
-    Parser_want(p, TokenType.Ident);
+        // Parameter name
+        let name_start: i64 = self.current.start;
+        let name_len: i64 = self.current.end;
+        self.want(TokenType.Ident);
 
-    // Parameters
-    Parser_want(p, TokenType.LParen);
-    let params_start: i64 = NodePool_childrenCount(p.pool);
-    var params_count: i64 = 0;
+        // Colon
+        self.want(TokenType.Colon);
 
-    if not Parser_check(p, TokenType.RParen) {
-        // First parameter
-        let param: i64 = Parser_parseParam(p);
-        Node_addChild(p.pool, param);
-        params_count = params_count + 1;
+        // Type (use Parser_parseType for all types)
+        let type_start: i64 = self.current.start;
+        let type_handle: i64 = self.parseType();
+        let type_len: i64 = self.current.start - type_start;  // Calculate length from position
 
-        // Additional parameters
-        while Parser_got(p, TokenType.Comma) {
-            let next_param: i64 = Parser_parseParam(p);
-            Node_addChild(p.pool, next_param);
+        let end: i64 = self.current.start;
+        // Note: we store type_handle in type_len field for now (type_start is unused for built-in types)
+        return Node_param(self.pool, name_start, name_len, type_start, type_handle, start, end);
+    }
+
+    // Parse extern function declaration: extern fn name(params) ret_type;
+    fn parseExternFnDecl(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        self.want(TokenType.Extern);
+        self.want(TokenType.Fn);
+
+        // Function name
+        let name_start: i64 = self.current.start;
+        let name_len: i64 = self.current.end;
+        self.want(TokenType.Ident);
+
+        // Parameters
+        self.want(TokenType.LParen);
+        let params_start: i64 = NodePool_childrenCount(self.pool);
+        var params_count: i64 = 0;
+
+        if not self.check(TokenType.RParen) {
+            // First parameter
+            let param: i64 = self.parseParam();
+            Node_addChild(self.pool, param);
             params_count = params_count + 1;
-        }
-    }
-    Parser_want(p, TokenType.RParen);
 
-    // Optional return type (void if omitted)
-    var ret_type_start: i64 = p.current.start;
-    var ret_type_handle: i64 = PTYPE_VOID;  // Default to void
-    // Check if there's a return type (not semicolon or EOF)
-    if not Parser_check(p, TokenType.Semi) and not Parser_check(p, TokenType.Eof) {
-        ret_type_handle = Parser_parseType(p);
-    }
-
-    // Optional semicolon (extern fn has no body)
-    Parser_got(p, TokenType.Semi);
-
-    let end: i64 = p.current.start;
-
-    // Create extern function declaration node
-    return Node_externFnDecl(p.pool, name_start, name_len, params_start, params_count, ret_type_start, ret_type_handle, start, end);
-}
-
-// Parse function declaration: fn name(params) ret_type { body }
-fn Parser_parseFnDecl(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    Parser_want(p, TokenType.Fn);
-
-    // Function name
-    let name_start: i64 = p.current.start;
-    let name_len: i64 = p.current.end;
-    Parser_want(p, TokenType.Ident);
-
-    // Parameters
-    Parser_want(p, TokenType.LParen);
-    let params_start: i64 = NodePool_childrenCount(p.pool);
-    var params_count: i64 = 0;
-
-    if not Parser_check(p, TokenType.RParen) {
-        // First parameter
-        let param: i64 = Parser_parseParam(p);
-        Node_addChild(p.pool, param);
-        params_count = params_count + 1;
-
-        // Additional parameters
-        while Parser_got(p, TokenType.Comma) {
-            let next_param: i64 = Parser_parseParam(p);
-            Node_addChild(p.pool, next_param);
-            params_count = params_count + 1;
-        }
-    }
-    Parser_want(p, TokenType.RParen);
-
-    // Return type - optional, defaults to void if { follows immediately
-    let ret_type_start: i64 = p.current.start;
-    var ret_type_handle: i64 = PTYPE_VOID;  // Default to void
-    if not Parser_check(p, TokenType.LBrace) {
-        ret_type_handle = Parser_parseType(p);
-    }
-
-    // Body
-    let body: i64 = Parser_parseBlock(p);
-
-    let end: i64 = p.current.start;
-
-    // Create function declaration node
-    // Note: we store ret_type_handle in ret_type_len field (ret_type_start for user types)
-    let fn_idx: i64 = Node_fnDecl(p.pool, name_start, name_len, params_start, params_count, ret_type_start, ret_type_handle, body, start, end);
-
-    return fn_idx;
-}
-
-// ============================================================================
-// Sprint B: Struct/Enum Declaration Parsing
-// Following Go's cmd/compile/internal/syntax/parser.go patterns
-// ============================================================================
-
-// Parse struct field: name: type,
-fn Parser_parseStructField(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-
-    // Field name
-    let name_start: i64 = p.current.start;
-    let name_len: i64 = p.current.end;  // Token.end is the length
-    Parser_want(p, TokenType.Ident);
-
-    // Colon
-    Parser_want(p, TokenType.Colon);
-
-    // Type
-    let type_start: i64 = p.current.start;
-    let type_handle: i64 = Parser_parseType(p);
-
-    let end: i64 = p.current.start;
-
-    // Comma is optional (handled by caller)
-    return Node_fieldDecl(p.pool, name_start, name_len, type_start, type_handle, start, end);
-}
-
-// Parse struct declaration: struct Name { fields }
-// cot1: Parse type alias declaration: type Name = Type;
-// Following Go's typeDecl pattern from syntax/parser.go:600
-fn Parser_parseTypeAliasDecl(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    Parser_want(p, TokenType.Type);
-
-    // Alias name
-    let name_start: i64 = p.current.start;
-    let name_len: i64 = p.current.end;
-    Parser_want(p, TokenType.Ident);
-
-    // Expect '='
-    Parser_want(p, TokenType.Eq);
-
-    // Parse the type expression
-    let type_node_idx: i64 = Parser_parseType(p);
-
-    let end: i64 = p.current.start + p.current.end;
-
-    // Optional semicolon (like other declarations)
-    Parser_got(p, TokenType.Semi);
-
-    return Node_typeAliasDecl(p.pool, name_start, name_len, type_node_idx, start, end);
-}
-
-// cot1: Parse impl block: impl TypeName { fn method1() { } fn method2() { } }
-// Following Rust's impl block pattern
-// Methods are collected and stored in children array
-fn Parser_parseImplBlock(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    Parser_want(p, TokenType.Impl);
-
-    // Type name (the type we're implementing methods for)
-    let type_name_start: i64 = p.current.start;
-    let type_name_len: i64 = p.current.end;
-    Parser_want(p, TokenType.Ident);
-
-    // Opening brace
-    Parser_want(p, TokenType.LBrace);
-
-    // Parse method declarations
-    // NOTE: We must collect method node indices BEFORE adding to children
-    // because Parser_parseFnDecl also adds params to children
-    var method_indices: I64List = undefined;
-    i64list_init(&method_indices);
-
-    while not Parser_check(p, TokenType.RBrace) and not Parser_atEnd(p) {
-        // Only fn declarations allowed inside impl block
-        if Parser_check(p, TokenType.Fn) {
-            let method: i64 = Parser_parseFnDecl(p);
-            if method != -1 {
-                i64list_append(&method_indices, method);
+            // Additional parameters
+            while self.got(TokenType.Comma) {
+                let next_param: i64 = self.parseParam();
+                Node_addChild(self.pool, next_param);
+                params_count = params_count + 1;
             }
-        } else {
-            // Skip unexpected tokens
-            p.had_error = true;
-            Parser_advance(p);
         }
+        self.want(TokenType.RParen);
+
+        // Optional return type (void if omitted)
+        var ret_type_start: i64 = self.current.start;
+        var ret_type_handle: i64 = PTYPE_VOID;  // Default to void
+        // Check if there's a return type (not semicolon or EOF)
+        if not self.check(TokenType.Semi) and not self.check(TokenType.Eof) {
+            ret_type_handle = self.parseType();
+        }
+
+        // Optional semicolon (extern fn has no body)
+        self.got(TokenType.Semi);
+
+        let end: i64 = self.current.start;
+
+        // Create extern function declaration node
+        return Node_externFnDecl(self.pool, name_start, name_len, params_start, params_count, ret_type_start, ret_type_handle, start, end);
     }
 
-    // Now add all method indices to children in a contiguous block
-    let methods_start: i64 = NodePool_childrenCount(p.pool);
-    let methods_count: i64 = method_indices.count;
-    var mi: i64 = 0;
-    while mi < methods_count {
-        Node_addChild(p.pool, i64list_get(&method_indices, mi));
-        mi = mi + 1;
+    // Parse function declaration: fn name(params) ret_type { body }
+    fn parseFnDecl(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        self.want(TokenType.Fn);
+
+        // Function name
+        let name_start: i64 = self.current.start;
+        let name_len: i64 = self.current.end;
+        self.want(TokenType.Ident);
+
+        // Parameters
+        self.want(TokenType.LParen);
+        let params_start: i64 = NodePool_childrenCount(self.pool);
+        var params_count: i64 = 0;
+
+        if not self.check(TokenType.RParen) {
+            // First parameter
+            let param: i64 = self.parseParam();
+            Node_addChild(self.pool, param);
+            params_count = params_count + 1;
+
+            // Additional parameters
+            while self.got(TokenType.Comma) {
+                let next_param: i64 = self.parseParam();
+                Node_addChild(self.pool, next_param);
+                params_count = params_count + 1;
+            }
+        }
+        self.want(TokenType.RParen);
+
+        // Return type - optional, defaults to void if { follows immediately
+        let ret_type_start: i64 = self.current.start;
+        var ret_type_handle: i64 = PTYPE_VOID;  // Default to void
+        if not self.check(TokenType.LBrace) {
+            ret_type_handle = self.parseType();
+        }
+
+        // Body
+        let body: i64 = self.parseBlock();
+
+        let end: i64 = self.current.start;
+
+        // Create function declaration node
+        // Note: we store ret_type_handle in ret_type_len field (ret_type_start for user types)
+        let fn_idx: i64 = Node_fnDecl(self.pool, name_start, name_len, params_start, params_count, ret_type_start, ret_type_handle, body, start, end);
+
+        return fn_idx;
     }
 
-    let end: i64 = p.current.start + p.current.end;
+    // ============================================================================
+    // Sprint B: Struct/Enum Declaration Parsing
+    // Following Go's cmd/compile/internal/syntax/parser.go patterns
+    // ============================================================================
 
-    // Closing brace
-    Parser_want(p, TokenType.RBrace);
+    // Parse struct field: name: type,
+    fn parseStructField(self: *Parser) i64 {
+        let start: i64 = self.current.start;
 
-    return Node_implBlock(p.pool, type_name_start, type_name_len, methods_start, methods_count, start, end);
-}
+        // Field name
+        let name_start: i64 = self.current.start;
+        let name_len: i64 = self.current.end;  // Token.end is the length
+        self.want(TokenType.Ident);
 
-fn Parser_parseStructDecl(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    Parser_want(p, TokenType.Struct);
+        // Colon
+        self.want(TokenType.Colon);
 
-    // Struct name
-    let name_start: i64 = p.current.start;
-    let name_len: i64 = p.current.end;
-    Parser_want(p, TokenType.Ident);
+        // Type
+        let type_start: i64 = self.current.start;
+        let type_handle: i64 = self.parseType();
 
-    // Opening brace
-    Parser_want(p, TokenType.LBrace);
+        let end: i64 = self.current.start;
 
-    // Parse fields
-    let fields_start: i64 = NodePool_childrenCount(p.pool);
-    var fields_count: i64 = 0;
-
-    while not Parser_check(p, TokenType.RBrace) and not Parser_atEnd(p) {
-        let field: i64 = Parser_parseStructField(p);
-        Node_addChild(p.pool, field);
-        fields_count = fields_count + 1;
-
-        // Optional comma between fields
-        Parser_got(p, TokenType.Comma);
+        // Comma is optional (handled by caller)
+        return Node_fieldDecl(self.pool, name_start, name_len, type_start, type_handle, start, end);
     }
 
-    let end: i64 = p.current.start + p.current.end;
-    Parser_want(p, TokenType.RBrace);
+    // Parse struct declaration: struct Name { fields }
+    // cot1: Parse type alias declaration: type Name = Type;
+    // Following Go's typeDecl pattern from syntax/parser.go:600
+    fn parseTypeAliasDecl(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        self.want(TokenType.Type);
 
-    return Node_structDecl(p.pool, name_start, name_len, fields_start, fields_count, start, end);
-}
+        // Alias name
+        let name_start: i64 = self.current.start;
+        let name_len: i64 = self.current.end;
+        self.want(TokenType.Ident);
 
-// Parse enum variant: just an identifier
-// Stores as an Ident node (variant_start, variant_len)
-fn Parser_parseEnumVariant(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    let name_len: i64 = p.current.end;  // Token.end is the length
-    Parser_want(p, TokenType.Ident);
-    return Node_ident(p.pool, start, name_len, start, start + name_len);
-}
+        // Expect '='
+        self.want(TokenType.Eq);
 
-// Parse enum declaration: enum Name { variants }
-fn Parser_parseEnumDecl(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    Parser_want(p, TokenType.Enum);
+        // Parse the type expression
+        let type_node_idx: i64 = self.parseType();
 
-    // Enum name
-    let name_start: i64 = p.current.start;
-    let name_len: i64 = p.current.end;
-    Parser_want(p, TokenType.Ident);
+        let end: i64 = self.current.start + self.current.end;
 
-    // Opening brace
-    Parser_want(p, TokenType.LBrace);
+        // Optional semicolon (like other declarations)
+        self.got(TokenType.Semi);
 
-    // Parse variants
-    let variants_start: i64 = NodePool_childrenCount(p.pool);
-    var variants_count: i64 = 0;
-
-    while not Parser_check(p, TokenType.RBrace) and not Parser_atEnd(p) {
-        let variant: i64 = Parser_parseEnumVariant(p);
-        Node_addChild(p.pool, variant);
-        variants_count = variants_count + 1;
-
-        // Optional comma between variants
-        Parser_got(p, TokenType.Comma);
+        return Node_typeAliasDecl(self.pool, name_start, name_len, type_node_idx, start, end);
     }
 
-    let end: i64 = p.current.start + p.current.end;
-    Parser_want(p, TokenType.RBrace);
+    // cot1: Parse impl block: impl TypeName { fn method1() { } fn method2() { } }
+    // Following Rust's impl block pattern
+    // Methods are collected and stored in children array
+    fn parseImplBlock(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        self.want(TokenType.Impl);
 
-    return Node_enumDecl(p.pool, name_start, name_len, variants_start, variants_count, start, end);
-}
+        // Type name (the type we're implementing methods for)
+        let type_name_start: i64 = self.current.start;
+        let type_name_len: i64 = self.current.end;
+        self.want(TokenType.Ident);
 
-// ============================================================================
-// Sprint D: Import and Const Declarations
-// ============================================================================
+        // Opening brace
+        self.want(TokenType.LBrace);
 
-// Parse import declaration: import "path";
-fn Parser_parseImport(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    Parser_want(p, TokenType.Import);
+        // Parse method declarations
+        // NOTE: We must collect method node indices BEFORE adding to children
+        // because Parser_parseFnDecl also adds params to children
+        var method_indices: I64List = undefined;
+        i64list_init(&method_indices);
 
-    // Expect string literal for path
-    if not Parser_check(p, TokenType.StringLit) {
-        p.had_error = true;
+        while not self.check(TokenType.RBrace) and not self.atEnd() {
+            // Only fn declarations allowed inside impl block
+            if self.check(TokenType.Fn) {
+                let method: i64 = self.parseFnDecl();
+                if method != -1 {
+                    i64list_append(&method_indices, method);
+                }
+            } else {
+                // Skip unexpected tokens
+                self.had_error = true;
+                self.advance();
+            }
+        }
+
+        // Now add all method indices to children in a contiguous block
+        let methods_start: i64 = NodePool_childrenCount(self.pool);
+        let methods_count: i64 = method_indices.count;
+        var mi: i64 = 0;
+        while mi < methods_count {
+            Node_addChild(self.pool, i64list_get(&method_indices, mi));
+            mi = mi + 1;
+        }
+
+        let end: i64 = self.current.start + self.current.end;
+
+        // Closing brace
+        self.want(TokenType.RBrace);
+
+        return Node_implBlock(self.pool, type_name_start, type_name_len, methods_start, methods_count, start, end);
+    }
+
+    fn parseStructDecl(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        self.want(TokenType.Struct);
+
+        // Struct name
+        let name_start: i64 = self.current.start;
+        let name_len: i64 = self.current.end;
+        self.want(TokenType.Ident);
+
+        // Opening brace
+        self.want(TokenType.LBrace);
+
+        // Parse fields
+        let fields_start: i64 = NodePool_childrenCount(self.pool);
+        var fields_count: i64 = 0;
+
+        while not self.check(TokenType.RBrace) and not self.atEnd() {
+            let field: i64 = self.parseStructField();
+            Node_addChild(self.pool, field);
+            fields_count = fields_count + 1;
+
+            // Optional comma between fields
+            self.got(TokenType.Comma);
+        }
+
+        let end: i64 = self.current.start + self.current.end;
+        self.want(TokenType.RBrace);
+
+        return Node_structDecl(self.pool, name_start, name_len, fields_start, fields_count, start, end);
+    }
+
+    // Parse enum variant: just an identifier
+    // Stores as an Ident node (variant_start, variant_len)
+    fn parseEnumVariant(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        let name_len: i64 = self.current.end;  // Token.end is the length
+        self.want(TokenType.Ident);
+        return Node_ident(self.pool, start, name_len, start, start + name_len);
+    }
+
+    // Parse enum declaration: enum Name { variants }
+    fn parseEnumDecl(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        self.want(TokenType.Enum);
+
+        // Enum name
+        let name_start: i64 = self.current.start;
+        let name_len: i64 = self.current.end;
+        self.want(TokenType.Ident);
+
+        // Opening brace
+        self.want(TokenType.LBrace);
+
+        // Parse variants
+        let variants_start: i64 = NodePool_childrenCount(self.pool);
+        var variants_count: i64 = 0;
+
+        while not self.check(TokenType.RBrace) and not self.atEnd() {
+            let variant: i64 = self.parseEnumVariant();
+            Node_addChild(self.pool, variant);
+            variants_count = variants_count + 1;
+
+            // Optional comma between variants
+            self.got(TokenType.Comma);
+        }
+
+        let end: i64 = self.current.start + self.current.end;
+        self.want(TokenType.RBrace);
+
+        return Node_enumDecl(self.pool, name_start, name_len, variants_start, variants_count, start, end);
+    }
+
+    // ============================================================================
+    // Sprint D: Import and Const Declarations
+    // ============================================================================
+
+    // Parse import declaration: import "path";
+    fn parseImport(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        self.want(TokenType.Import);
+
+        // Expect string literal for path
+        if not self.check(TokenType.StringLit) {
+            self.had_error = true;
+            return -1;
+        }
+
+        let path_token_start: i64 = self.current.start;
+        let path_token_len: i64 = self.current.end;
+        // Path content starts after opening quote
+        let path_start: i64 = path_token_start + 1;
+        // Path length is token length - 2 (for both quotes)
+        let path_len: i64 = path_token_len - 2;
+        self.advance();
+
+        // Optional semicolon
+        self.got(TokenType.Semi);
+
+        let end: i64 = self.current.start;
+        return Node_importDecl(self.pool, path_start, path_len, start, end);
+    }
+
+    // Parse const declaration: const NAME = expr; or const NAME: type = expr;
+    fn parseConstDecl(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        self.want(TokenType.Const);
+
+        // Constant name
+        let name_start: i64 = self.current.start;
+        let name_len: i64 = self.current.end;
+        self.want(TokenType.Ident);
+
+        // Optional type annotation
+        var type_handle: i64 = -1;
+        if self.got(TokenType.Colon) {
+            type_handle = self.parseType();
+        }
+
+        // Required initializer
+        self.want(TokenType.Eq);
+        let init_expr: i64 = self.parseExpr();
+
+        let end: i64 = self.current.start + self.current.end;
+        self.got(TokenType.Semi);  // Optional semicolon
+
+        return Node_constDecl(self.pool, name_start, name_len, type_handle, init_expr, start, end);
+    }
+
+    // Parse var declaration at top level: var NAME: type = expr;
+    // Following Zig parser's pattern for parseVarDecl
+    fn parseGlobalVarDecl(self: *Parser) i64 {
+        let start: i64 = self.current.start;
+        self.want(TokenType.Var);
+
+        // Variable name
+        let name_start: i64 = self.current.start;
+        let name_len: i64 = self.current.end;  // Token.end is the length
+        self.want(TokenType.Ident);
+
+        // Type annotation (required for globals)
+        var type_handle: i64 = -1;
+        var type_start: i64 = 0;
+        if self.got(TokenType.Colon) {
+            type_start = self.current.start;
+            type_handle = self.parseType();
+        }
+
+        // Optional initializer
+        var init_expr: i64 = -1;
+        if self.got(TokenType.Eq) {
+            init_expr = self.parseExpr();
+        }
+
+        let end: i64 = self.current.start + self.current.end;
+        self.got(TokenType.Semi);  // Optional semicolon
+
+        // Use GlobalVarDecl for top-level global variables
+        return Node_globalVarDecl(self.pool, name_start, name_len, type_start, type_handle, init_expr, start, end);
+    }
+
+    // ============================================================================
+    // Top-Level Parsing
+    // ============================================================================
+
+    // Parse a single top-level declaration
+    fn parseDecl(self: *Parser) i64 {
+        // Import must come first
+        if self.check(TokenType.Import) {
+            return self.parseImport();
+        }
+
+        // Extern function declaration
+        if self.check(TokenType.Extern) {
+            return self.parseExternFnDecl();
+        }
+
+        // Const declaration
+        if self.check(TokenType.Const) {
+            return self.parseConstDecl();
+        }
+
+        // Var declaration (global variable)
+        if self.check(TokenType.Var) {
+            return self.parseGlobalVarDecl();
+        }
+
+        if self.check(TokenType.Fn) {
+            return self.parseFnDecl();
+        }
+
+        if self.check(TokenType.Struct) {
+            return self.parseStructDecl();
+        }
+
+        if self.check(TokenType.Enum) {
+            return self.parseEnumDecl();
+        }
+
+        // cot1: type alias declaration
+        if self.check(TokenType.Type) {
+            return self.parseTypeAliasDecl();
+        }
+
+        // cot1: impl block for method syntax
+        if self.check(TokenType.Impl) {
+            return self.parseImplBlock();
+        }
+
+        // Error - unexpected token at top level
+        self.had_error = true;
+        self.advance();  // Skip bad token
         return -1;
     }
 
-    let path_token_start: i64 = p.current.start;
-    let path_token_len: i64 = p.current.end;
-    // Path content starts after opening quote
-    let path_start: i64 = path_token_start + 1;
-    // Path length is token length - 2 (for both quotes)
-    let path_len: i64 = path_token_len - 2;
-    Parser_advance(p);
+    // Parse entire file (list of declarations)
+    fn parseFile(self: *Parser) i64 {
+        // Store declarations in children array
+        let decls_start: i64 = NodePool_childrenCount(self.pool);
+        var decls_count: i64 = 0;
 
-    // Optional semicolon
-    Parser_got(p, TokenType.Semi);
-
-    let end: i64 = p.current.start;
-    return Node_importDecl(p.pool, path_start, path_len, start, end);
-}
-
-// Parse const declaration: const NAME = expr; or const NAME: type = expr;
-fn Parser_parseConstDecl(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    Parser_want(p, TokenType.Const);
-
-    // Constant name
-    let name_start: i64 = p.current.start;
-    let name_len: i64 = p.current.end;
-    Parser_want(p, TokenType.Ident);
-
-    // Optional type annotation
-    var type_handle: i64 = -1;
-    if Parser_got(p, TokenType.Colon) {
-        type_handle = Parser_parseType(p);
-    }
-
-    // Required initializer
-    Parser_want(p, TokenType.Eq);
-    let init_expr: i64 = Parser_parseExpr(p);
-
-    let end: i64 = p.current.start + p.current.end;
-    Parser_got(p, TokenType.Semi);  // Optional semicolon
-
-    return Node_constDecl(p.pool, name_start, name_len, type_handle, init_expr, start, end);
-}
-
-// Parse var declaration at top level: var NAME: type = expr;
-// Following Zig parser's pattern for parseVarDecl
-fn Parser_parseGlobalVarDecl(p: *Parser) i64 {
-    let start: i64 = p.current.start;
-    Parser_want(p, TokenType.Var);
-
-    // Variable name
-    let name_start: i64 = p.current.start;
-    let name_len: i64 = p.current.end;  // Token.end is the length
-    Parser_want(p, TokenType.Ident);
-
-    // Type annotation (required for globals)
-    var type_handle: i64 = -1;
-    var type_start: i64 = 0;
-    if Parser_got(p, TokenType.Colon) {
-        type_start = p.current.start;
-        type_handle = Parser_parseType(p);
-    }
-
-    // Optional initializer
-    var init_expr: i64 = -1;
-    if Parser_got(p, TokenType.Eq) {
-        init_expr = Parser_parseExpr(p);
-    }
-
-    let end: i64 = p.current.start + p.current.end;
-    Parser_got(p, TokenType.Semi);  // Optional semicolon
-
-    // Use GlobalVarDecl for top-level global variables
-    return Node_globalVarDecl(p.pool, name_start, name_len, type_start, type_handle, init_expr, start, end);
-}
-
-// ============================================================================
-// Top-Level Parsing
-// ============================================================================
-
-// Parse a single top-level declaration
-fn Parser_parseDecl(p: *Parser) i64 {
-    // Import must come first
-    if Parser_check(p, TokenType.Import) {
-        return Parser_parseImport(p);
-    }
-
-    // Extern function declaration
-    if Parser_check(p, TokenType.Extern) {
-        return Parser_parseExternFnDecl(p);
-    }
-
-    // Const declaration
-    if Parser_check(p, TokenType.Const) {
-        return Parser_parseConstDecl(p);
-    }
-
-    // Var declaration (global variable)
-    if Parser_check(p, TokenType.Var) {
-        return Parser_parseGlobalVarDecl(p);
-    }
-
-    if Parser_check(p, TokenType.Fn) {
-        return Parser_parseFnDecl(p);
-    }
-
-    if Parser_check(p, TokenType.Struct) {
-        return Parser_parseStructDecl(p);
-    }
-
-    if Parser_check(p, TokenType.Enum) {
-        return Parser_parseEnumDecl(p);
-    }
-
-    // cot1: type alias declaration
-    if Parser_check(p, TokenType.Type) {
-        return Parser_parseTypeAliasDecl(p);
-    }
-
-    // cot1: impl block for method syntax
-    if Parser_check(p, TokenType.Impl) {
-        return Parser_parseImplBlock(p);
-    }
-
-    // Error - unexpected token at top level
-    p.had_error = true;
-    Parser_advance(p);  // Skip bad token
-    return -1;
-}
-
-// Parse entire file (list of declarations)
-fn Parser_parseFile(p: *Parser) i64 {
-    // Store declarations in children array
-    let decls_start: i64 = NodePool_childrenCount(p.pool);
-    var decls_count: i64 = 0;
-
-    while not Parser_atEnd(p) {
-        let decl: i64 = Parser_parseDecl(p);
-        if decl != -1 {
-            Node_addChild(p.pool, decl);
-            decls_count = decls_count + 1;
+        while not self.atEnd() {
+            let decl: i64 = self.parseDecl();
+            if decl != -1 {
+                Node_addChild(self.pool, decl);
+                decls_count = decls_count + 1;
+            }
         }
+
+        // Return a block node representing the file
+        return Node_block(self.pool, decls_start, decls_count, 0, self.scanner.pos);
     }
 
-    // Return a block node representing the file
-    return Node_block(p.pool, decls_start, decls_count, 0, p.scanner.pos);
-}
+    // ============================================================================
+    // Utility Functions
+    // ============================================================================
 
-// ============================================================================
-// Utility Functions
-// ============================================================================
+    // Get source text for a node (name, etc.)
+    fn getSourceText(self: *Parser, start: i64, length: i64) string {
+        return @string(self.source.ptr + start, length);
+    }
 
-// Get source text for a node (name, etc.)
-fn Parser_getSourceText(p: *Parser, start: i64, length: i64) string {
-    return @string(p.source.ptr + start, length);
-}
+    // Check if parser encountered errors
+    fn hadError(self: *Parser) bool {
+        return self.had_error;
+    }
 
-// Check if parser encountered errors
-fn Parser_hadError(p: *Parser) bool {
-    return p.had_error;
 }

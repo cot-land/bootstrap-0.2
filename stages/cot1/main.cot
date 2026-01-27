@@ -345,9 +345,9 @@ fn parse_import_file_with_dir(import_path: *u8, import_path_len: i64, pool: *Nod
 
     let nodes_before: i64 = pool.count;
     var parser: Parser = Parser_init(import_source, pool, &g_type_pool);
-    Parser_parseFile(&parser);
+    parser.parseFile();
 
-    if Parser_hadError(&parser) {
+    if parser.hadError() {
         print("  Warning: Parse error in import\n");
     }
 
@@ -448,9 +448,9 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print("Phase 2: Parsing...\n");
     let pool: *NodePool = init_node_pool();
     var parser: Parser = Parser_init(source, pool, &g_type_pool);
-    let file_node: i64 = Parser_parseFile(&parser);
+    let file_node: i64 = parser.parseFile();
 
-    if Parser_hadError(&parser) {
+    if parser.hadError() {
         print("  FAIL: Parser error at position ");
         print(parser.scanner.pos);
         print("\n");
