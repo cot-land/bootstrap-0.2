@@ -438,7 +438,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print("\n");
 
     // Initialize type registry (needed for parser) - self-allocates storage
-    TypeRegistry_init(&g_type_pool);
+    g_type_pool.init();
 
     t_now = get_time_ns();
     print("  [Phase 1 time: "); print((t_now - t_phase) / 1000000); print("ms]\n");
@@ -512,7 +512,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print("Phase 3: Lowering to IR...\n");
 
     // Update type registry source to combined source buffer (after imports)
-    TypeRegistry_setSource(&g_type_pool, g_source, g_source_len);
+    g_type_pool.setSource(g_source, g_source_len);
 
     var lowerer: Lowerer = undefined;
     Lowerer_init(&lowerer,
@@ -605,7 +605,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
 
         // BUG-054: Compute return type size for hidden return detection
         // Following Zig: src/codegen/arm64.zig:493-522
-        let ret_type_size: i64 = TypeRegistry_sizeof(&g_type_pool, ir_func.return_type);
+        let ret_type_size: i64 = g_type_pool.sizeof(ir_func.return_type);
         ssa_func.setReturnTypeSize(ret_type_size);
 
         // ==================================================================

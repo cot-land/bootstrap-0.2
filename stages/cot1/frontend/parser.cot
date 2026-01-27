@@ -191,7 +191,7 @@ impl Parser {
         // TypeExprPointer: *T
         if node.kind == NodeKind.TypeExprPointer {
             let inner_type: i64 = self.resolveTypeNode(node.field0);
-            return TypeRegistry_makePointer(self.type_registry, inner_type);
+            return self.type_registry.makePointer(inner_type);
         }
 
         // TypeExprFunc: already resolved
@@ -361,7 +361,7 @@ impl Parser {
             }
 
             // Create function type in TypeRegistry
-            let func_type_idx: i64 = TypeRegistry_makeFunc(self.type_registry, 0, param_types.count, ret_type_idx);
+            let func_type_idx: i64 = self.type_registry.makeFunc(0, param_types.count, ret_type_idx);
 
             // Return TypeExprFunc node with pre-resolved type index
             let end_pos: i64 = self.current.start;

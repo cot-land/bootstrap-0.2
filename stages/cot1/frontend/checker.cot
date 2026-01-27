@@ -371,7 +371,7 @@ fn Checker_checkExpr(chk: *Checker, node_idx: i64) i64 {
         let operand_type: i64 = Checker_checkExpr(chk, operand);
 
         // Create pointer type
-        return TypeRegistry_makePointer(chk.type_pool, operand_type);
+        return chk.type_pool.makePointer( operand_type);
     }
 
     // DerefExpr -> operand must be pointer, returns element type
@@ -581,7 +581,7 @@ fn Checker_resolveTypeHandle(chk: *Checker, type_handle: i64) i64 {
     if type_handle >= PTYPE_PTR_BASE and type_handle < PTYPE_USER_BASE {
         let pointee_handle: i64 = type_handle - PTYPE_PTR_BASE;
         let pointee_type: i64 = Checker_resolveTypeHandle(chk, pointee_handle);
-        return TypeRegistry_makePointer(chk.type_pool, pointee_type);
+        return chk.type_pool.makePointer( pointee_type);
     }
 
     // User-defined types: PTYPE_USER_BASE + source_offset
@@ -656,7 +656,7 @@ fn Checker_resolveTypeNode(chk: *Checker, type_node_idx: i64) i64 {
     if node.kind == NodeKind.TypeExprPointer {
         let inner_idx: i64 = node.field0;
         let inner_type: i64 = Checker_resolveTypeNode(chk, inner_idx);
-        return TypeRegistry_makePointer(chk.type_pool, inner_type);
+        return chk.type_pool.makePointer( inner_type);
     }
 
     // TypeExprOptional: ?T (for now, treat as inner type)
@@ -684,14 +684,14 @@ fn Checker_resolveTypeNode(chk: *Checker, type_node_idx: i64) i64 {
             }
         }
         let elem_type: i64 = Checker_resolveTypeNode(chk, elem_node_idx);
-        return TypeRegistry_makeArray(chk.type_pool, elem_type, array_size);
+        return chk.type_pool.makeArray( elem_type, array_size);
     }
 
     // TypeExprSlice: []T
     if node.kind == NodeKind.TypeExprSlice {
         let elem_node_idx: i64 = node.field0;
         let elem_type: i64 = Checker_resolveTypeNode(chk, elem_node_idx);
-        return TypeRegistry_makeSlice(chk.type_pool, elem_type);
+        return chk.type_pool.makeSlice( elem_type);
     }
 
     // TypeExprFunc: fn(params) -> ret (pre-resolved by parser)
@@ -753,7 +753,7 @@ fn Checker_checkStructDecl(chk: *Checker, node_idx: i64) {
         }
 
         // Add field to TypeRegistry with computed offset
-        TypeRegistry_addField(chk.type_pool, fname_start, fname_len, field_type, offset);
+        chk.type_pool.addField( fname_start, fname_len, field_type, offset);
 
         // Advance offset by field size
         offset = offset + field_size;
@@ -765,7 +765,7 @@ fn Checker_checkStructDecl(chk: *Checker, node_idx: i64) {
     let struct_size: i64 = (offset + max_align - 1) / max_align * max_align;
 
     // Create struct type with TypeRegistry fields_start (not AST children start)
-    let struct_type: i64 = TypeRegistry_makeStruct(chk.type_pool, name_start, name_len,
+    let struct_type: i64 = chk.type_pool.makeStruct( name_start, name_len,
                                              type_fields_start, fields_count,
                                              struct_size, max_align);
 
@@ -788,7 +788,7 @@ fn Checker_checkEnumDecl(chk: *Checker, node_idx: i64) {
     let variants_count: i64 = node.field3;
 
     // Create enum type
-    let enum_type: i64 = TypeRegistry_makeEnum(chk.type_pool, name_start, name_len, variants_count);
+    let enum_type: i64 = chk.type_pool.makeEnum( name_start, name_len, variants_count);
 
     // Register as type name in scope
     let sym: CheckerSymbol = CheckerSymbol_new(name_start, name_len, CheckerSymbolKind.TypeName,
