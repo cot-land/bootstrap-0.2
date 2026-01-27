@@ -1,0 +1,118 @@
+// AMD64 Register Definitions
+// Defines register numbers and register sets for AMD64 code generation.
+//
+// Reference: src/amd64/regs.zig (our Zig bootstrap)
+// Reference: System V AMD64 ABI
+//
+// AMD64 has 16 general-purpose 64-bit registers:
+// - RAX, RBX, RCX, RDX: Legacy x86 registers (extended to 64-bit)
+// - RSI, RDI: Source/Destination index registers
+// - RBP, RSP: Base/Stack pointer registers
+// - R8-R15: New AMD64 registers
+
+// ============================================================================
+// General Purpose Registers (64-bit)
+// ============================================================================
+
+// Register encodings (0-15) - used in instruction encoding
+const RAX: i64 = 0;   // Accumulator, return value
+const RCX: i64 = 1;   // Counter, 4th argument
+const RDX: i64 = 2;   // Data, 3rd argument, second return value
+const RBX: i64 = 3;   // Base (callee-saved)
+const RSP: i64 = 4;   // Stack pointer
+const RBP: i64 = 5;   // Base pointer (callee-saved)
+const RSI: i64 = 6;   // Source index, 2nd argument
+const RDI: i64 = 7;   // Destination index, 1st argument
+const R8: i64 = 8;    // 5th argument
+const R9: i64 = 9;    // 6th argument
+const R10: i64 = 10;  // Temporary (caller-saved)
+const R11: i64 = 11;  // Temporary (caller-saved)
+const R12: i64 = 12;  // Callee-saved
+const R13: i64 = 13;  // Callee-saved
+const R14: i64 = 14;  // Callee-saved
+const R15: i64 = 15;  // Callee-saved
+
+// ============================================================================
+// System V AMD64 ABI Constants
+// ============================================================================
+
+// Number of integer argument registers (RDI, RSI, RDX, RCX, R8, R9)
+const NUM_ARG_REGS: i64 = 6;
+
+// Number of integer return registers (RAX, RDX)
+const NUM_RET_REGS: i64 = 2;
+
+// Number of callee-saved registers (RBX, RBP, R12-R15)
+const NUM_CALLEE_SAVED: i64 = 6;
+
+// Stack alignment (16 bytes before CALL)
+const STACK_ALIGN: i64 = 16;
+
+// Register size in bytes
+const REG_SIZE: i64 = 8;
+
+// ============================================================================
+// Register Classification Functions
+// ============================================================================
+
+// Check if register needs REX prefix extension (R8-R15)
+fn needs_rex(reg: i64) bool {
+    return reg >= 8;
+}
+
+// Get 3-bit encoding for register (low 3 bits)
+fn reg_enc3(reg: i64) i64 {
+    return reg & 7;
+}
+
+// Check if register is an argument register (RDI, RSI, RDX, RCX, R8, R9)
+fn is_arg_reg(reg: i64) bool {
+    return reg == RDI or reg == RSI or reg == RDX or reg == RCX or reg == R8 or reg == R9;
+}
+
+// Check if register is callee-saved (RBX, RBP, R12-R15)
+fn is_callee_saved(reg: i64) bool {
+    if reg == RBX { return true; }
+    if reg == RBP { return true; }
+    if reg >= R12 and reg <= R15 { return true; }
+    return false;
+}
+
+// Check if register is caller-saved (RAX, RCX, RDX, RSI, RDI, R8-R11)
+fn is_caller_saved(reg: i64) bool {
+    if reg == RAX or reg == RCX or reg == RDX { return true; }
+    if reg == RSI or reg == RDI { return true; }
+    if reg >= R8 and reg <= R11 { return true; }
+    return false;
+}
+
+// Check if register is allocatable (all except RSP)
+fn is_allocatable(reg: i64) bool {
+    return reg != RSP;
+}
+
+// Get argument register by index (0-5)
+// Order: RDI, RSI, RDX, RCX, R8, R9
+fn arg_reg(idx: i64) i64 {
+    if idx == 0 { return RDI; }
+    if idx == 1 { return RSI; }
+    if idx == 2 { return RDX; }
+    if idx == 3 { return RCX; }
+    if idx == 4 { return R8; }
+    if idx == 5 { return R9; }
+    return RAX;  // Fallback (shouldn't happen)
+}
+
+// ============================================================================
+// Special Register Handling
+// ============================================================================
+
+// RSP and R12 require SIB byte when used as base in memory operands
+fn needs_sib_as_base(reg: i64) bool {
+    return reg == RSP or reg == R12;
+}
+
+// RBP and R13 require displacement when used as base with mod=00
+fn needs_disp_as_base(reg: i64) bool {
+    return reg == RBP or reg == R13;
+}

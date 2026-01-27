@@ -1,0 +1,689 @@
+// ELF64 Object File Writer
+// Generates ELF64 relocatable object files for Linux AMD64.
+//
+// Reference: src/obj/elf.zig (our Zig bootstrap)
+// Reference: System V AMD64 ABI
+//
+// ELF64 Structure (Relocatable Object):
+// +------------------+
+// | ELF Header       |  64 bytes
+// +------------------+
+// | .text section    |  Code
+// +------------------+
+// | .data section    |  Initialized data
+// +------------------+
+// | .symtab section  |  Symbol table
+// +------------------+
+// | .strtab section  |  String table (symbol names)
+// +------------------+
+// | .shstrtab        |  Section header string table
+// +------------------+
+// | .rela.text       |  Relocations for .text
+// +------------------+
+// | Section Headers  |  Array of section headers
+// +------------------+
+
+// ============================================================================
+// Module-Level Storage
+// ============================================================================
+
+extern fn malloc_u8(count: i64) *u8;
+extern fn malloc_i64(count: i64) *i64;
+extern fn write(fd: i32, buf: *u8, count: i64) i64;
+
+// Storage capacity constants
+const EW_SYMBOLS_CAP: i64 = 5000;
+const EW_STRINGS_CAP: i64 = 131072;   // 128KB
+const EW_RELOCS_CAP: i64 = 10000;
+const EW_OUTPUT_CAP: i64 = 1048576;   // 1MB
+
+// Module storage (allocated once, reused)
+var ew_sym_name_offsets: *i64 = null;
+var ew_sym_values: *i64 = null;
+var ew_sym_sections: *i64 = null;
+var ew_sym_bindings: *i64 = null;
+var ew_sym_types: *i64 = null;
+var ew_symbols_cap: i64 = 0;
+
+var ew_strings: *u8 = null;
+var ew_strings_cap: i64 = 0;
+
+var ew_reloc_offsets: *i64 = null;
+var ew_reloc_target_str_offs: *i64 = null;
+var ew_reloc_target_lens: *i64 = null;
+var ew_reloc_types: *i64 = null;
+var ew_reloc_addends: *i64 = null;
+var ew_relocs_cap: i64 = 0;
+
+var ew_output: *u8 = null;
+var ew_output_cap: i64 = 0;
+
+var ew_storage_initialized: bool = false;
+
+fn ElfWriter_allocateStorage() {
+    if ew_storage_initialized { return; }
+
+    ew_sym_name_offsets = malloc_i64(EW_SYMBOLS_CAP);
+    ew_sym_values = malloc_i64(EW_SYMBOLS_CAP);
+    ew_sym_sections = malloc_i64(EW_SYMBOLS_CAP);
+    ew_sym_bindings = malloc_i64(EW_SYMBOLS_CAP);
+    ew_sym_types = malloc_i64(EW_SYMBOLS_CAP);
+    ew_symbols_cap = EW_SYMBOLS_CAP;
+
+    ew_strings = malloc_u8(EW_STRINGS_CAP);
+    ew_strings_cap = EW_STRINGS_CAP;
+
+    ew_reloc_offsets = malloc_i64(EW_RELOCS_CAP);
+    ew_reloc_target_str_offs = malloc_i64(EW_RELOCS_CAP);
+    ew_reloc_target_lens = malloc_i64(EW_RELOCS_CAP);
+    ew_reloc_types = malloc_i64(EW_RELOCS_CAP);
+    ew_reloc_addends = malloc_i64(EW_RELOCS_CAP);
+    ew_relocs_cap = EW_RELOCS_CAP;
+
+    ew_output = malloc_u8(EW_OUTPUT_CAP);
+    ew_output_cap = EW_OUTPUT_CAP;
+
+    ew_storage_initialized = true;
+}
+
+// ============================================================================
+// ELF Constants
+// ============================================================================
+
+// ELF Magic
+const ELF_MAG0: i64 = 0x7F;
+const ELF_MAG1: i64 = 0x45;  // 'E'
+const ELF_MAG2: i64 = 0x4C;  // 'L'
+const ELF_MAG3: i64 = 0x46;  // 'F'
+
+// ELF class
+const ELFCLASS64: i64 = 2;
+
+// Data encoding
+const ELFDATA2LSB: i64 = 1;  // Little-endian
+
+// Version
+const EV_CURRENT: i64 = 1;
+
+// OS/ABI
+const ELFOSABI_SYSV: i64 = 0;
+
+// Object file types
+const ET_REL: i64 = 1;  // Relocatable
+
+// Machine types
+const EM_X86_64: i64 = 62;
+
+// Section types
+const SHT_NULL: i64 = 0;
+const SHT_PROGBITS: i64 = 1;
+const SHT_SYMTAB: i64 = 2;
+const SHT_STRTAB: i64 = 3;
+const SHT_RELA: i64 = 4;
+
+// Section flags
+const SHF_WRITE: i64 = 1;
+const SHF_ALLOC: i64 = 2;
+const SHF_EXECINSTR: i64 = 4;
+const SHF_INFO_LINK: i64 = 0x40;
+
+// Symbol binding
+const STB_LOCAL: i64 = 0;
+const STB_GLOBAL: i64 = 1;
+
+// Symbol types
+const STT_NOTYPE: i64 = 0;
+const STT_OBJECT: i64 = 1;
+const STT_FUNC: i64 = 2;
+
+// Special section indices
+const SHN_UNDEF: i64 = 0;
+
+// AMD64 relocation types
+const R_X86_64_PC32: i64 = 2;   // PC-relative 32-bit
+const R_X86_64_PLT32: i64 = 4;  // 32-bit PLT address
+
+// Structure sizes
+const ELF64_EHDR_SIZE: i64 = 64;
+const ELF64_SHDR_SIZE: i64 = 64;
+const ELF64_SYM_SIZE: i64 = 24;
+const ELF64_RELA_SIZE: i64 = 24;
+
+// ============================================================================
+// ELF Writer State
+// ============================================================================
+
+struct ElfWriter {
+    // Code section (.text)
+    code: *u8,
+    code_count: i64,
+    code_cap: i64,
+
+    // Data section (.data)
+    data: *u8,
+    data_count: i64,
+    data_cap: i64,
+
+    // Symbol table (parallel arrays)
+    sym_name_offsets: *i64,
+    sym_values: *i64,
+    sym_sections: *i64,
+    sym_bindings: *i64,
+    sym_types: *i64,
+    symbols_count: i64,
+    symbols_cap: i64,
+
+    // String table
+    strings: *u8,
+    strings_count: i64,
+    strings_cap: i64,
+
+    // Relocations (parallel arrays)
+    reloc_offsets: *i64,
+    reloc_target_str_offs: *i64,
+    reloc_target_lens: *i64,
+    reloc_types: *i64,
+    reloc_addends: *i64,
+    relocs_count: i64,
+    relocs_cap: i64,
+
+    // Output buffer
+    output: *u8,
+    output_count: i64,
+    output_cap: i64,
+
+    // Section header string table offsets (fixed layout)
+    shstrtab_text_off: i64,
+    shstrtab_data_off: i64,
+    shstrtab_symtab_off: i64,
+    shstrtab_strtab_off: i64,
+    shstrtab_shstrtab_off: i64,
+    shstrtab_rela_off: i64,
+}
+
+impl ElfWriter {
+
+    fn init(self: *ElfWriter, code: *u8, code_count: i64, data: *u8, data_cap: i64) {
+        ElfWriter_allocateStorage();
+
+        self.code = code;
+        self.code_count = code_count;
+        self.code_cap = code_count;
+
+        self.data = data;
+        self.data_count = 0;
+        self.data_cap = data_cap;
+
+        self.sym_name_offsets = ew_sym_name_offsets;
+        self.sym_values = ew_sym_values;
+        self.sym_sections = ew_sym_sections;
+        self.sym_bindings = ew_sym_bindings;
+        self.sym_types = ew_sym_types;
+        self.symbols_count = 0;
+        self.symbols_cap = ew_symbols_cap;
+
+        self.strings = ew_strings;
+        self.strings_count = 1;  // Reserve byte 0 as null
+        self.strings_cap = ew_strings_cap;
+        ew_strings.* = 0;
+
+        self.reloc_offsets = ew_reloc_offsets;
+        self.reloc_target_str_offs = ew_reloc_target_str_offs;
+        self.reloc_target_lens = ew_reloc_target_lens;
+        self.reloc_types = ew_reloc_types;
+        self.reloc_addends = ew_reloc_addends;
+        self.relocs_count = 0;
+        self.relocs_cap = ew_relocs_cap;
+
+        self.output = ew_output;
+        self.output_count = 0;
+        self.output_cap = ew_output_cap;
+
+        // Fixed section header string table layout
+        self.shstrtab_text_off = 1;      // ".text" at offset 1
+        self.shstrtab_data_off = 7;      // ".data" at offset 7
+        self.shstrtab_symtab_off = 13;   // ".symtab" at offset 13
+        self.shstrtab_strtab_off = 21;   // ".strtab" at offset 21
+        self.shstrtab_shstrtab_off = 29; // ".shstrtab" at offset 29
+        self.shstrtab_rela_off = 39;     // ".rela.text" at offset 39
+    }
+
+    // Add a string to strtab, return offset
+    fn addString(self: *ElfWriter, ptr: *u8, len: i64) i64 {
+        if self.strings_count + len + 1 > self.strings_cap {
+            return 0;  // Error
+        }
+
+        let offset: i64 = self.strings_count;
+        var i: i64 = 0;
+        while i < len {
+            let dst: *u8 = self.strings + self.strings_count + i;
+            let src: *u8 = ptr + i;
+            dst.* = src.*;
+            i = i + 1;
+        }
+        // Null terminate
+        let term: *u8 = self.strings + self.strings_count + len;
+        term.* = 0;
+        self.strings_count = self.strings_count + len + 1;
+
+        return offset;
+    }
+
+    // Add a symbol
+    fn addSymbol(self: *ElfWriter, name_ptr: *u8, name_len: i64, value: i64, section: i64, is_external: bool) {
+        if self.symbols_count >= self.symbols_cap { return; }
+
+        let name_off: i64 = self.addString( name_ptr, name_len);
+
+        let idx: i64 = self.symbols_count;
+        let off_ptr: *i64 = self.sym_name_offsets + idx;
+        let val_ptr: *i64 = self.sym_values + idx;
+        let sec_ptr: *i64 = self.sym_sections + idx;
+        let bind_ptr: *i64 = self.sym_bindings + idx;
+        let type_ptr: *i64 = self.sym_types + idx;
+
+        off_ptr.* = name_off;
+        val_ptr.* = value;
+        sec_ptr.* = section;
+        if is_external {
+            bind_ptr.* = STB_GLOBAL;
+        } else {
+            bind_ptr.* = STB_LOCAL;
+        }
+        // Determine type based on section
+        if section == 1 {
+            type_ptr.* = STT_FUNC;
+        } else if section == 2 {
+            type_ptr.* = STT_OBJECT;
+        } else {
+            type_ptr.* = STT_NOTYPE;
+        }
+
+        self.symbols_count = self.symbols_count + 1;
+    }
+
+    // Add a relocation (for CALL instructions)
+    fn addReloc(self: *ElfWriter, offset: i64, target_ptr: *u8, target_len: i64, reloc_type: i64, addend: i64) {
+        if self.relocs_count >= self.relocs_cap { return; }
+
+        // Store target name for later lookup
+        let target_off: i64 = self.addString( target_ptr, target_len);
+
+        let idx: i64 = self.relocs_count;
+        let off_ptr: *i64 = self.reloc_offsets + idx;
+        let tgt_off_ptr: *i64 = self.reloc_target_str_offs + idx;
+        let tgt_len_ptr: *i64 = self.reloc_target_lens + idx;
+        let type_ptr: *i64 = self.reloc_types + idx;
+        let add_ptr: *i64 = self.reloc_addends + idx;
+
+        off_ptr.* = offset;
+        tgt_off_ptr.* = target_off;
+        tgt_len_ptr.* = target_len;
+        type_ptr.* = reloc_type;
+        add_ptr.* = addend;
+
+        self.relocs_count = self.relocs_count + 1;
+    }
+
+    // Helper: write a byte to output
+    fn writeByte(self: *ElfWriter, b: i64) {
+        if self.output_count >= self.output_cap { return; }
+        let ptr: *u8 = self.output + self.output_count;
+        ptr.* = @intCast(u8, b & 255);
+        self.output_count = self.output_count + 1;
+    }
+
+    // Helper: write 2 bytes (little-endian)
+    fn writeU16(self: *ElfWriter, v: i64) {
+        self.writeByte( v & 0xFF);
+        self.writeByte( (v >> 8) & 0xFF);
+    }
+
+    // Helper: write 4 bytes (little-endian)
+    fn writeU32(self: *ElfWriter, v: i64) {
+        self.writeByte( v & 0xFF);
+        self.writeByte( (v >> 8) & 0xFF);
+        self.writeByte( (v >> 16) & 0xFF);
+        self.writeByte( (v >> 24) & 0xFF);
+    }
+
+    // Helper: write 8 bytes (little-endian)
+    fn writeU64(self: *ElfWriter, v: i64) {
+        self.writeU32( v & 0xFFFFFFFF);
+        self.writeU32( (v >> 32) & 0xFFFFFFFF);
+    }
+
+    // Helper: write bytes from buffer
+    fn writeBytes(self: *ElfWriter, buf: *u8, len: i64) {
+        var i: i64 = 0;
+        while i < len {
+            if self.output_count >= self.output_cap { return; }
+            let dst: *u8 = self.output + self.output_count;
+            let src: *u8 = buf + i;
+            dst.* = src.*;
+            self.output_count = self.output_count + 1;
+            i = i + 1;
+        }
+    }
+
+    // Helper: write zeros
+    fn writeZeros(self: *ElfWriter, count: i64) {
+        var i: i64 = 0;
+        while i < count {
+            self.writeByte( 0);
+            i = i + 1;
+        }
+    }
+
+    // Helper: align to boundary
+    fn alignTo(self: *ElfWriter, align: i64) {
+        while (self.output_count & (align - 1)) != 0 {
+            self.writeByte( 0);
+        }
+    }
+
+    // Build section header string table
+    fn buildShstrtab(self: *ElfWriter) i64 {
+        // Fixed layout: \0.text\0.data\0.symtab\0.strtab\0.shstrtab\0.rela.text\0
+        let start: i64 = self.output_count;
+
+        self.writeByte( 0);  // Null byte at offset 0
+
+        // .text (offset 1)
+        self.writeByte( 46); self.writeByte( 116); self.writeByte( 101);
+        self.writeByte( 120); self.writeByte( 116); self.writeByte( 0);
+
+        // .data (offset 7)
+        self.writeByte( 46); self.writeByte( 100); self.writeByte( 97);
+        self.writeByte( 116); self.writeByte( 97); self.writeByte( 0);
+
+        // .symtab (offset 13)
+        self.writeByte( 46); self.writeByte( 115); self.writeByte( 121);
+        self.writeByte( 109); self.writeByte( 116); self.writeByte( 97);
+        self.writeByte( 98); self.writeByte( 0);
+
+        // .strtab (offset 21)
+        self.writeByte( 46); self.writeByte( 115); self.writeByte( 116);
+        self.writeByte( 114); self.writeByte( 116); self.writeByte( 97);
+        self.writeByte( 98); self.writeByte( 0);
+
+        // .shstrtab (offset 29)
+        self.writeByte( 46); self.writeByte( 115); self.writeByte( 104);
+        self.writeByte( 115); self.writeByte( 116); self.writeByte( 114);
+        self.writeByte( 116); self.writeByte( 97); self.writeByte( 98); self.writeByte( 0);
+
+        // .rela.text (offset 39)
+        self.writeByte( 46); self.writeByte( 114); self.writeByte( 101);
+        self.writeByte( 108); self.writeByte( 97); self.writeByte( 46);
+        self.writeByte( 116); self.writeByte( 101); self.writeByte( 120);
+        self.writeByte( 116); self.writeByte( 0);
+
+        return self.output_count - start;
+    }
+
+    // Write ELF header
+    fn writeElfHeader(self: *ElfWriter, shoff: i64, shnum: i64, shstrndx: i64) {
+        // e_ident (16 bytes)
+        self.writeByte( ELF_MAG0);
+        self.writeByte( ELF_MAG1);
+        self.writeByte( ELF_MAG2);
+        self.writeByte( ELF_MAG3);
+        self.writeByte( ELFCLASS64);
+        self.writeByte( ELFDATA2LSB);
+        self.writeByte( EV_CURRENT);
+        self.writeByte( ELFOSABI_SYSV);
+        self.writeZeros( 8);  // Padding
+
+        // e_type, e_machine, e_version
+        self.writeU16( ET_REL);
+        self.writeU16( EM_X86_64);
+        self.writeU32( EV_CURRENT);
+
+        // e_entry (0 for relocatable)
+        self.writeU64( 0);
+
+        // e_phoff (0 for relocatable)
+        self.writeU64( 0);
+
+        // e_shoff
+        self.writeU64( shoff);
+
+        // e_flags
+        self.writeU32( 0);
+
+        // e_ehsize
+        self.writeU16( ELF64_EHDR_SIZE);
+
+        // e_phentsize, e_phnum (0 for relocatable)
+        self.writeU16( 0);
+        self.writeU16( 0);
+
+        // e_shentsize
+        self.writeU16( ELF64_SHDR_SIZE);
+
+        // e_shnum
+        self.writeU16( shnum);
+
+        // e_shstrndx
+        self.writeU16( shstrndx);
+    }
+
+    // Write section header
+    fn writeSectionHeader(self: *ElfWriter, name: i64, shtype: i64, flags: i64,
+                          offset: i64, size: i64, link: i64, info: i64, align: i64, entsize: i64) {
+        self.writeU32( name);    // sh_name
+        self.writeU32( shtype);  // sh_type
+        self.writeU64( flags);   // sh_flags
+        self.writeU64( 0);       // sh_addr (0 for relocatable)
+        self.writeU64( offset);  // sh_offset
+        self.writeU64( size);    // sh_size
+        self.writeU32( link);    // sh_link
+        self.writeU32( info);    // sh_info
+        self.writeU64( align);   // sh_addralign
+        self.writeU64( entsize); // sh_entsize
+    }
+
+    // Write symbol table entry
+    fn writeSymbol(self: *ElfWriter, name: i64, info: i64, shndx: i64, value: i64, size: i64) {
+        self.writeU32( name);   // st_name
+        self.writeByte( info);  // st_info
+        self.writeByte( 0);     // st_other
+        self.writeU16( shndx);  // st_shndx
+        self.writeU64( value);  // st_value
+        self.writeU64( size);   // st_size
+    }
+
+    // Write relocation entry
+    fn writeRela(self: *ElfWriter, offset: i64, sym: i64, rtype: i64, addend: i64) {
+        self.writeU64( offset);
+        // r_info = (sym << 32) | type
+        let info: i64 = (sym << 32) | (rtype & 0xFFFFFFFF);
+        self.writeU64( info);
+        self.writeU64( addend);
+    }
+
+    // Find symbol index by name (string offset)
+    fn findSymbolIndex(self: *ElfWriter, name_str_off: i64, num_local: i64) i64 {
+        // Check defined symbols
+        var i: i64 = 0;
+        while i < self.symbols_count {
+            let off_ptr: *i64 = self.sym_name_offsets + i;
+            if off_ptr.* == name_str_off {
+                // Local symbols have index 1..num_local
+                // Global symbols have index num_local+1..
+                return i + 1;  // +1 for null symbol
+            }
+            i = i + 1;
+        }
+        return 0;  // Not found
+    }
+
+    // Write complete ELF object file
+    fn write(self: *ElfWriter, fd: i32) i64 {
+        // Calculate section layout
+        // Sections: 0=NULL, 1=.text, 2=.data, 3=.symtab, 4=.strtab, 5=.shstrtab, 6=.rela.text
+        let num_sections: i64 = 7;
+
+        // Calculate offsets
+        var offset: i64 = ELF64_EHDR_SIZE;
+
+        // .text
+        let text_offset: i64 = offset;
+        let text_size: i64 = self.code_count;
+        offset = offset + text_size;
+        offset = (offset + 7) & (0 - 8);  // Align to 8
+
+        // .data
+        let data_offset: i64 = offset;
+        let data_size: i64 = self.data_count;
+        if data_size > 0 {
+            offset = offset + data_size;
+            offset = (offset + 7) & (0 - 8);
+        }
+
+        // Count local and global symbols
+        var num_local: i64 = 1;  // Null symbol is local
+        var i: i64 = 0;
+        while i < self.symbols_count {
+            let bind_ptr: *i64 = self.sym_bindings + i;
+            if bind_ptr.* == STB_LOCAL {
+                num_local = num_local + 1;
+            }
+            i = i + 1;
+        }
+
+        // .symtab
+        let symtab_offset: i64 = offset;
+        let total_syms: i64 = 1 + self.symbols_count;  // +1 for null symbol
+        let symtab_size: i64 = total_syms * ELF64_SYM_SIZE;
+        offset = offset + symtab_size;
+        offset = (offset + 7) & (0 - 8);
+
+        // .strtab
+        let strtab_offset: i64 = offset;
+        let strtab_size: i64 = self.strings_count;
+        offset = offset + strtab_size;
+        offset = (offset + 7) & (0 - 8);
+
+        // .shstrtab
+        let shstrtab_offset: i64 = offset;
+        let shstrtab_size: i64 = 50;  // Known fixed size
+        offset = offset + shstrtab_size;
+        offset = (offset + 7) & (0 - 8);
+
+        // .rela.text
+        let rela_offset: i64 = offset;
+        let rela_size: i64 = self.relocs_count * ELF64_RELA_SIZE;
+        offset = offset + rela_size;
+        offset = (offset + 7) & (0 - 8);
+
+        // Section headers
+        let shdr_offset: i64 = offset;
+
+        // Reset output buffer
+        self.output_count = 0;
+
+        // Write ELF header
+        self.writeElfHeader( shdr_offset, num_sections, 5);
+
+        // Write .text section
+        self.writeBytes( self.code, self.code_count);
+        self.alignTo( 8);
+
+        // Write .data section
+        if data_size > 0 {
+            self.writeBytes( self.data, self.data_count);
+            self.alignTo( 8);
+        }
+
+        // Write .symtab section
+        // Null symbol first
+        self.writeSymbol( 0, 0, 0, 0, 0);
+
+        // Local symbols first, then global
+        i = 0;
+        while i < self.symbols_count {
+            let bind_ptr: *i64 = self.sym_bindings + i;
+            if bind_ptr.* == STB_LOCAL {
+                let off_ptr: *i64 = self.sym_name_offsets + i;
+                let val_ptr: *i64 = self.sym_values + i;
+                let sec_ptr: *i64 = self.sym_sections + i;
+                let type_ptr: *i64 = self.sym_types + i;
+                let info: i64 = (STB_LOCAL << 4) | type_ptr.*;
+                self.writeSymbol( off_ptr.*, info, sec_ptr.*, val_ptr.*, 0);
+            }
+            i = i + 1;
+        }
+
+        i = 0;
+        while i < self.symbols_count {
+            let bind_ptr: *i64 = self.sym_bindings + i;
+            if bind_ptr.* == STB_GLOBAL {
+                let off_ptr: *i64 = self.sym_name_offsets + i;
+                let val_ptr: *i64 = self.sym_values + i;
+                let sec_ptr: *i64 = self.sym_sections + i;
+                let type_ptr: *i64 = self.sym_types + i;
+                let info: i64 = (STB_GLOBAL << 4) | type_ptr.*;
+                self.writeSymbol( off_ptr.*, info, sec_ptr.*, val_ptr.*, 0);
+            }
+            i = i + 1;
+        }
+        self.alignTo( 8);
+
+        // Write .strtab section
+        self.writeBytes( self.strings, self.strings_count);
+        self.alignTo( 8);
+
+        // Write .shstrtab section
+        self.buildShstrtab();
+        self.alignTo( 8);
+
+        // Write .rela.text section
+        i = 0;
+        while i < self.relocs_count {
+            let off_ptr: *i64 = self.reloc_offsets + i;
+            let tgt_off_ptr: *i64 = self.reloc_target_str_offs + i;
+            let type_ptr: *i64 = self.reloc_types + i;
+            let add_ptr: *i64 = self.reloc_addends + i;
+
+            // Find symbol index
+            let sym_idx: i64 = self.findSymbolIndex( tgt_off_ptr.*, num_local);
+            self.writeRela( off_ptr.*, sym_idx, type_ptr.*, add_ptr.*);
+            i = i + 1;
+        }
+        self.alignTo( 8);
+
+        // Write section headers
+        // 0: NULL
+        self.writeSectionHeader( 0, SHT_NULL, 0, 0, 0, 0, 0, 0, 0);
+
+        // 1: .text
+        self.writeSectionHeader( self.shstrtab_text_off, SHT_PROGBITS,
+                                SHF_ALLOC | SHF_EXECINSTR, text_offset, text_size, 0, 0, 16, 0);
+
+        // 2: .data
+        self.writeSectionHeader( self.shstrtab_data_off, SHT_PROGBITS,
+                                SHF_WRITE | SHF_ALLOC, data_offset, data_size, 0, 0, 8, 0);
+
+        // 3: .symtab (link=4 for strtab, info=num_local)
+        self.writeSectionHeader( self.shstrtab_symtab_off, SHT_SYMTAB,
+                                0, symtab_offset, symtab_size, 4, num_local, 8, ELF64_SYM_SIZE);
+
+        // 4: .strtab
+        self.writeSectionHeader( self.shstrtab_strtab_off, SHT_STRTAB,
+                                0, strtab_offset, strtab_size, 0, 0, 1, 0);
+
+        // 5: .shstrtab
+        self.writeSectionHeader( self.shstrtab_shstrtab_off, SHT_STRTAB,
+                                0, shstrtab_offset, shstrtab_size, 0, 0, 1, 0);
+
+        // 6: .rela.text (link=3 for symtab, info=1 for .text)
+        self.writeSectionHeader( self.shstrtab_rela_off, SHT_RELA,
+                                SHF_INFO_LINK, rela_offset, rela_size, 3, 1, 8, ELF64_RELA_SIZE);
+
+        // Write to file
+        let write_result: i64 = write(fd, self.output, self.output_count);
+        return write_result;
+    }
+}

@@ -1,0 +1,416 @@
+// AMD64 Code Generator
+// Generates AMD64 machine code from SSA representation.
+//
+// Reference: src/codegen/amd64.zig (our Zig bootstrap)
+// Reference: ~/learning/go/src/cmd/compile/internal/amd64/ssa.go
+//
+// Design:
+// 1. Walk SSA blocks in scheduled order
+// 2. For each value, emit corresponding AMD64 instructions
+// 3. Handle register allocation results
+// 4. Emit prologue/epilogue for function frame
+
+import "../amd64/asm.cot"
+import "../amd64/regs.cot"
+
+// ============================================================================
+// Code Emitter
+// ============================================================================
+
+// The emitter collects machine code bytes.
+// For self-hosting, we use a simple byte buffer approach.
+// Maximum code size for a single function (can be increased if needed).
+const MAX_CODE_SIZE: i64 = 262144;
+
+struct Emitter {
+    // Code buffer (would be dynamically allocated in full implementation)
+    code_offset: i64,
+    // Number of instructions emitted
+    inst_count: i64,
+}
+
+fn Emitter_init() Emitter {
+    return Emitter{
+        .code_offset = 0,
+        .inst_count = 0,
+    };
+}
+
+// ============================================================================
+// Type-Based Instruction Selection
+// ============================================================================
+// Following Go's pattern from amd64/ssa.go
+
+// Select load instruction based on type size
+// AMD64 uses MOVZX/MOVSX for smaller sizes
+fn Instruction_selectLoad(size: i64, is_signed: bool) i64 {
+    // Returns an instruction selector code
+    // 1 = MOVZX r64, byte [mem]
+    // 2 = MOVSX r64, byte [mem]
+    // 3 = MOVZX r64, word [mem]
+    // 4 = MOVSX r64, word [mem]
+    // 5 = MOV r32, [mem] (zero-extended)
+    // 6 = MOVSXD r64, dword [mem]
+    // 7 = MOV r64, [mem]
+    if size == 1 {
+        if is_signed { return 2; }  // MOVSX byte
+        return 1;  // MOVZX byte
+    }
+    if size == 2 {
+        if is_signed { return 4; }  // MOVSX word
+        return 3;  // MOVZX word
+    }
+    if size == 4 {
+        if is_signed { return 6; }  // MOVSXD dword
+        return 5;  // MOV r32 (implicit zero-extend)
+    }
+    return 7;  // MOV r64
+}
+
+// Select store instruction based on type size
+fn Instruction_selectStore(size: i64) i64 {
+    // Returns an instruction selector code
+    // 1 = MOV byte [mem], r8
+    // 2 = MOV word [mem], r16
+    // 3 = MOV dword [mem], r32
+    // 4 = MOV qword [mem], r64
+    if size == 1 { return 1; }
+    if size == 2 { return 2; }
+    if size == 4 { return 3; }
+    return 4;
+}
+
+// ============================================================================
+// Frame Layout
+// ============================================================================
+
+// AMD64 System V calling convention:
+// - RDI, RSI, RDX, RCX, R8, R9: Integer arguments (1-6)
+// - RAX: Return value (first 8 bytes)
+// - RDX: Return value (second 8 bytes, for 9-16 byte structs)
+// - RAX, RCX, RDX, RSI, RDI, R8-R11: Caller-saved registers
+// - RBX, RBP, R12-R15: Callee-saved registers
+// - RSP: Stack pointer (must be 16-byte aligned before CALL)
+// - RBP: Frame pointer (optional but we use it)
+
+// Standard function prologue:
+// PUSH RBP              ; Save old frame pointer
+// MOV RBP, RSP          ; Set up new frame pointer
+// SUB RSP, frame_size   ; Allocate stack space
+// (save callee-saved registers if needed)
+
+// Standard function epilogue:
+// (restore callee-saved registers if needed)
+// MOV RSP, RBP          ; Restore stack pointer
+// POP RBP               ; Restore frame pointer
+// RET
+
+// Get packed prologue instruction: PUSH RBP
+fn AMD64_encodePushRbp() i64 {
+    return encode_push(RBP);
+}
+
+// Get packed prologue instruction: MOV RBP, RSP
+fn AMD64_encodeMovRbpRsp() i64 {
+    return encode_mov_rr(RBP, RSP);
+}
+
+// Get packed prologue instruction: SUB RSP, imm
+fn AMD64_encodeSubRspImm(frame_size: i64) i64 {
+    if frame_size == 0 {
+        return encode_nop();
+    }
+    if frame_size >= -128 and frame_size <= 127 {
+        return encode_sub_ri8(RSP, frame_size);
+    }
+    return encode_sub_ri32(RSP, frame_size);
+}
+
+// Get packed epilogue instruction: MOV RSP, RBP
+fn AMD64_encodeMovRspRbp() i64 {
+    return encode_mov_rr(RSP, RBP);
+}
+
+// Get packed epilogue instruction: POP RBP
+fn AMD64_encodePopRbp() i64 {
+    return encode_pop(RBP);
+}
+
+// Get packed epilogue instruction: RET
+fn AMD64_encodeReturn() i64 {
+    return encode_ret();
+}
+
+// ============================================================================
+// Move Generation
+// ============================================================================
+
+// Generate a move from one register to another
+fn AMD64_encodeMovReg(rd: i64, rm: i64) i64 {
+    return encode_mov_rr(rd, rm);
+}
+
+// Generate loading an immediate value
+// For small values (fits in 32-bit signed), use MOV r32, imm32 (clears upper bits)
+// For larger values, use MOV r64, imm32 (sign-extended)
+fn AMD64_encodeMovImm(rd: i64, imm: i64) i64 {
+    // If value fits in 32 bits unsigned and is positive, use MOV r32, imm32
+    if imm >= 0 and imm <= 0x7FFFFFFF {
+        return encode_mov_r32_i32(rd, imm);
+    }
+    // For negative or large values, use MOV r64, imm32 (sign-extended)
+    return encode_mov_ri32(rd, imm);
+}
+
+// ============================================================================
+// Comparison and Condition Codes
+// ============================================================================
+
+// AMD64 condition codes (for Jcc and SETcc):
+// E/Z (4): Equal / Zero (ZF=1)
+// NE/NZ (5): Not equal / Not zero (ZF=0)
+// L/NGE (12): Less (SF!=OF) - signed
+// GE/NL (13): Greater or equal (SF=OF) - signed
+// LE/NG (14): Less or equal (ZF=1 or SF!=OF) - signed
+// G/NLE (15): Greater (ZF=0 and SF=OF) - signed
+
+fn Cond_forSignedLt() i64 { return COND_L; }
+fn Cond_forSignedGt() i64 { return COND_G; }
+fn Cond_forSignedLe() i64 { return COND_LE; }
+fn Cond_forSignedGe() i64 { return COND_GE; }
+fn Cond_forEq() i64 { return COND_E; }
+fn Cond_forNe() i64 { return COND_NE; }
+
+// ============================================================================
+// SSA Operation Handlers
+// ============================================================================
+
+// These functions take SSA operation parameters and return packed instructions.
+// In the full implementation, these would be called from the main codegen loop.
+
+// Handle SSA add operation
+fn AMD64_add(rd: i64, rn: i64, rm: i64) i64 {
+    // AMD64 add is destructive: rd = rd + rm
+    // If rd != rn, we need to MOV rd, rn first (handled by caller)
+    // For simplicity, assume rd == rn (regalloc ensures this)
+    return encode_add_rr(rd, rm);
+}
+
+// Handle SSA add immediate operation
+fn AMD64_addConst(rd: i64, rn: i64, imm: i64) i64 {
+    // Assume rd == rn (2-operand form)
+    if imm >= -128 and imm <= 127 {
+        return encode_add_ri8(rd, imm);
+    }
+    return encode_add_ri32(rd, imm);
+}
+
+// Handle SSA sub operation
+fn AMD64_sub(rd: i64, rn: i64, rm: i64) i64 {
+    return encode_sub_rr(rd, rm);
+}
+
+// Handle SSA sub immediate operation
+fn AMD64_subConst(rd: i64, rn: i64, imm: i64) i64 {
+    if imm >= -128 and imm <= 127 {
+        return encode_sub_ri8(rd, imm);
+    }
+    return encode_sub_ri32(rd, imm);
+}
+
+// Handle SSA multiply operation
+fn AMD64_mul(rd: i64, rn: i64, rm: i64) i64 {
+    // IMUL r64, r64 is 2-operand: rd = rd * rm
+    return encode_imul_rr(rd, rm);
+}
+
+// Handle SSA and operation
+fn AMD64_and(rd: i64, rn: i64, rm: i64) i64 {
+    return encode_and_rr(rd, rm);
+}
+
+// Handle SSA or operation
+fn AMD64_or(rd: i64, rn: i64, rm: i64) i64 {
+    return encode_or_rr(rd, rm);
+}
+
+// Handle SSA xor operation
+fn AMD64_xor(rd: i64, rn: i64, rm: i64) i64 {
+    return encode_xor_rr(rd, rm);
+}
+
+// Handle SSA not operation
+fn AMD64_not(rd: i64) i64 {
+    return encode_not(rd);
+}
+
+// Handle SSA neg operation
+fn AMD64_neg(rd: i64) i64 {
+    return encode_neg(rd);
+}
+
+// Handle SSA comparison (sets flags)
+fn AMD64_cmp(rn: i64, rm: i64) i64 {
+    return encode_cmp_rr(rn, rm);
+}
+
+// Handle SSA comparison with immediate (sets flags)
+fn AMD64_cmp_imm(rn: i64, imm: i64) i64 {
+    if imm >= -128 and imm <= 127 {
+        return encode_cmp_ri8(rn, imm);
+    }
+    return encode_cmp_ri32(rn, imm);
+}
+
+// Handle conditional set (result = cond ? 1 : 0)
+// Note: SETcc only sets low byte, need MOVZX to zero-extend
+fn AMD64_setcc(rd: i64, cond: i64) i64 {
+    return encode_setcc(cond, rd);
+}
+
+// Zero-extend byte to 64-bit (use after SETcc)
+fn AMD64_movzx_r64_r8(rd: i64, rs: i64) i64 {
+    return encode_movzx_r64_r8(rd, rs);
+}
+
+// ============================================================================
+// Division Operations (special handling for RAX/RDX)
+// ============================================================================
+
+// Division on AMD64 uses fixed registers:
+// - Dividend: RDX:RAX (128-bit)
+// - Divisor: any register
+// - Quotient: RAX
+// - Remainder: RDX
+
+// Prepare for signed division: CQO (sign-extend RAX into RDX:RAX)
+fn AMD64_cqo() i64 {
+    return encode_cqo();
+}
+
+// Signed divide RDX:RAX by divisor, quotient in RAX, remainder in RDX
+fn AMD64_idiv(divisor: i64) i64 {
+    return encode_idiv(divisor);
+}
+
+// ============================================================================
+// Shift Operations (special handling for CL)
+// ============================================================================
+
+// Variable shifts use CL (low byte of RCX) for count
+
+// Shift left by CL
+fn AMD64_shl_cl(rd: i64) i64 {
+    return encode_shl_cl(rd);
+}
+
+// Shift left by immediate
+fn AMD64_shl_imm(rd: i64, imm: i64) i64 {
+    return encode_shl_i8(rd, imm);
+}
+
+// Logical shift right by CL
+fn AMD64_shr_cl(rd: i64) i64 {
+    return encode_shr_cl(rd);
+}
+
+// Logical shift right by immediate
+fn AMD64_shr_imm(rd: i64, imm: i64) i64 {
+    return encode_shr_i8(rd, imm);
+}
+
+// Arithmetic shift right by CL (preserves sign)
+fn AMD64_sar_cl(rd: i64) i64 {
+    return encode_sar_cl(rd);
+}
+
+// Arithmetic shift right by immediate
+fn AMD64_sar_imm(rd: i64, imm: i64) i64 {
+    return encode_sar_i8(rd, imm);
+}
+
+// ============================================================================
+// Branch Generation
+// ============================================================================
+
+// Generate unconditional jump (rel32 offset)
+fn AMD64_branch(offset: i64) i64 {
+    return encode_jmp_rel32(offset);
+}
+
+// Generate short unconditional jump (rel8 offset)
+fn AMD64_branch_short(offset: i64) i64 {
+    return encode_jmp_rel8(offset);
+}
+
+// Generate conditional branch (branch if condition is true)
+fn AMD64_branchCond(offset: i64, cond: i64) i64 {
+    return encode_jcc_rel32(cond, offset);
+}
+
+// Generate short conditional branch
+fn AMD64_branchCond_short(offset: i64, cond: i64) i64 {
+    return encode_jcc_rel8(cond, offset);
+}
+
+// Generate function call (rel32 offset)
+fn AMD64_call(offset: i64) i64 {
+    return encode_call_rel32(offset);
+}
+
+// Generate return
+fn AMD64_return() i64 {
+    return encode_ret();
+}
+
+// ============================================================================
+// Memory Access
+// ============================================================================
+
+// Load from memory [base+disp32] (64-bit)
+fn AMD64_load64(rd: i64, base: i64, disp: i64) i64 {
+    return encode_load_disp32(rd, base, disp);
+}
+
+// Store to memory [base+disp32] (64-bit)
+fn AMD64_store64(rs: i64, base: i64, disp: i64) i64 {
+    return encode_store_disp32(base, disp, rs);
+}
+
+// Load effective address: LEA rd, [base+disp32]
+fn AMD64_lea(rd: i64, base: i64, disp: i64) i64 {
+    return encode_lea_disp32(rd, base, disp);
+}
+
+// ============================================================================
+// Stack Operations
+// ============================================================================
+
+// Push register to stack
+fn AMD64_push(reg: i64) i64 {
+    return encode_push(reg);
+}
+
+// Pop register from stack
+fn AMD64_pop(reg: i64) i64 {
+    return encode_pop(reg);
+}
+
+// ============================================================================
+// Miscellaneous
+// ============================================================================
+
+// No-operation
+fn AMD64_nop() i64 {
+    return encode_nop();
+}
+
+// Debug breakpoint
+fn AMD64_int3() i64 {
+    return encode_int3();
+}
+
+// Test register against itself (for zero check)
+fn AMD64_test(r1: i64, r2: i64) i64 {
+    return encode_test_rr(r1, r2);
+}
