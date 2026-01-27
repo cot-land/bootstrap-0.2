@@ -3164,8 +3164,12 @@ fn emitPhiMoves(self: *GenState, current_block: *Block, target_block_id: i64) {
     i = 0;
     while i < src_regs.count {
         if i64list_get(&needs_temp, i) != 0 and i64list_get(&src_regs, i) >= 0 {
-            // MOV temp, src (encoded as ADD temp, src, #0)
-            self.emitInst(ARM64_encodeMovReg(i64list_get(&temp_regs, i), i64list_get(&src_regs, i)));
+            // MOV temp, src
+            if self.target == TARGET_AMD64 {
+                self.emitInstPacked(AMD64_encodeMovReg(i64list_get(&temp_regs, i), i64list_get(&src_regs, i)));
+            } else {
+                self.emitInst(ARM64_encodeMovReg(i64list_get(&temp_regs, i), i64list_get(&src_regs, i)));
+            }
         }
         i = i + 1;
     }
@@ -3176,14 +3180,22 @@ fn emitPhiMoves(self: *GenState, current_block: *Block, target_block_id: i64) {
         if i64list_get(&needs_temp, i) != 0 {
             if i64list_get(&src_regs, i) >= 0 {
                 // Source was saved to temp
-                self.emitInst(ARM64_encodeMovReg(i64list_get(&dest_regs, i), i64list_get(&temp_regs, i)));
+                if self.target == TARGET_AMD64 {
+                    self.emitInstPacked(AMD64_encodeMovReg(i64list_get(&dest_regs, i), i64list_get(&temp_regs, i)));
+                } else {
+                    self.emitInst(ARM64_encodeMovReg(i64list_get(&dest_regs, i), i64list_get(&temp_regs, i)));
+                }
             }
         } else {
             // No conflict, emit directly
             let src_r: i64 = i64list_get(&src_regs, i);
             let dest_r: i64 = i64list_get(&dest_regs, i);
             if src_r >= 0 and src_r != dest_r {
-                self.emitInst(ARM64_encodeMovReg(dest_r, src_r));
+                if self.target == TARGET_AMD64 {
+                    self.emitInstPacked(AMD64_encodeMovReg(dest_r, src_r));
+                } else {
+                    self.emitInst(ARM64_encodeMovReg(dest_r, src_r));
+                }
             }
         }
         i = i + 1;
@@ -3212,8 +3224,13 @@ fn blockControl(self: *GenState, block: *Block, next_block: i64) {
             // Emit phi moves before branch/fallthrough
             self.emitPhiMoves(block, target);
             if target != next_block {
-                self.emitInst(encode_b(0));  // Placeholder offset
-                self.addBranch(target, false, 0);
+                if self.target == TARGET_AMD64 {
+                    self.emitInstPacked(AMD64_branch(0));  // JMP placeholder
+                    self.addBranchAMD64(target, BRANCH_JMP, 0);
+                } else {
+                    self.emitInst(encode_b(0));  // B placeholder
+                    self.addBranch(target, false, 0);
+                }
             }
         }
         return;
