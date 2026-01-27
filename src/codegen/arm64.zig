@@ -3156,6 +3156,7 @@ pub const ARM64CodeGen = struct {
     }
 
     /// Regenerate a value into a register (for consts, etc.)
+    /// This is called when a value was evicted (no register) but needs to be used.
     fn regenerateValue(self: *ARM64CodeGen, dest: u5, value: *Value) !void {
         switch (value.op) {
             .const_int, .const_64 => try self.emitLoadImmediate(dest, value.aux_int),
@@ -3164,6 +3165,43 @@ pub const ARM64CodeGen = struct {
                 try self.emitLoadImmediate(dest, imm);
             },
             .const_nil => try self.emitLoadImmediate(dest, 0),
+            .local_addr => {
+                // Regenerate local variable address: ADD dest, SP, #offset
+                const local_idx: usize = @intCast(value.aux_int);
+                if (local_idx < self.func.local_offsets.len) {
+                    const byte_off = self.func.local_offsets[local_idx];
+                    try self.emitAddImm(dest, 31, @intCast(byte_off));
+                    debug.log(.codegen, "      regen local_addr {d} -> x{d} = SP+{d}", .{ local_idx, dest, byte_off });
+                } else {
+                    // Fallback: offset 0
+                    try self.emit(asm_mod.encodeADDImm(dest, 31, 0, 0));
+                    debug.log(.codegen, "      regen local_addr {d} -> x{d} = SP+0 (NO OFFSET!)", .{ local_idx, dest });
+                }
+            },
+            .global_addr => {
+                // Regenerate global variable address: ADRP + ADD
+                const name = switch (value.aux) {
+                    .string => |s| s,
+                    else => {
+                        debug.log(.codegen, "      WARNING: global_addr has no name, generating 0", .{});
+                        try self.emit(asm_mod.encodeMOVZ(dest, 0, 0));
+                        return;
+                    },
+                };
+                // Emit ADRP + ADD and record relocations
+                const adrp_offset = self.offset();
+                try self.emit(asm_mod.encodeADRP(dest, 0));
+                const add_offset = self.offset();
+                try self.emit(asm_mod.encodeADDImm(dest, dest, 0, 0));
+                // Record for relocation (prepend underscore for macOS)
+                const mangled_name = try std.fmt.allocPrint(self.allocator, "_{s}", .{name});
+                try self.func_refs.append(self.allocator, .{
+                    .adrp_offset = adrp_offset,
+                    .add_offset = add_offset,
+                    .func_name = mangled_name,
+                });
+                debug.log(.codegen, "      regen global_addr '{s}' -> x{d}", .{ name, dest });
+            },
             else => {
                 // Fallback: emit 0
                 debug.log(.codegen, "      WARNING: regenerating unknown op {s} as 0", .{@tagName(value.op)});

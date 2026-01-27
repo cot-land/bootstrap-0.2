@@ -1002,3 +1002,213 @@ fn TypeInfo_registerCount(pool: *TypeRegistry, idx: i64) i64 {
     // Even larger types would need memory
     return 0;
 }
+
+// ============================================================================
+// TEST INFRASTRUCTURE - Types
+// ============================================================================
+
+struct TestPoint {
+    x: i64,
+    y: i64,
+}
+
+struct TestInner {
+    a: i64,
+    b: i64,
+}
+
+struct TestOuter {
+    inner: TestInner,
+    c: i64,
+}
+
+struct TestLargeStruct {
+    a: i64,
+    b: i64,
+    c: i64,
+    d: i64,
+    e: i64,
+    f: i64,
+    g: i64,
+    h: i64,
+}
+
+enum TestStatus {
+    Pending,
+    Active,
+    Done,
+}
+
+struct TestBigReturn {
+    a: i64,
+    b: i64,
+    c: i64,
+}
+
+struct TestNodeForPtr {
+    value: i64,
+}
+
+struct TestBigArg {
+    a: i64,
+    b: i64,
+    c: i64,
+    d: i64,
+    e: i64,
+    f: i64,
+    g: i64,
+}
+
+// ============================================================================
+// TEST INFRASTRUCTURE - Helper Functions
+// ============================================================================
+
+fn test_add_via_ptr(ptr: *i64, val: i64) void {
+    ptr.* = ptr.* + val
+}
+
+fn test_set_point_x(p: *TestPoint, val: i64) void {
+    p.x = val
+}
+
+fn test_check_status(s: TestStatus) i64 {
+    if s == TestStatus.Done { return 42 }
+    if s == TestStatus.Active { return 20 }
+    return 10
+}
+
+fn test_get_node_value(p: *TestNodeForPtr) i64 {
+    return p.value
+}
+
+fn test_sum_big_arg(s: TestBigArg) i64 {
+    return s.a + s.b + s.c + s.d + s.e + s.f + s.g
+}
+
+fn test_make_big_return(x: i64, y: i64, z: i64) TestBigReturn {
+    var r: TestBigReturn
+    r.a = x
+    r.b = y
+    r.c = z
+    return r
+}
+
+// ============================================================================
+// INLINE TESTS - Struct Types
+// ============================================================================
+
+test "struct simple" {
+    var p: TestPoint
+    p.x = 20
+    p.y = 22
+    @assert(p.x + p.y == 42)
+}
+
+test "struct reassign" {
+    var p: TestPoint
+    p.x = 10
+    p.y = 10
+    p.x = p.x + 12
+    p.y = p.y + 10
+    @assert(p.x + p.y == 42)
+}
+
+test "nested struct" {
+    var o: TestOuter
+    o.inner.a = 10
+    o.inner.b = 20
+    o.c = 12
+    @assert(o.inner.a + o.inner.b + o.c == 42)
+}
+
+test "large struct" {
+    var s: TestLargeStruct
+    s.a = 1
+    s.b = 2
+    s.c = 3
+    s.d = 4
+    s.e = 5
+    s.f = 6
+    s.g = 7
+    s.h = 14
+    @assert(s.a + s.b + s.c + s.d + s.e + s.f + s.g + s.h == 42)
+}
+
+// ============================================================================
+// INLINE TESTS - Enum Types
+// ============================================================================
+
+test "enum pending" {
+    let s: TestStatus = TestStatus.Pending
+    @assert(test_check_status(s) == 10)
+}
+
+test "enum active" {
+    let s: TestStatus = TestStatus.Active
+    @assert(test_check_status(s) == 20)
+}
+
+test "enum done" {
+    let s: TestStatus = TestStatus.Done
+    @assert(test_check_status(s) == 42)
+}
+
+// ============================================================================
+// INLINE TESTS - Pointer Types
+// ============================================================================
+
+test "ptr read" {
+    var x: i64 = 42
+    var p: *i64 = &x
+    @assert(p.* == 42)
+}
+
+test "ptr write" {
+    var x: i64 = 0
+    var p: *i64 = &x
+    p.* = 42
+    @assert(x == 42)
+}
+
+test "ptr modify" {
+    var x: i64 = 10
+    test_add_via_ptr(&x, 32)
+    @assert(x == 42)
+}
+
+test "ptr struct field" {
+    var p: TestPoint
+    p.x = 0
+    p.y = 22
+    test_set_point_x(&p, 20)
+    @assert(p.x + p.y == 42)
+}
+
+// ============================================================================
+// INLINE TESTS - Array Types
+// ============================================================================
+
+test "array index const" {
+    var arr: [4]i64 = [10, 20, 30, 40]
+    @assert(arr[0] == 10)
+}
+
+test "array index var" {
+    var arr: [4]i64 = [10, 20, 30, 40]
+    var i: i64 = 2
+    @assert(arr[i] == 30)
+}
+
+test "array assign" {
+    var arr: [4]i64 = [0, 0, 0, 0]
+    arr[0] = 10
+    arr[1] = 20
+    arr[2] = 30
+    arr[3] = 40
+    @assert(arr[0] + arr[3] == 50)
+}
+
+test "array sum" {
+    var arr: [4]i64 = [10, 11, 12, 9]
+    @assert(arr[0] + arr[1] + arr[2] + arr[3] == 42)
+}

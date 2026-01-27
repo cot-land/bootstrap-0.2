@@ -1620,6 +1620,30 @@ pub const Lowerer = struct {
                 // Strategy: Create a temporary local, initialize it, and return a load of it
                 return try self.lowerStructInitExpr(si);
             },
+            .block_expr => |block| {
+                // Block expression: { stmt; stmt; expr }
+                // Lower all statements in the block
+                const defer_depth = self.defer_stack.items.len;
+
+                for (block.stmts) |stmt_idx| {
+                    const stmt_node = self.tree.getNode(stmt_idx) orelse continue;
+                    if (stmt_node.asStmt()) |s| {
+                        if (try self.lowerStmt(s)) {
+                            // Block terminated by return/break/continue
+                            break;
+                        }
+                    }
+                }
+
+                // Emit deferred expressions for block scope
+                try self.emitDeferredExprs(defer_depth);
+
+                // If there's a final expression, return its value
+                if (block.expr != null_node) {
+                    return try self.lowerExprNode(block.expr);
+                }
+                return ir.null_node;
+            },
             else => return ir.null_node,
         }
     }

@@ -5751,6 +5751,67 @@ fn test_helper_fib(n: i64) i64 {
     return test_helper_fib(n - 1) + test_helper_fib(n - 2)
 }
 
+// Additional test helpers for bootstrap test migration
+fn test_add_one(x: i64) i64 {
+    return x + 1
+}
+
+fn test_add(a: i64, b: i64) i64 {
+    return a + b
+}
+
+fn test_mul(a: i64, b: i64) i64 {
+    return a * b
+}
+
+fn test_helper_42() i64 {
+    return 42
+}
+
+fn test_sum16(a1: i64, a2: i64, a3: i64, a4: i64, a5: i64, a6: i64, a7: i64, a8: i64,
+              a9: i64, a10: i64, a11: i64, a12: i64, a13: i64, a14: i64, a15: i64, a16: i64) i64 {
+    return a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10 + a11 + a12 + a13 + a14 + a15 + a16
+}
+
+fn test_add_fn(a: i64, b: i64) i64 {
+    return a + b
+}
+
+fn test_mul_fn(a: i64, b: i64) i64 {
+    return a * b
+}
+
+fn test_get_forty_two() i64 {
+    return 42
+}
+
+fn test_pressure_helper(x: i64) i64 {
+    return x * 2
+}
+
+fn test_defer_identity(x: i64) i64 {
+    return x
+}
+
+// Global variable for testing
+var test_g_counter: i64 = 0
+
+fn test_g_increment() void {
+    test_g_counter = test_g_counter + 1
+}
+
+fn test_g_get() i64 {
+    return test_g_counter
+}
+
+fn test_g_reset() void {
+    test_g_counter = 0
+}
+
+fn test_array_sum(arr: [4]i64) i64 {
+    return arr[0] + arr[1] + arr[2] + arr[3]
+}
+
 // ============================================================================
 // INLINE TESTS - Arithmetic and Comparisons
 // ============================================================================
@@ -6070,17 +6131,17 @@ test "logical and true" {
 
 test "logical and false first" {
     var result: bool = false and true
-    @assert(result == false)
+    @assert(!result)
 }
 
 test "logical and false second" {
     var result: bool = true and false
-    @assert(result == false)
+    @assert(!result)
 }
 
 test "logical or false" {
     var result: bool = false or false
-    @assert(result == false)
+    @assert(!result)
 }
 
 test "logical or true first" {
@@ -6096,4 +6157,202 @@ test "logical or true second" {
 test "logical not" {
     var x: bool = !false
     @assert(x)  // x should be true
+}
+
+// ============================================================================
+// PHASE 2 TESTS - Additional Arithmetic & Comparisons
+// ============================================================================
+
+test "boolean variable true" {
+    let b: bool = true
+    @assert(b)
+}
+
+test "boolean variable false" {
+    let b: bool = false
+    @assert(!b)
+}
+
+test "chain arithmetic" {
+    @assert(1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 6 == 42)
+}
+
+test "call add one" {
+    @assert(test_add_one(41) == 42)
+}
+
+test "call add" {
+    @assert(test_add(20, 22) == 42)
+}
+
+test "call mul" {
+    @assert(test_mul(6, 7) == 42)
+}
+
+test "call spill" {
+    var x: i64 = test_mul(2, 3)
+    var y: i64 = test_mul(6, 6)
+    @assert(x == 6)
+}
+
+test "fibonacci" {
+    @assert(test_helper_fib(10) == 55)
+}
+
+test "early return" {
+    var x: i64 = 10
+    @assert(x == 10)
+}
+
+test "16 args" {
+    @assert(test_sum16(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16) == 136)
+}
+
+test "add assign" {
+    var x: i64 = 10
+    x += 32
+    @assert(x == 42)
+}
+
+test "sub assign" {
+    var x: i64 = 50
+    x -= 8
+    @assert(x == 42)
+}
+
+test "mul assign" {
+    var x: i64 = 6
+    x *= 7
+    @assert(x == 42)
+}
+
+test "div assign" {
+    var x: i64 = 84
+    x /= 2
+    @assert(x == 42)
+}
+
+test "bitwise not zero" {
+    let x: i64 = 0
+    @assert(~x == -1)
+}
+
+test "bitwise not neg" {
+    let x: i64 = -1
+    @assert(~x == 0)
+}
+
+test "bitwise not double" {
+    let x: i64 = 42
+    @assert(~~x == 42)
+}
+
+test "bitwise and assign" {
+    var x: i64 = 255
+    x &= 15
+    @assert(x == 15)
+}
+
+test "bitwise or assign" {
+    var x: i64 = 5
+    x |= 10
+    @assert(x == 15)
+}
+
+test "shift left manual" {
+    var x: i64 = 1
+    x = x << 4
+    @assert(x == 16)
+}
+
+test "shift right manual" {
+    var x: i64 = 64
+    x = x >> 2
+    @assert(x == 16)
+}
+
+// ============================================================================
+// PHASE 2 TESTS - Control Flow
+// ============================================================================
+
+test "while simple skip" {
+    var x: i64 = 42
+    while 1 == 2 {
+        x = 0
+    }
+    @assert(x == 42)
+}
+
+test "loop sum 0 to 4" {
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 5 {
+        sum = sum + i
+        i = i + 1
+    }
+    @assert(sum == 10)
+}
+
+test "loop break at 5" {
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 100 {
+        if i == 5 { break }
+        sum = sum + i
+        i = i + 1
+    }
+    @assert(sum == 10)
+}
+
+test "loop continue skip 2" {
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 5 {
+        i = i + 1
+        if i == 2 { continue }
+        sum = sum + i
+    }
+    @assert(sum == 13)
+}
+
+test "else simple" {
+    var x: i64 = 0
+    if 1 == 2 {
+        x = 10
+    } else {
+        x = 42
+    }
+    @assert(x == 42)
+}
+
+// ============================================================================
+// PHASE 2 TESTS - Function Pointers
+// ============================================================================
+
+test "fn ptr call" {
+    var f: fn(i64, i64) -> i64 = test_add_fn
+    @assert(f(20, 22) == 42)
+}
+
+test "fn ptr no args" {
+    var f: fn() -> i64 = test_get_forty_two
+    @assert(f() == 42)
+}
+
+// ============================================================================
+// PHASE 2 TESTS - Global Variables
+// ============================================================================
+
+test "global increment" {
+    test_g_reset()
+    test_g_increment()
+    test_g_increment()
+    test_g_increment()
+    @assert(test_g_get() == 3)
+}
+
+test "global reset" {
+    test_g_increment()
+    test_g_reset()
+    @assert(test_g_get() == 0)
 }
