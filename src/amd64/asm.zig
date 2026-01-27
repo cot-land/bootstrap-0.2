@@ -167,6 +167,151 @@ pub fn encodeMovRegMem(dst: Reg, base: Reg, disp: i32) []const u8 {
     @panic("encodeMovRegMem not yet implemented");
 }
 
+/// MOV [base + disp], src - Store 64-bit register to memory
+/// 89 /r = MOV r/m64, r64
+/// Returns variable-length encoding (up to 8 bytes)
+pub fn encodeMovMemReg(base: Reg, disp: i32, src: Reg) struct { data: [8]u8, len: u8 } {
+    var buf: [8]u8 = .{0} ** 8;
+    var len: u8 = 0;
+
+    // REX prefix: W=1 (64-bit), R=src extension, B=base extension
+    buf[len] = 0x48 |
+        (@as(u8, @intFromBool(src.needsRex())) << 2) |
+        @as(u8, @intFromBool(base.needsRex()));
+    len += 1;
+
+    // Opcode: MOV r/m64, r64
+    buf[len] = 0x89;
+    len += 1;
+
+    // ModR/M and optional SIB/displacement
+    if (base == .rsp or base == .r12) {
+        // RSP/R12 as base requires SIB byte
+        if (disp == 0) {
+            buf[len] = 0x04 | (@as(u8, src.enc3()) << 3); // mod=00, r/m=100 (SIB)
+            len += 1;
+            buf[len] = 0x24; // SIB: scale=0, index=100 (none), base=100 (RSP)
+            len += 1;
+        } else if (disp >= -128 and disp <= 127) {
+            buf[len] = 0x44 | (@as(u8, src.enc3()) << 3); // mod=01 (disp8), r/m=100 (SIB)
+            len += 1;
+            buf[len] = 0x24; // SIB
+            len += 1;
+            buf[len] = @bitCast(@as(i8, @intCast(disp)));
+            len += 1;
+        } else {
+            buf[len] = 0x84 | (@as(u8, src.enc3()) << 3); // mod=10 (disp32), r/m=100 (SIB)
+            len += 1;
+            buf[len] = 0x24; // SIB
+            len += 1;
+            std.mem.writeInt(i32, buf[len..][0..4], disp, .little);
+            len += 4;
+        }
+    } else if (base == .rbp or base == .r13) {
+        // RBP/R13 always needs displacement (even if 0)
+        if (disp >= -128 and disp <= 127) {
+            buf[len] = 0x45 | (@as(u8, src.enc3()) << 3); // mod=01 (disp8), r/m=101 (RBP)
+            len += 1;
+            buf[len] = @bitCast(@as(i8, @intCast(disp)));
+            len += 1;
+        } else {
+            buf[len] = 0x85 | (@as(u8, src.enc3()) << 3); // mod=10 (disp32), r/m=101 (RBP)
+            len += 1;
+            std.mem.writeInt(i32, buf[len..][0..4], disp, .little);
+            len += 4;
+        }
+    } else {
+        // Normal base register
+        if (disp == 0) {
+            buf[len] = (@as(u8, src.enc3()) << 3) | base.enc3(); // mod=00
+            len += 1;
+        } else if (disp >= -128 and disp <= 127) {
+            buf[len] = 0x40 | (@as(u8, src.enc3()) << 3) | base.enc3(); // mod=01 (disp8)
+            len += 1;
+            buf[len] = @bitCast(@as(i8, @intCast(disp)));
+            len += 1;
+        } else {
+            buf[len] = 0x80 | (@as(u8, src.enc3()) << 3) | base.enc3(); // mod=10 (disp32)
+            len += 1;
+            std.mem.writeInt(i32, buf[len..][0..4], disp, .little);
+            len += 4;
+        }
+    }
+
+    return .{ .data = buf, .len = len };
+}
+
+/// MOV dst, [base + disp] - Load 64-bit register from memory
+/// 8B /r = MOV r64, r/m64
+/// Returns variable-length encoding (up to 8 bytes)
+pub fn encodeMovRegMemDisp(dst: Reg, base: Reg, disp: i32) struct { data: [8]u8, len: u8 } {
+    var buf: [8]u8 = .{0} ** 8;
+    var len: u8 = 0;
+
+    // REX prefix: W=1 (64-bit), R=dst extension, B=base extension
+    buf[len] = 0x48 |
+        (@as(u8, @intFromBool(dst.needsRex())) << 2) |
+        @as(u8, @intFromBool(base.needsRex()));
+    len += 1;
+
+    // Opcode: MOV r64, r/m64
+    buf[len] = 0x8B;
+    len += 1;
+
+    // ModR/M and optional SIB/displacement (same logic as store)
+    if (base == .rsp or base == .r12) {
+        if (disp == 0) {
+            buf[len] = 0x04 | (@as(u8, dst.enc3()) << 3);
+            len += 1;
+            buf[len] = 0x24;
+            len += 1;
+        } else if (disp >= -128 and disp <= 127) {
+            buf[len] = 0x44 | (@as(u8, dst.enc3()) << 3);
+            len += 1;
+            buf[len] = 0x24;
+            len += 1;
+            buf[len] = @bitCast(@as(i8, @intCast(disp)));
+            len += 1;
+        } else {
+            buf[len] = 0x84 | (@as(u8, dst.enc3()) << 3);
+            len += 1;
+            buf[len] = 0x24;
+            len += 1;
+            std.mem.writeInt(i32, buf[len..][0..4], disp, .little);
+            len += 4;
+        }
+    } else if (base == .rbp or base == .r13) {
+        if (disp >= -128 and disp <= 127) {
+            buf[len] = 0x45 | (@as(u8, dst.enc3()) << 3);
+            len += 1;
+            buf[len] = @bitCast(@as(i8, @intCast(disp)));
+            len += 1;
+        } else {
+            buf[len] = 0x85 | (@as(u8, dst.enc3()) << 3);
+            len += 1;
+            std.mem.writeInt(i32, buf[len..][0..4], disp, .little);
+            len += 4;
+        }
+    } else {
+        if (disp == 0) {
+            buf[len] = (@as(u8, dst.enc3()) << 3) | base.enc3();
+            len += 1;
+        } else if (disp >= -128 and disp <= 127) {
+            buf[len] = 0x40 | (@as(u8, dst.enc3()) << 3) | base.enc3();
+            len += 1;
+            buf[len] = @bitCast(@as(i8, @intCast(disp)));
+            len += 1;
+        } else {
+            buf[len] = 0x80 | (@as(u8, dst.enc3()) << 3) | base.enc3();
+            len += 1;
+            std.mem.writeInt(i32, buf[len..][0..4], disp, .little);
+            len += 4;
+        }
+    }
+
+    return .{ .data = buf, .len = len };
+}
+
 /// MOV r/m64, imm32 (sign-extended)
 /// C7 /0 = MOV r/m64, imm32
 pub fn encodeMovRegImm32(dst: Reg, imm: i32) [7]u8 {
@@ -1209,6 +1354,76 @@ pub fn encodeLeaBaseIndex(dst: Reg, base: Reg, index: Reg) struct { data: [5]u8,
         // SIB: scale=00 (1), index=index, base=base
         buf[len] = (@as(u8, index.enc3()) << 3) | base.enc3();
         len += 1;
+    }
+
+    return .{ .data = buf, .len = len };
+}
+
+/// LEA dst, [base + disp] - compute base + displacement address
+/// 8D /r = LEA r64, m
+pub fn encodeLeaRegMem(dst: Reg, base: Reg, disp: i32) struct { data: [8]u8, len: u8 } {
+    var buf: [8]u8 = .{0} ** 8;
+    var len: u8 = 0;
+
+    // REX prefix: W=1 (64-bit), R=dst extension, B=base extension
+    buf[len] = 0x48 |
+        (@as(u8, @intFromBool(dst.needsRex())) << 2) |
+        @as(u8, @intFromBool(base.needsRex()));
+    len += 1;
+
+    // LEA opcode
+    buf[len] = 0x8D;
+    len += 1;
+
+    // ModR/M and optional SIB/displacement (same as load)
+    if (base == .rsp or base == .r12) {
+        if (disp == 0) {
+            buf[len] = 0x04 | (@as(u8, dst.enc3()) << 3);
+            len += 1;
+            buf[len] = 0x24;
+            len += 1;
+        } else if (disp >= -128 and disp <= 127) {
+            buf[len] = 0x44 | (@as(u8, dst.enc3()) << 3);
+            len += 1;
+            buf[len] = 0x24;
+            len += 1;
+            buf[len] = @bitCast(@as(i8, @intCast(disp)));
+            len += 1;
+        } else {
+            buf[len] = 0x84 | (@as(u8, dst.enc3()) << 3);
+            len += 1;
+            buf[len] = 0x24;
+            len += 1;
+            std.mem.writeInt(i32, buf[len..][0..4], disp, .little);
+            len += 4;
+        }
+    } else if (base == .rbp or base == .r13) {
+        if (disp >= -128 and disp <= 127) {
+            buf[len] = 0x45 | (@as(u8, dst.enc3()) << 3);
+            len += 1;
+            buf[len] = @bitCast(@as(i8, @intCast(disp)));
+            len += 1;
+        } else {
+            buf[len] = 0x85 | (@as(u8, dst.enc3()) << 3);
+            len += 1;
+            std.mem.writeInt(i32, buf[len..][0..4], disp, .little);
+            len += 4;
+        }
+    } else {
+        if (disp == 0) {
+            buf[len] = (@as(u8, dst.enc3()) << 3) | base.enc3();
+            len += 1;
+        } else if (disp >= -128 and disp <= 127) {
+            buf[len] = 0x40 | (@as(u8, dst.enc3()) << 3) | base.enc3();
+            len += 1;
+            buf[len] = @bitCast(@as(i8, @intCast(disp)));
+            len += 1;
+        } else {
+            buf[len] = 0x80 | (@as(u8, dst.enc3()) << 3) | base.enc3();
+            len += 1;
+            std.mem.writeInt(i32, buf[len..][0..4], disp, .little);
+            len += 4;
+        }
     }
 
     return .{ .data = buf, .len = len };

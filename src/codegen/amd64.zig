@@ -103,6 +103,17 @@ pub const AMD64CodeGen = struct {
     debug_source_file: []const u8 = "",
     debug_source_text: []const u8 = "",
 
+    // Large struct return support (AMD64 System V ABI: >16B returns via hidden RDI pointer)
+    /// True if this function returns >16B and needs hidden return pointer
+    has_hidden_return: bool = false,
+    /// Stack offset where the hidden return pointer (RDI) is saved
+    hidden_ret_ptr_offset: u32 = 0,
+    /// Pre-allocated space for hidden return values from calls returning >16B
+    hidden_ret_frame_offset: u32 = 0,
+    hidden_ret_space_needed: u32 = 0,
+    /// Map from static_call Value to its hidden return offset within frame
+    hidden_ret_offsets: std.AutoHashMapUnmanaged(*const Value, u32),
+
     pub fn init(allocator: std.mem.Allocator) AMD64CodeGen {
         return .{
             .allocator = allocator,
@@ -114,6 +125,7 @@ pub const AMD64CodeGen = struct {
             .block_offsets = .{},
             .branch_fixups = .{},
             .string_refs = .{},
+            .hidden_ret_offsets = .{},
         };
     }
 
@@ -128,6 +140,7 @@ pub const AMD64CodeGen = struct {
             self.allocator.free(str_ref.string_data);
         }
         self.string_refs.deinit(self.allocator);
+        self.hidden_ret_offsets.deinit(self.allocator);
     }
 
     /// Set the register allocation state.
@@ -167,6 +180,32 @@ pub const AMD64CodeGen = struct {
         return TypeRegistry.basicTypeSize(type_idx);
     }
 
+    /// Check if a type is a 9-16 byte struct (passed in 2 registers on AMD64)
+    fn isTwoRegStruct(self: *const AMD64CodeGen, type_idx: TypeIndex) bool {
+        if (type_idx < TypeRegistry.FIRST_USER_TYPE) return false;
+        if (self.type_reg) |reg| {
+            const type_info = reg.get(type_idx);
+            if (type_info == .struct_type) {
+                const size = reg.sizeOf(type_idx);
+                return size > 8 and size <= 16;
+            }
+        }
+        return false;
+    }
+
+    /// Check if a type is a >16 byte struct (passed by pointer on AMD64)
+    fn isLargeStruct(self: *const AMD64CodeGen, type_idx: TypeIndex) bool {
+        if (type_idx < TypeRegistry.FIRST_USER_TYPE) return false;
+        if (self.type_reg) |reg| {
+            const type_info = reg.get(type_idx);
+            if (type_info == .struct_type) {
+                const size = reg.sizeOf(type_idx);
+                return size > 16;
+            }
+        }
+        return false;
+    }
+
     /// Current code offset
     fn offset(self: *const AMD64CodeGen) u32 {
         return @intCast(self.code.items.len);
@@ -185,6 +224,25 @@ pub const AMD64CodeGen = struct {
     /// Emit variable-length instruction (for instructions that may or may not need REX prefix)
     fn emitVarLen(self: *AMD64CodeGen, data: anytype, len: u8) !void {
         try self.code.appendSlice(self.allocator, data[0..len]);
+    }
+
+    /// Store 64-bit register to frame location [RBP + frame_off]
+    /// frame_off is typically negative (e.g., -8 for first local)
+    fn emitStoreRegToFrame(self: *AMD64CodeGen, src: Reg, frame_off: i32) !void {
+        const enc = asm_mod.encodeMovMemReg(.rbp, frame_off, src);
+        try self.code.appendSlice(self.allocator, enc.data[0..enc.len]);
+    }
+
+    /// Load 64-bit register from frame location [RBP + frame_off]
+    fn emitLoadRegFromFrame(self: *AMD64CodeGen, dst: Reg, frame_off: i32) !void {
+        const enc = asm_mod.encodeMovRegMemDisp(dst, .rbp, frame_off);
+        try self.code.appendSlice(self.allocator, enc.data[0..enc.len]);
+    }
+
+    /// Load effective address from frame: LEA dst, [RBP + frame_off]
+    fn emitLeaFromFrame(self: *AMD64CodeGen, dst: Reg, frame_off: i32) !void {
+        const enc = asm_mod.encodeLeaRegMem(dst, .rbp, frame_off);
+        try self.code.appendSlice(self.allocator, enc.data[0..enc.len]);
     }
 
     // ========================================================================
@@ -347,15 +405,20 @@ pub const AMD64CodeGen = struct {
             .arg => {
                 // Rematerialize function argument from ABI register
                 // Note: This assumes we haven't called any functions that clobber arg registers
-                const arg_idx: usize = @intCast(value.aux_int);
-                if (arg_idx < regs.AMD64.arg_regs.len) {
-                    const src_reg = regs.AMD64.arg_regs[arg_idx];
+                // When has_hidden_return, user args are shifted (RDI is hidden return ptr)
+                const user_arg_idx: usize = @intCast(value.aux_int);
+                const abi_arg_idx: usize = if (self.has_hidden_return) user_arg_idx + 1 else user_arg_idx;
+                const max_reg_args: usize = if (self.has_hidden_return) 5 else 6;
+
+                if (user_arg_idx < max_reg_args and abi_arg_idx < regs.AMD64.arg_regs.len) {
+                    const src_reg = regs.AMD64.arg_regs[abi_arg_idx];
                     if (hint_reg != src_reg) {
                         try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, src_reg));
                     }
                 } else {
                     // Stack argument - load from caller's stack frame
-                    const stack_offset: i32 = @intCast(16 + (arg_idx - 6) * 8);
+                    const stack_arg_idx = if (self.has_hidden_return) user_arg_idx - 5 else user_arg_idx - 6;
+                    const stack_offset: i32 = @intCast(16 + stack_arg_idx * 8);
                     const load = asm_mod.encodeLoadDisp32(hint_reg, .rbp, stack_offset);
                     try self.emitBytes(load.data[0..load.len]);
                 }
@@ -679,14 +742,43 @@ pub const AMD64CodeGen = struct {
     fn setupCallArgs(self: *AMD64CodeGen, args: []*Value) !usize {
         if (args.len == 0) return 0;
 
-        // Handle stack arguments first (args beyond the first 6)
-        const num_stack_args: usize = if (args.len > 6) args.len - 6 else 0;
-        var stack_cleanup: usize = 0;
+        // First pass: count how many ABI registers each arg uses
+        // (9-16B structs use 2 registers, everything else uses 1)
+        var abi_reg_count: usize = 0;
+        for (args) |arg| {
+            const type_size = self.getTypeSize(arg.type_idx);
+            const is_two_reg = self.isTwoRegStruct(arg.type_idx);
+            if (is_two_reg) {
+                abi_reg_count += 2;
+            } else if (type_size > 16) {
+                // >16B: passed by pointer, 1 register
+                abi_reg_count += 1;
+            } else {
+                abi_reg_count += 1;
+            }
+        }
 
-        if (num_stack_args > 0) {
-            // Push stack arguments in reverse order
+        // Handle stack arguments (args that don't fit in the 6 ABI registers)
+        var stack_cleanup: usize = 0;
+        if (abi_reg_count > 6) {
+            // For simplicity, push excess args in reverse order
+            // This is a simplified version - just push the excess as 8-byte values
+            var abi_idx: usize = 0;
             var i: usize = args.len;
-            while (i > 6) {
+            // Count how many register slots are used by first N args
+            var reg_used: usize = 0;
+            for (args) |arg| {
+                const is_two_reg = self.isTwoRegStruct(arg.type_idx);
+                if (is_two_reg) {
+                    reg_used += 2;
+                } else {
+                    reg_used += 1;
+                }
+                if (reg_used > 6) break;
+                abi_idx += 1;
+            }
+            // Push remaining args in reverse
+            while (i > abi_idx) {
                 i -= 1;
                 const arg = args[i];
                 if (self.getRegForValue(arg)) |src_reg| {
@@ -699,31 +791,103 @@ pub const AMD64CodeGen = struct {
                 }
                 debug.log(.codegen, "      PUSH (stack arg {d})", .{i});
             }
-            stack_cleanup = num_stack_args * 8;
+            stack_cleanup = (args.len - abi_idx) * 8;
         }
 
         // Collect register argument moves
-        const max_reg_args = @min(args.len, 6);
+        // For 9-16B structs, we need 2 consecutive registers
         const Move = struct {
             src: ?Reg, // null if value needs rematerialization
             dest: Reg,
             value: *Value,
+            is_hi_half: bool, // true if this is the high half of a 2-reg struct
+            struct_base_addr: ?Reg, // if set, load from this base + offset
+            offset: i32,
             done: bool,
         };
 
-        var moves: [6]Move = undefined;
+        var moves: [12]Move = undefined; // 6 args * 2 = 12 max moves
         var num_moves: usize = 0;
+        var abi_reg_idx: usize = 0;
 
-        for (args[0..max_reg_args], 0..) |arg, i| {
-            const dest = regs.AMD64.arg_regs[i];
-            const src = self.getRegForValue(arg);
-            moves[num_moves] = .{
-                .src = src,
-                .dest = dest,
-                .value = arg,
-                .done = (src != null and src.? == dest), // Already in correct register
-            };
-            num_moves += 1;
+        for (args) |arg| {
+            if (abi_reg_idx >= 6) break; // No more register args
+
+            const is_two_reg = self.isTwoRegStruct(arg.type_idx);
+
+            if (is_two_reg and abi_reg_idx + 1 < 6) {
+                // 9-16B struct: split into 2 registers
+                // Need to load from struct's memory location
+                const dest_lo = regs.AMD64.arg_regs[abi_reg_idx];
+                const dest_hi = regs.AMD64.arg_regs[abi_reg_idx + 1];
+
+                // The arg value should be a load from a local_addr
+                // We'll handle this specially in the move execution
+                moves[num_moves] = .{
+                    .src = null,
+                    .dest = dest_lo,
+                    .value = arg,
+                    .is_hi_half = false,
+                    .struct_base_addr = null,
+                    .offset = 0,
+                    .done = false,
+                };
+                num_moves += 1;
+
+                moves[num_moves] = .{
+                    .src = null,
+                    .dest = dest_hi,
+                    .value = arg,
+                    .is_hi_half = true,
+                    .struct_base_addr = null,
+                    .offset = 8,
+                    .done = false,
+                };
+                num_moves += 1;
+
+                abi_reg_idx += 2;
+            } else if (is_two_reg) {
+                // Would need 2 registers but only 1 available - push to stack
+                // (already handled above in stack args)
+                break;
+            } else {
+                // Check if this is a >16B struct (passed by pointer)
+                const type_size = self.getTypeSize(arg.type_idx);
+                const is_large_struct = self.isLargeStruct(arg.type_idx);
+
+                if (is_large_struct) {
+                    // >16B struct: pass pointer to struct in register
+                    // The arg value is a load from local_addr - we need to pass the address
+                    const dest = regs.AMD64.arg_regs[abi_reg_idx];
+                    moves[num_moves] = .{
+                        .src = null, // Will compute address
+                        .dest = dest,
+                        .value = arg,
+                        .is_hi_half = false,
+                        .struct_base_addr = null,
+                        .offset = -1, // Marker for "pass address"
+                        .done = false,
+                    };
+                    num_moves += 1;
+                    abi_reg_idx += 1;
+                    debug.log(.codegen, "      >16B struct arg: will pass ptr in {s}, size={d}", .{ dest.name(), type_size });
+                } else {
+                    // Single register arg
+                    const dest = regs.AMD64.arg_regs[abi_reg_idx];
+                    const src = self.getRegForValue(arg);
+                    moves[num_moves] = .{
+                        .src = src,
+                        .dest = dest,
+                        .value = arg,
+                        .is_hi_half = false,
+                        .struct_base_addr = null,
+                        .offset = 0,
+                        .done = (src != null and src.? == dest),
+                    };
+                    num_moves += 1;
+                    abi_reg_idx += 1;
+                }
+            }
         }
 
         // Process moves that don't conflict first (dest doesn't clobber any needed source)
@@ -747,7 +911,74 @@ pub const AMD64CodeGen = struct {
 
                 if (!would_clobber) {
                     // Safe to do this move
-                    if (moves[mi].src) |src| {
+                    const is_two_reg = self.isTwoRegStruct(moves[mi].value.type_idx);
+                    const is_large_struct = self.isLargeStruct(moves[mi].value.type_idx);
+                    const load_offset = moves[mi].offset;
+
+                    if (is_large_struct and load_offset == -1) {
+                        // >16B struct: pass address of struct
+                        // The value should be a load from local_addr - pass the address instead
+                        const struct_val = moves[mi].value;
+
+                        if (struct_val.op == .load and struct_val.args.len > 0) {
+                            const addr_val = struct_val.args[0];
+                            if (addr_val.op == .local_addr) {
+                                // LEA dest, [RBP - offset] to get struct address
+                                const local_idx: usize = @intCast(addr_val.aux_int);
+                                if (local_idx < self.func.local_offsets.len and local_idx < self.func.local_sizes.len) {
+                                    const byte_offset = self.func.local_offsets[local_idx];
+                                    const local_size: i32 = @intCast(self.func.local_sizes[local_idx]);
+                                    const base_disp: i32 = -(byte_offset + local_size);
+                                    const lea = asm_mod.encodeLeaDisp32(moves[mi].dest, .rbp, base_disp);
+                                    try self.emitBytes(lea.data[0..lea.len]);
+                                    debug.log(.codegen, "      >16B struct arg: LEA {s}, [RBP{d}]", .{ moves[mi].dest.name(), base_disp });
+                                }
+                            } else {
+                                // Get address value directly
+                                try self.ensureInReg(addr_val, moves[mi].dest);
+                                debug.log(.codegen, "      >16B struct arg: addr in {s}", .{moves[mi].dest.name()});
+                            }
+                        } else {
+                            // Fallback
+                            try self.ensureInReg(struct_val, moves[mi].dest);
+                            debug.log(.codegen, "      >16B struct arg fallback: {s}", .{moves[mi].dest.name()});
+                        }
+                    } else if (is_two_reg) {
+                        // 2-register struct: load from memory
+                        // The value should be a load from a local_addr or similar
+                        const struct_val = moves[mi].value;
+
+                        // Get the struct's base address
+                        // The struct_val is typically a load - we need its source address
+                        if (struct_val.op == .load and struct_val.args.len > 0) {
+                            const addr_val = struct_val.args[0];
+                            if (addr_val.op == .local_addr) {
+                                // Load from local variable: compute [RBP - offset]
+                                const local_idx: usize = @intCast(addr_val.aux_int);
+                                if (local_idx < self.func.local_offsets.len and local_idx < self.func.local_sizes.len) {
+                                    const byte_offset = self.func.local_offsets[local_idx];
+                                    const local_size: i32 = @intCast(self.func.local_sizes[local_idx]);
+                                    const base_disp: i32 = -(byte_offset + local_size);
+                                    const final_disp: i32 = base_disp + load_offset;
+                                    const enc = asm_mod.encodeLoadDisp32(moves[mi].dest, .rbp, final_disp);
+                                    try self.emitBytes(enc.data[0..enc.len]);
+                                    debug.log(.codegen, "      2-reg struct arg: MOV {s}, [RBP{d}] (offset {d})", .{ moves[mi].dest.name(), final_disp, load_offset });
+                                }
+                            } else {
+                                // Other address type - get address to R10, then load
+                                try self.ensureInReg(addr_val, .r10);
+                                const enc = asm_mod.encodeLoadDisp32(moves[mi].dest, .r10, load_offset);
+                                try self.emitBytes(enc.data[0..enc.len]);
+                                debug.log(.codegen, "      2-reg struct arg: MOV {s}, [R10+{d}]", .{ moves[mi].dest.name(), load_offset });
+                            }
+                        } else {
+                            // Fallback: try to get struct address and load
+                            try self.ensureInReg(struct_val, .r10);
+                            const enc = asm_mod.encodeLoadDisp32(moves[mi].dest, .r10, load_offset);
+                            try self.emitBytes(enc.data[0..enc.len]);
+                            debug.log(.codegen, "      2-reg struct arg fallback: MOV {s}, [R10+{d}]", .{ moves[mi].dest.name(), load_offset });
+                        }
+                    } else if (moves[mi].src) |src| {
                         try self.emit(3, asm_mod.encodeMovRegReg(moves[mi].dest, src));
                         debug.log(.codegen, "      arg move: {s} -> {s}", .{ src.name(), moves[mi].dest.name() });
                     } else {
@@ -760,11 +991,65 @@ pub const AMD64CodeGen = struct {
             }
         }
 
-        // Handle any remaining cycles using R11 as temp
+        // Handle any remaining moves (no cycles for 2-reg struct loads)
         for (0..num_moves) |mi| {
             if (moves[mi].done) continue;
 
-            if (moves[mi].src) |start_src| {
+            const is_two_reg = self.isTwoRegStruct(moves[mi].value.type_idx);
+            const is_large_struct = self.isLargeStruct(moves[mi].value.type_idx);
+            const load_offset = moves[mi].offset;
+
+            if (is_large_struct and load_offset == -1) {
+                // >16B struct: pass address (same logic as above)
+                const struct_val = moves[mi].value;
+                if (struct_val.op == .load and struct_val.args.len > 0) {
+                    const addr_val = struct_val.args[0];
+                    if (addr_val.op == .local_addr) {
+                        const local_idx: usize = @intCast(addr_val.aux_int);
+                        if (local_idx < self.func.local_offsets.len and local_idx < self.func.local_sizes.len) {
+                            const byte_offset = self.func.local_offsets[local_idx];
+                            const local_size: i32 = @intCast(self.func.local_sizes[local_idx]);
+                            const base_disp: i32 = -(byte_offset + local_size);
+                            const lea = asm_mod.encodeLeaDisp32(moves[mi].dest, .rbp, base_disp);
+                            try self.emitBytes(lea.data[0..lea.len]);
+                            debug.log(.codegen, "      >16B struct arg (remaining): LEA {s}, [RBP{d}]", .{ moves[mi].dest.name(), base_disp });
+                        }
+                    } else {
+                        try self.ensureInReg(addr_val, moves[mi].dest);
+                    }
+                } else {
+                    try self.ensureInReg(struct_val, moves[mi].dest);
+                }
+                moves[mi].done = true;
+            } else if (is_two_reg) {
+                // 2-register struct: load from memory (same logic as above)
+                const struct_val = moves[mi].value;
+
+                if (struct_val.op == .load and struct_val.args.len > 0) {
+                    const addr_val = struct_val.args[0];
+                    if (addr_val.op == .local_addr) {
+                        const local_idx: usize = @intCast(addr_val.aux_int);
+                        if (local_idx < self.func.local_offsets.len and local_idx < self.func.local_sizes.len) {
+                            const byte_offset = self.func.local_offsets[local_idx];
+                            const local_size: i32 = @intCast(self.func.local_sizes[local_idx]);
+                            const base_disp: i32 = -(byte_offset + local_size);
+                            const final_disp: i32 = base_disp + load_offset;
+                            const enc = asm_mod.encodeLoadDisp32(moves[mi].dest, .rbp, final_disp);
+                            try self.emitBytes(enc.data[0..enc.len]);
+                            debug.log(.codegen, "      2-reg struct arg (remaining): MOV {s}, [RBP{d}]", .{ moves[mi].dest.name(), final_disp });
+                        }
+                    } else {
+                        try self.ensureInReg(addr_val, .r10);
+                        const enc = asm_mod.encodeLoadDisp32(moves[mi].dest, .r10, load_offset);
+                        try self.emitBytes(enc.data[0..enc.len]);
+                    }
+                } else {
+                    try self.ensureInReg(struct_val, .r10);
+                    const enc = asm_mod.encodeLoadDisp32(moves[mi].dest, .r10, load_offset);
+                    try self.emitBytes(enc.data[0..enc.len]);
+                }
+                moves[mi].done = true;
+            } else if (moves[mi].src) |start_src| {
                 // Save the starting value to R11
                 try self.emit(3, asm_mod.encodeMovRegReg(.r11, start_src));
                 debug.log(.codegen, "      cycle: save {s} -> R11", .{start_src.name()});
@@ -818,6 +1103,143 @@ pub const AMD64CodeGen = struct {
         return stack_cleanup;
     }
 
+    /// Setup call arguments for calls with hidden return pointer.
+    /// RDI is already set up with the hidden return address.
+    /// Args go in RSI, RDX, RCX, R8, R9 (only 5 register args, then stack).
+    fn setupCallArgsWithHiddenRet(self: *AMD64CodeGen, args: []*Value) !usize {
+        if (args.len == 0) return 0;
+
+        // With hidden return, only 5 register args available (RDI is taken)
+        const num_stack_args: usize = if (args.len > 5) args.len - 5 else 0;
+        var stack_cleanup: usize = 0;
+
+        if (num_stack_args > 0) {
+            // Push stack arguments in reverse order
+            var i: usize = args.len;
+            while (i > 5) {
+                i -= 1;
+                const arg = args[i];
+                if (self.getRegForValue(arg)) |src_reg| {
+                    const push = asm_mod.encodePush(src_reg);
+                    try self.emitBytes(push.data[0..push.len]);
+                } else {
+                    try self.ensureInReg(arg, .rax);
+                    const push = asm_mod.encodePush(.rax);
+                    try self.emitBytes(push.data[0..push.len]);
+                }
+                debug.log(.codegen, "      PUSH (stack arg {d})", .{i});
+            }
+            stack_cleanup = num_stack_args * 8;
+        }
+
+        // Collect register argument moves (skip RDI, use RSI through R9)
+        const max_reg_args = @min(args.len, 5);
+        const Move = struct {
+            src: ?Reg,
+            dest: Reg,
+            value: *Value,
+            done: bool,
+        };
+
+        var moves: [5]Move = undefined;
+        var num_moves: usize = 0;
+
+        for (args[0..max_reg_args], 0..) |arg, i| {
+            // arg_regs[1..] = RSI, RDX, RCX, R8, R9
+            const dest = regs.AMD64.arg_regs[i + 1];
+            const src = self.getRegForValue(arg);
+            moves[num_moves] = .{
+                .src = src,
+                .dest = dest,
+                .value = arg,
+                .done = (src != null and src.? == dest),
+            };
+            num_moves += 1;
+        }
+
+        // Process moves that don't conflict first
+        var progress = true;
+        while (progress) {
+            progress = false;
+            for (0..num_moves) |mi| {
+                if (moves[mi].done) continue;
+
+                var would_clobber = false;
+                for (0..num_moves) |oi| {
+                    if (moves[oi].done) continue;
+                    if (moves[oi].src) |other_src| {
+                        if (other_src == moves[mi].dest and oi != mi) {
+                            would_clobber = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (!would_clobber) {
+                    if (moves[mi].src) |src| {
+                        try self.emit(3, asm_mod.encodeMovRegReg(moves[mi].dest, src));
+                        debug.log(.codegen, "      arg move (hidden ret): {s} -> {s}", .{ src.name(), moves[mi].dest.name() });
+                    } else {
+                        try self.ensureInReg(moves[mi].value, moves[mi].dest);
+                    }
+                    moves[mi].done = true;
+                    progress = true;
+                }
+            }
+        }
+
+        // Handle cycles using R11
+        for (0..num_moves) |mi| {
+            if (moves[mi].done) continue;
+
+            if (moves[mi].src) |start_src| {
+                try self.emit(3, asm_mod.encodeMovRegReg(.r11, start_src));
+                debug.log(.codegen, "      cycle (hidden ret): save {s} -> R11", .{start_src.name()});
+
+                var current_dest = start_src;
+                var iterations: usize = 0;
+                const max_iterations: usize = 8;
+
+                while (iterations < max_iterations) {
+                    var found_move: ?usize = null;
+                    for (0..num_moves) |oi| {
+                        if (moves[oi].done) continue;
+                        if (moves[oi].dest == current_dest) {
+                            found_move = oi;
+                            break;
+                        }
+                    }
+
+                    if (found_move) |move_idx| {
+                        if (moves[move_idx].src) |src| {
+                            const actual_src: Reg = if (src == start_src) .r11 else src;
+                            try self.emit(3, asm_mod.encodeMovRegReg(moves[move_idx].dest, actual_src));
+                            debug.log(.codegen, "      cycle (hidden ret): {s} -> {s}", .{ actual_src.name(), moves[move_idx].dest.name() });
+                            current_dest = src;
+                        } else {
+                            try self.ensureInReg(moves[move_idx].value, moves[move_idx].dest);
+                        }
+                        moves[move_idx].done = true;
+                    } else {
+                        break;
+                    }
+
+                    if (current_dest == start_src) break;
+                    iterations += 1;
+                }
+
+                try self.emit(3, asm_mod.encodeMovRegReg(moves[mi].dest, .r11));
+                debug.log(.codegen, "      cycle (hidden ret): R11 -> {s}", .{moves[mi].dest.name()});
+                moves[mi].done = true;
+            } else {
+                try self.ensureInReg(moves[mi].value, moves[mi].dest);
+                moves[mi].done = true;
+            }
+        }
+
+        return stack_cleanup;
+    }
+
     // ========================================================================
     // Code Generation
     // ========================================================================
@@ -832,9 +1254,82 @@ pub const AMD64CodeGen = struct {
         // so we must clear the mapping to avoid cross-function confusion
         self.block_offsets.clearRetainingCapacity();
         self.branch_fixups.clearRetainingCapacity();
+        self.hidden_ret_offsets.clearRetainingCapacity();
+        self.has_hidden_return = false;
+        self.hidden_ret_space_needed = 0;
 
         debug.log(.codegen, "Generating AMD64 code for '{s}'", .{name});
         debug.log(.codegen, "  Stack frame: {d} bytes", .{self.frame_size});
+
+        // AMD64 System V ABI: Check if this function returns >16B (needs hidden return pointer in RDI)
+        if (self.type_reg) |type_reg| {
+            const func_type = type_reg.get(f.type_idx);
+            if (func_type == .func) {
+                const ret_type_idx = func_type.func.return_type;
+                const ret_size = self.getTypeSize(ret_type_idx);
+                if (ret_size > 16) {
+                    self.has_hidden_return = true;
+                    debug.log(.codegen, "  Function returns >16B ({d}B), using hidden return via RDI (saved to stack)", .{ret_size});
+                }
+            }
+        }
+        // Fallback: scan return blocks for return value type
+        if (!self.has_hidden_return) {
+            for (f.blocks.items) |block| {
+                if (block.kind == .ret and block.numControls() > 0) {
+                    const ret_val = block.controlValues()[0];
+                    const ret_size = self.getTypeSize(ret_val.type_idx);
+                    if (ret_size > 16) {
+                        self.has_hidden_return = true;
+                        debug.log(.codegen, "  Function returns >16B ({d}B) [from ret block], using hidden return via RDI", .{ret_size});
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Pre-allocate space for calls that return >16B via hidden pointer
+        var cur_hidden_offset: u32 = 0;
+        for (f.blocks.items) |block| {
+            for (block.values.items) |value| {
+                if (value.op == .static_call or value.op == .closure_call) {
+                    const ret_size: u32 = if (value.aux_call) |aux_call|
+                        aux_call.hiddenReturnSize()
+                    else
+                        self.getTypeSize(value.type_idx);
+
+                    var uses_hidden = ret_size > 16;
+                    if (value.aux_call) |aux_call| {
+                        if (aux_call.usesHiddenReturn()) {
+                            uses_hidden = true;
+                        }
+                    }
+
+                    if (uses_hidden and ret_size > 0) {
+                        const aligned_size = (ret_size + 15) & ~@as(u32, 15);
+                        try self.hidden_ret_offsets.put(self.allocator, value, cur_hidden_offset);
+                        debug.log(.codegen, "  Pre-allocated hidden return for call v{d}: offset={d}, size={d}", .{ value.id, cur_hidden_offset, aligned_size });
+                        cur_hidden_offset += aligned_size;
+                    }
+                }
+            }
+        }
+        self.hidden_ret_space_needed = cur_hidden_offset;
+        self.hidden_ret_frame_offset = self.frame_size;
+        if (cur_hidden_offset > 0) {
+            self.frame_size += cur_hidden_offset;
+            debug.log(.codegen, "  Added {d}B hidden return space, new frame_size={d}", .{ cur_hidden_offset, self.frame_size });
+        }
+
+        // Save space for hidden return pointer when this function returns >16B
+        // IMPORTANT: hidden_ret_ptr_offset must be BEYOND existing locals
+        // Locals use offsets [8, frame_size] from RBP, so hidden ptr goes at frame_size + 8
+        if (self.has_hidden_return) {
+            self.frame_size += 8; // Add 8 bytes to ensure we're past locals
+            self.hidden_ret_ptr_offset = self.frame_size;
+            self.frame_size += 8; // Add 8 more for the pointer itself (16 total for alignment)
+            debug.log(.codegen, "  Added 16B for hidden return ptr at offset {d}, new frame_size={d}", .{ self.hidden_ret_ptr_offset, self.frame_size });
+        }
 
         // Add symbol (no underscore prefix for Linux/ELF)
         try self.symbols.append(self.allocator, .{
@@ -877,6 +1372,15 @@ pub const AMD64CodeGen = struct {
             } else {
                 try self.emit(7, asm_mod.encodeSubRegImm32(.rsp, @intCast(aligned_frame)));
             }
+        }
+
+        // AMD64 System V: Save hidden return pointer (RDI) to stack for >16B returns
+        // Caller passes return location in RDI; we save it so we can store result there on return
+        if (self.has_hidden_return) {
+            // MOV [RBP - hidden_ret_ptr_offset], RDI
+            const neg_offset: i32 = -@as(i32, @intCast(self.hidden_ret_ptr_offset));
+            try self.emitStoreRegToFrame(.rdi, neg_offset);
+            debug.log(.codegen, "  Saved RDI (hidden return ptr) to [RBP{d}]", .{neg_offset});
         }
     }
 
@@ -926,8 +1430,109 @@ pub const AMD64CodeGen = struct {
                 if (block.controlValues().len > 0) {
                     const ret_val = block.controlValues()[0];
 
-                    // Handle slice returns: ptr in RAX, len in RDX
-                    if (ret_val.op == .slice_make and ret_val.args.len >= 2) {
+                    // AMD64 System V: Handle >16B return via hidden pointer (saved RDI)
+                    if (self.has_hidden_return) {
+                        debug.log(.codegen, "      ret_val.op = {s}, ret_val.id = v{d}", .{ @tagName(ret_val.op), ret_val.id });
+
+                        // Get source address of the struct data
+                        var src_addr_reg: Reg = .r10; // Default scratch register
+                        if (ret_val.op == .local_addr) {
+                            // Local variable - get its stack address
+                            const slot: i64 = ret_val.aux_int;
+                            const slot_offset: i32 = -@as(i32, @intCast((slot + 1) * 8));
+                            // LEA src_addr_reg, [RBP + slot_offset]
+                            try self.emitLeaFromFrame(src_addr_reg, slot_offset);
+                            debug.log(.codegen, "      ret local_addr: slot {d} -> {s}", .{ slot, src_addr_reg.name() });
+                        } else if (ret_val.op == .load and ret_val.args.len > 0) {
+                            // Load operation - source address is in the load's argument
+                            const src_addr = ret_val.args[0];
+                            if (src_addr.op == .local_addr) {
+                                // Local address - compute from slot
+                                // Same formula as local_addr handler: disp = -(byte_offset + local_size)
+                                const local_idx: u32 = @intCast(src_addr.aux_int);
+                                if (local_idx < self.func.local_offsets.len and local_idx < self.func.local_sizes.len) {
+                                    const byte_offset: i32 = @intCast(self.func.local_offsets[local_idx]);
+                                    const local_size: i32 = @intCast(self.func.local_sizes[local_idx]);
+                                    const disp: i32 = -(byte_offset + local_size);
+                                    try self.emitLeaFromFrame(src_addr_reg, disp);
+                                    debug.log(.codegen, "      ret load: source local_addr {d} at [RBP{d}]", .{ local_idx, disp });
+                                }
+                            } else {
+                                // Other address - get from register
+                                const addr_reg = self.getRegForValue(src_addr) orelse blk: {
+                                    try self.ensureInReg(src_addr, src_addr_reg);
+                                    break :blk src_addr_reg;
+                                };
+                                if (addr_reg != src_addr_reg) {
+                                    try self.emit(3, asm_mod.encodeMovRegReg(src_addr_reg, addr_reg));
+                                }
+                            }
+                        } else if (ret_val.op == .load_reg) {
+                            // The value was loaded from somewhere - get the address from regalloc
+                            const ret_reg = self.getRegForValue(ret_val) orelse blk: {
+                                try self.ensureInReg(ret_val, src_addr_reg);
+                                break :blk src_addr_reg;
+                            };
+                            if (ret_reg != src_addr_reg) {
+                                try self.emit(3, asm_mod.encodeMovRegReg(src_addr_reg, ret_reg));
+                            }
+                        } else if (ret_val.op == .static_call or ret_val.op == .closure_call) {
+                            // Call result - check if it used hidden return
+                            if (self.hidden_ret_offsets.get(ret_val)) |rel_offset| {
+                                // Result is at frame location - compute address
+                                // Point to the LOW end of the allocated space (highest frame offset)
+                                const ret_size_inner = self.getTypeSize(ret_val.type_idx);
+                                const aligned_size = (ret_size_inner + 15) & ~@as(u32, 15);
+                                const frame_offset: i32 = @intCast(self.hidden_ret_frame_offset + rel_offset + aligned_size);
+                                const neg_offset: i32 = -frame_offset;
+                                // LEA R10, [RBP - frame_offset]
+                                try self.emitLeaFromFrame(.r10, neg_offset);
+                                src_addr_reg = .r10;
+                                debug.log(.codegen, "      ret static_call: result at frame offset {d}", .{frame_offset});
+                            } else {
+                                // Normal call - result in register
+                                const ret_reg = self.getRegForValue(ret_val) orelse .rax;
+                                if (ret_reg != src_addr_reg) {
+                                    try self.emit(3, asm_mod.encodeMovRegReg(src_addr_reg, ret_reg));
+                                }
+                            }
+                        } else {
+                            // Other ops - try to get from register
+                            const ret_reg = self.getRegForValue(ret_val) orelse blk: {
+                                try self.ensureInReg(ret_val, src_addr_reg);
+                                break :blk src_addr_reg;
+                            };
+                            if (ret_reg != src_addr_reg) {
+                                try self.emit(3, asm_mod.encodeMovRegReg(src_addr_reg, ret_reg));
+                            }
+                        }
+
+                        // Get return type size
+                        const ret_size = self.getTypeSize(ret_val.type_idx);
+
+                        // Load hidden return pointer from stack into R11 (temp)
+                        const dest_ptr_reg: Reg = .r11;
+                        const neg_ptr_offset: i32 = -@as(i32, @intCast(self.hidden_ret_ptr_offset));
+                        try self.emitLoadRegFromFrame(dest_ptr_reg, neg_ptr_offset);
+                        debug.log(.codegen, "      ret hidden: loaded dest ptr from [RBP{d}] to {s}", .{ neg_ptr_offset, dest_ptr_reg.name() });
+                        debug.log(.codegen, "      ret hidden: copying {d}B from [{s}] to [{s}]", .{ ret_size, src_addr_reg.name(), dest_ptr_reg.name() });
+
+                        // Copy data in 8-byte chunks using MOV
+                        var copy_off: u32 = 0;
+                        while (copy_off < ret_size) : (copy_off += 8) {
+                            // MOV R12, [src + copy_off]
+                            const src_enc = asm_mod.encodeMovRegMemDisp(.r12, src_addr_reg, @intCast(copy_off));
+                            try self.code.appendSlice(self.allocator, src_enc.data[0..src_enc.len]);
+                            // MOV [dest + copy_off], R12
+                            const dst_enc = asm_mod.encodeMovMemReg(dest_ptr_reg, @intCast(copy_off), .r12);
+                            try self.code.appendSlice(self.allocator, dst_enc.data[0..dst_enc.len]);
+                        }
+
+                        // Return destination pointer in RAX
+                        try self.emit(3, asm_mod.encodeMovRegReg(.rax, dest_ptr_reg));
+                        debug.log(.codegen, "      ret hidden: returning dest ptr in RAX", .{});
+                    } else if (ret_val.op == .slice_make and ret_val.args.len >= 2) {
+                        // Handle slice returns: ptr in RAX, len in RDX
                         // Put ptr in RAX
                         const ptr_val = ret_val.args[0];
                         const ptr_reg = self.getRegForValue(ptr_val) orelse blk: {
@@ -1154,15 +1759,20 @@ pub const AMD64CodeGen = struct {
                         break :blk Reg.rax;
                     };
                     var op2_reg = self.getRegForValue(args[1]) orelse blk: {
-                        // Use R11 for divisor to avoid conflicts with dividend
+                        // Use R11 for divisor to avoid conflicts with RAX/RDX
                         try self.ensureInReg(args[1], .r11);
                         break :blk Reg.r11;
                     };
 
                     // If op2 is in RAX, move it to R11 before we put op1 in RAX
-                    // Use R11 to avoid clobbering op1_reg which might be in RCX
                     if (op2_reg == .rax and op1_reg != .rax) {
                         try self.emit(3, asm_mod.encodeMovRegReg(.r11, .rax));
+                        op2_reg = .r11;
+                    }
+
+                    // CRITICAL: If op2 is in RDX, move it to R11 BEFORE CQO clobbers RDX
+                    if (op2_reg == .rdx) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(.r11, .rdx));
                         op2_reg = .r11;
                     }
 
@@ -1186,7 +1796,7 @@ pub const AMD64CodeGen = struct {
             },
 
             .mod => {
-                // Modulo: same as div but result is in RDX
+                // Modulo: same as div but result is in RDX (remainder)
                 const args = value.args;
                 if (args.len >= 2) {
                     const op1_reg = self.getRegForValue(args[0]) orelse blk: {
@@ -1194,15 +1804,20 @@ pub const AMD64CodeGen = struct {
                         break :blk Reg.rax;
                     };
                     var op2_reg = self.getRegForValue(args[1]) orelse blk: {
-                        // Use R11 for divisor to avoid conflicts with dividend
+                        // Use R11 for divisor to avoid conflicts with RAX/RDX
                         try self.ensureInReg(args[1], .r11);
                         break :blk Reg.r11;
                     };
 
                     // If op2 is in RAX, move it to R11 before we put op1 in RAX
-                    // Use R11 to avoid clobbering op1_reg which might be in RCX
                     if (op2_reg == .rax and op1_reg != .rax) {
                         try self.emit(3, asm_mod.encodeMovRegReg(.r11, .rax));
+                        op2_reg = .r11;
+                    }
+
+                    // CRITICAL: If op2 is in RDX, move it to R11 BEFORE CQO clobbers RDX
+                    if (op2_reg == .rdx) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(.r11, .rdx));
                         op2_reg = .r11;
                     }
 
@@ -1522,23 +2137,30 @@ pub const AMD64CodeGen = struct {
             .arg => {
                 // Function argument - System V AMD64 ABI
                 // First 6 args in: RDI, RSI, RDX, RCX, R8, R9
-                const arg_idx: usize = @intCast(value.aux_int);
+                // BUT: when function has hidden return, RDI is the hidden return pointer
+                // so user args shift: arg0 in RSI, arg1 in RDX, etc.
+                const user_arg_idx: usize = @intCast(value.aux_int);
                 const dest_reg = self.getDestRegForValue(value);
 
-                if (arg_idx < regs.AMD64.arg_regs.len) {
+                // Adjust for hidden return: user arg N is in arg_regs[N+1]
+                const abi_arg_idx: usize = if (self.has_hidden_return) user_arg_idx + 1 else user_arg_idx;
+                const max_reg_args: usize = if (self.has_hidden_return) 5 else 6;
+
+                if (user_arg_idx < max_reg_args and abi_arg_idx < regs.AMD64.arg_regs.len) {
                     // Register argument - move from ABI register to destination
-                    const src_reg = regs.AMD64.arg_regs[arg_idx];
+                    const src_reg = regs.AMD64.arg_regs[abi_arg_idx];
                     if (dest_reg != src_reg) {
                         try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, src_reg));
-                        debug.log(.codegen, "      -> MOV {s}, {s} (arg {d})", .{ dest_reg.name(), src_reg.name(), arg_idx });
+                        debug.log(.codegen, "      -> MOV {s}, {s} (user arg {d}, ABI arg {d})", .{ dest_reg.name(), src_reg.name(), user_arg_idx, abi_arg_idx });
                     }
                 } else {
                     // Stack argument - load from caller's stack frame
                     // After push rbp; mov rbp,rsp, caller's args are at [rbp+16+N*8]
-                    const stack_offset: i32 = @intCast(16 + (arg_idx - 6) * 8);
+                    const stack_arg_idx = if (self.has_hidden_return) user_arg_idx - 5 else user_arg_idx - 6;
+                    const stack_offset: i32 = @intCast(16 + stack_arg_idx * 8);
                     const load = asm_mod.encodeLoadDisp32(dest_reg, .rbp, stack_offset);
                     try self.emitBytes(load.data[0..load.len]);
-                    debug.log(.codegen, "      -> MOV {s}, [rbp+{d}] (stack arg {d})", .{ dest_reg.name(), stack_offset, arg_idx });
+                    debug.log(.codegen, "      -> MOV {s}, [rbp+{d}] (stack arg {d})", .{ dest_reg.name(), stack_offset, user_arg_idx });
                 }
             },
 
@@ -1550,27 +2172,71 @@ pub const AMD64CodeGen = struct {
                     else => "unknown",
                 };
 
-                // Use parallel copy to setup arguments (prevents clobbering)
-                const stack_cleanup = try self.setupCallArgs(value.args);
+                // AMD64 System V: Check if call returns >16B (needs hidden return pointer in RDI)
+                if (self.hidden_ret_offsets.get(value)) |rel_offset| {
+                    // Get return size from aux_call
+                    const ret_size: u32 = if (value.aux_call) |aux_call|
+                        aux_call.hiddenReturnSize()
+                    else
+                        self.getTypeSize(value.type_idx);
 
-                // Emit CALL rel32 with relocation
-                const call_offset = self.offset();
-                try self.emit(5, asm_mod.encodeCall(0)); // Placeholder
+                    // Compute frame-relative address for hidden return area
+                    // We need to point to the LOW end of the allocated space (highest frame offset)
+                    // Space starts at hidden_ret_frame_offset + rel_offset, extends aligned_size bytes
+                    const aligned_size = (ret_size + 15) & ~@as(u32, 15);
+                    const frame_offset: i32 = @intCast(self.hidden_ret_frame_offset + rel_offset + aligned_size);
+                    const neg_offset: i32 = -frame_offset;
 
-                // Clean up stack arguments (caller-cleanup on System V AMD64)
-                if (stack_cleanup > 0) {
-                    const cleanup_size: i32 = @intCast(stack_cleanup);
-                    try self.emit(7, asm_mod.encodeAddRegImm32(.rsp, cleanup_size));
-                    debug.log(.codegen, "      ADD RSP, {d} (cleanup stack args)", .{cleanup_size});
+                    debug.log(.codegen, "      static_call {s}: >16B return ({d}B), frame offset={d}", .{ target_name, ret_size, frame_offset });
+
+                    // Set RDI to point to return location: LEA RDI, [RBP - frame_offset]
+                    try self.emitLeaFromFrame(.rdi, neg_offset);
+                    debug.log(.codegen, "      LEA RDI, [RBP{d}] (hidden return ptr)", .{neg_offset});
+
+                    // Setup args shifted by 1 (RDI is hidden return, actual args start at RSI)
+                    const stack_cleanup = try self.setupCallArgsWithHiddenRet(value.args);
+
+                    // Emit CALL rel32 with relocation
+                    const call_offset = self.offset();
+                    try self.emit(5, asm_mod.encodeCall(0)); // Placeholder
+
+                    // Clean up stack arguments
+                    if (stack_cleanup > 0) {
+                        const cleanup_size: i32 = @intCast(stack_cleanup);
+                        try self.emit(7, asm_mod.encodeAddRegImm32(.rsp, cleanup_size));
+                        debug.log(.codegen, "      ADD RSP, {d} (cleanup stack args)", .{cleanup_size});
+                    }
+
+                    // Record relocation
+                    try self.relocations.append(self.allocator, .{
+                        .offset = @intCast(call_offset + 1),
+                        .target = target_name,
+                    });
+
+                    debug.log(.codegen, "      CALL {s} (hidden return)", .{target_name});
+                } else {
+                    // Normal call - use parallel copy to setup arguments
+                    const stack_cleanup = try self.setupCallArgs(value.args);
+
+                    // Emit CALL rel32 with relocation
+                    const call_offset = self.offset();
+                    try self.emit(5, asm_mod.encodeCall(0)); // Placeholder
+
+                    // Clean up stack arguments (caller-cleanup on System V AMD64)
+                    if (stack_cleanup > 0) {
+                        const cleanup_size: i32 = @intCast(stack_cleanup);
+                        try self.emit(7, asm_mod.encodeAddRegImm32(.rsp, cleanup_size));
+                        debug.log(.codegen, "      ADD RSP, {d} (cleanup stack args)", .{cleanup_size});
+                    }
+
+                    // Record relocation
+                    try self.relocations.append(self.allocator, .{
+                        .offset = @intCast(call_offset + 1), // Skip E8 opcode
+                        .target = target_name,
+                    });
+
+                    debug.log(.codegen, "      CALL {s}", .{target_name});
                 }
-
-                // Record relocation
-                try self.relocations.append(self.allocator, .{
-                    .offset = @intCast(call_offset + 1), // Skip E8 opcode
-                    .target = target_name,
-                });
-
-                debug.log(.codegen, "      CALL {s}", .{target_name});
                 debug.log(.codegen, "      static_call v{d}: uses={d}, has_home={}", .{ value.id, value.uses, value.getHome() != null });
 
                 // Result is in RAX - regalloc will handle spill/reload if needed
@@ -1631,6 +2297,90 @@ pub const AMD64CodeGen = struct {
                 // Result is in RAX - regalloc will handle spill/reload if needed
             },
 
+            .string_concat => {
+                // String concatenation: call __cot_str_concat(ptr1, len1, ptr2, len2)
+                // AMD64 System V ABI: RDI=ptr1, RSI=len1, RDX=ptr2, RCX=len2
+                // Returns: RAX=ptr, RDX=len
+                const args = value.args;
+                if (args.len >= 4) {
+                    debug.log(.codegen, "      string_concat (decomposed): 4 scalar args", .{});
+
+                    // Get current registers for each arg
+                    const ptr1_reg = self.getRegForValue(args[0]) orelse blk: {
+                        try self.ensureInReg(args[0], .r10);
+                        break :blk Reg.r10;
+                    };
+                    const len1_reg = self.getRegForValue(args[1]) orelse blk: {
+                        try self.ensureInReg(args[1], .r11);
+                        break :blk Reg.r11;
+                    };
+                    const ptr2_reg = self.getRegForValue(args[2]) orelse blk: {
+                        try self.ensureInReg(args[2], .r12);
+                        break :blk Reg.r12;
+                    };
+                    const len2_reg = self.getRegForValue(args[3]) orelse blk: {
+                        try self.ensureInReg(args[3], .r13);
+                        break :blk Reg.r13;
+                    };
+
+                    debug.log(.codegen, "      Current locations: ptr1={s}, len1={s}, ptr2={s}, len2={s}", .{
+                        ptr1_reg.name(), len1_reg.name(), ptr2_reg.name(), len2_reg.name(),
+                    });
+
+                    // Move args to calling convention registers via scratch regs to avoid clobbering
+                    // AMD64 System V: RDI=arg1, RSI=arg2, RDX=arg3, RCX=arg4
+                    try self.emit(3, asm_mod.encodeMovRegReg(.r10, ptr1_reg)); // r10 = ptr1
+                    try self.emit(3, asm_mod.encodeMovRegReg(.r11, len1_reg)); // r11 = len1
+                    try self.emit(3, asm_mod.encodeMovRegReg(.r14, ptr2_reg)); // r14 = ptr2
+                    try self.emit(3, asm_mod.encodeMovRegReg(.r15, len2_reg)); // r15 = len2
+                    try self.emit(3, asm_mod.encodeMovRegReg(.rdi, .r10)); // RDI = ptr1
+                    try self.emit(3, asm_mod.encodeMovRegReg(.rsi, .r11)); // RSI = len1
+                    try self.emit(3, asm_mod.encodeMovRegReg(.rdx, .r14)); // RDX = ptr2
+                    try self.emit(3, asm_mod.encodeMovRegReg(.rcx, .r15)); // RCX = len2
+
+                    // Emit the call to __cot_str_concat
+                    const call_offset = self.offset();
+                    try self.emit(5, asm_mod.encodeCall(0)); // Placeholder
+                    try self.relocations.append(self.allocator, .{
+                        .offset = @intCast(call_offset + 1),
+                        .target = "__cot_str_concat",
+                    });
+                    debug.log(.codegen, "      -> CALL __cot_str_concat", .{});
+
+                    // Save RDX (len) to R8 immediately after call.
+                    // select_n[0] will read RAX (ptr), select_n[1] will read R8 (len)
+                    // This is necessary because regalloc might assign RDX to something else
+                    try self.emit(3, asm_mod.encodeMovRegReg(.r8, .rdx)); // R8 = RDX (len)
+                    debug.log(.codegen, "      Results: RAX (ptr), RDX->R8 (len)", .{});
+                } else if (args.len >= 2) {
+                    // Old path (before expand_calls): 2 string args
+                    debug.log(.codegen, "      string_concat (old): 2 string args - unexpected!", .{});
+                }
+            },
+
+            .select_n => {
+                // select_n(call, idx) -> extract the idx-th result from a multi-value call
+                //
+                // AMD64 ABI for 16-byte return (like string = ptr + len):
+                // - idx=0 → RAX (ptr)
+                // - idx=1 → R8 (len, saved from RDX by caller to avoid clobbering)
+                //
+                // The call (string_concat/static_call) saves RDX to R8 immediately after
+                // return, so select_n[1] reads from R8.
+                if (value.args.len >= 1) {
+                    const idx: usize = @intCast(value.aux_int);
+                    const dest_reg = self.getDestRegForValue(value);
+
+                    // idx=0 → RAX, idx=1 → R8 (saved from RDX)
+                    const src_reg: Reg = if (idx == 0) .rax else .r8;
+
+                    if (dest_reg != src_reg) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, src_reg));
+                    }
+                    debug.log(.codegen, "      select_n[{d}] {s} -> {s}", .{ idx, src_reg.name(), dest_reg.name() });
+                }
+            },
+
             .load => {
                 // Load from memory address
                 // arg[0] is the address
@@ -1674,42 +2424,71 @@ pub const AMD64CodeGen = struct {
                 if (value.args.len >= 2) {
                     const addr = value.args[0];
                     const val = value.args[1];
+                    const type_size = self.getTypeSize(val.type_idx);
 
-                    // CRITICAL: Use R10 (not R9) because R9 is an argument register
-                    // on AMD64 System V ABI (6th argument). Using R9 would clobber
-                    // the 6th argument when storing parameters to stack.
-                    const val_reg = self.getRegForValue(val) orelse blk: {
-                        try self.ensureInReg(val, .r10);
-                        break :blk Reg.r10;
-                    };
-
-                    // Now get address - ensureInReg for add_ptr can use R10/R11 freely
+                    // Get destination address first
                     const addr_reg = self.getRegForValue(addr) orelse blk: {
                         try self.ensureInReg(addr, .r11);
                         break :blk Reg.r11;
                     };
 
-                    // Use type-sized store instruction
-                    const type_size = self.getTypeSize(val.type_idx);
+                    // Special handling for >16B call results with hidden return
+                    if (type_size > 16 and (val.op == .static_call or val.op == .closure_call)) {
+                        // Result is at pre-allocated hidden return frame location
+                        if (self.hidden_ret_offsets.get(val)) |rel_offset| {
+                            // Point to the LOW end of the allocated space (highest frame offset)
+                            const aligned_size = (type_size + 15) & ~@as(u32, 15);
+                            const frame_offset: i32 = @intCast(self.hidden_ret_frame_offset + rel_offset + aligned_size);
+                            const neg_offset: i32 = -frame_offset;
+                            // LEA R10, [RBP - frame_offset] (source address)
+                            try self.emitLeaFromFrame(.r10, neg_offset);
+                            debug.log(.codegen, "      store >16B: src at frame offset {d} -> R10", .{frame_offset});
 
-                    if (type_size == 1) {
-                        // MOV BYTE PTR
-                        const store = asm_mod.encodeStoreByteDisp32(addr_reg, 0, val_reg);
-                        try self.emitBytes(store.data[0..store.len]);
-                    } else if (type_size == 2) {
-                        // MOV WORD PTR
-                        const store = asm_mod.encodeStoreWordDisp32(addr_reg, 0, val_reg);
-                        try self.emitBytes(store.data[0..store.len]);
-                    } else if (type_size == 4) {
-                        // MOV DWORD PTR
-                        const store = asm_mod.encodeStoreDwordDisp32(addr_reg, 0, val_reg);
-                        try self.emitBytes(store.data[0..store.len]);
+                            // Copy data in 8-byte chunks
+                            var copy_off: u32 = 0;
+                            while (copy_off < type_size) : (copy_off += 8) {
+                                // MOV R12, [R10 + copy_off]
+                                const src_enc = asm_mod.encodeMovRegMemDisp(.r12, .r10, @intCast(copy_off));
+                                try self.code.appendSlice(self.allocator, src_enc.data[0..src_enc.len]);
+                                // MOV [addr_reg + copy_off], R12
+                                const dst_enc = asm_mod.encodeMovMemReg(addr_reg, @intCast(copy_off), .r12);
+                                try self.code.appendSlice(self.allocator, dst_enc.data[0..dst_enc.len]);
+                            }
+                            debug.log(.codegen, "      -> copied {d}B from hidden ret to [{s}]", .{ type_size, addr_reg.name() });
+                        } else {
+                            // Fallback: shouldn't happen for >16B call
+                            debug.log(.codegen, "      store >16B: WARNING no hidden_ret_offset found", .{});
+                        }
+                    } else if (type_size == 16 and val.op == .string_concat) {
+                        // String concat returns ptr in RAX, len in R8 (we saved it there)
+                        // Store as 16-byte pair
+                        const store_ptr = asm_mod.encodeMovMemReg(addr_reg, 0, .rax);
+                        try self.code.appendSlice(self.allocator, store_ptr.data[0..store_ptr.len]);
+                        const store_len = asm_mod.encodeMovMemReg(addr_reg, 8, .r8);
+                        try self.code.appendSlice(self.allocator, store_len.data[0..store_len.len]);
+                        debug.log(.codegen, "      -> stored string_concat RAX,R8 to [{s}]", .{addr_reg.name()});
                     } else {
-                        // MOV QWORD PTR (default)
-                        const store = asm_mod.encodeStoreDisp32(addr_reg, 0, val_reg);
-                        try self.emitBytes(store.data[0..store.len]);
+                        // Normal store - get value to register
+                        const val_reg = self.getRegForValue(val) orelse blk: {
+                            try self.ensureInReg(val, .r10);
+                            break :blk Reg.r10;
+                        };
+
+                        if (type_size == 1) {
+                            const store = asm_mod.encodeStoreByteDisp32(addr_reg, 0, val_reg);
+                            try self.emitBytes(store.data[0..store.len]);
+                        } else if (type_size == 2) {
+                            const store = asm_mod.encodeStoreWordDisp32(addr_reg, 0, val_reg);
+                            try self.emitBytes(store.data[0..store.len]);
+                        } else if (type_size == 4) {
+                            const store = asm_mod.encodeStoreDwordDisp32(addr_reg, 0, val_reg);
+                            try self.emitBytes(store.data[0..store.len]);
+                        } else {
+                            const store = asm_mod.encodeStoreDisp32(addr_reg, 0, val_reg);
+                            try self.emitBytes(store.data[0..store.len]);
+                        }
+                        debug.log(.codegen, "      -> STORE [{s}] <- {s} ({d}B)", .{ addr_reg.name(), val_reg.name(), type_size });
                     }
-                    debug.log(.codegen, "      -> STORE [{s}] <- {s} ({d}B)", .{ addr_reg.name(), val_reg.name(), type_size });
                 }
             },
 
@@ -2191,6 +2970,80 @@ pub const AMD64CodeGen = struct {
                     const load = asm_mod.encodeLoadDisp32(dest_reg, .rbp, disp);
                     try self.emitBytes(load.data[0..load.len]);
                     debug.log(.codegen, "      -> MOV {s}, [RBP{d}]", .{ dest_reg.name(), disp });
+                }
+            },
+
+            .move => {
+                // Bulk memory copy (OpMove) - used for large struct args/returns
+                // args[0] = dest address, args[1] = src value (may be arg pointer)
+                // aux_int = size in bytes
+                if (value.args.len >= 2) {
+                    const dest_addr = value.args[0];
+                    const src_val = value.args[1];
+                    const type_size: u32 = @intCast(value.aux_int);
+
+                    // Get destination address register
+                    const dest_reg = self.getRegForValue(dest_addr) orelse blk: {
+                        try self.ensureInReg(dest_addr, .r10);
+                        break :blk Reg.r10;
+                    };
+
+                    // Get source address - for large struct params, src_val is the arg (pointer)
+                    var src_reg: Reg = undefined;
+
+                    // Check if src_val is an arg (pointer passed in register)
+                    if (src_val.op == .arg) {
+                        // For large struct param, arg is the pointer - get it from ABI register
+                        const user_arg_idx: usize = @intCast(src_val.aux_int);
+                        const abi_arg_idx: usize = if (self.has_hidden_return) user_arg_idx + 1 else user_arg_idx;
+                        if (abi_arg_idx < regs.AMD64.arg_regs.len) {
+                            src_reg = regs.AMD64.arg_regs[abi_arg_idx];
+                            debug.log(.codegen, "      move: src is arg {d} in {s}", .{ user_arg_idx, src_reg.name() });
+                        } else {
+                            // Stack arg - load address
+                            const stack_arg_idx = if (self.has_hidden_return) user_arg_idx - 5 else user_arg_idx - 6;
+                            const stack_offset: i32 = @intCast(16 + stack_arg_idx * 8);
+                            const load = asm_mod.encodeLoadDisp32(.r11, .rbp, stack_offset);
+                            try self.emitBytes(load.data[0..load.len]);
+                            src_reg = .r11;
+                        }
+                    } else if (self.getRegForValue(src_val)) |reg| {
+                        src_reg = reg;
+                    } else {
+                        try self.ensureInReg(src_val, .r11);
+                        src_reg = .r11;
+                    }
+
+                    debug.log(.codegen, "      -> OpMove {d}B: [{s}] <- [{s}]", .{ type_size, dest_reg.name(), src_reg.name() });
+
+                    // Copy data in 8-byte chunks using MOV
+                    var copy_off: u32 = 0;
+                    while (copy_off + 8 <= type_size) {
+                        // MOV R12, [src + offset]
+                        const load = asm_mod.encodeMovRegMemDisp(.r12, src_reg, @intCast(copy_off));
+                        try self.code.appendSlice(self.allocator, load.data[0..load.len]);
+                        // MOV [dest + offset], R12
+                        const store = asm_mod.encodeMovMemReg(dest_reg, @intCast(copy_off), .r12);
+                        try self.code.appendSlice(self.allocator, store.data[0..store.len]);
+                        copy_off += 8;
+                    }
+                    // Handle remaining bytes (4 or fewer)
+                    if (copy_off + 4 <= type_size) {
+                        const load = asm_mod.encodeLoadDwordDisp32(.r12, src_reg, @intCast(copy_off));
+                        try self.emitBytes(load.data[0..load.len]);
+                        const store = asm_mod.encodeStoreDwordDisp32(dest_reg, @intCast(copy_off), .r12);
+                        try self.emitBytes(store.data[0..store.len]);
+                        copy_off += 4;
+                    }
+                    while (copy_off < type_size) {
+                        const load = asm_mod.encodeLoadByteDisp32(.r12, src_reg, @intCast(copy_off));
+                        try self.emitBytes(load.data[0..load.len]);
+                        const store = asm_mod.encodeStoreByteDisp32(dest_reg, @intCast(copy_off), .r12);
+                        try self.emitBytes(store.data[0..store.len]);
+                        copy_off += 1;
+                    }
+
+                    debug.log(.codegen, "      -> copied {d}B via OpMove", .{type_size});
                 }
             },
 

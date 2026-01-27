@@ -134,6 +134,11 @@ pub const SSABuilder = struct {
         var string_params = std.ArrayListUnmanaged(struct { ptr: *Value, len: *Value, idx: usize }){};
         defer string_params.deinit(allocator);
 
+        // Track 2-register struct params (9-16 bytes) separately
+        const TwoRegStructParam = struct { lo: *Value, hi: *Value, idx: usize, type_idx: u32 };
+        var two_reg_struct_params = std.ArrayListUnmanaged(TwoRegStructParam){};
+        defer two_reg_struct_params.deinit(allocator);
+
         // Phase 1: Create ALL arg ops first
         for (ir_func.locals, 0..) |local, i| {
             if (local.is_param) {
@@ -154,22 +159,58 @@ pub const SSABuilder = struct {
                     // Remember for Phase 2 - don't create slice_make yet!
                     try string_params.append(allocator, .{ .ptr = ptr_val, .len = len_val, .idx = i });
                 } else {
-                    // Regular parameter: single register
+                    // Regular parameter: check struct size for ABI handling
                     // BUG-019 FIX: >16B struct types are passed by reference (pointer in x0)
+                    // For 9-16B structs, they are passed in 2 registers
                     // Go reference: expand_calls.go lines 373-385
                     const local_type_info = type_registry.get(local.type_idx);
                     const type_size = type_registry.sizeOf(local.type_idx);
-                    const is_large_struct = (local_type_info == .struct_type) and (type_size > 16);
-                    const arg_type = if (is_large_struct) TypeRegistry.I64 else local.type_idx;
+                    const is_struct = (local_type_info == .struct_type);
+                    const is_large_struct = is_struct and (type_size > 16);
+                    const is_two_reg_struct = is_struct and (type_size > 8) and (type_size <= 16);
 
-                    const param_val = try func.newValue(.arg, arg_type, entry, .{});
-                    param_val.aux_int = phys_reg_idx;
-                    try entry.addValue(allocator, param_val);
-                    phys_reg_idx += 1;
+                    if (is_large_struct) {
+                        // >16B: passed by reference (pointer in single register)
+                        const param_val = try func.newValue(.arg, TypeRegistry.I64, entry, .{});
+                        param_val.aux_int = phys_reg_idx;
+                        try entry.addValue(allocator, param_val);
+                        phys_reg_idx += 1;
 
-                    try param_values.append(allocator, param_val);
-                    try param_indices.append(allocator, i);
-                    try vars.put(@intCast(i), param_val);
+                        try param_values.append(allocator, param_val);
+                        try param_indices.append(allocator, i);
+                        try vars.put(@intCast(i), param_val);
+                    } else if (is_two_reg_struct) {
+                        // 9-16B: passed in TWO registers (low part, high part)
+                        // Create arg for low 8 bytes
+                        const lo_val = try func.newValue(.arg, TypeRegistry.I64, entry, .{});
+                        lo_val.aux_int = phys_reg_idx;
+                        try entry.addValue(allocator, lo_val);
+                        phys_reg_idx += 1;
+
+                        // Create arg for high bytes (up to 8 more)
+                        const hi_val = try func.newValue(.arg, TypeRegistry.I64, entry, .{});
+                        hi_val.aux_int = phys_reg_idx;
+                        try entry.addValue(allocator, hi_val);
+                        phys_reg_idx += 1;
+
+                        // Remember for Phase 3
+                        try two_reg_struct_params.append(allocator, .{
+                            .lo = lo_val,
+                            .hi = hi_val,
+                            .idx = i,
+                            .type_idx = local.type_idx,
+                        });
+                    } else {
+                        // <= 8B: single register
+                        const param_val = try func.newValue(.arg, local.type_idx, entry, .{});
+                        param_val.aux_int = phys_reg_idx;
+                        try entry.addValue(allocator, param_val);
+                        phys_reg_idx += 1;
+
+                        try param_values.append(allocator, param_val);
+                        try param_indices.append(allocator, i);
+                        try vars.put(@intCast(i), param_val);
+                    }
                 }
             }
         }
@@ -240,6 +281,28 @@ pub const SSABuilder = struct {
         }
         param_values.deinit(allocator);
         param_indices.deinit(allocator);
+
+        // Phase 3b: Store 2-register struct params (9-16 bytes)
+        for (two_reg_struct_params.items) |trsp| {
+            // Store low 8 bytes at offset 0
+            const addr_lo = try func.newValue(.local_addr, TypeRegistry.VOID, entry, .{});
+            addr_lo.aux_int = @intCast(trsp.idx);
+            try entry.addValue(allocator, addr_lo);
+
+            const store_lo = try func.newValue(.store, TypeRegistry.VOID, entry, .{});
+            store_lo.addArg2(addr_lo, trsp.lo);
+            try entry.addValue(allocator, store_lo);
+
+            // Store high bytes at offset 8
+            const addr_hi = try func.newValue(.off_ptr, TypeRegistry.VOID, entry, .{});
+            addr_hi.aux_int = 8;
+            addr_hi.addArg(addr_lo);
+            try entry.addValue(allocator, addr_hi);
+
+            const store_hi = try func.newValue(.store, TypeRegistry.VOID, entry, .{});
+            store_hi.addArg2(addr_hi, trsp.hi);
+            try entry.addValue(allocator, store_hi);
+        }
 
         // Initialize block_map with entry block
         var block_map = std.AutoHashMap(ir.BlockIndex, *Block).init(allocator);

@@ -80,6 +80,55 @@ pub const ARM64 = struct {
     }
 };
 
+/// AMD64 System V calling convention constants.
+/// Reference: System V AMD64 ABI
+pub const AMD64 = struct {
+    /// Number of integer registers for parameter passing (RDI, RSI, RDX, RCX, R8, R9)
+    pub const int_param_regs: u8 = 6;
+
+    /// Number of integer registers for return values (RAX, RDX)
+    pub const int_result_regs: u8 = 2;
+
+    /// Maximum aggregate size that fits in registers (16 bytes = 2 x 8-byte regs)
+    pub const max_reg_aggregate: u32 = 16;
+
+    /// Stack alignment (must be 16-byte aligned before CALL)
+    pub const stack_align: u32 = 16;
+
+    /// Register size in bytes
+    pub const reg_size: u32 = 8;
+
+    /// Integer parameter register order: RDI, RSI, RDX, RCX, R8, R9
+    /// These are the actual AMD64 register numbers
+    pub const param_regs = [_]RegIndex{ 7, 6, 2, 1, 8, 9 };
+
+    /// Result registers: RAX, RDX
+    pub const result_regs = [_]RegIndex{ 0, 2 };
+
+    /// Caller-saved registers: RAX, RCX, RDX, RSI, RDI, R8-R11
+    /// Note: RBX, RBP, R12-R15 are callee-saved
+    pub const caller_save_mask: RegMask = 0xFC7; // RAX, RCX, RDX, RSI, RDI, R8, R9, R10, R11
+
+    /// Argument registers: RDI, RSI, RDX, RCX, R8, R9
+    pub const arg_regs_mask: RegMask = 0x3C6; // bits for registers 7, 6, 2, 1, 8, 9
+
+    /// Convert RegIndex to actual AMD64 register number
+    pub fn regIndexToAmd64(idx: RegIndex) u4 {
+        // RegIndex directly maps to AMD64 register encoding
+        return @intCast(idx);
+    }
+
+    /// Convert AMD64 register number to RegIndex
+    pub fn amd64ToRegIndex(reg: u4) RegIndex {
+        return @intCast(reg);
+    }
+
+    /// Get register mask for a single register
+    pub fn regMask(reg: u4) RegMask {
+        return @as(RegMask, 1) << reg;
+    }
+};
+
 /// ABIParamAssignment holds information about how a specific parameter or
 /// result will be passed: in registers (Registers populated) or on the
 /// stack (offset set).
@@ -353,9 +402,8 @@ pub fn buildCallRegInfo(
 // ============================================================================
 
 /// ABI info for __cot_str_concat(ptr1, len1, ptr2, len2) -> (ptr, len)
-/// Input: x0=ptr1, x1=len1, x2=ptr2, x3=len2
-/// Output: x0=ptr, x1=len
-pub const str_concat_abi = ABIParamResultInfo{
+/// ARM64: x0=ptr1, x1=len1, x2=ptr2, x3=len2, return (x0, x1)
+pub const str_concat_abi_arm64 = ABIParamResultInfo{
     .in_params = &[_]ABIParamAssignment{
         ABIParamAssignment.inRegs(TypeRegistry.I64, &[_]RegIndex{0}), // ptr1 in x0
         ABIParamAssignment.inRegs(TypeRegistry.I64, &[_]RegIndex{1}), // len1 in x1
@@ -369,6 +417,26 @@ pub const str_concat_abi = ABIParamResultInfo{
     .in_registers_used = 4,
     .out_registers_used = 2,
 };
+
+/// ABI info for __cot_str_concat on AMD64
+/// AMD64 System V: RDI=ptr1, RSI=len1, RDX=ptr2, RCX=len2, return (RAX, RDX)
+pub const str_concat_abi_amd64 = ABIParamResultInfo{
+    .in_params = &[_]ABIParamAssignment{
+        ABIParamAssignment.inRegs(TypeRegistry.I64, &[_]RegIndex{7}), // ptr1 in RDI
+        ABIParamAssignment.inRegs(TypeRegistry.I64, &[_]RegIndex{6}), // len1 in RSI
+        ABIParamAssignment.inRegs(TypeRegistry.I64, &[_]RegIndex{2}), // ptr2 in RDX
+        ABIParamAssignment.inRegs(TypeRegistry.I64, &[_]RegIndex{1}), // len2 in RCX
+    },
+    .out_params = &[_]ABIParamAssignment{
+        ABIParamAssignment.inRegs(TypeRegistry.I64, &[_]RegIndex{0}), // ptr in RAX
+        ABIParamAssignment.inRegs(TypeRegistry.I64, &[_]RegIndex{2}), // len in RDX
+    },
+    .in_registers_used = 4,
+    .out_registers_used = 2,
+};
+
+/// Legacy alias for ARM64 (for backwards compatibility)
+pub const str_concat_abi = str_concat_abi_arm64;
 
 // ============================================================================
 // Debug formatting
