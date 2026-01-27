@@ -1,6 +1,5 @@
-// KNOWN BUG: cot1 has bug with nested recursive calls
-// ack(m - 1, ack(m, n - 1)) - inner ack result is corrupted
-// cot1 returns 6, should be 9 for ack(2,3)
+// Ackermann function - tests nested recursive calls
+// ack(m - 1, ack(m, n - 1)) requires storing all args to temp locals
 fn ack(m: i64, n: i64) i64 {
     if m == 0 { return n + 1; }
     if n == 0 { return ack(m - 1, 1); }

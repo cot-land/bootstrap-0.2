@@ -3279,46 +3279,58 @@ fn Lowerer_lowerCall(l: *Lowerer, node: *Node) i64 {
     }
 
     // Two-pass approach to handle nested calls:
-    // Pass 1: Lower all arguments and STORE nested call results to temp locals
-    //         (but don't load yet - the load would get clobbered by subsequent calls)
-    // Pass 2: Load from temp locals for nested calls, then emit the main call
+    // Pass 0: Pre-scan to check if ANY argument contains a call
+    // Pass 1: Lower all arguments. If any arg is a call, store ALL arg results to temp locals
+    //         (not just call results - earlier args would be clobbered by later calls)
+    // Pass 2: Load from temp locals if we had any calls, then emit the main call
     //
     // This ensures loads happen AFTER all nested calls have completed.
     // Following the Zig compiler pattern (src/ssa/regalloc.zig): values need to
     // survive across calls by being spilled to stack, not held in caller-saved regs.
 
+    // Pass 0: Pre-scan for any calls among arguments
+    var has_any_call: bool = false;
+    var pre_i: i64 = 0;
+    while pre_i < args_count {
+        let pre_arg_ptr: *i64 = l.children + args_start + pre_i;
+        let pre_arg_idx: i64 = pre_arg_ptr.*;
+        let pre_arg_node: *Node = l.nodes + pre_arg_idx;
+        if pre_arg_node.kind == NodeKind.CallExpr {
+            has_any_call = true;
+        }
+        pre_i = pre_i + 1;
+    }
+
     // Track state for args using dynamic lists
     var arg_ir: I64List = undefined;
     var arg_local: I64List = undefined;
-    var arg_is_call: I64List = undefined;  // 0 = false, 1 = true
     i64list_init(&arg_ir);
     i64list_init(&arg_local);
-    i64list_init(&arg_is_call);
 
-    // Pass 1: Lower all arguments and store nested call results
+    // Pass 1: Lower all arguments
+    // If ANY arg is a call, store ALL arg results to temp locals
     var i: i64 = 0;
     while i < args_count {
         let arg_child_ptr: *i64 = l.children + args_start + i;
         let arg_node_idx: i64 = arg_child_ptr.*;
         let arg_node: *Node = l.nodes + arg_node_idx;
         let arg_ir_idx: i64 = Lowerer_lowerExpr(l, arg_node);
-        let is_call: bool = arg_node.kind == NodeKind.CallExpr;
 
         i64list_append(&arg_ir, arg_ir_idx);
-        if is_call {
-            i64list_append(&arg_is_call, 1);
+        if has_any_call {
+            // Store ALL arguments to temp locals when any call exists
+            // This prevents earlier args from being clobbered by later calls
             let local_idx: i64 = FuncBuilder_addLocal(fb, 0, 0, TYPE_I64, true);
             i64list_append(&arg_local, local_idx);
             FuncBuilder_emitStoreLocal(fb, local_idx, arg_ir_idx);
         } else {
-            i64list_append(&arg_is_call, 0);
             i64list_append(&arg_local, -1);
         }
 
         i = i + 1;
     }
 
-    // Pass 2: Load from temp locals for nested calls, build final args list
+    // Pass 2: Load from temp locals if we had any calls, build final args list
     // Following Zig: args stored directly in Call node (c.args slice)
     var final_args: I64List = undefined;
     i64list_init(&final_args);
@@ -3326,9 +3338,8 @@ fn Lowerer_lowerCall(l: *Lowerer, node: *Node) i64 {
     i = 0;
     while i < args_count {
         var final_arg_idx: i64 = i64list_get(&arg_ir, i);
-        let is_call_val: i64 = i64list_get(&arg_is_call, i);
         let local_idx: i64 = i64list_get(&arg_local, i);
-        if is_call_val != 0 and local_idx >= 0 {
+        if has_any_call and local_idx >= 0 {
             final_arg_idx = FuncBuilder_emitLoadLocal(fb, local_idx);
         }
 
@@ -3340,7 +3351,6 @@ fn Lowerer_lowerCall(l: *Lowerer, node: *Node) i64 {
 
     i64list_deinit(&arg_ir);
     i64list_deinit(&arg_local);
-    i64list_deinit(&arg_is_call);
 
     // Emit Call or CallIndirect IR node
     // Following Zig pattern: src/frontend/lower.zig:1867-1906
