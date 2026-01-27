@@ -417,6 +417,12 @@ fn AMD64_lea(rd: i64, base: i64, disp: i64) i64 {
     return amd64_encode_lea_disp32(rd, base, disp);
 }
 
+// Load effective address with RIP-relative addressing: LEA rd, [RIP+disp32]
+// Used for loading addresses of globals and string literals
+fn AMD64_lea_rip(rd: i64, disp: i64) i64 {
+    return amd64_encode_lea_rip(rd, disp);
+}
+
 // ============================================================================
 // Stack Operations
 // ============================================================================

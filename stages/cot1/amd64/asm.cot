@@ -485,6 +485,20 @@ fn amd64_encode_lea_disp32(dst: i64, base: i64, disp: i64) i64 {
     return pack7(rex, 0x8D, modrm, disp & 0xFF, (disp >> 8) & 0xFF, (disp >> 16) & 0xFF, (disp >> 24) & 0xFF);
 }
 
+// LEA r64, [RIP+disp32] - RIP-relative addressing (7 bytes: REX.W 8D ModR/M disp32)
+// Used for loading addresses of globals, string literals, etc.
+// ModR/M: mod=00, reg=dst, rm=5 (RIP-relative mode)
+fn amd64_encode_lea_rip(dst: i64, disp: i64) i64 {
+    // REX.W prefix: 0x48 if dst < 8, 0x4C if dst >= 8
+    var rex: i64 = 0x48;
+    if dst >= 8 {
+        rex = 0x4C;
+    }
+    // ModR/M: mod=00, reg=dst[2:0], rm=5
+    let modrm: i64 = ((dst & 7) << 3) | 5;
+    return pack7(rex, 0x8D, modrm, disp & 0xFF, (disp >> 8) & 0xFF, (disp >> 16) & 0xFF, (disp >> 24) & 0xFF);
+}
+
 // ============================================================================
 // Miscellaneous Instructions
 // ============================================================================
