@@ -89,6 +89,10 @@ var gs_storage_initialized: bool = false;
 const MAX_BRANCHES: i64 = 5000;
 const MAX_CODE: i64 = 262144;
 
+// Target architecture constants
+const TARGET_ARM64: i64 = 0;
+const TARGET_AMD64: i64 = 1;
+
 // ============================================================================
 // Branch Record
 // For collecting branches that need target resolution
@@ -174,6 +178,9 @@ extern fn malloc_sized(count: i64, struct_size: i64) *u8;
 struct GenState {
     // The SSA function being compiled
     func: *Func,
+
+    // Target architecture (TARGET_ARM64 or TARGET_AMD64)
+    target: i64,
 
     // Output code buffer (externally allocated)
     code: *u8,             // Byte buffer for machine code
@@ -377,6 +384,7 @@ fn init(self: *GenState) {
 
     // Wire up GenState to use module storage
     self.func = null;
+    self.target = TARGET_ARM64;  // Default to ARM64 (current target)
     self.code = gs_code;
     self.code_count = 0;
     self.code_cap = gs_code_cap;
@@ -440,6 +448,11 @@ fn init(self: *GenState) {
 // Set type registry for computing type sizes (BUG-054: hidden return at call sites)
 fn setTypeRegistry(self: *GenState, type_reg: *TypeRegistry) {
     self.type_registry = type_reg;
+}
+
+// Set target architecture
+fn setTarget(self: *GenState, target: i64) {
+    self.target = target;
 }
 
 // Set up globals tracking for global variable access
@@ -583,6 +596,23 @@ fn emitInst(self: *GenState, inst: i64) {
     p3.* = @intCast(u8, (inst >> 24) & 255);
 
     self.code_count = self.code_count + 4;
+}
+
+// Emit a packed variable-length instruction (for AMD64)
+// Format: (length << 56) | bytes
+fn emitInstPacked(self: *GenState, packed: i64) {
+    let len: i64 = (packed >> 56) & 0xFF;
+    if len == 0 { return; }
+    if self.code_count + len > self.code_cap { return; }
+
+    var i: i64 = 0;
+    while i < len {
+        let byte_val: i64 = (packed >> (i * 8)) & 0xFF;
+        let p: *u8 = self.code + self.code_count;
+        p.* = @intCast(u8, byte_val);
+        self.code_count = self.code_count + 1;
+        i = i + 1;
+    }
 }
 
 // Record a branch for later resolution
