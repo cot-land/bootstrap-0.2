@@ -6356,3 +6356,290 @@ test "global reset" {
     test_g_reset()
     @assert(test_g_get() == 0)
 }
+
+// ============================================================================
+// PHASE 3 TESTS - Switch Statements
+// ============================================================================
+
+test "switch basic" {
+    let x: i64 = 2
+    let result: i64 = switch x {
+        1 => 10,
+        2 => 42,
+        3 => 30,
+        else => 99,
+    }
+    @assert(result == 42)
+}
+
+test "switch default and multi" {
+    // Test default case
+    let a: i64 = 5
+    let r1: i64 = switch a {
+        1 => 10,
+        2 => 20,
+        else => 42,
+    }
+    @assert(r1 == 42)
+    // Test first case match
+    let b: i64 = 1
+    let r2: i64 = switch b {
+        1 => 42,
+        2 => 20,
+        else => 99,
+    }
+    @assert(r2 == 42)
+    // Test multi patterns
+    let c: i64 = 3
+    let r3: i64 = switch c {
+        1, 2 => 12,
+        3, 4 => 42,
+        else => 99,
+    }
+    @assert(r3 == 42)
+}
+
+// ============================================================================
+// PHASE 3 TESTS - For-In Loops
+// ============================================================================
+
+test "for in array" {
+    var arr: [5]i64 = [1, 2, 3, 4, 5]
+    var sum: i64 = 0
+    for x in arr {
+        sum = sum + x
+    }
+    @assert(sum == 15)
+}
+
+test "for in with break and continue" {
+    // Test break
+    var arr1: [5]i64 = [10, 20, 30, 40, 50]
+    var sum1: i64 = 0
+    for x in arr1 {
+        if x == 30 { break }
+        sum1 = sum1 + x
+    }
+    @assert(sum1 == 30)
+    // Test continue
+    var arr2: [5]i64 = [1, 2, 3, 4, 5]
+    var sum2: i64 = 0
+    for x in arr2 {
+        if x == 3 { continue }
+        sum2 = sum2 + x
+    }
+    @assert(sum2 == 12)
+}
+
+test "for in slice" {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[1:4]
+    var sum: i64 = 0
+    for x in s {
+        sum = sum + x
+    }
+    @assert(sum == 90)
+}
+
+// ============================================================================
+// PHASE 3 TESTS - Defer Statement
+// ============================================================================
+
+fn defer_identity(x: i64) i64 {
+    return x
+}
+
+test "defer simple" {
+    defer defer_identity(42)
+    @assert(1 == 1)
+}
+
+test "defer multiple and early return" {
+    defer defer_identity(1)
+    defer defer_identity(2)
+    let x: i64 = 5
+    if x > 0 {
+        defer defer_identity(99)
+        @assert(x == 5)
+    }
+}
+
+// ============================================================================
+// PHASE 3 TESTS - @intCast
+// ============================================================================
+
+test "intcast widen" {
+    let a: u8 = 200
+    let b: i64 = @intCast(i64, a)
+    @assert(b == 200)
+}
+
+test "intcast truncate and roundtrip" {
+    // Truncate: 300 (0x12C) -> 44 (0x2C)
+    let a: i64 = 300
+    let b: u8 = @intCast(u8, a)
+    @assert(b == 44)
+    // Roundtrip
+    let c: i64 = 12345
+    let d: i32 = @intCast(i32, c)
+    let e: i64 = @intCast(i64, d)
+    @assert(e == 12345)
+}
+
+// ============================================================================
+// PHASE 3 TESTS - Register Pressure
+// ============================================================================
+
+test "register pressure 15" {
+    let a: i64 = 1; let b: i64 = 2; let c: i64 = 3; let d: i64 = 4
+    let e: i64 = 5; let f: i64 = 6; let g: i64 = 7; let h: i64 = 8
+    let i: i64 = 9; let j: i64 = 10; let k: i64 = 11; let l: i64 = 12
+    let m: i64 = 13; let n: i64 = 14; let o: i64 = 15
+    @assert(a+b+c+d+e+f+g+h+i+j+k+l+m+n+o == 120)
+}
+
+test "register pressure 20" {
+    let a: i64 = 1; let b: i64 = 2; let c: i64 = 3; let d: i64 = 4
+    let e: i64 = 5; let f: i64 = 6; let g: i64 = 7; let h: i64 = 8
+    let i: i64 = 9; let j: i64 = 10; let k: i64 = 11; let l: i64 = 12
+    let m: i64 = 13; let n: i64 = 14; let o: i64 = 15; let p: i64 = 16
+    let q: i64 = 17; let r: i64 = 18; let s: i64 = 19; let t: i64 = 20
+    @assert(a+b+c+d+e+f+g+h+i+j+k+l+m+n+o+p+q+r+s+t == 210)
+}
+
+// ============================================================================
+// PHASE 3 TESTS - Multi-way Control Flow (Phi Nodes)
+// ============================================================================
+
+fn test_phi_3way(x: i64) i64 {
+    var result: i64 = 0
+    if x == 1 {
+        result = 10
+    } else if x == 2 {
+        result = 20
+    } else {
+        result = 30
+    }
+    return result
+}
+
+fn test_phi_4way(x: i64) i64 {
+    var result: i64 = 0
+    if x == 1 {
+        result = 100
+    } else if x == 2 {
+        result = 200
+    } else if x == 3 {
+        result = 300
+    } else {
+        result = 400
+    }
+    return result
+}
+
+test "phi 3way" {
+    let r1: i64 = test_phi_3way(1)
+    let r2: i64 = test_phi_3way(2)
+    let r3: i64 = test_phi_3way(99)
+    @assert(r1 + r2 + r3 == 60)
+}
+
+test "phi 4way" {
+    let r1: i64 = test_phi_4way(1)
+    let r2: i64 = test_phi_4way(2)
+    let r3: i64 = test_phi_4way(3)
+    let r4: i64 = test_phi_4way(99)
+    @assert(r1 + r2 + r3 + r4 == 1000)
+}
+
+// ============================================================================
+// PHASE 3 TESTS - Deep Nesting
+// ============================================================================
+
+test "nest 3 levels" {
+    var result: i64 = 0
+    var i: i64 = 0
+    while i < 3 {
+        var j: i64 = 0
+        while j < 3 {
+            if (i + j) % 2 == 0 {
+                result = result + 1
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    @assert(result == 5)
+}
+
+test "nest 4 levels" {
+    var total: i64 = 0
+    var a: i64 = 0
+    while a < 2 {
+        var b: i64 = 0
+        while b < 2 {
+            var c: i64 = 0
+            while c < 2 {
+                if a + b + c == 2 {
+                    total = total + 1
+                }
+                c = c + 1
+            }
+            b = b + 1
+        }
+        a = a + 1
+    }
+    @assert(total == 3)
+}
+
+// ============================================================================
+// PHASE 3 TESTS - Complex Expressions
+// ============================================================================
+
+test "long expression" {
+    let a: i64 = 1; let b: i64 = 2; let c: i64 = 3
+    let result: i64 = ((a + b) * (c + a) + (b * c)) * ((a + c) - b) + (a * b * c)
+    @assert(result == 42)
+}
+
+test "nested arithmetic" {
+    let x: i64 = 2; let y: i64 = 3; let z: i64 = 4
+    let result: i64 = (((x + y) * z) + ((y * z) - x)) * (x + y - 1)
+    @assert(result == 120)
+}
+
+test "pressure in loop" {
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 5 {
+        let a: i64 = i * 2
+        let b: i64 = i * 3
+        let c: i64 = i * 4
+        let d: i64 = i * 5
+        let e: i64 = a + b
+        let f: i64 = c + d
+        sum = sum + e + f
+        i = i + 1
+    }
+    @assert(sum == 140)
+}
+
+// ============================================================================
+// PHASE 3 TESTS - Bug Regression Tests
+// ============================================================================
+
+test "bug004 large struct return" {
+    let s: TestBigReturn = test_make_big_return(10, 20, 12)
+    @assert(s.a + s.b + s.c == 42)
+}
+
+test "bug019 large struct arg" {
+    var s: TestBigArg
+    s.a = 1; s.b = 2; s.c = 3; s.d = 4; s.e = 5; s.f = 6; s.g = 21
+    @assert(test_sum_big_arg(s) == 42)
+}
+
+test "bug019b large struct literal arg" {
+    let s: TestBigArg = TestBigArg{ .a = 6, .b = 6, .c = 6, .d = 6, .e = 6, .f = 6, .g = 6 }
+    @assert(test_sum_big_arg(s) == 42)
+}

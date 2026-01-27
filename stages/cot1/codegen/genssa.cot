@@ -382,6 +382,19 @@ fn GenState_printTiming() {
     print("ms]\n");
 }
 
+// Map ARM64 condition code to AMD64 condition code
+fn mapCondToAMD64(cond: i64) i64 {
+    // ARM64: EQ=0, NE=1, GE=10, LT=11, GT=12, LE=13
+    // AMD64: E=4, NE=5, GE=13, L=12, G=15, LE=14
+    if cond == COND_EQ { return AMD64_COND_E; }
+    if cond == COND_NE { return AMD64_COND_NE; }
+    if cond == COND_GE { return AMD64_COND_GE; }
+    if cond == COND_LT { return AMD64_COND_L; }
+    if cond == COND_GT { return AMD64_COND_G; }
+    if cond == COND_LE { return AMD64_COND_LE; }
+    return AMD64_COND_E;  // Default to equal
+}
+
 impl GenState {
 
 // Initialize GenState with self-allocated module storage
@@ -1859,19 +1872,6 @@ fn logical_not(self: *GenState, v: *Value) {
         self.emitInst(ARM64_cmp_imm(src_reg, 0));
         self.emitInst(ARM64_setcc(rd, COND_EQ));
     }
-}
-
-// Map ARM64 condition code to AMD64 condition code
-fn mapCondToAMD64(cond: i64) i64 {
-    // ARM64: EQ=0, NE=1, GE=10, LT=11, GT=12, LE=13
-    // AMD64: E=4, NE=5, GE=13, L=12, G=15, LE=14
-    if cond == COND_EQ { return AMD64_COND_E; }
-    if cond == COND_NE { return AMD64_COND_NE; }
-    if cond == COND_GE { return AMD64_COND_GE; }
-    if cond == COND_LT { return AMD64_COND_L; }
-    if cond == COND_GT { return AMD64_COND_G; }
-    if cond == COND_LE { return AMD64_COND_LE; }
-    return AMD64_COND_E;  // Default to equal
 }
 
 fn compare(self: *GenState, v: *Value, cond: i64) {
