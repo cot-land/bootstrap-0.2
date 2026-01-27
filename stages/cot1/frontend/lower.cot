@@ -5993,3 +5993,107 @@ test "void call" {
     test_helper_void()
     @assert(1 == 1)
 }
+
+// ============================================================================
+// INLINE TESTS - Variables and Assignment
+// ============================================================================
+
+test "var assign" {
+    var x: i64 = 42
+    @assert(x == 42)
+}
+
+test "var reassign" {
+    var x: i64 = 10
+    x = 42
+    @assert(x == 42)
+}
+
+test "const decl" {
+    let x: i64 = 42
+    @assert(x == 42)
+}
+
+test "multiple vars" {
+    let a: i64 = 10
+    let b: i64 = 20
+    let c: i64 = 12
+    @assert(a + b + c == 42)
+}
+
+test "var in expression" {
+    var x: i64 = 20
+    var y: i64 = 22
+    @assert(x + y == 42)
+}
+
+// ============================================================================
+// INLINE TESTS - Bitwise Operations
+// ============================================================================
+
+test "bitwise and" {
+    @assert((15 & 10) == 10)
+}
+
+test "bitwise or" {
+    @assert((5 | 10) == 15)
+}
+
+test "bitwise xor" {
+    @assert((15 ^ 10) == 5)
+}
+
+test "shift left" {
+    @assert((4 << 3) == 32)
+}
+
+test "shift right" {
+    @assert((32 >> 3) == 4)
+}
+
+test "bitwise combo" {
+    @assert(((15 & 12) | 8) == 12)
+}
+
+test "mask extract" {
+    let val: i64 = 255
+    @assert((val & 15) == 15)
+}
+
+// ============================================================================
+// INLINE TESTS - Logical Operations
+// ============================================================================
+
+test "logical and true" {
+    @assert(true and true)
+}
+
+test "logical and false first" {
+    var result: bool = false and true
+    @assert(result == false)
+}
+
+test "logical and false second" {
+    var result: bool = true and false
+    @assert(result == false)
+}
+
+test "logical or false" {
+    var result: bool = false or false
+    @assert(result == false)
+}
+
+test "logical or true first" {
+    var result: bool = true or false
+    @assert(result)  // result is true
+}
+
+test "logical or true second" {
+    var result: bool = false or true
+    @assert(result)  // result is true
+}
+
+test "logical not" {
+    var x: bool = !false
+    @assert(x)  // x should be true
+}
