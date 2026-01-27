@@ -5812,3 +5812,113 @@ test "zero comparisons" {
     @assert(0 <= 0)
     @assert(0 >= 0)
 }
+
+// ============================================================================
+// INLINE TESTS - Control Flow
+// ============================================================================
+
+test "if true branch" {
+    var result: i64 = 0
+    if 1 == 1 {
+        result = 42
+    }
+    @assert(result == 42)
+}
+
+test "if false branch" {
+    var result: i64 = 0
+    if 1 == 2 {
+        result = 1
+    } else {
+        result = 42
+    }
+    @assert(result == 42)
+}
+
+test "nested if" {
+    var result: i64 = 0
+    if 1 == 1 {
+        if 2 == 2 {
+            result = 42
+        }
+    }
+    @assert(result == 42)
+}
+
+test "while skip" {
+    var result: i64 = 42
+    while 1 == 2 {
+        result = 0
+    }
+    @assert(result == 42)
+}
+
+test "while loop" {
+    var x: i64 = 0
+    while x < 42 {
+        x = x + 1
+    }
+    @assert(x == 42)
+}
+
+test "while countdown" {
+    var x: i64 = 10
+    while x > 0 {
+        x = x - 1
+    }
+    @assert(x == 0)
+}
+
+test "nested while" {
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 3 {
+        var j: i64 = 0
+        while j < 3 {
+            sum = sum + 1
+            j = j + 1
+        }
+        i = i + 1
+    }
+    @assert(sum == 9)
+}
+
+test "break statement" {
+    var x: i64 = 0
+    while x < 100 {
+        x = x + 1
+        if x == 42 {
+            break
+        }
+    }
+    @assert(x == 42)
+}
+
+test "continue statement" {
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 10 {
+        i = i + 1
+        if i == 5 {
+            continue
+        }
+        sum = sum + i
+    }
+    // sum = 1+2+3+4+6+7+8+9+10 = 50
+    @assert(sum == 50)
+}
+
+test "if chain" {
+    var x: i64 = 5
+    var result: i64 = 0
+    if x == 1 {
+        result = 1
+    } else {
+        if x == 5 {
+            result = 42
+        } else {
+            result = 0
+        }
+    }
+    @assert(result == 42)
+}
