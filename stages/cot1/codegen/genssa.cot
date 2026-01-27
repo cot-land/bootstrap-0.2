@@ -2283,11 +2283,16 @@ fn funcAddr(self: *GenState, v: *Value) {
     // Record the code offset for relocation
     let reloc_offset: i64 = self.code_count;
 
-    // Emit ADRP + ADD pair (placeholders - linker fills in real values)
-    // ADRP Rd, function@PAGE
-    self.emitInst(encode_adrp(rd, 0));  // Placeholder
-    // ADD Rd, Rd, function@PAGEOFF
-    self.emitInst(encode_add_imm(rd, rd, 0));  // Placeholder
+    if self.target == TARGET_AMD64 {
+        // AMD64: LEA Rd, [RIP+disp32] - RIP-relative addressing
+        self.emitInstPacked(AMD64_lea_rip(rd, 0));
+    } else {
+        // ARM64: Emit ADRP + ADD pair (placeholders - linker fills in real values)
+        // ADRP Rd, function@PAGE
+        self.emitInst(encode_adrp(rd, 0));  // Placeholder
+        // ADD Rd, Rd, function@PAGEOFF
+        self.emitInst(encode_add_imm(rd, rd, 0));  // Placeholder
+    }
 
     // Record relocation for linker to resolve
     // v.aux_int = func_name_start, v.aux_ptr = func_name_len
@@ -2313,18 +2318,27 @@ fn globalAddr(self: *GenState, v: *Value) {
     let global_idx: i64 = v.aux_int;
     if self.globals == null or global_idx >= self.globals_count {
         // No globals info - emit a constant 0 as placeholder
-        self.emitInst(encode_movz(rd, 0, 0));
+        if self.target == TARGET_AMD64 {
+            self.emitInstPacked(AMD64_encodeMovImm(rd, 0));
+        } else {
+            self.emitInst(encode_movz(rd, 0, 0));
+        }
         return;
     }
 
     // Record the code offset for relocation
     let reloc_offset: i64 = self.code_count;
 
-    // Emit ADRP + ADD pair (placeholders - linker fills in real values)
-    // ADRP Rd, symbol@PAGE
-    self.emitInst(encode_adrp(rd, 0));  // Placeholder, linker fills in
-    // ADD Rd, Rd, symbol@PAGEOFF
-    self.emitInst(encode_add_imm(rd, rd, 0));  // Placeholder, linker fills in
+    if self.target == TARGET_AMD64 {
+        // AMD64: LEA Rd, [RIP+disp32] - RIP-relative addressing
+        self.emitInstPacked(AMD64_lea_rip(rd, 0));
+    } else {
+        // ARM64: Emit ADRP + ADD pair (placeholders - linker fills in real values)
+        // ADRP Rd, symbol@PAGE
+        self.emitInst(encode_adrp(rd, 0));  // Placeholder, linker fills in
+        // ADD Rd, Rd, symbol@PAGEOFF
+        self.emitInst(encode_add_imm(rd, rd, 0));  // Placeholder, linker fills in
+    }
 
     // Record relocation for linker to resolve (using parallel arrays)
     if self.global_reloc_offsets != null and self.global_relocs_count < self.global_relocs_cap {
@@ -2442,17 +2456,31 @@ fn offPtr(self: *GenState, v: *Value) {
         if base_val.op == Op.LocalAddr {
             let local_idx: i64 = base_val.aux_int;
             let local: *Local = f.getLocal(local_idx);
-            // Compute address with combined offset: SP + local.offset + field_offset
+            // Compute address with combined offset
             let total_offset: i64 = local.offset + offset;
-            self.emitInst(encode_add_imm(rd, SP, total_offset));
+            if self.target == TARGET_AMD64 {
+                // AMD64: LEA rd, [RSP + offset]
+                self.emitInstPacked(AMD64_lea(rd, RSP, total_offset));
+            } else {
+                // ARM64: ADD rd, SP, #offset
+                self.emitInst(encode_add_imm(rd, SP, total_offset));
+            }
         } else {
             // General case: base is already in a register
             let base_reg: i64 = base_val.reg;
             if base_reg >= 0 {
                 if offset != 0 {
-                    self.emitInst(encode_add_imm(rd, base_reg, offset));
+                    if self.target == TARGET_AMD64 {
+                        self.emitInstPacked(AMD64_lea(rd, base_reg, offset));
+                    } else {
+                        self.emitInst(encode_add_imm(rd, base_reg, offset));
+                    }
                 } else if rd != base_reg {
-                    self.emitInst(ARM64_encodeMovReg(rd, base_reg));
+                    if self.target == TARGET_AMD64 {
+                        self.emitInstPacked(AMD64_encodeMovReg(rd, base_reg));
+                    } else {
+                        self.emitInst(ARM64_encodeMovReg(rd, base_reg));
+                    }
                 }
             }
         }
