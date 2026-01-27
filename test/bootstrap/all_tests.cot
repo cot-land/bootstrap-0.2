@@ -2,7 +2,7 @@
 // COT END-TO-END TEST SUITE
 // ============================================================================
 //
-// Progress: 715 / 715 tests passing
+// Progress: 754 / 754 tests passing
 //
 // ============================================================================
 // STATUS TRACKER
@@ -9483,6 +9483,381 @@ fn test_parity_expr_145_arithmetic_mix() i64 {
 }
 
 
+
+// Parity test: functions/fn_011_void_fn
+var g_val_fn_011_void_fn: i64 = 0;
+fn set_global_fn_011_void_fn(v: i64) void { g_val_fn_011_void_fn = v; }
+fn test_parity_fn_011_void_fn() i64 {
+    set_global_fn_011_void_fn(42);
+    if g_val_fn_011_void_fn == 42 { return 42; }
+    return 1;
+}
+
+
+// Parity test: functions/fn_012_global_access
+var g_counter_fn_012_global_access: i64 = 0;
+fn increment_fn_012_global_access() void { g_counter_fn_012_global_access = g_counter_fn_012_global_access + 1; }
+fn get_counter_fn_012_global_access() i64 { return g_counter_fn_012_global_access; }
+fn test_parity_fn_012_global_access() i64 {
+    increment_fn_012_global_access();
+    increment_fn_012_global_access();
+    increment_fn_012_global_access();
+    if get_counter_fn_012_global_access() == 3 { return 42; }
+    return 1;
+}
+
+
+// Parity test: functions/fn_088_digit_sum
+fn digit_sum_fn_088_digit_sum(n: i64) i64 {
+    var num: i64 = n;
+    if num < 0 { num = 0 - num; }
+    if num < 10 { return num; }
+    return num % 10 + digit_sum_fn_088_digit_sum(num / 10);
+}
+fn test_parity_fn_088_digit_sum() i64 {
+    if digit_sum_fn_088_digit_sum(12345) == 15 { return 42; }
+    return 1;
+}
+
+
+// Parity test: functions/fn_089_count_digits
+fn count_digits_fn_089_count_digits(n: i64) i64 {
+    var num: i64 = n;
+    if num < 0 { num = 0 - num; }
+    if num < 10 { return 1; }
+    return 1 + count_digits_fn_089_count_digits(num / 10);
+}
+fn test_parity_fn_089_count_digits() i64 {
+    if count_digits_fn_089_count_digits(12345) == 5 and count_digits_fn_089_count_digits(7) == 1 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_001_local_vars
+fn test_locals_ty_001_local_vars() i64 {
+    var a: i64 = 10;
+    var b: i64 = 20;
+    var c: i64 = a + b;
+    return c;
+}
+fn test_parity_ty_001_local_vars() i64 { if test_locals_ty_001_local_vars() == 30 { return 42; } return 1; }
+
+
+// Parity test: types/ty_002_var_reassign
+fn test_reassign_ty_002_var_reassign() i64 {
+    var x: i64 = 5;
+    x = x + 10;
+    x = x * 2;
+    return x;
+}
+fn test_parity_ty_002_var_reassign() i64 { if test_reassign_ty_002_var_reassign() == 30 { return 42; } return 1; }
+
+
+// Parity test: types/ty_003_bool_like
+fn to_bool_ty_003_bool_like(x: i64) i64 { if x != 0 { return 1; } return 0; }
+fn test_parity_ty_003_bool_like() i64 { if to_bool_ty_003_bool_like(42) == 1 { return 42; } return 1; }
+
+
+// Parity test: types/ty_004_const
+const MAGIC: i64 = 42;
+fn test_parity_ty_004_const() i64 { if MAGIC == 42 { return 42; } return 1; }
+
+
+// Parity test: types/ty_008_ptr_deref
+fn set_value_ty_008_ptr_deref(ptr: *i64, val: i64) void { ptr.* = val; }
+fn test_parity_ty_008_ptr_deref() i64 {
+    var x: i64 = 0;
+    set_value_ty_008_ptr_deref(&x, 42);
+    if x == 42 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_009_ptr_arith
+fn test_parity_ty_009_ptr_arith() i64 {
+    var arr: *i64 = malloc(24);
+    (arr + 0).* = 10;
+    (arr + 1).* = 20;
+    (arr + 2).* = 30;
+    var sum: i64 = (arr + 0).* + (arr + 1).* + (arr + 2).*;
+    if sum == 60 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_010_u8
+fn test_parity_ty_010_u8() i64 {
+    var bytes: *u8 = malloc_u8(4);
+    (bytes + 0).* = 65;
+    (bytes + 1).* = 66;
+    (bytes + 2).* = 67;
+    (bytes + 3).* = 0;
+    if (bytes + 0).* == 65 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_012_ptr_ptr
+fn test_parity_ty_012_ptr_ptr() i64 {
+    var inner: *i64 = malloc(8);
+    inner.* = 42;
+    var outer: **i64 = &inner;
+    if outer.*.* == 42 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_015_global_var
+var g_value_ty_015_global_var: i64 = 0;
+fn modify_global_ty_015_global_var() void { g_value_ty_015_global_var = g_value_ty_015_global_var + 50; }
+fn test_parity_ty_015_global_var() i64 {
+    g_value_ty_015_global_var = 100;
+    modify_global_ty_015_global_var();
+    if g_value_ty_015_global_var == 150 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_016_multi_global
+var g_a_ty_016_multi_global: i64 = 0;
+var g_b_ty_016_multi_global: i64 = 0;
+var g_c_ty_016_multi_global: i64 = 0;
+fn sum_globals_ty_016_multi_global() i64 { return g_a_ty_016_multi_global + g_b_ty_016_multi_global + g_c_ty_016_multi_global; }
+fn test_parity_ty_016_multi_global() i64 {
+    g_a_ty_016_multi_global = 10; g_b_ty_016_multi_global = 20; g_c_ty_016_multi_global = 30;
+    if sum_globals_ty_016_multi_global() == 60 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_017_const_expr
+const WIDTH: i64 = 80;
+const HEIGHT: i64 = 25;
+const AREA: i64 = 2000;
+fn test_parity_ty_017_const_expr() i64 { if WIDTH * HEIGHT == AREA { return 42; } return 1; }
+
+
+// Parity test: types/ty_031_ptr_to_ptr
+fn test_parity_ty_031_ptr_to_ptr() i64 {
+    var x: i64 = 42;
+    var p: *i64 = &x;
+    var pp: **i64 = &p;
+    if pp.*.* == 42 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_032_ptr_to_ptr_modify
+fn test_parity_ty_032_ptr_to_ptr_modify() i64 {
+    var x: i64 = 10;
+    var p: *i64 = &x;
+    var pp: **i64 = &p;
+    pp.*.* = 100;
+    if x == 100 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_046_i64_max
+fn test_parity_ty_046_i64_max() i64 {
+    var max: i64 = 9223372036854775807;
+    if max > 0 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_047_i64_overflow
+fn test_parity_ty_047_i64_overflow() i64 {
+    var big: i64 = 1000000000;
+    var result: i64 = big * big;
+    if result == 1000000000000000000 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_048_bool_as_int
+fn test_parity_ty_048_bool_as_int() i64 {
+    var b: i64 = 0;
+    if 5 > 3 { b = 1; }
+    if b == 1 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_049_ptr_arithmetic
+fn test_parity_ty_049_ptr_arithmetic() i64 {
+    var arr: *i64 = malloc(24);
+    (arr + 0).* = 10;
+    (arr + 1).* = 20;
+    (arr + 2).* = 30;
+    var p: *i64 = arr + 1;
+    if p.* == 20 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_050_ptr_deref_assign
+fn test_parity_ty_050_ptr_deref_assign() i64 {
+    var x: *i64 = malloc(8);
+    x.* = 42;
+    var y: i64 = x.*;
+    if y == 42 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_051_ptr_chain
+fn test_parity_ty_051_ptr_chain() i64 {
+    var a: *i64 = malloc(8);
+    var b: *i64 = malloc(8);
+    var c: *i64 = malloc(8);
+    a.* = 1;
+    b.* = 2;
+    c.* = 3;
+    var sum: i64 = a.* + b.* + c.*;
+    if sum == 6 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_052_ptr_compare
+fn test_parity_ty_052_ptr_compare() i64 {
+    var a: *i64 = malloc(16);
+    var b: *i64 = a + 1;
+    a.* = 10;
+    b.* = 20;
+    if a.* < b.* { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_053_void_fn
+var result: i64 = 0;
+fn set_result_ty_053_void_fn(val: i64) void {
+    result = val;
+}
+fn test_parity_ty_053_void_fn() i64 {
+    set_result_ty_053_void_fn(42);
+    if result == 42 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_054_multi_void
+var counter: i64 = 0;
+fn increment_ty_054_multi_void() void {
+    counter = counter + 1;
+}
+fn test_parity_ty_054_multi_void() i64 {
+    increment_ty_054_multi_void();
+    increment_ty_054_multi_void();
+    increment_ty_054_multi_void();
+    if counter == 3 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_055_ptr_null_check
+fn test_parity_ty_055_ptr_null_check() i64 {
+    var p: *i64 = malloc(8);
+    p.* = 42;
+    var val: i64 = p.*;
+    if val == 42 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_056_compare_neq
+fn test_parity_ty_056_compare_neq() i64 {
+    var a: i64 = 5;
+    var b: i64 = 10;
+    if a != b { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_057_compare_lt
+fn test_parity_ty_057_compare_lt() i64 {
+    var a: i64 = 5;
+    var b: i64 = 10;
+    if a < b { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_058_compare_gt
+fn test_parity_ty_058_compare_gt() i64 {
+    var a: i64 = 10;
+    var b: i64 = 5;
+    if a > b { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_059_compare_lte
+fn test_parity_ty_059_compare_lte() i64 {
+    var a: i64 = 5;
+    var b: i64 = 5;
+    if a <= b { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_060_compare_gte
+fn test_parity_ty_060_compare_gte() i64 {
+    var a: i64 = 5;
+    var b: i64 = 5;
+    if a >= b { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_061_negative_literal
+fn test_parity_ty_061_negative_literal() i64 {
+    var x: i64 = 0 - 42;
+    if x == 0 - 42 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_062_zero_compare
+fn test_parity_ty_062_zero_compare() i64 {
+    var x: i64 = 0;
+    if x == 0 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_063_one_compare
+fn test_parity_ty_063_one_compare() i64 {
+    var x: i64 = 1;
+    if x == 1 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_064_bool_convert
+fn test_parity_ty_064_bool_convert() i64 {
+    var cond: i64 = 0;
+    if 5 > 3 { cond = 1; }
+    if cond == 1 { return 42; }
+    return 1;
+}
+
+
+// Parity test: types/ty_065_ptr_offset
+fn test_parity_ty_065_ptr_offset() i64 {
+    var arr: *i64 = malloc(40);
+    (arr + 0).* = 100;
+    (arr + 1).* = 200;
+    (arr + 2).* = 300;
+    var p: *i64 = arr;
+    p = p + 2;
+    if p.* == 300 { return 42; }
+    return 1;
+}
+
+
 fn main() i64 {
     var failed: i64 = 0
 
@@ -10285,9 +10660,47 @@ fn main() i64 {
     if test_parity_cf_050_while_break_simple() != 21 { println("FAIL: test_parity_cf_050_while_break_simple"); failed += 1 }
     if test_parity_expr_145_arithmetic_mix() != 42 { println("FAIL: test_parity_expr_145_arithmetic_mix"); failed += 1 }
 
+    if test_parity_fn_011_void_fn() != 42 { println("FAIL: test_parity_fn_011_void_fn"); failed += 1 }
+    if test_parity_fn_012_global_access() != 42 { println("FAIL: test_parity_fn_012_global_access"); failed += 1 }
+    if test_parity_fn_088_digit_sum() != 42 { println("FAIL: test_parity_fn_088_digit_sum"); failed += 1 }
+    if test_parity_fn_089_count_digits() != 42 { println("FAIL: test_parity_fn_089_count_digits"); failed += 1 }
+    if test_parity_ty_001_local_vars() != 42 { println("FAIL: test_parity_ty_001_local_vars"); failed += 1 }
+    if test_parity_ty_002_var_reassign() != 42 { println("FAIL: test_parity_ty_002_var_reassign"); failed += 1 }
+    if test_parity_ty_003_bool_like() != 42 { println("FAIL: test_parity_ty_003_bool_like"); failed += 1 }
+    if test_parity_ty_004_const() != 42 { println("FAIL: test_parity_ty_004_const"); failed += 1 }
+    if test_parity_ty_008_ptr_deref() != 42 { println("FAIL: test_parity_ty_008_ptr_deref"); failed += 1 }
+    if test_parity_ty_009_ptr_arith() != 42 { println("FAIL: test_parity_ty_009_ptr_arith"); failed += 1 }
+    if test_parity_ty_010_u8() != 42 { println("FAIL: test_parity_ty_010_u8"); failed += 1 }
+    if test_parity_ty_012_ptr_ptr() != 42 { println("FAIL: test_parity_ty_012_ptr_ptr"); failed += 1 }
+    if test_parity_ty_015_global_var() != 42 { println("FAIL: test_parity_ty_015_global_var"); failed += 1 }
+    if test_parity_ty_016_multi_global() != 42 { println("FAIL: test_parity_ty_016_multi_global"); failed += 1 }
+    if test_parity_ty_017_const_expr() != 42 { println("FAIL: test_parity_ty_017_const_expr"); failed += 1 }
+    if test_parity_ty_031_ptr_to_ptr() != 42 { println("FAIL: test_parity_ty_031_ptr_to_ptr"); failed += 1 }
+    if test_parity_ty_032_ptr_to_ptr_modify() != 42 { println("FAIL: test_parity_ty_032_ptr_to_ptr_modify"); failed += 1 }
+    if test_parity_ty_046_i64_max() != 42 { println("FAIL: test_parity_ty_046_i64_max"); failed += 1 }
+    if test_parity_ty_047_i64_overflow() != 42 { println("FAIL: test_parity_ty_047_i64_overflow"); failed += 1 }
+    if test_parity_ty_048_bool_as_int() != 42 { println("FAIL: test_parity_ty_048_bool_as_int"); failed += 1 }
+    if test_parity_ty_049_ptr_arithmetic() != 42 { println("FAIL: test_parity_ty_049_ptr_arithmetic"); failed += 1 }
+    if test_parity_ty_050_ptr_deref_assign() != 42 { println("FAIL: test_parity_ty_050_ptr_deref_assign"); failed += 1 }
+    if test_parity_ty_051_ptr_chain() != 42 { println("FAIL: test_parity_ty_051_ptr_chain"); failed += 1 }
+    if test_parity_ty_052_ptr_compare() != 42 { println("FAIL: test_parity_ty_052_ptr_compare"); failed += 1 }
+    if test_parity_ty_053_void_fn() != 42 { println("FAIL: test_parity_ty_053_void_fn"); failed += 1 }
+    if test_parity_ty_054_multi_void() != 42 { println("FAIL: test_parity_ty_054_multi_void"); failed += 1 }
+    if test_parity_ty_055_ptr_null_check() != 42 { println("FAIL: test_parity_ty_055_ptr_null_check"); failed += 1 }
+    if test_parity_ty_056_compare_neq() != 42 { println("FAIL: test_parity_ty_056_compare_neq"); failed += 1 }
+    if test_parity_ty_057_compare_lt() != 42 { println("FAIL: test_parity_ty_057_compare_lt"); failed += 1 }
+    if test_parity_ty_058_compare_gt() != 42 { println("FAIL: test_parity_ty_058_compare_gt"); failed += 1 }
+    if test_parity_ty_059_compare_lte() != 42 { println("FAIL: test_parity_ty_059_compare_lte"); failed += 1 }
+    if test_parity_ty_060_compare_gte() != 42 { println("FAIL: test_parity_ty_060_compare_gte"); failed += 1 }
+    if test_parity_ty_061_negative_literal() != 42 { println("FAIL: test_parity_ty_061_negative_literal"); failed += 1 }
+    if test_parity_ty_062_zero_compare() != 42 { println("FAIL: test_parity_ty_062_zero_compare"); failed += 1 }
+    if test_parity_ty_063_one_compare() != 42 { println("FAIL: test_parity_ty_063_one_compare"); failed += 1 }
+    if test_parity_ty_064_bool_convert() != 42 { println("FAIL: test_parity_ty_064_bool_convert"); failed += 1 }
+    if test_parity_ty_065_ptr_offset() != 42 { println("FAIL: test_parity_ty_065_ptr_offset"); failed += 1 }
+
     // Summary
     if failed == 0 {
-        println("All 715 tests passed!")
+        println("All 754 tests passed!")
     }
 
     return failed
