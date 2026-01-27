@@ -1101,14 +1101,14 @@ pub const ARM64CodeGen = struct {
             self.last_source_offset = source_offset;
         }
 
-        // BUG-021 FIX: Skip values that were evicted (no home assignment).
-        // Rematerializeable values (const_int, const_bool, etc.) that were evicted
-        // have their home assignment cleared. They should not be emitted here -
-        // they'll be rematerialized as new values where they're actually needed.
+        // BUG-021 FIX: Skip const values that were evicted (no home assignment).
+        // For const_int, const_bool, etc. that were evicted and later needed,
+        // the regalloc should have created rematerialized copies. Skip the original.
+        // NOTE: local_addr must NOT be skipped - it needs to be emitted to compute the address.
         switch (value.op) {
             .const_int, .const_64, .const_bool => {
                 if (value.regOrNull() == null) {
-                    debug.log(.codegen, "      (skipped - evicted rematerializeable)", .{});
+                    debug.log(.codegen, "      (skipped - evicted constant)", .{});
                     return;
                 }
             },
@@ -2236,7 +2236,16 @@ pub const ARM64CodeGen = struct {
                 // Compute address of a local variable on the stack
                 // aux_int contains the local index
                 const local_idx: usize = @intCast(value.aux_int);
-                const dest_reg = self.getDestRegForValue(value);
+                // BUG-021 FIX: Use regOrNull to handle evicted local_addr values
+                // If evicted, the value was rematerialized elsewhere and we can skip this.
+                // If not evicted, emit the address computation.
+                const maybe_reg = value.regOrNull();
+                if (maybe_reg == null) {
+                    // This local_addr was evicted - a rematerialized copy was inserted where needed
+                    debug.log(.codegen, "      (local_addr skipped - evicted, will be rematerialized)", .{});
+                    return;
+                }
+                const dest_reg: u5 = @intCast(maybe_reg.?);
 
                 // Get stack offset from local_offsets (set by stackalloc)
                 if (local_idx < self.func.local_offsets.len) {
@@ -2254,7 +2263,13 @@ pub const ARM64CodeGen = struct {
             .global_addr => {
                 // Address of a global variable
                 // aux.string contains the global variable name
-                const dest_reg = self.getDestRegForValue(value);
+                // BUG-021 FIX: Handle evicted values
+                const maybe_reg = value.regOrNull();
+                if (maybe_reg == null) {
+                    debug.log(.codegen, "      (global_addr skipped - evicted)", .{});
+                    return;
+                }
+                const dest_reg: u5 = @intCast(maybe_reg.?);
                 const global_name = switch (value.aux) {
                     .string => |s| s,
                     else => "unknown_global",
@@ -2283,7 +2298,13 @@ pub const ARM64CodeGen = struct {
             .addr => {
                 // Address of a symbol (function for function pointers)
                 // aux.string contains the symbol name
-                const dest_reg = self.getDestRegForValue(value);
+                // BUG-021 FIX: Handle evicted values
+                const maybe_reg = value.regOrNull();
+                if (maybe_reg == null) {
+                    debug.log(.codegen, "      (addr skipped - evicted)", .{});
+                    return;
+                }
+                const dest_reg: u5 = @intCast(maybe_reg.?);
                 const func_name = switch (value.aux) {
                     .string => |s| s,
                     else => "unknown",
