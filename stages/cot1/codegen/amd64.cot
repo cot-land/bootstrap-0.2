@@ -383,6 +383,11 @@ fn AMD64_call(offset: i64) i64 {
     return amd64_encode_call_rel32(offset);
 }
 
+// Generate indirect call through register
+fn AMD64_call_reg(reg: i64) i64 {
+    return amd64_encode_call_reg(reg);
+}
+
 // Generate return
 fn AMD64_return() i64 {
     return amd64_encode_ret();

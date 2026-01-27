@@ -412,6 +412,18 @@ fn amd64_encode_call_rel32(offset: i64) i64 {
     return pack5(0xE8, offset & 0xFF, (offset >> 8) & 0xFF, (offset >> 16) & 0xFF, (offset >> 24) & 0xFF);
 }
 
+// CALL r64 - indirect call through register (2-3 bytes: [REX.B] FF /2)
+// Opcode FF with ModR/M reg field = 2 (opcode extension for CALL)
+fn amd64_encode_call_reg(reg: i64) i64 {
+    // ModR/M: mod=11 (register), reg=2 (opcode ext), r/m=register
+    let modrm: i64 = 0xD0 | AMD64_reg_enc3(reg);  // 11 010 rrr
+    if AMD64_needs_rex(reg) {
+        // REX.B for R8-R15
+        return pack3(0x41, 0xFF, modrm);
+    }
+    return pack2(0xFF, modrm);
+}
+
 // RET (1 byte: C3)
 fn amd64_encode_ret() i64 {
     return (1 << 56) | 0xC3;

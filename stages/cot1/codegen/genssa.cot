@@ -1884,8 +1884,18 @@ fn compare(self: *GenState, v: *Value, cond: i64) {
 
     if self.target == TARGET_AMD64 {
         // AMD64: CMP + SETcc
+        // Map ARM64 condition code to AMD64:
+        // ARM64: EQ=0, NE=1, GE=10, LT=11, GT=12, LE=13
+        // AMD64: E=4, NE=5, GE=13, L=12, G=15, LE=14
+        var amd64_cond: i64 = AMD64_COND_E;
+        if cond == COND_EQ { amd64_cond = AMD64_COND_E; }
+        else if cond == COND_NE { amd64_cond = AMD64_COND_NE; }
+        else if cond == COND_GE { amd64_cond = AMD64_COND_GE; }
+        else if cond == COND_LT { amd64_cond = AMD64_COND_L; }
+        else if cond == COND_GT { amd64_cond = AMD64_COND_G; }
+        else if cond == COND_LE { amd64_cond = AMD64_COND_LE; }
         self.emitInstPacked(AMD64_cmp(arg0.reg, arg1.reg));
-        self.emitInstPacked(AMD64_setcc(rd, mapCondToAMD64(cond)));
+        self.emitInstPacked(AMD64_setcc(rd, amd64_cond));
         // Zero-extend to 64-bit
         self.emitInstPacked(AMD64_movzx_r64_r8(rd, rd));
     } else {
@@ -2560,26 +2570,36 @@ fn call(self: *GenState, v: *Value) {
         if assignment.location == ParamLocation.Stack {
             var src_reg: i64 = arg_val.reg;
 
-            // For constants, ALWAYS regenerate to x16 regardless of regalloc
+            // For constants, ALWAYS regenerate regardless of regalloc
             // (the assigned register may contain a different value now)
             if arg_val.op == Op.ConstInt {
-                // Materialize constant to x16
-                self.emitInst(encode_movz(X16, arg_val.aux_int & 0xFFFF, 0));
-                if arg_val.aux_int > 0xFFFF {
-                    self.emitInst(encode_movk(X16, (arg_val.aux_int >> 16) & 0xFFFF, 1));
+                if self.target == TARGET_AMD64 {
+                    // Materialize constant to R10
+                    self.emitInstPacked(AMD64_encodeMovImm(R10, arg_val.aux_int));
+                    src_reg = R10;
+                } else {
+                    // Materialize constant to x16
+                    self.emitInst(encode_movz(X16, arg_val.aux_int & 0xFFFF, 0));
+                    if arg_val.aux_int > 0xFFFF {
+                        self.emitInst(encode_movk(X16, (arg_val.aux_int >> 16) & 0xFFFF, 1));
+                    }
+                    if arg_val.aux_int > 0xFFFFFFFF {
+                        self.emitInst(encode_movk(X16, (arg_val.aux_int >> 32) & 0xFFFF, 2));
+                    }
+                    src_reg = X16;
                 }
-                if arg_val.aux_int > 0xFFFFFFFF {
-                    self.emitInst(encode_movk(X16, (arg_val.aux_int >> 32) & 0xFFFF, 2));
-                }
-                src_reg = X16;
             } else if src_reg < 0 {
                 // Non-constant without register - skip (shouldn't happen for valid args)
                 src_reg = -1;
             }
 
             if src_reg >= 0 {
-                // Stack offset is relative to SP
-                self.emitInst(encode_str(src_reg, SP, assignment.offset));
+                // Stack offset is relative to SP/RSP
+                if self.target == TARGET_AMD64 {
+                    self.emitInstPacked(AMD64_store64(src_reg, RSP, assignment.offset));
+                } else {
+                    self.emitInst(encode_str(src_reg, SP, assignment.offset));
+                }
             }
         }
 
@@ -2658,36 +2678,51 @@ fn call(self: *GenState, v: *Value) {
                         // (the assigned register may contain a different value now)
                         if mi_val.op == Op.ConstInt {
                             let imm: i64 = mi_val.aux_int;
-                            // Handle negative small numbers with MOVN
-                            if imm < 0 and imm >= (0 - 65536) {
-                                let notval: i64 = (0 - imm) - 1;
-                                self.emitInst(encode_movn(mi_dest, notval, 0));
-                            } else if imm >= 0 and imm <= 65535 {
-                                self.emitInst(encode_movz(mi_dest, imm, 0));
+                            if self.target == TARGET_AMD64 {
+                                // AMD64: MOV r64, imm64
+                                self.emitInstPacked(AMD64_encodeMovImm(mi_dest, imm));
                             } else {
-                                // Large positive values need MOVZ + MOVK
-                                self.emitInst(encode_movz(mi_dest, imm & 65535, 0));
-                                let bits16: i64 = (imm / 65536) & 65535;
-                                if bits16 != 0 {
-                                    self.emitInst(encode_movk(mi_dest, bits16, 1));
-                                }
-                                let bits32: i64 = (imm / 65536 / 65536) & 65535;
-                                if bits32 != 0 {
-                                    self.emitInst(encode_movk(mi_dest, bits32, 2));
+                                // ARM64: Handle negative small numbers with MOVN
+                                if imm < 0 and imm >= (0 - 65536) {
+                                    let notval: i64 = (0 - imm) - 1;
+                                    self.emitInst(encode_movn(mi_dest, notval, 0));
+                                } else if imm >= 0 and imm <= 65535 {
+                                    self.emitInst(encode_movz(mi_dest, imm, 0));
+                                } else {
+                                    // Large positive values need MOVZ + MOVK
+                                    self.emitInst(encode_movz(mi_dest, imm & 65535, 0));
+                                    let bits16: i64 = (imm / 65536) & 65535;
+                                    if bits16 != 0 {
+                                        self.emitInst(encode_movk(mi_dest, bits16, 1));
+                                    }
+                                    let bits32: i64 = (imm / 65536 / 65536) & 65535;
+                                    if bits32 != 0 {
+                                        self.emitInst(encode_movk(mi_dest, bits32, 2));
+                                    }
                                 }
                             }
                         } else if mi_val.op == Op.ConstBool {
                             let imm: i64 = 0;
                             if mi_val.aux_int != 0 { imm = 1; }
-                            self.emitInst(encode_movz(mi_dest, imm, 0));
+                            if self.target == TARGET_AMD64 {
+                                self.emitInstPacked(AMD64_encodeMovImm(mi_dest, imm));
+                            } else {
+                                self.emitInst(encode_movz(mi_dest, imm, 0));
+                            }
                         } else if mi_val.op == Op.ConstString {
-                            // String literal: need ADRP + ADD to load address
+                            // String literal: need address computation
                             // Record relocation and emit address computation
                             let str_start: i64 = mi_val.aux_int;
                             let str_len: i64 = mi_val.aux_ptr;
                             let reloc_offset: i64 = self.code_count;
-                            self.emitInst(encode_adrp(mi_dest, 0));
-                            self.emitInst(encode_add_imm(mi_dest, mi_dest, 0));
+                            if self.target == TARGET_AMD64 {
+                                // AMD64: LEA r64, [RIP+disp32]
+                                self.emitInstPacked(AMD64_lea_rip(mi_dest, 0));
+                            } else {
+                                // ARM64: ADRP + ADD
+                                self.emitInst(encode_adrp(mi_dest, 0));
+                                self.emitInst(encode_add_imm(mi_dest, mi_dest, 0));
+                            }
                             // Record string relocation
                             if self.string_reloc_code_offsets != null and self.string_relocs_count < self.string_relocs_cap {
                                 let off_ptr: *i64 = self.string_reloc_code_offsets + self.string_relocs_count;
@@ -2700,10 +2735,14 @@ fn call(self: *GenState, v: *Value) {
                             }
                         } else if mi_val.op == Op.LocalAddr {
                             // BUG-019: LocalAddr as call arg (>16B struct pass-by-reference)
-                            // emit ADD dest, SP, #offset to compute local address
+                            // emit LEA/ADD dest, SP, #offset to compute local address
                             let local_idx: i64 = mi_val.aux_int;
                             let local: *Local = f.getLocal(local_idx);
-                            self.emitInst(encode_add_imm(mi_dest, SP, local.offset));
+                            if self.target == TARGET_AMD64 {
+                                self.emitInstPacked(AMD64_lea(mi_dest, RSP, local.offset));
+                            } else {
+                                self.emitInst(encode_add_imm(mi_dest, SP, local.offset));
+                            }
                         } else if mi_val.op == Op.StringPtr or mi_val.op == Op.SlicePtr {
                             // StringPtr/SlicePtr as call arg: need to materialize the ptr
                             // Get the string/slice value and extract ptr
@@ -2711,12 +2750,18 @@ fn call(self: *GenState, v: *Value) {
                                 let slice_arg_id: i64 = mi_val.getArg(0);
                                 let slice_arg: *Value = f.getValue(slice_arg_id);
                                 if slice_arg.op == Op.ConstString {
-                                    // ConstString: emit ADRP+ADD to load ptr
+                                    // ConstString: emit address computation
                                     let str_start: i64 = slice_arg.aux_int;
                                     let str_len: i64 = slice_arg.aux_ptr;
                                     let reloc_offset: i64 = self.code_count;
-                                    self.emitInst(encode_adrp(mi_dest, 0));
-                                    self.emitInst(encode_add_imm(mi_dest, mi_dest, 0));
+                                    if self.target == TARGET_AMD64 {
+                                        // AMD64: LEA r64, [RIP+disp32]
+                                        self.emitInstPacked(AMD64_lea_rip(mi_dest, 0));
+                                    } else {
+                                        // ARM64: ADRP + ADD
+                                        self.emitInst(encode_adrp(mi_dest, 0));
+                                        self.emitInst(encode_add_imm(mi_dest, mi_dest, 0));
+                                    }
                                     // Record string relocation
                                     if self.string_reloc_code_offsets != null and self.string_relocs_count < self.string_relocs_cap {
                                         let off_ptr: *i64 = self.string_reloc_code_offsets + self.string_relocs_count;
@@ -2729,7 +2774,11 @@ fn call(self: *GenState, v: *Value) {
                                     }
                                 } else if slice_arg.reg >= 0 {
                                     // Ptr is in a register
-                                    self.emitInst(ARM64_encodeMovReg(mi_dest, slice_arg.reg));
+                                    if self.target == TARGET_AMD64 {
+                                        self.emitInstPacked(AMD64_encodeMovReg(mi_dest, slice_arg.reg));
+                                    } else {
+                                        self.emitInst(ARM64_encodeMovReg(mi_dest, slice_arg.reg));
+                                    }
                                 }
                             }
                         } else if mi_val.op == Op.StringLen or mi_val.op == Op.SliceLen {
@@ -2740,7 +2789,11 @@ fn call(self: *GenState, v: *Value) {
                                 if slice_arg.op == Op.ConstString {
                                     // ConstString: len is stored in aux_ptr
                                     let str_len: i64 = slice_arg.aux_ptr;
-                                    self.emitInst(ARM64_encodeMovImm(mi_dest, str_len));
+                                    if self.target == TARGET_AMD64 {
+                                        self.emitInstPacked(AMD64_encodeMovImm(mi_dest, str_len));
+                                    } else {
+                                        self.emitInst(ARM64_encodeMovImm(mi_dest, str_len));
+                                    }
                                 } else if slice_arg.op == Op.Load and slice_arg.args.count >= 1 {
                                     // Load of a string local: len is at offset 8 from base
                                     let addr_val: *Value = f.getValue(slice_arg.getArg(0));
@@ -2748,18 +2801,34 @@ fn call(self: *GenState, v: *Value) {
                                         let local_idx: i64 = addr_val.aux_int;
                                         let local: *Local = f.getLocal(local_idx);
                                         let len_offset: i64 = local.offset + 8;
-                                        self.emitInst(encode_ldr(mi_dest, SP, len_offset));
+                                        if self.target == TARGET_AMD64 {
+                                            self.emitInstPacked(AMD64_load64(mi_dest, RSP, len_offset));
+                                        } else {
+                                            self.emitInst(encode_ldr(mi_dest, SP, len_offset));
+                                        }
                                     } else if addr_val.reg >= 0 {
-                                        self.emitInst(encode_ldr(mi_dest, addr_val.reg, 8));
+                                        if self.target == TARGET_AMD64 {
+                                            self.emitInstPacked(AMD64_load64(mi_dest, addr_val.reg, 8));
+                                        } else {
+                                            self.emitInst(encode_ldr(mi_dest, addr_val.reg, 8));
+                                        }
                                     }
                                 } else if slice_arg.reg >= 0 {
                                     // Fallback: assume len is in the register
-                                    self.emitInst(ARM64_encodeMovReg(mi_dest, slice_arg.reg));
+                                    if self.target == TARGET_AMD64 {
+                                        self.emitInstPacked(AMD64_encodeMovReg(mi_dest, slice_arg.reg));
+                                    } else {
+                                        self.emitInst(ARM64_encodeMovReg(mi_dest, slice_arg.reg));
+                                    }
                                 }
                             }
                         } else if mi_src >= 0 {
                             // Non-constant with source register: emit MOV dest, src
-                            self.emitInst(ARM64_encodeMovReg(mi_dest, mi_src));
+                            if self.target == TARGET_AMD64 {
+                                self.emitInstPacked(AMD64_encodeMovReg(mi_dest, mi_src));
+                            } else {
+                                self.emitInst(ARM64_encodeMovReg(mi_dest, mi_src));
+                            }
                         }
                         // else: no source and not a constant - skip
                     }
@@ -2771,14 +2840,19 @@ fn call(self: *GenState, v: *Value) {
         }
     }
 
-    // Third pass: handle remaining cycles using x16 as temp
+    // Third pass: handle remaining cycles using a temp register
+    // ARM64: X16, AMD64: R10
     i = 0;
     while i < move_src.count {
         let i_src: i64 = i64list_get(&move_src, i);
         if i64list_get(&move_done, i) == 0 and i_src >= 0 {
-            // Part of a cycle - save starting value to x16
+            // Part of a cycle - save starting value to temp register
             let start_src: i64 = i_src;
-            self.emitInst(ARM64_encodeMovReg(X16, start_src));
+            if self.target == TARGET_AMD64 {
+                self.emitInstPacked(AMD64_encodeMovReg(R10, start_src));
+            } else {
+                self.emitInst(ARM64_encodeMovReg(X16, start_src));
+            }
 
             // Execute cycle moves
             var current_dest: i64 = start_src;
@@ -2798,11 +2872,19 @@ fn call(self: *GenState, v: *Value) {
                 else {
                     let actual_src: i64 = i64list_get(&move_src, found_idx);
                     let found_dest: i64 = i64list_get(&move_dest, found_idx);
-                    // If src is the start_src, use x16 instead
+                    // If src is the start_src, use temp register instead
                     if actual_src == start_src {
-                        self.emitInst(ARM64_encodeMovReg(found_dest, X16));
+                        if self.target == TARGET_AMD64 {
+                            self.emitInstPacked(AMD64_encodeMovReg(found_dest, R10));
+                        } else {
+                            self.emitInst(ARM64_encodeMovReg(found_dest, X16));
+                        }
                     } else if actual_src >= 0 {
-                        self.emitInst(ARM64_encodeMovReg(found_dest, actual_src));
+                        if self.target == TARGET_AMD64 {
+                            self.emitInstPacked(AMD64_encodeMovReg(found_dest, actual_src));
+                        } else {
+                            self.emitInst(ARM64_encodeMovReg(found_dest, actual_src));
+                        }
                     }
                     i64list_set(&move_done, found_idx, 1);
 
@@ -2927,11 +3009,19 @@ fn callIndirect(self: *GenState, v: *Value) {
         if assignment.location == ParamLocation.Register {
             let target_reg: i64 = assignment.reg0;
             if target_reg >= 0 and arg_val.reg != target_reg and arg_val.reg >= 0 {
-                self.emitInst(ARM64_encodeMovReg(target_reg, arg_val.reg));
+                if self.target == TARGET_AMD64 {
+                    self.emitInstPacked(AMD64_encodeMovReg(target_reg, arg_val.reg));
+                } else {
+                    self.emitInst(ARM64_encodeMovReg(target_reg, arg_val.reg));
+                }
             }
         } else if assignment.location == ParamLocation.Stack {
             if arg_val.reg >= 0 {
-                self.emitInst(encode_str(arg_val.reg, SP, assignment.offset));
+                if self.target == TARGET_AMD64 {
+                    self.emitInstPacked(AMD64_store64(arg_val.reg, RSP, assignment.offset));
+                } else {
+                    self.emitInst(encode_str(arg_val.reg, SP, assignment.offset));
+                }
             }
         }
 
@@ -2940,23 +3030,41 @@ fn callIndirect(self: *GenState, v: *Value) {
 
     // Allocate stack space for stack-passed arguments
     if abi_info.arg_stack_size > 0 {
-        self.emitInst(encode_sub_imm(SP, SP, abi_info.arg_stack_size));
+        if self.target == TARGET_AMD64 {
+            self.emitInstPacked(AMD64_subConst(RSP, RSP, abi_info.arg_stack_size));
+        } else {
+            self.emitInst(encode_sub_imm(SP, SP, abi_info.arg_stack_size));
+        }
     }
 
-    // Emit BLR instruction with function pointer register
+    // Emit indirect call instruction with function pointer register
     if fn_ptr_reg >= 0 {
-        self.emitInst(encode_blr(fn_ptr_reg));
+        if self.target == TARGET_AMD64 {
+            self.emitInstPacked(AMD64_call_reg(fn_ptr_reg));
+        } else {
+            self.emitInst(encode_blr(fn_ptr_reg));
+        }
     }
 
     // Restore stack if we allocated for args
     if abi_info.arg_stack_size > 0 {
-        self.emitInst(encode_add_imm(SP, SP, abi_info.arg_stack_size));
+        if self.target == TARGET_AMD64 {
+            self.emitInstPacked(AMD64_addConst(RSP, RSP, abi_info.arg_stack_size));
+        } else {
+            self.emitInst(encode_add_imm(SP, SP, abi_info.arg_stack_size));
+        }
     }
 
-    // Move call result from X0 to the assigned register
+    // Move call result from RAX/X0 to the assigned register
     let dest_reg: i64 = v.reg;
-    if dest_reg >= 0 and dest_reg != X0 {
-        self.emitInst(ARM64_encodeMovReg(dest_reg, X0));
+    if self.target == TARGET_AMD64 {
+        if dest_reg >= 0 and dest_reg != RAX {
+            self.emitInstPacked(AMD64_encodeMovReg(dest_reg, RAX));
+        }
+    } else {
+        if dest_reg >= 0 and dest_reg != X0 {
+            self.emitInst(ARM64_encodeMovReg(dest_reg, X0));
+        }
     }
 
     // Clean up ABI info
@@ -2981,21 +3089,35 @@ fn stringConcat(self: *GenState, v: *Value) {
     let ptr2_val: *Value = f.getValue(v.getArg(2));
     let len2_val: *Value = f.getValue(v.getArg(3));
 
-    // Following Zig pattern: use scratch registers x10-x13 to avoid clobbering
-    // Then copy to x0-x3 for the call
+    // Use scratch registers to avoid clobbering, then copy to call registers
+    // ARM64: scratch X10-X13, call X0-X3
+    // AMD64: scratch R10-R13 (using R12/R13 temporarily), call RDI/RSI/RDX/RCX
 
-    // Step 1: Materialize args into scratch registers x10-x13
-    // For ConstString, emit ADRP+ADD; for ConstInt, emit MOV; otherwise use reg
-    self.materializeArgToReg(ptr1_val, X10);
-    self.materializeArgToReg(len1_val, X11);
-    self.materializeArgToReg(ptr2_val, X12);
-    self.materializeArgToReg(len2_val, X13);
+    if self.target == TARGET_AMD64 {
+        // Step 1: Materialize args into scratch registers R10-R13
+        self.materializeArgToReg(ptr1_val, R10);
+        self.materializeArgToReg(len1_val, R11);
+        self.materializeArgToReg(ptr2_val, R12);
+        self.materializeArgToReg(len2_val, R13);
 
-    // Step 2: Move from scratch to call registers x0-x3
-    self.emitInst(ARM64_encodeMovReg(X0, X10));
-    self.emitInst(ARM64_encodeMovReg(X1, X11));
-    self.emitInst(ARM64_encodeMovReg(X2, X12));
-    self.emitInst(ARM64_encodeMovReg(X3, X13));
+        // Step 2: Move from scratch to call registers RDI, RSI, RDX, RCX
+        self.emitInstPacked(AMD64_encodeMovReg(RDI, R10));
+        self.emitInstPacked(AMD64_encodeMovReg(RSI, R11));
+        self.emitInstPacked(AMD64_encodeMovReg(RDX, R12));
+        self.emitInstPacked(AMD64_encodeMovReg(RCX, R13));
+    } else {
+        // Step 1: Materialize args into scratch registers X10-X13
+        self.materializeArgToReg(ptr1_val, X10);
+        self.materializeArgToReg(len1_val, X11);
+        self.materializeArgToReg(ptr2_val, X12);
+        self.materializeArgToReg(len2_val, X13);
+
+        // Step 2: Move from scratch to call registers X0-X3
+        self.emitInst(ARM64_encodeMovReg(X0, X10));
+        self.emitInst(ARM64_encodeMovReg(X1, X11));
+        self.emitInst(ARM64_encodeMovReg(X2, X12));
+        self.emitInst(ARM64_encodeMovReg(X3, X13));
+    }
 
     // Step 3: Emit call to __cot_str_concat
     // Record call site for relocation
