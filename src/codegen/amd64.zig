@@ -170,12 +170,12 @@ pub const AMD64CodeGen = struct {
     }
 
     /// Get the size of a type in bytes.
-    fn getTypeSize(self: *const AMD64CodeGen, type_idx: TypeIndex) u8 {
+    fn getTypeSize(self: *const AMD64CodeGen, type_idx: TypeIndex) u32 {
         if (type_idx < TypeRegistry.FIRST_USER_TYPE) {
             return TypeRegistry.basicTypeSize(type_idx);
         }
         if (self.type_reg) |reg| {
-            return @intCast(reg.sizeOf(type_idx));
+            return reg.sizeOf(type_idx);
         }
         return TypeRegistry.basicTypeSize(type_idx);
     }
