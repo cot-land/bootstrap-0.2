@@ -818,8 +818,8 @@ fn TypeInfo_equal(pool: *TypeRegistry, a: i64, b: i64) bool {
 
         var i: i64 = 0;
         while i < ta.params_count {
-            let pa: i64 = TypeRegistry_getParam(pool, ta.params_start, i);
-            let pb: i64 = TypeRegistry_getParam(pool, tb.params_start, i);
+            let pa: i64 = pool.getParam( ta.params_start, i);
+            let pb: i64 = pool.getParam( tb.params_start, i);
             if not TypeInfo_equal(pool, pa, pb) { return false; }
             i = i + 1;
         }

@@ -513,7 +513,7 @@ fn posToColumn(self: *GenState, pos: i64) i64 {
     if self.source == null or pos < 0 or self.line_offsets == null {
         return 1;
     }
-    let line: i64 = GenState_posToLine(self, pos);
+    let line: i64 = self.posToLine( pos);
     let line_start: i64 = (self.line_offsets + (line - 1)).*;
     return pos - line_start + 1;
 }
@@ -535,7 +535,7 @@ fn recordLine(self: *GenState, source_pos: i64) {
         return;  // No position info
     }
 
-    let line: i64 = GenState_posToLine(self, source_pos);
+    let line: i64 = self.posToLine( source_pos);
     // Only record if line changed
     if line == self.last_line and self.line_entries_count > 0 {
         return;
@@ -553,7 +553,7 @@ fn recordLine(self: *GenState, source_pos: i64) {
     // Write line at offset 16
     GenState_writeI64(entry_base + 16, line);
     // Write column at offset 24
-    GenState_writeI64(entry_base + 24, GenState_posToColumn(self, source_pos));
+    GenState_writeI64(entry_base + 24, self.posToColumn( source_pos));
     self.line_entries_count = self.line_entries_count + 1;
 }
 
@@ -643,9 +643,9 @@ fn emitReload(self: *GenState, v: *Value) {
 
     // spill_slot is the actual SP offset (stackalloc converted slot number to offset)
     if is_byte {
-        GenState_emitInst(self, encode_ldrb(v.reg, SP, v.spill_slot));
+        self.emitInst( encode_ldrb(v.reg, SP, v.spill_slot));
     } else {
-        GenState_emitInst(self, encode_ldr(v.reg, SP, v.spill_slot));
+        self.emitInst( encode_ldr(v.reg, SP, v.spill_slot));
     }
 }
 
@@ -662,9 +662,9 @@ fn emitSpill(self: *GenState, v: *Value) {
 
     // spill_slot is the actual SP offset (stackalloc converted slot number to offset)
     if is_byte {
-        GenState_emitInst(self, encode_strb(v.reg, SP, v.spill_slot));
+        self.emitInst( encode_strb(v.reg, SP, v.spill_slot));
     } else {
-        GenState_emitInst(self, encode_str(v.reg, SP, v.spill_slot));
+        self.emitInst( encode_str(v.reg, SP, v.spill_slot));
     }
 }
 
@@ -676,7 +676,7 @@ fn reloadSpilledArgs(self: *GenState, v: *Value) {
         let arg_id: i64 = v.getArg( i);
         if arg_id >= 0 and arg_id < f.values_count {
             let arg: *Value = f.getValue( arg_id);
-            GenState_emitReload(self, arg);
+            self.emitReload( arg);
         }
         i = i + 1;
     }
@@ -704,7 +704,7 @@ fn generate(self: *GenState) i64 {
     // Always save LR (X30) in case of calls, and FP (X29) for debugging
     // STP X29, X30, [SP, #-16]!  (pre-indexed store pair)
     // Note: imm7 is offset in 8-byte units, so -16 bytes = -2
-    GenState_emitInst(self, encode_stp_pre(X29, X30, SP, -2));
+    self.emitInst( encode_stp_pre(X29, X30, SP, -2));
 
     var frame_size: i64 = f.frame_size;
 
@@ -721,14 +721,14 @@ fn generate(self: *GenState) i64 {
     self.frame_size = frame_size;
 
     if frame_size > 0 {
-        GenState_emitInst(self, encode_sub_imm(SP, SP, frame_size));
+        self.emitInst( encode_sub_imm(SP, SP, frame_size));
     }
 
     // BUG-054: Save hidden return pointer (x8) to stack
     // Following Zig: src/codegen/arm64.zig:677-683
     if self.has_hidden_return {
         // STR x8, [sp, #hidden_ret_ptr_offset]
-        GenState_emitInst(self, encode_str(X8, SP, self.hidden_ret_ptr_offset));
+        self.emitInst( encode_str(X8, SP, self.hidden_ret_ptr_offset));
     }
 
     // Check if this is the main function (for crash handler insertion)
@@ -762,7 +762,7 @@ fn generate(self: *GenState) i64 {
 
         // Process each value in the block
         t_tmp = get_time_ns();
-        GenState_blockValues(self, block);
+        self.blockValues( block);
         gs_time_blockvalues = gs_time_blockvalues + (get_time_ns() - t_tmp);
 
         // Emit control flow for block
@@ -771,7 +771,7 @@ fn generate(self: *GenState) i64 {
             next_block = INVALID_BLOCK;
         }
         t_tmp = get_time_ns();
-        GenState_blockControl(self, block, next_block);
+        self.blockControl( block, next_block);
         gs_time_blockcontrol = gs_time_blockcontrol + (get_time_ns() - t_tmp);
 
         block_id = block_id + 1;
@@ -779,7 +779,7 @@ fn generate(self: *GenState) i64 {
 
     // Resolve branches
     t_tmp = get_time_ns();
-    GenState_resolveBranches(self);
+    self.resolveBranches();
     gs_time_resolve = gs_time_resolve + (get_time_ns() - t_tmp);
 
     return 0;
@@ -811,22 +811,22 @@ fn blockValues(self: *GenState, block: *Block) {
             if !is_param_setup {
                 // Emit crash handler call before this value
                 self.crash_handler_offset = self.code_count;
-                GenState_emitInst(self, encode_bl(0));  // Offset will be patched
+                self.emitInst( encode_bl(0));  // Offset will be patched
                 self.crash_handler_emitted = true;
             }
         }
 
         // Record line entry for DWARF debug info
-        GenState_recordLine(self, v.pos);
+        self.recordLine( v.pos);
 
         // Reload any spilled arguments before using them
-        GenState_reloadSpilledArgs(self, v);
+        self.reloadSpilledArgs( v);
 
         // Generate code for the value
-        GenState_value(self, v);
+        self.value( v);
 
         // Spill the result if it was marked for spilling
-        GenState_emitSpill(self, v);
+        self.emitSpill( v);
 
         i = i + 1;
     }
@@ -849,7 +849,7 @@ fn value(self: *GenState, v: *Value) {
             // are used before any are stored. For non-Store uses (arithmetic, calls),
             // the value will be in x16 immediately after this load.
             let byte_offset: i64 = self.frame_size + 16 + (arg_idx - 8) * 8;
-            GenState_emitInst(self, encode_ldr(X16, SP, byte_offset));
+            self.emitInst( encode_ldr(X16, SP, byte_offset));
             v.reg = X16;
         }
         // For register arguments (arg_idx < 8), regalloc already assigned
@@ -862,116 +862,116 @@ fn value(self: *GenState, v: *Value) {
 
     // Dispatch based on operation
     if v.op == Op.ConstInt {
-        GenState_constInt(self, v);
+        self.constInt( v);
     } else if v.op == Op.ConstBool {
-        GenState_constBool(self, v);
+        self.constBool( v);
     } else if v.op == Op.ConstString {
-        GenState_constString(self, v);
+        self.constString( v);
     } else if v.op == Op.StringMake {
-        GenState_stringMake(self, v);
+        self.stringMake( v);
     } else if v.op == Op.SliceMake {
-        GenState_sliceMake(self, v);
+        self.sliceMake( v);
     } else if v.op == Op.SlicePtr {
-        GenState_slicePtr(self, v);
+        self.slicePtr( v);
     } else if v.op == Op.SliceLen {
-        GenState_sliceLen(self, v);
+        self.sliceLen( v);
     } else if v.op == Op.StringPtr {
         // StringPtr has same layout as SlicePtr
-        GenState_slicePtr(self, v);
+        self.slicePtr( v);
     } else if v.op == Op.StringLen {
         // StringLen has same layout as SliceLen
-        GenState_sliceLen(self, v);
+        self.sliceLen( v);
     } else if v.op == Op.Add64 {
-        GenState_add(self, v);
+        self.add( v);
     } else if v.op == Op.Sub64 {
-        GenState_sub(self, v);
+        self.sub( v);
     } else if v.op == Op.Mul64 {
-        GenState_mul(self, v);
+        self.mul( v);
     } else if v.op == Op.Div64 {
-        GenState_div(self, v);
+        self.div( v);
     } else if v.op == Op.Mod64 {
-        GenState_mod(self, v);
+        self.mod( v);
     } else if v.op == Op.And64 {
-        GenState_emitAnd(self, v);
+        self.emitAnd( v);
     } else if v.op == Op.Or64 {
-        GenState_emitOr(self, v);
+        self.emitOr( v);
     } else if v.op == Op.Xor64 {
-        GenState_xor(self, v);
+        self.xor( v);
     } else if v.op == Op.Shl64 {
-        GenState_shl(self, v);
+        self.shl( v);
     } else if v.op == Op.Shr64 {
-        GenState_shr(self, v);
+        self.shr( v);
     } else if v.op == Op.Neg64 {
-        GenState_neg(self, v);
+        self.neg( v);
     } else if v.op == Op.Not64 {
-        GenState_bitnot(self, v);
+        self.bitnot( v);
     } else if v.op == Op.LogicalNot64 {
-        GenState_logical_not(self, v);
+        self.logical_not( v);
     } else if v.op == Op.Eq64 {
-        GenState_compare(self, v, COND_EQ);
+        self.compare( v, COND_EQ);
     } else if v.op == Op.Ne64 {
-        GenState_compare(self, v, COND_NE);
+        self.compare( v, COND_NE);
     } else if v.op == Op.Lt64 {
-        GenState_compare(self, v, COND_LT);
+        self.compare( v, COND_LT);
     } else if v.op == Op.Le64 {
-        GenState_compare(self, v, COND_LE);
+        self.compare( v, COND_LE);
     } else if v.op == Op.Gt64 {
-        GenState_compare(self, v, COND_GT);
+        self.compare( v, COND_GT);
     } else if v.op == Op.Ge64 {
-        GenState_compare(self, v, COND_GE);
+        self.compare( v, COND_GE);
     } else if v.op == Op.Load {
-        GenState_load(self, v);
+        self.load( v);
     } else if v.op == Op.Store {
-        GenState_store(self, v);
+        self.store( v);
     } else if v.op == Op.Move {
-        GenState_move(self, v);
+        self.move( v);
     } else if v.op == Op.LocalAddr {
-        GenState_localAddr(self, v);
+        self.localAddr( v);
     } else if v.op == Op.GlobalAddr {
-        GenState_globalAddr(self, v);
+        self.globalAddr( v);
     } else if v.op == Op.GlobalLoad {
-        GenState_globalLoad(self, v);
+        self.globalLoad( v);
     } else if v.op == Op.GlobalStore {
-        GenState_globalStore(self, v);
+        self.globalStore( v);
     } else if v.op == Op.Addr {
-        GenState_funcAddr(self, v);
+        self.funcAddr( v);
     } else if v.op == Op.OffPtr {
-        GenState_offPtr(self, v);
+        self.offPtr( v);
     } else if v.op == Op.AddPtr {
         // Pointer arithmetic is the same as 64-bit addition
-        GenState_add(self, v);
+        self.add( v);
     } else if v.op == Op.Call {
-        GenState_call(self, v);
+        self.call( v);
     } else if v.op == Op.ClosureCall {
-        GenState_callIndirect(self, v);
+        self.callIndirect( v);
     } else if v.op == Op.StringConcat {
-        GenState_stringConcat(self, v);
+        self.stringConcat( v);
     } else if v.op == Op.Return {
-        GenState_emitReturn(self, v);
+        self.emitReturn( v);
     } else if v.op == Op.Copy {
-        GenState_copy(self, v);
+        self.copy( v);
     } else if v.op == Op.Select {
-        GenState_select(self, v);
+        self.select( v);
     } else if v.op == Op.ConstNil {
-        GenState_constNil(self, v);
+        self.constNil( v);
     } else if v.op == Op.ZeroExt8to64 {
-        GenState_zeroExt(self, v, 8);
+        self.zeroExt( v, 8);
     } else if v.op == Op.ZeroExt16to64 {
-        GenState_zeroExt(self, v, 16);
+        self.zeroExt( v, 16);
     } else if v.op == Op.ZeroExt32to64 {
-        GenState_zeroExt(self, v, 32);
+        self.zeroExt( v, 32);
     } else if v.op == Op.SignExt8to64 {
-        GenState_signExt(self, v, 8);
+        self.signExt( v, 8);
     } else if v.op == Op.SignExt16to64 {
-        GenState_signExt(self, v, 16);
+        self.signExt( v, 16);
     } else if v.op == Op.SignExt32to64 {
-        GenState_signExt(self, v, 32);
+        self.signExt( v, 32);
     } else if v.op == Op.Trunc64to8 {
-        GenState_trunc(self, v, 8);
+        self.trunc( v, 8);
     } else if v.op == Op.Trunc64to16 {
-        GenState_trunc(self, v, 16);
+        self.trunc( v, 16);
     } else if v.op == Op.Trunc64to32 {
-        GenState_trunc(self, v, 32);
+        self.trunc( v, 32);
     }
     // Unknown ops are silently ignored for now
 }
@@ -991,36 +991,36 @@ fn constInt(self: *GenState, v: *Value) {
         // MOVN loads ~imm16, so for -1 we use MOVN x, 0 (since ~0 = -1)
         // For -n where n <= 65536, we use MOVN x, (n-1)
         let notval: i64 = (0 - imm) - 1;
-        GenState_emitInst(self, encode_movn(rd, notval, 0));
+        self.emitInst( encode_movn(rd, notval, 0));
         return;
     }
 
     // Positive values that fit in 16 bits
     if imm >= 0 and imm <= 65535 {
-        GenState_emitInst(self, encode_movz(rd, imm, 0));
+        self.emitInst( encode_movz(rd, imm, 0));
         return;
     }
 
     // Large positive values need MOVZ + MOVK sequence
     // MOVZ loads low 16 bits (shift 0)
-    GenState_emitInst(self, encode_movz(rd, imm & 65535, 0));
+    self.emitInst( encode_movz(rd, imm & 65535, 0));
 
     // MOVK for bits 16-31 if non-zero
     let bits16: i64 = (imm / 65536) & 65535;
     if bits16 != 0 {
-        GenState_emitInst(self, encode_movk(rd, bits16, 1));
+        self.emitInst( encode_movk(rd, bits16, 1));
     }
 
     // MOVK for bits 32-47 if non-zero
     let bits32: i64 = (imm / 4294967296) & 65535;
     if bits32 != 0 {
-        GenState_emitInst(self, encode_movk(rd, bits32, 2));
+        self.emitInst( encode_movk(rd, bits32, 2));
     }
 
     // MOVK for bits 48-63 if non-zero
     let bits48: i64 = (imm / 281474976710656) & 65535;
     if bits48 != 0 {
-        GenState_emitInst(self, encode_movk(rd, bits48, 3));
+        self.emitInst( encode_movk(rd, bits48, 3));
     }
 }
 
@@ -1029,7 +1029,7 @@ fn constBool(self: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let imm: i64 = v.aux_int;
-    GenState_emitInst(self, ARM64_encodeMovImm(rd, imm));
+    self.emitInst( ARM64_encodeMovImm(rd, imm));
 }
 
 // ConstNil: null/nil is just 0
@@ -1037,7 +1037,7 @@ fn constBool(self: *GenState, v: *Value) {
 fn constNil(self: *GenState, v: *Value) {
     let rd: i64 = v.reg;
     if rd < 0 { return; }
-    GenState_emitInst(self, ARM64_encodeMovImm(rd, 0));
+    self.emitInst( ARM64_encodeMovImm(rd, 0));
 }
 
 // Zero extension: clear upper bits
@@ -1056,15 +1056,15 @@ fn zeroExt(self: *GenState, v: *Value, src_bits: i64) {
     if src_bits == 8 {
         // UXTB: AND rd, rn, #0xFF
         // Encode as: UBFM rd, rn, #0, #7 (extract bits 0-7)
-        GenState_emitInst(self, encode_ubfm(rd, rn, 0, 7));
+        self.emitInst( encode_ubfm(rd, rn, 0, 7));
     } else if src_bits == 16 {
         // UXTH: AND rd, rn, #0xFFFF
         // Encode as: UBFM rd, rn, #0, #15 (extract bits 0-15)
-        GenState_emitInst(self, encode_ubfm(rd, rn, 0, 15));
+        self.emitInst( encode_ubfm(rd, rn, 0, 15));
     } else if src_bits == 32 {
         // Zero-extend 32 to 64: use 32-bit MOV which zero-extends
         // MOV Wd, Wn (implicitly zeros upper 32 bits)
-        GenState_emitInst(self, encode_mov_w(rd, rn));
+        self.emitInst( encode_mov_w(rd, rn));
     }
 }
 
@@ -1083,13 +1083,13 @@ fn signExt(self: *GenState, v: *Value, src_bits: i64) {
 
     if src_bits == 8 {
         // SXTB: SBFM rd, rn, #0, #7
-        GenState_emitInst(self, encode_sbfm(rd, rn, 0, 7));
+        self.emitInst( encode_sbfm(rd, rn, 0, 7));
     } else if src_bits == 16 {
         // SXTH: SBFM rd, rn, #0, #15
-        GenState_emitInst(self, encode_sbfm(rd, rn, 0, 15));
+        self.emitInst( encode_sbfm(rd, rn, 0, 15));
     } else if src_bits == 32 {
         // SXTW: SBFM rd, rn, #0, #31
-        GenState_emitInst(self, encode_sbfm(rd, rn, 0, 31));
+        self.emitInst( encode_sbfm(rd, rn, 0, 31));
     }
 }
 
@@ -1110,7 +1110,7 @@ fn trunc(self: *GenState, v: *Value, dst_bits: i64) {
     // For truncation, just move the value - the upper bits are ignored
     // when stored to memory with STRB/STRH/STR W
     if rd != rn {
-        GenState_emitInst(self, encode_mov(rd, rn));
+        self.emitInst( encode_mov(rd, rn));
     }
     // Note: If strict masking is needed, could add AND here
 }
@@ -1131,9 +1131,9 @@ fn constString(self: *GenState, v: *Value) {
 
     // Emit ADRP + ADD pair (placeholders - linker fills in addresses)
     // ADRP rd, symbol@PAGE
-    GenState_emitInst(self, encode_adrp(rd, 0));
+    self.emitInst( encode_adrp(rd, 0));
     // ADD rd, rd, symbol@PAGEOFF
-    GenState_emitInst(self, encode_add_imm(rd, rd, 0));
+    self.emitInst( encode_add_imm(rd, rd, 0));
 
     // Record string relocation for later processing
     // Following Zig: arm64.zig:1165-1169 (string_refs.append)
@@ -1160,7 +1160,7 @@ fn stringMake(self: *GenState, v: *Value) {
 
     // Move ptr to destination register
     if ptr_val.reg >= 0 and ptr_val.reg != rd {
-        GenState_emitInst(self, ARM64_encodeMovReg(rd, ptr_val.reg));
+        self.emitInst( ARM64_encodeMovReg(rd, ptr_val.reg));
     }
     // Note: len is in args[1] but for now we just pass ptr
     // Full string support would need to handle the len as well
@@ -1178,7 +1178,7 @@ fn sliceMake(self: *GenState, v: *Value) {
 
     // Move ptr to destination register
     if ptr_val.reg >= 0 and ptr_val.reg != rd {
-        GenState_emitInst(self, ARM64_encodeMovReg(rd, ptr_val.reg));
+        self.emitInst( ARM64_encodeMovReg(rd, ptr_val.reg));
     }
     // Note: len is in args[1] but for now we just pass ptr
     // Full slice support would store (ptr, len) together
@@ -1199,13 +1199,13 @@ fn slicePtr(self: *GenState, v: *Value) {
         // Call/StringConcat result: slice/string returned in (x0=ptr, x1=len)
         // ptr is in x0
         if rd != X0 {
-            GenState_emitInst(self, ARM64_encodeMovReg(rd, X0));
+            self.emitInst( ARM64_encodeMovReg(rd, X0));
         }
     } else if slice_val.op == Op.SliceMake or slice_val.op == Op.StringMake {
         // slice_make/string_make: ptr is args[0]
         let ptr_val: *Value = f.getValue( slice_val.getArg( 0));
         if ptr_val.reg >= 0 and ptr_val.reg != rd {
-            GenState_emitInst(self, ARM64_encodeMovReg(rd, ptr_val.reg));
+            self.emitInst( ARM64_encodeMovReg(rd, ptr_val.reg));
         }
     } else if slice_val.op == Op.ConstString {
         // ConstString: aux_int=str_start (offset in source), aux_ptr=str_len
@@ -1217,8 +1217,8 @@ fn slicePtr(self: *GenState, v: *Value) {
         let reloc_offset: i64 = self.code_count;
 
         // Emit ADRP + ADD pair
-        GenState_emitInst(self, encode_adrp(rd, 0));
-        GenState_emitInst(self, encode_add_imm(rd, rd, 0));
+        self.emitInst( encode_adrp(rd, 0));
+        self.emitInst( encode_add_imm(rd, rd, 0));
 
         // Record string relocation
         if self.string_reloc_code_offsets != null and self.string_relocs_count < self.string_relocs_cap {
@@ -1233,7 +1233,7 @@ fn slicePtr(self: *GenState, v: *Value) {
     } else {
         // Other cases: just copy the register (assume ptr is there)
         if slice_val.reg >= 0 and slice_val.reg != rd {
-            GenState_emitInst(self, ARM64_encodeMovReg(rd, slice_val.reg));
+            self.emitInst( ARM64_encodeMovReg(rd, slice_val.reg));
         }
     }
 }
@@ -1253,19 +1253,19 @@ fn sliceLen(self: *GenState, v: *Value) {
         // Call/StringConcat result: slice/string returned in (x0=ptr, x1=len)
         // len is in x1
         if rd != X1 {
-            GenState_emitInst(self, ARM64_encodeMovReg(rd, X1));
+            self.emitInst( ARM64_encodeMovReg(rd, X1));
         }
     } else if slice_val.op == Op.SliceMake or slice_val.op == Op.StringMake {
         // slice_make/string_make: len is args[1]
         let len_val: *Value = f.getValue( slice_val.getArg( 1));
         if len_val.reg >= 0 and len_val.reg != rd {
-            GenState_emitInst(self, ARM64_encodeMovReg(rd, len_val.reg));
+            self.emitInst( ARM64_encodeMovReg(rd, len_val.reg));
         }
     } else if slice_val.op == Op.ConstString {
         // ConstString: aux_int=str_start, aux_ptr=str_len
         // The length is stored in aux_ptr
         let str_len: i64 = slice_val.aux_ptr;
-        GenState_emitInst(self, ARM64_encodeMovImm(rd, str_len));
+        self.emitInst( ARM64_encodeMovImm(rd, str_len));
     } else if slice_val.op == Op.Load and slice_val.args.count >= 1 {
         // Load of a string/slice local: len is at offset 8 from base
         // Check if type is TYPE_STRING or TYPE_SLICE (16-byte composite)
@@ -1276,24 +1276,24 @@ fn sliceLen(self: *GenState, v: *Value) {
                 let local_idx: i64 = addr_val.aux_int;
                 let local: *Local = f.getLocal( local_idx);
                 let len_offset: i64 = local.offset + 8;
-                GenState_emitInst(self, encode_ldr(rd, SP, len_offset));
+                self.emitInst( encode_ldr(rd, SP, len_offset));
             } else {
                 // Generic case: load from addr + 8
                 // addr_val.reg should contain the base address
                 if addr_val.reg >= 0 {
-                    GenState_emitInst(self, encode_ldr(rd, addr_val.reg, 8));
+                    self.emitInst( encode_ldr(rd, addr_val.reg, 8));
                 }
             }
         } else {
             // Non-string load: fallback to register copy
             if slice_val.reg >= 0 and slice_val.reg != rd {
-                GenState_emitInst(self, ARM64_encodeMovReg(rd, slice_val.reg));
+                self.emitInst( ARM64_encodeMovReg(rd, slice_val.reg));
             }
         }
     } else {
         // Other cases: fallback (shouldn't normally happen)
         if slice_val.reg >= 0 and slice_val.reg != rd {
-            GenState_emitInst(self, ARM64_encodeMovReg(rd, slice_val.reg));
+            self.emitInst( ARM64_encodeMovReg(rd, slice_val.reg));
         }
     }
 }
@@ -1308,9 +1308,9 @@ fn add(self: *GenState, v: *Value) {
 
     // Check if arg1 is a small constant
     if arg1.op == Op.ConstInt and arg1.aux_int >= 0 and arg1.aux_int <= 4095 {
-        GenState_emitInst(self, encode_add_imm(rd, arg0.reg, arg1.aux_int));
+        self.emitInst( encode_add_imm(rd, arg0.reg, arg1.aux_int));
     } else {
-        GenState_emitInst(self, ARM64_add(rd, arg0.reg, arg1.reg));
+        self.emitInst( ARM64_add(rd, arg0.reg, arg1.reg));
     }
 }
 
@@ -1323,9 +1323,9 @@ fn sub(self: *GenState, v: *Value) {
     let arg1: *Value = f.getValue( v.getArg( 1));
 
     if arg1.op == Op.ConstInt and arg1.aux_int >= 0 and arg1.aux_int <= 4095 {
-        GenState_emitInst(self, encode_sub_imm(rd, arg0.reg, arg1.aux_int));
+        self.emitInst( encode_sub_imm(rd, arg0.reg, arg1.aux_int));
     } else {
-        GenState_emitInst(self, ARM64_sub(rd, arg0.reg, arg1.reg));
+        self.emitInst( ARM64_sub(rd, arg0.reg, arg1.reg));
     }
 }
 
@@ -1337,7 +1337,7 @@ fn mul(self: *GenState, v: *Value) {
     let arg0: *Value = f.getValue( v.getArg( 0));
     let arg1: *Value = f.getValue( v.getArg( 1));
 
-    GenState_emitInst(self, encode_mul(rd, arg0.reg, arg1.reg));
+    self.emitInst( encode_mul(rd, arg0.reg, arg1.reg));
 }
 
 fn div(self: *GenState, v: *Value) {
@@ -1348,7 +1348,7 @@ fn div(self: *GenState, v: *Value) {
     let arg0: *Value = f.getValue( v.getArg( 0));
     let arg1: *Value = f.getValue( v.getArg( 1));
 
-    GenState_emitInst(self, encode_sdiv(rd, arg0.reg, arg1.reg));
+    self.emitInst( encode_sdiv(rd, arg0.reg, arg1.reg));
 }
 
 fn mod(self: *GenState, v: *Value) {
@@ -1366,11 +1366,11 @@ fn mod(self: *GenState, v: *Value) {
     let rm: i64 = arg1.reg;  // divisor (b)
 
     // x16 = a / b (quotient)
-    GenState_emitInst(self, encode_sdiv(16, rn, rm));
+    self.emitInst( encode_sdiv(16, rn, rm));
     // x16 = (a / b) * b
-    GenState_emitInst(self, encode_mul(16, 16, rm));
+    self.emitInst( encode_mul(16, 16, rm));
     // dest = a - (a / b) * b (remainder)
-    GenState_emitInst(self, encode_sub_reg(rd, rn, 16));
+    self.emitInst( encode_sub_reg(rd, rn, 16));
 }
 
 fn emitAnd(self: *GenState, v: *Value) {
@@ -1381,7 +1381,7 @@ fn emitAnd(self: *GenState, v: *Value) {
     let arg0: *Value = f.getValue( v.getArg( 0));
     let arg1: *Value = f.getValue( v.getArg( 1));
 
-    GenState_emitInst(self, ARM64_and(rd, arg0.reg, arg1.reg));
+    self.emitInst( ARM64_and(rd, arg0.reg, arg1.reg));
 }
 
 fn emitOr(self: *GenState, v: *Value) {
@@ -1392,7 +1392,7 @@ fn emitOr(self: *GenState, v: *Value) {
     let arg0: *Value = f.getValue( v.getArg( 0));
     let arg1: *Value = f.getValue( v.getArg( 1));
 
-    GenState_emitInst(self, ARM64_or(rd, arg0.reg, arg1.reg));
+    self.emitInst( ARM64_or(rd, arg0.reg, arg1.reg));
 }
 
 fn xor(self: *GenState, v: *Value) {
@@ -1403,7 +1403,7 @@ fn xor(self: *GenState, v: *Value) {
     let arg0: *Value = f.getValue( v.getArg( 0));
     let arg1: *Value = f.getValue( v.getArg( 1));
 
-    GenState_emitInst(self, ARM64_xor(rd, arg0.reg, arg1.reg));
+    self.emitInst( ARM64_xor(rd, arg0.reg, arg1.reg));
 }
 
 fn shl(self: *GenState, v: *Value) {
@@ -1414,7 +1414,7 @@ fn shl(self: *GenState, v: *Value) {
     let arg0: *Value = f.getValue( v.getArg( 0));
     let arg1: *Value = f.getValue( v.getArg( 1));
 
-    GenState_emitInst(self, encode_lsl_reg(rd, arg0.reg, arg1.reg));
+    self.emitInst( encode_lsl_reg(rd, arg0.reg, arg1.reg));
 }
 
 fn shr(self: *GenState, v: *Value) {
@@ -1425,7 +1425,7 @@ fn shr(self: *GenState, v: *Value) {
     let arg0: *Value = f.getValue( v.getArg( 0));
     let arg1: *Value = f.getValue( v.getArg( 1));
 
-    GenState_emitInst(self, encode_asr_reg(rd, arg0.reg, arg1.reg));  // Signed shift right
+    self.emitInst( encode_asr_reg(rd, arg0.reg, arg1.reg));  // Signed shift right
 }
 
 fn neg(self: *GenState, v: *Value) {
@@ -1436,7 +1436,7 @@ fn neg(self: *GenState, v: *Value) {
     let arg0: *Value = f.getValue( v.getArg( 0));
 
     // NEG Xd, Xn = SUB Xd, XZR, Xn
-    GenState_emitInst(self, encode_sub_reg(rd, XZR, arg0.reg));
+    self.emitInst( encode_sub_reg(rd, XZR, arg0.reg));
 }
 
 // Bitwise NOT: ~arg0 = MVN (all bits inverted)
@@ -1448,7 +1448,7 @@ fn bitnot(self: *GenState, v: *Value) {
     let arg0: *Value = f.getValue( v.getArg( 0));
 
     // MVN Xd, Xn = ORN Xd, XZR, Xn
-    GenState_emitInst(self, encode_orn(rd, XZR, arg0.reg));
+    self.emitInst( encode_orn(rd, XZR, arg0.reg));
 }
 
 // Logical NOT: !arg0 (0 -> 1, non-zero -> 0)
@@ -1467,14 +1467,14 @@ fn logical_not(self: *GenState, v: *Value) {
         if arg0.op == Op.ConstInt or arg0.op == Op.ConstBool {
             // Materialize constant to x16 first
             let imm: i64 = arg0.aux_int;
-            GenState_emitInst(self, encode_movz(X16, imm & 0xFFFF, 0));
+            self.emitInst( encode_movz(X16, imm & 0xFFFF, 0));
             src_reg = X16;
         } else {
             return;
         }
     }
-    GenState_emitInst(self, ARM64_cmp_imm(src_reg, 0));
-    GenState_emitInst(self, ARM64_setcc(rd, COND_EQ));
+    self.emitInst( ARM64_cmp_imm(src_reg, 0));
+    self.emitInst( ARM64_setcc(rd, COND_EQ));
 }
 
 fn compare(self: *GenState, v: *Value, cond: i64) {
@@ -1486,8 +1486,8 @@ fn compare(self: *GenState, v: *Value, cond: i64) {
     let arg1: *Value = f.getValue( v.getArg( 1));
 
     // Compare and set result
-    GenState_emitInst(self, ARM64_cmp(arg0.reg, arg1.reg));
-    GenState_emitInst(self, ARM64_setcc(rd, cond));
+    self.emitInst( ARM64_cmp(arg0.reg, arg1.reg));
+    self.emitInst( ARM64_setcc(rd, cond));
 }
 
 fn select(self: *GenState, v: *Value) {
@@ -1502,10 +1502,10 @@ fn select(self: *GenState, v: *Value) {
     let false_val: *Value = f.getValue( v.getArg( 2));
 
     // Compare condition with 0
-    GenState_emitInst(self, encode_cmp_imm(cond_val.reg, 0));
+    self.emitInst( encode_cmp_imm(cond_val.reg, 0));
 
     // CSEL: if NE (cond != 0), select true_val, else select false_val
-    GenState_emitInst(self, encode_csel(rd, true_val.reg, false_val.reg, COND_NE));
+    self.emitInst( encode_csel(rd, true_val.reg, false_val.reg, COND_NE));
 }
 
 fn load(self: *GenState, v: *Value) {
@@ -1529,9 +1529,9 @@ fn load(self: *GenState, v: *Value) {
             is_byte = true;
         }
         if is_byte {
-            GenState_emitInst(self, encode_ldrb(rd, SP, local.offset));
+            self.emitInst( encode_ldrb(rd, SP, local.offset));
         } else {
-            GenState_emitInst(self, encode_ldr(rd, SP, local.offset));
+            self.emitInst( encode_ldr(rd, SP, local.offset));
         }
     } else if addr.op == Op.OffPtr {
         // OffPtr: base + offset. Check if base is LocalAddr for direct SP-relative load
@@ -1543,25 +1543,25 @@ fn load(self: *GenState, v: *Value) {
                 let local: *Local = f.getLocal( local_idx);
                 let total_offset: i64 = local.offset + field_offset;
                 if is_byte {
-                    GenState_emitInst(self, encode_ldrb(rd, SP, total_offset));
+                    self.emitInst( encode_ldrb(rd, SP, total_offset));
                 } else {
-                    GenState_emitInst(self, encode_ldr(rd, SP, total_offset));
+                    self.emitInst( encode_ldr(rd, SP, total_offset));
                 }
             } else if base_val.reg >= 0 {
                 // Base is in a register
                 if is_byte {
-                    GenState_emitInst(self, encode_ldrb(rd, base_val.reg, field_offset));
+                    self.emitInst( encode_ldrb(rd, base_val.reg, field_offset));
                 } else {
-                    GenState_emitInst(self, encode_ldr(rd, base_val.reg, field_offset));
+                    self.emitInst( encode_ldr(rd, base_val.reg, field_offset));
                 }
             }
         }
     } else {
         // Load from address in register
         if is_byte {
-            GenState_emitInst(self, encode_ldrb(rd, addr.reg, 0));
+            self.emitInst( encode_ldrb(rd, addr.reg, 0));
         } else {
-            GenState_emitInst(self, encode_ldr(rd, addr.reg, 0));
+            self.emitInst( encode_ldr(rd, addr.reg, 0));
         }
     }
 }
@@ -1601,7 +1601,7 @@ fn store(self: *GenState, v: *Value) {
         if arg_idx >= 8 {
             // Load from caller's stack frame into x16
             let byte_offset: i64 = self.frame_size + 16 + (arg_idx - 8) * 8;
-            GenState_emitInst(self, encode_ldr(X16, SP, byte_offset));
+            self.emitInst( encode_ldr(X16, SP, byte_offset));
             src_reg = X16;
         }
     }
@@ -1611,9 +1611,9 @@ fn store(self: *GenState, v: *Value) {
         let local_idx: i64 = addr.aux_int;
         let local: *Local = f.getLocal( local_idx);
         if is_byte {
-            GenState_emitInst(self, encode_strb(src_reg, SP, local.offset));
+            self.emitInst( encode_strb(src_reg, SP, local.offset));
         } else {
-            GenState_emitInst(self, encode_str(src_reg, SP, local.offset));
+            self.emitInst( encode_str(src_reg, SP, local.offset));
         }
     } else if addr.op == Op.OffPtr {
         // OffPtr: base + offset. Check if base is LocalAddr for direct SP-relative store
@@ -1625,25 +1625,25 @@ fn store(self: *GenState, v: *Value) {
                 let local: *Local = f.getLocal( local_idx);
                 let total_offset: i64 = local.offset + field_offset;
                 if is_byte {
-                    GenState_emitInst(self, encode_strb(src_reg, SP, total_offset));
+                    self.emitInst( encode_strb(src_reg, SP, total_offset));
                 } else {
-                    GenState_emitInst(self, encode_str(src_reg, SP, total_offset));
+                    self.emitInst( encode_str(src_reg, SP, total_offset));
                 }
             } else if base_val.reg >= 0 {
                 // Base is in a register
                 if is_byte {
-                    GenState_emitInst(self, encode_strb(src_reg, base_val.reg, field_offset));
+                    self.emitInst( encode_strb(src_reg, base_val.reg, field_offset));
                 } else {
-                    GenState_emitInst(self, encode_str(src_reg, base_val.reg, field_offset));
+                    self.emitInst( encode_str(src_reg, base_val.reg, field_offset));
                 }
             }
         }
     } else {
         // Store to address in register
         if is_byte {
-            GenState_emitInst(self, encode_strb(src_reg, addr.reg, 0));
+            self.emitInst( encode_strb(src_reg, addr.reg, 0));
         } else {
-            GenState_emitInst(self, encode_str(src_reg, addr.reg, 0));
+            self.emitInst( encode_str(src_reg, addr.reg, 0));
         }
     }
 }
@@ -1667,7 +1667,7 @@ fn move(self: *GenState, v: *Value) {
         // Compute local address into X16
         let local_idx: i64 = dest_val.aux_int;
         let local: *Local = f.getLocal( local_idx);
-        GenState_emitInst(self, encode_add_imm(X16, SP, local.offset));
+        self.emitInst( encode_add_imm(X16, SP, local.offset));
     } else if dest_val.reg >= 0 {
         // Use assigned register (may need to reload if stale)
         dest_reg = dest_val.reg;
@@ -1695,16 +1695,16 @@ fn move(self: *GenState, v: *Value) {
                 idx_ptr.* = global_idx;
                 self.global_relocs_count = self.global_relocs_count + 1;
             }
-            GenState_emitInst(self, encode_adrp(X17, 0));
-            GenState_emitInst(self, encode_add_imm(X17, X17, 0));
+            self.emitInst( encode_adrp(X17, 0));
+            self.emitInst( encode_add_imm(X17, X17, 0));
         } else if base_v.reg >= 0 {
             // Copy base register to X17
-            GenState_emitInst(self, encode_add_imm(X17, base_v.reg, 0));
+            self.emitInst( encode_add_imm(X17, base_v.reg, 0));
         }
 
         // Add offset (off_v should be Mul64 result with a register)
         if off_v.reg >= 0 {
-            GenState_emitInst(self, encode_add_reg(X17, X17, off_v.reg));
+            self.emitInst( encode_add_reg(X17, X17, off_v.reg));
         }
     } else if src_val.reg >= 0 {
         // Direct register use
@@ -1716,18 +1716,18 @@ fn move(self: *GenState, v: *Value) {
     var copy_off: i64 = 0;
     while copy_off + 8 <= copy_size {
         // LDR X19, [src_reg, #copy_off]
-        GenState_emitInst(self, encode_ldr(X19, src_reg, copy_off));
+        self.emitInst( encode_ldr(X19, src_reg, copy_off));
         // STR X19, [dest_reg, #copy_off]
-        GenState_emitInst(self, encode_str(X19, dest_reg, copy_off));
+        self.emitInst( encode_str(X19, dest_reg, copy_off));
         copy_off = copy_off + 8;
     }
 
     // Handle remaining bytes (< 8)
     while copy_off < copy_size {
         // LDRB X19, [src_reg, #copy_off]
-        GenState_emitInst(self, encode_ldrb(X19, src_reg, copy_off));
+        self.emitInst( encode_ldrb(X19, src_reg, copy_off));
         // STRB X19, [dest_reg, #copy_off]
-        GenState_emitInst(self, encode_strb(X19, dest_reg, copy_off));
+        self.emitInst( encode_strb(X19, dest_reg, copy_off));
         copy_off = copy_off + 1;
     }
 }
@@ -1741,7 +1741,7 @@ fn localAddr(self: *GenState, v: *Value) {
     let local: *Local = f.getLocal( local_idx);
 
     // Compute address: SP + offset (no FP setup in simple prologue)
-    GenState_emitInst(self, encode_add_imm(rd, SP, local.offset));
+    self.emitInst( encode_add_imm(rd, SP, local.offset));
 }
 
 // Function address for function pointers
@@ -1755,9 +1755,9 @@ fn funcAddr(self: *GenState, v: *Value) {
 
     // Emit ADRP + ADD pair (placeholders - linker fills in real values)
     // ADRP Rd, function@PAGE
-    GenState_emitInst(self, encode_adrp(rd, 0));  // Placeholder
+    self.emitInst( encode_adrp(rd, 0));  // Placeholder
     // ADD Rd, Rd, function@PAGEOFF
-    GenState_emitInst(self, encode_add_imm(rd, rd, 0));  // Placeholder
+    self.emitInst( encode_add_imm(rd, rd, 0));  // Placeholder
 
     // Record relocation for linker to resolve
     // v.aux_int = func_name_start, v.aux_ptr = func_name_len
@@ -1783,7 +1783,7 @@ fn globalAddr(self: *GenState, v: *Value) {
     let global_idx: i64 = v.aux_int;
     if self.globals == null or global_idx >= self.globals_count {
         // No globals info - emit a constant 0 as placeholder
-        GenState_emitInst(self, encode_movz(rd, 0, 0));
+        self.emitInst( encode_movz(rd, 0, 0));
         return;
     }
 
@@ -1792,9 +1792,9 @@ fn globalAddr(self: *GenState, v: *Value) {
 
     // Emit ADRP + ADD pair (placeholders - linker fills in real values)
     // ADRP Rd, symbol@PAGE
-    GenState_emitInst(self, encode_adrp(rd, 0));  // Placeholder, linker fills in
+    self.emitInst( encode_adrp(rd, 0));  // Placeholder, linker fills in
     // ADD Rd, Rd, symbol@PAGEOFF
-    GenState_emitInst(self, encode_add_imm(rd, rd, 0));  // Placeholder, linker fills in
+    self.emitInst( encode_add_imm(rd, rd, 0));  // Placeholder, linker fills in
 
     // Record relocation for linker to resolve (using parallel arrays)
     if self.global_reloc_offsets != null and self.global_relocs_count < self.global_relocs_cap {
@@ -1814,7 +1814,7 @@ fn globalLoad(self: *GenState, v: *Value) {
 
     let global_idx: i64 = v.aux_int;
     if self.globals == null or global_idx >= self.globals_count {
-        GenState_emitInst(self, encode_movz(rd, 0, 0));
+        self.emitInst( encode_movz(rd, 0, 0));
         return;
     }
 
@@ -1826,13 +1826,13 @@ fn globalLoad(self: *GenState, v: *Value) {
 
     // Emit ADRP + ADD pair to compute global address (placeholders - linker fills in)
     // ADRP addr_reg, symbol@PAGE
-    GenState_emitInst(self, encode_adrp(addr_reg, 0));
+    self.emitInst( encode_adrp(addr_reg, 0));
     // ADD addr_reg, addr_reg, symbol@PAGEOFF
-    GenState_emitInst(self, encode_add_imm(addr_reg, addr_reg, 0));
+    self.emitInst( encode_add_imm(addr_reg, addr_reg, 0));
 
     // Emit LDR to load the value from the global address
     // LDR rd, [addr_reg]
-    GenState_emitInst(self, encode_ldr(rd, addr_reg, 0));
+    self.emitInst( encode_ldr(rd, addr_reg, 0));
 
     // Record relocation for linker to resolve (using parallel arrays)
     if self.global_reloc_offsets != null and self.global_relocs_count < self.global_relocs_cap {
@@ -1871,13 +1871,13 @@ fn globalStore(self: *GenState, v: *Value) {
 
     // Emit ADRP + ADD pair to compute global address (placeholders - linker fills in)
     // ADRP addr_reg, symbol@PAGE
-    GenState_emitInst(self, encode_adrp(addr_reg, 0));
+    self.emitInst( encode_adrp(addr_reg, 0));
     // ADD addr_reg, addr_reg, symbol@PAGEOFF
-    GenState_emitInst(self, encode_add_imm(addr_reg, addr_reg, 0));
+    self.emitInst( encode_add_imm(addr_reg, addr_reg, 0));
 
     // Emit STR to store the value
     // STR src_reg, [addr_reg]
-    GenState_emitInst(self, encode_str(src_reg, addr_reg, 0));
+    self.emitInst( encode_str(src_reg, addr_reg, 0));
 
     // Record relocation for linker to resolve (using parallel arrays)
     if self.global_reloc_offsets != null and self.global_relocs_count < self.global_relocs_cap {
@@ -1909,15 +1909,15 @@ fn offPtr(self: *GenState, v: *Value) {
             let local: *Local = f.getLocal( local_idx);
             // Compute address with combined offset: SP + local.offset + field_offset
             let total_offset: i64 = local.offset + offset;
-            GenState_emitInst(self, encode_add_imm(rd, SP, total_offset));
+            self.emitInst( encode_add_imm(rd, SP, total_offset));
         } else {
             // General case: base is already in a register
             let base_reg: i64 = base_val.reg;
             if base_reg >= 0 {
                 if offset != 0 {
-                    GenState_emitInst(self, encode_add_imm(rd, base_reg, offset));
+                    self.emitInst( encode_add_imm(rd, base_reg, offset));
                 } else if rd != base_reg {
-                    GenState_emitInst(self, ARM64_encodeMovReg(rd, base_reg));
+                    self.emitInst( ARM64_encodeMovReg(rd, base_reg));
                 }
             }
         }
@@ -1930,7 +1930,7 @@ fn call(self: *GenState, v: *Value) {
     // BUG-054: Check if call returns >16B (needs hidden return)
     var call_ret_size: i64 = 8;  // Default to 8 bytes
     if self.type_registry != null {
-        call_ret_size = TypeRegistry_sizeof(self.type_registry, v.type_idx);
+        call_ret_size = self.type_registry.sizeof( v.type_idx);
     }
     let needs_hidden_return: bool = call_ret_size > 16;
 
@@ -1940,11 +1940,11 @@ fn call(self: *GenState, v: *Value) {
     if needs_hidden_return {
         hidden_ret_stack_size = (call_ret_size + 15) & (0 - 16);
         // Allocate stack space: SUB SP, SP, #size
-        GenState_emitInst(self, encode_sub_imm(SP, SP, hidden_ret_stack_size));
+        self.emitInst( encode_sub_imm(SP, SP, hidden_ret_stack_size));
         // Set x8 = SP (hidden return destination)
         // NOTE: Can't use MOV x8, SP because SP/XZR share encoding (31)
         // Use ADD x8, SP, #0 instead
-        GenState_emitInst(self, encode_add_imm(X8, SP, 0));
+        self.emitInst( encode_add_imm(X8, SP, 0));
     }
 
     // Use ABI module for proper parameter assignment
@@ -1970,7 +1970,7 @@ fn call(self: *GenState, v: *Value) {
 
     // Step 1: Allocate stack space for stack arguments FIRST
     if abi_info.arg_stack_size > 0 {
-        GenState_emitInst(self, encode_sub_imm(SP, SP, abi_info.arg_stack_size));
+        self.emitInst( encode_sub_imm(SP, SP, abi_info.arg_stack_size));
     }
 
     // Step 2: Store stack arguments (args 9+)
@@ -1990,12 +1990,12 @@ fn call(self: *GenState, v: *Value) {
             // (the assigned register may contain a different value now)
             if arg_val.op == Op.ConstInt {
                 // Materialize constant to x16
-                GenState_emitInst(self, encode_movz(X16, arg_val.aux_int & 0xFFFF, 0));
+                self.emitInst( encode_movz(X16, arg_val.aux_int & 0xFFFF, 0));
                 if arg_val.aux_int > 0xFFFF {
-                    GenState_emitInst(self, encode_movk(X16, (arg_val.aux_int >> 16) & 0xFFFF, 1));
+                    self.emitInst( encode_movk(X16, (arg_val.aux_int >> 16) & 0xFFFF, 1));
                 }
                 if arg_val.aux_int > 0xFFFFFFFF {
-                    GenState_emitInst(self, encode_movk(X16, (arg_val.aux_int >> 32) & 0xFFFF, 2));
+                    self.emitInst( encode_movk(X16, (arg_val.aux_int >> 32) & 0xFFFF, 2));
                 }
                 src_reg = X16;
             } else if src_reg < 0 {
@@ -2005,7 +2005,7 @@ fn call(self: *GenState, v: *Value) {
 
             if src_reg >= 0 {
                 // Stack offset is relative to SP
-                GenState_emitInst(self, encode_str(src_reg, SP, assignment.offset));
+                self.emitInst( encode_str(src_reg, SP, assignment.offset));
             }
         }
 
@@ -2087,33 +2087,33 @@ fn call(self: *GenState, v: *Value) {
                             // Handle negative small numbers with MOVN
                             if imm < 0 and imm >= (0 - 65536) {
                                 let notval: i64 = (0 - imm) - 1;
-                                GenState_emitInst(self, encode_movn(mi_dest, notval, 0));
+                                self.emitInst( encode_movn(mi_dest, notval, 0));
                             } else if imm >= 0 and imm <= 65535 {
-                                GenState_emitInst(self, encode_movz(mi_dest, imm, 0));
+                                self.emitInst( encode_movz(mi_dest, imm, 0));
                             } else {
                                 // Large positive values need MOVZ + MOVK
-                                GenState_emitInst(self, encode_movz(mi_dest, imm & 65535, 0));
+                                self.emitInst( encode_movz(mi_dest, imm & 65535, 0));
                                 let bits16: i64 = (imm / 65536) & 65535;
                                 if bits16 != 0 {
-                                    GenState_emitInst(self, encode_movk(mi_dest, bits16, 1));
+                                    self.emitInst( encode_movk(mi_dest, bits16, 1));
                                 }
                                 let bits32: i64 = (imm / 65536 / 65536) & 65535;
                                 if bits32 != 0 {
-                                    GenState_emitInst(self, encode_movk(mi_dest, bits32, 2));
+                                    self.emitInst( encode_movk(mi_dest, bits32, 2));
                                 }
                             }
                         } else if mi_val.op == Op.ConstBool {
                             let imm: i64 = 0;
                             if mi_val.aux_int != 0 { imm = 1; }
-                            GenState_emitInst(self, encode_movz(mi_dest, imm, 0));
+                            self.emitInst( encode_movz(mi_dest, imm, 0));
                         } else if mi_val.op == Op.ConstString {
                             // String literal: need ADRP + ADD to load address
                             // Record relocation and emit address computation
                             let str_start: i64 = mi_val.aux_int;
                             let str_len: i64 = mi_val.aux_ptr;
                             let reloc_offset: i64 = self.code_count;
-                            GenState_emitInst(self, encode_adrp(mi_dest, 0));
-                            GenState_emitInst(self, encode_add_imm(mi_dest, mi_dest, 0));
+                            self.emitInst( encode_adrp(mi_dest, 0));
+                            self.emitInst( encode_add_imm(mi_dest, mi_dest, 0));
                             // Record string relocation
                             if self.string_reloc_code_offsets != null and self.string_relocs_count < self.string_relocs_cap {
                                 let off_ptr: *i64 = self.string_reloc_code_offsets + self.string_relocs_count;
@@ -2129,7 +2129,7 @@ fn call(self: *GenState, v: *Value) {
                             // emit ADD dest, SP, #offset to compute local address
                             let local_idx: i64 = mi_val.aux_int;
                             let local: *Local = f.getLocal( local_idx);
-                            GenState_emitInst(self, encode_add_imm(mi_dest, SP, local.offset));
+                            self.emitInst( encode_add_imm(mi_dest, SP, local.offset));
                         } else if mi_val.op == Op.StringPtr or mi_val.op == Op.SlicePtr {
                             // StringPtr/SlicePtr as call arg: need to materialize the ptr
                             // Get the string/slice value and extract ptr
@@ -2141,8 +2141,8 @@ fn call(self: *GenState, v: *Value) {
                                     let str_start: i64 = slice_arg.aux_int;
                                     let str_len: i64 = slice_arg.aux_ptr;
                                     let reloc_offset: i64 = self.code_count;
-                                    GenState_emitInst(self, encode_adrp(mi_dest, 0));
-                                    GenState_emitInst(self, encode_add_imm(mi_dest, mi_dest, 0));
+                                    self.emitInst( encode_adrp(mi_dest, 0));
+                                    self.emitInst( encode_add_imm(mi_dest, mi_dest, 0));
                                     // Record string relocation
                                     if self.string_reloc_code_offsets != null and self.string_relocs_count < self.string_relocs_cap {
                                         let off_ptr: *i64 = self.string_reloc_code_offsets + self.string_relocs_count;
@@ -2155,7 +2155,7 @@ fn call(self: *GenState, v: *Value) {
                                     }
                                 } else if slice_arg.reg >= 0 {
                                     // Ptr is in a register
-                                    GenState_emitInst(self, ARM64_encodeMovReg(mi_dest, slice_arg.reg));
+                                    self.emitInst( ARM64_encodeMovReg(mi_dest, slice_arg.reg));
                                 }
                             }
                         } else if mi_val.op == Op.StringLen or mi_val.op == Op.SliceLen {
@@ -2166,7 +2166,7 @@ fn call(self: *GenState, v: *Value) {
                                 if slice_arg.op == Op.ConstString {
                                     // ConstString: len is stored in aux_ptr
                                     let str_len: i64 = slice_arg.aux_ptr;
-                                    GenState_emitInst(self, ARM64_encodeMovImm(mi_dest, str_len));
+                                    self.emitInst( ARM64_encodeMovImm(mi_dest, str_len));
                                 } else if slice_arg.op == Op.Load and slice_arg.args.count >= 1 {
                                     // Load of a string local: len is at offset 8 from base
                                     let addr_val: *Value = f.getValue( slice_arg.getArg( 0));
@@ -2174,18 +2174,18 @@ fn call(self: *GenState, v: *Value) {
                                         let local_idx: i64 = addr_val.aux_int;
                                         let local: *Local = f.getLocal( local_idx);
                                         let len_offset: i64 = local.offset + 8;
-                                        GenState_emitInst(self, encode_ldr(mi_dest, SP, len_offset));
+                                        self.emitInst( encode_ldr(mi_dest, SP, len_offset));
                                     } else if addr_val.reg >= 0 {
-                                        GenState_emitInst(self, encode_ldr(mi_dest, addr_val.reg, 8));
+                                        self.emitInst( encode_ldr(mi_dest, addr_val.reg, 8));
                                     }
                                 } else if slice_arg.reg >= 0 {
                                     // Fallback: assume len is in the register
-                                    GenState_emitInst(self, ARM64_encodeMovReg(mi_dest, slice_arg.reg));
+                                    self.emitInst( ARM64_encodeMovReg(mi_dest, slice_arg.reg));
                                 }
                             }
                         } else if mi_src >= 0 {
                             // Non-constant with source register: emit MOV dest, src
-                            GenState_emitInst(self, ARM64_encodeMovReg(mi_dest, mi_src));
+                            self.emitInst( ARM64_encodeMovReg(mi_dest, mi_src));
                         }
                         // else: no source and not a constant - skip
                     }
@@ -2204,7 +2204,7 @@ fn call(self: *GenState, v: *Value) {
         if i64list_get(&move_done, i) == 0 and i_src >= 0 {
             // Part of a cycle - save starting value to x16
             let start_src: i64 = i_src;
-            GenState_emitInst(self, ARM64_encodeMovReg(X16, start_src));
+            self.emitInst( ARM64_encodeMovReg(X16, start_src));
 
             // Execute cycle moves
             var current_dest: i64 = start_src;
@@ -2226,9 +2226,9 @@ fn call(self: *GenState, v: *Value) {
                     let found_dest: i64 = i64list_get(&move_dest, found_idx);
                     // If src is the start_src, use x16 instead
                     if actual_src == start_src {
-                        GenState_emitInst(self, ARM64_encodeMovReg(found_dest, X16));
+                        self.emitInst( ARM64_encodeMovReg(found_dest, X16));
                     } else if actual_src >= 0 {
-                        GenState_emitInst(self, ARM64_encodeMovReg(found_dest, actual_src));
+                        self.emitInst( ARM64_encodeMovReg(found_dest, actual_src));
                     }
                     i64list_set(&move_done, found_idx, 1);
 
@@ -2264,11 +2264,11 @@ fn call(self: *GenState, v: *Value) {
     }
 
     // Emit BL instruction placeholder (offset 0, to be patched later)
-    GenState_emitInst(self, encode_bl(0));
+    self.emitInst( encode_bl(0));
 
     // Restore stack if we allocated for args
     if abi_info.arg_stack_size > 0 {
-        GenState_emitInst(self, encode_add_imm(SP, SP, abi_info.arg_stack_size));
+        self.emitInst( encode_add_imm(SP, SP, abi_info.arg_stack_size));
     }
 
     // BUG-054: For hidden return, result is at SP (the hidden return area)
@@ -2279,17 +2279,17 @@ fn call(self: *GenState, v: *Value) {
         // For hidden return, x0 has the address of the result
         // Copy the result address to dest_reg before deallocating
         if dest_reg >= 0 and dest_reg != X0 {
-            GenState_emitInst(self, ARM64_encodeMovReg(dest_reg, X0));
+            self.emitInst( ARM64_encodeMovReg(dest_reg, X0));
         }
         // Restore the hidden return stack space
         // IMPORTANT: x0/dest_reg now points to potentially invalid stack memory,
         // but the copy to the local destination happens immediately after this
         // in the generated code, so it works as long as we don't clobber the memory
-        GenState_emitInst(self, encode_add_imm(SP, SP, hidden_ret_stack_size));
+        self.emitInst( encode_add_imm(SP, SP, hidden_ret_stack_size));
     } else {
         // Regular return: move result from X0 to the assigned register
         if dest_reg >= 0 and dest_reg != X0 {
-            GenState_emitInst(self, ARM64_encodeMovReg(dest_reg, X0));
+            self.emitInst( ARM64_encodeMovReg(dest_reg, X0));
         }
     }
 
@@ -2339,11 +2339,11 @@ fn callIndirect(self: *GenState, v: *Value) {
         if assignment.location == ParamLocation.Register {
             let target_reg: i64 = assignment.reg0;
             if target_reg >= 0 and arg_val.reg != target_reg and arg_val.reg >= 0 {
-                GenState_emitInst(self, ARM64_encodeMovReg(target_reg, arg_val.reg));
+                self.emitInst( ARM64_encodeMovReg(target_reg, arg_val.reg));
             }
         } else if assignment.location == ParamLocation.Stack {
             if arg_val.reg >= 0 {
-                GenState_emitInst(self, encode_str(arg_val.reg, SP, assignment.offset));
+                self.emitInst( encode_str(arg_val.reg, SP, assignment.offset));
             }
         }
 
@@ -2352,23 +2352,23 @@ fn callIndirect(self: *GenState, v: *Value) {
 
     // Allocate stack space for stack-passed arguments
     if abi_info.arg_stack_size > 0 {
-        GenState_emitInst(self, encode_sub_imm(SP, SP, abi_info.arg_stack_size));
+        self.emitInst( encode_sub_imm(SP, SP, abi_info.arg_stack_size));
     }
 
     // Emit BLR instruction with function pointer register
     if fn_ptr_reg >= 0 {
-        GenState_emitInst(self, encode_blr(fn_ptr_reg));
+        self.emitInst( encode_blr(fn_ptr_reg));
     }
 
     // Restore stack if we allocated for args
     if abi_info.arg_stack_size > 0 {
-        GenState_emitInst(self, encode_add_imm(SP, SP, abi_info.arg_stack_size));
+        self.emitInst( encode_add_imm(SP, SP, abi_info.arg_stack_size));
     }
 
     // Move call result from X0 to the assigned register
     let dest_reg: i64 = v.reg;
     if dest_reg >= 0 and dest_reg != X0 {
-        GenState_emitInst(self, ARM64_encodeMovReg(dest_reg, X0));
+        self.emitInst( ARM64_encodeMovReg(dest_reg, X0));
     }
 
     // Clean up ABI info
@@ -2398,21 +2398,21 @@ fn stringConcat(self: *GenState, v: *Value) {
 
     // Step 1: Materialize args into scratch registers x10-x13
     // For ConstString, emit ADRP+ADD; for ConstInt, emit MOV; otherwise use reg
-    GenState_materializeArgToReg(self, ptr1_val, X10);
-    GenState_materializeArgToReg(self, len1_val, X11);
-    GenState_materializeArgToReg(self, ptr2_val, X12);
-    GenState_materializeArgToReg(self, len2_val, X13);
+    self.materializeArgToReg( ptr1_val, X10);
+    self.materializeArgToReg( len1_val, X11);
+    self.materializeArgToReg( ptr2_val, X12);
+    self.materializeArgToReg( len2_val, X13);
 
     // Step 2: Move from scratch to call registers x0-x3
-    GenState_emitInst(self, ARM64_encodeMovReg(X0, X10));
-    GenState_emitInst(self, ARM64_encodeMovReg(X1, X11));
-    GenState_emitInst(self, ARM64_encodeMovReg(X2, X12));
-    GenState_emitInst(self, ARM64_encodeMovReg(X3, X13));
+    self.emitInst( ARM64_encodeMovReg(X0, X10));
+    self.emitInst( ARM64_encodeMovReg(X1, X11));
+    self.emitInst( ARM64_encodeMovReg(X2, X12));
+    self.emitInst( ARM64_encodeMovReg(X3, X13));
 
     // Step 3: Emit BL to __cot_str_concat
     // Record call site for relocation
     let call_offset: i64 = self.code_count;
-    GenState_emitInst(self, encode_bl(0));  // Placeholder offset
+    self.emitInst( encode_bl(0));  // Placeholder offset
 
     // Record call site for later relocation
     if self.call_sites_count < self.call_sites_cap {
@@ -2429,7 +2429,7 @@ fn stringConcat(self: *GenState, v: *Value) {
     // For now, leave result in x0 (ptr) - the caller handles storing both fields
     let dest_reg: i64 = v.reg;
     if dest_reg >= 0 and dest_reg != X0 {
-        GenState_emitInst(self, ARM64_encodeMovReg(dest_reg, X0));
+        self.emitInst( ARM64_encodeMovReg(dest_reg, X0));
     }
 }
 
@@ -2441,8 +2441,8 @@ fn materializeArgToReg(self: *GenState, arg_val: *Value, target_reg: i64) {
         let str_start: i64 = arg_val.aux_int;
         let str_len: i64 = arg_val.aux_ptr;
         let reloc_offset: i64 = self.code_count;
-        GenState_emitInst(self, encode_adrp(target_reg, 0));
-        GenState_emitInst(self, encode_add_imm(target_reg, target_reg, 0));
+        self.emitInst( encode_adrp(target_reg, 0));
+        self.emitInst( encode_add_imm(target_reg, target_reg, 0));
         // Record string relocation
         if self.string_reloc_code_offsets != null and self.string_relocs_count < self.string_relocs_cap {
             let off_ptr: *i64 = self.string_reloc_code_offsets + self.string_relocs_count;
@@ -2458,21 +2458,21 @@ fn materializeArgToReg(self: *GenState, arg_val: *Value, target_reg: i64) {
         let imm: i64 = arg_val.aux_int;
         if imm < 0 and imm >= (0 - 65536) {
             let notval: i64 = (0 - imm) - 1;
-            GenState_emitInst(self, encode_movn(target_reg, notval, 0));
+            self.emitInst( encode_movn(target_reg, notval, 0));
         } else if imm >= 0 and imm <= 65535 {
-            GenState_emitInst(self, encode_movz(target_reg, imm, 0));
+            self.emitInst( encode_movz(target_reg, imm, 0));
         } else {
             // Large value needs MOVZ + MOVK
-            GenState_emitInst(self, encode_movz(target_reg, imm & 65535, 0));
+            self.emitInst( encode_movz(target_reg, imm & 65535, 0));
             let bits16: i64 = (imm / 65536) & 65535;
             if bits16 != 0 {
-                GenState_emitInst(self, encode_movk(target_reg, bits16, 1));
+                self.emitInst( encode_movk(target_reg, bits16, 1));
             }
         }
     } else if arg_val.reg >= 0 {
         // Value is in a register - just move it
         if arg_val.reg != target_reg {
-            GenState_emitInst(self, ARM64_encodeMovReg(target_reg, arg_val.reg));
+            self.emitInst( ARM64_encodeMovReg(target_reg, arg_val.reg));
         }
     }
 }
@@ -2488,7 +2488,7 @@ fn emitReturn(self: *GenState, v: *Value) {
 
         // Load hidden return pointer from stack into X17 (temp register)
         // We saved x8 to [sp, #hidden_ret_ptr_offset] in prologue
-        GenState_emitInst(self, encode_ldr(X17, SP, self.hidden_ret_ptr_offset));
+        self.emitInst( encode_ldr(X17, SP, self.hidden_ret_ptr_offset));
 
         // Get source address for the return value
         // The return value may be:
@@ -2500,27 +2500,27 @@ fn emitReturn(self: *GenState, v: *Value) {
             // Direct local address - compute address
             let local_idx: i64 = ret_val.aux_int;
             let local: *Local = f.getLocal( local_idx);
-            GenState_emitInst(self, encode_add_imm(X16, SP, local.offset));
+            self.emitInst( encode_add_imm(X16, SP, local.offset));
         } else if ret_val.op == Op.Load and ret_val.args.count > 0 {
             // Load operation - get source address from arg[0] (which should be LocalAddr or OffPtr)
             let addr_val: *Value = f.getValue( ret_val.getArg( 0));
             if addr_val.op == Op.LocalAddr {
                 let local_idx: i64 = addr_val.aux_int;
                 let local: *Local = f.getLocal( local_idx);
-                GenState_emitInst(self, encode_add_imm(X16, SP, local.offset));
+                self.emitInst( encode_add_imm(X16, SP, local.offset));
             } else if addr_val.op == Op.OffPtr and addr_val.args.count > 0 {
                 let base_val: *Value = f.getValue( addr_val.getArg( 0));
                 if base_val.op == Op.LocalAddr {
                     let local_idx: i64 = base_val.aux_int;
                     let local: *Local = f.getLocal( local_idx);
                     let offset: i64 = addr_val.aux_int;
-                    GenState_emitInst(self, encode_add_imm(X16, SP, local.offset + offset));
+                    self.emitInst( encode_add_imm(X16, SP, local.offset + offset));
                 } else if base_val.reg >= 0 {
-                    GenState_emitInst(self, encode_add_imm(X16, base_val.reg, addr_val.aux_int));
+                    self.emitInst( encode_add_imm(X16, base_val.reg, addr_val.aux_int));
                 }
             } else if addr_val.reg >= 0 {
                 // Address is in a register
-                GenState_emitInst(self, encode_add_imm(X16, addr_val.reg, 0));
+                self.emitInst( encode_add_imm(X16, addr_val.reg, 0));
             }
         } else if ret_val.op == Op.OffPtr and ret_val.args.count > 0 {
             // Offset from base - check if base is LocalAddr
@@ -2529,9 +2529,9 @@ fn emitReturn(self: *GenState, v: *Value) {
                 let local_idx: i64 = base_val.aux_int;
                 let local: *Local = f.getLocal( local_idx);
                 let offset: i64 = ret_val.aux_int;
-                GenState_emitInst(self, encode_add_imm(X16, SP, local.offset + offset));
+                self.emitInst( encode_add_imm(X16, SP, local.offset + offset));
             } else if base_val.reg >= 0 {
-                GenState_emitInst(self, encode_add_imm(X16, base_val.reg, ret_val.aux_int));
+                self.emitInst( encode_add_imm(X16, base_val.reg, ret_val.aux_int));
             }
         } else if ret_val.reg >= 0 {
             // Value is in a register (should be an address)
@@ -2543,21 +2543,21 @@ fn emitReturn(self: *GenState, v: *Value) {
         var copy_off: i64 = 0;
         while copy_off + 8 <= ret_size {
             // LDR X19, [src_reg, #copy_off]
-            GenState_emitInst(self, encode_ldr(X19, src_reg, copy_off));
+            self.emitInst( encode_ldr(X19, src_reg, copy_off));
             // STR X19, [X17, #copy_off]
-            GenState_emitInst(self, encode_str(X19, X17, copy_off));
+            self.emitInst( encode_str(X19, X17, copy_off));
             copy_off = copy_off + 8;
         }
         // Handle remaining bytes
         while copy_off < ret_size {
-            GenState_emitInst(self, encode_ldrb(X19, src_reg, copy_off));
-            GenState_emitInst(self, encode_strb(X19, X17, copy_off));
+            self.emitInst( encode_ldrb(X19, src_reg, copy_off));
+            self.emitInst( encode_strb(X19, X17, copy_off));
             copy_off = copy_off + 1;
         }
 
         // For hidden return, x0 should contain the return address
         // Some ABIs require this, others don't - we'll set it to be safe
-        GenState_emitInst(self, ARM64_encodeMovReg(X0, X17));
+        self.emitInst( ARM64_encodeMovReg(X0, X17));
     } else if v.args.count > 0 {
         // Regular return handling (not hidden)
         let arg0_id: i64 = v.getArg( 0);
@@ -2570,16 +2570,16 @@ fn emitReturn(self: *GenState, v: *Value) {
             let len_val: *Value = f.getValue( ret_val.getArg( 1));
             // Move ptr to X0
             if ptr_val.reg >= 0 and ptr_val.reg != X0 {
-                GenState_emitInst(self, ARM64_encodeMovReg(X0, ptr_val.reg));
+                self.emitInst( ARM64_encodeMovReg(X0, ptr_val.reg));
             }
             // Move len to X1
             if len_val.reg >= 0 and len_val.reg != X1 {
-                GenState_emitInst(self, ARM64_encodeMovReg(X1, len_val.reg));
+                self.emitInst( ARM64_encodeMovReg(X1, len_val.reg));
             }
         } else {
             // Regular return: move to X0
             if ret_val.reg != X0 and ret_val.reg >= 0 {
-                GenState_emitInst(self, ARM64_encodeMovReg(X0, ret_val.reg));
+                self.emitInst( ARM64_encodeMovReg(X0, ret_val.reg));
             }
         }
     }
@@ -2593,12 +2593,12 @@ fn emitReturn(self: *GenState, v: *Value) {
         frame_size = (frame_size + 15) & (0 - 16);
     }
     if frame_size > 0 {
-        GenState_emitInst(self, encode_add_imm(SP, SP, frame_size));
+        self.emitInst( encode_add_imm(SP, SP, frame_size));
     }
     // LDP X29, X30, [SP], #16  (post-indexed load pair)
     // Note: imm7 is offset in 8-byte units, so 16 bytes = 2
-    GenState_emitInst(self, encode_ldp_post(X29, X30, SP, 2));
-    GenState_emitInst(self, ARM64_return());
+    self.emitInst( encode_ldp_post(X29, X30, SP, 2));
+    self.emitInst( ARM64_return());
 }
 
 fn copy(self: *GenState, v: *Value) {
@@ -2612,7 +2612,7 @@ fn copy(self: *GenState, v: *Value) {
         return;  // Same register, no-op
     }
 
-    GenState_emitInst(self, ARM64_encodeMovReg(rd, arg0.reg));
+    self.emitInst( ARM64_encodeMovReg(rd, arg0.reg));
 }
 
 // ============================================================================
@@ -2713,7 +2713,7 @@ fn emitPhiMoves(self: *GenState, current_block: *Block, target_block_id: i64) {
     while i < src_regs.count {
         if i64list_get(&needs_temp, i) != 0 and i64list_get(&src_regs, i) >= 0 {
             // MOV temp, src (encoded as ADD temp, src, #0)
-            GenState_emitInst(self, ARM64_encodeMovReg(i64list_get(&temp_regs, i), i64list_get(&src_regs, i)));
+            self.emitInst( ARM64_encodeMovReg(i64list_get(&temp_regs, i), i64list_get(&src_regs, i)));
         }
         i = i + 1;
     }
@@ -2724,14 +2724,14 @@ fn emitPhiMoves(self: *GenState, current_block: *Block, target_block_id: i64) {
         if i64list_get(&needs_temp, i) != 0 {
             if i64list_get(&src_regs, i) >= 0 {
                 // Source was saved to temp
-                GenState_emitInst(self, ARM64_encodeMovReg(i64list_get(&dest_regs, i), i64list_get(&temp_regs, i)));
+                self.emitInst( ARM64_encodeMovReg(i64list_get(&dest_regs, i), i64list_get(&temp_regs, i)));
             }
         } else {
             // No conflict, emit directly
             let src_r: i64 = i64list_get(&src_regs, i);
             let dest_r: i64 = i64list_get(&dest_regs, i);
             if src_r >= 0 and src_r != dest_r {
-                GenState_emitInst(self, ARM64_encodeMovReg(dest_r, src_r));
+                self.emitInst( ARM64_encodeMovReg(dest_r, src_r));
             }
         }
         i = i + 1;
@@ -2758,10 +2758,10 @@ fn blockControl(self: *GenState, block: *Block, next_block: i64) {
         if block.succs_count > 0 {
             let target: i64 = block.succs[0];
             // Emit phi moves before branch/fallthrough
-            GenState_emitPhiMoves(self, block, target);
+            self.emitPhiMoves( block, target);
             if target != next_block {
-                GenState_emitInst(self, encode_b(0));  // Placeholder offset
-                GenState_addBranch(self, target, false, 0);
+                self.emitInst( encode_b(0));  // Placeholder offset
+                self.addBranch( target, false, 0);
             }
         }
         return;
@@ -2780,35 +2780,35 @@ fn blockControl(self: *GenState, block: *Block, next_block: i64) {
         if then_block == next_block {
             // Fall through to then, branch to else if condition is false (zero)
             // Emit phi moves for else (the branch target)
-            GenState_emitPhiMoves(self, block, else_block);
-            GenState_emitInst(self, encode_cbz(cond_reg, 0));  // CBZ - branch if zero
-            GenState_addBranchCbz(self, else_block, cond_reg, false);
+            self.emitPhiMoves( block, else_block);
+            self.emitInst( encode_cbz(cond_reg, 0));  // CBZ - branch if zero
+            self.addBranchCbz( else_block, cond_reg, false);
             // Emit phi moves for then (fallthrough)
-            GenState_emitPhiMoves(self, block, then_block);
+            self.emitPhiMoves( block, then_block);
         } else if else_block == next_block {
             // Fall through to else, branch to then if condition is true (non-zero)
             // Emit phi moves for then (the branch target)
-            GenState_emitPhiMoves(self, block, then_block);
-            GenState_emitInst(self, encode_cbnz(cond_reg, 0));  // CBNZ - branch if non-zero
-            GenState_addBranchCbz(self, then_block, cond_reg, true);
+            self.emitPhiMoves( block, then_block);
+            self.emitInst( encode_cbnz(cond_reg, 0));  // CBNZ - branch if non-zero
+            self.addBranchCbz( then_block, cond_reg, true);
             // Emit phi moves for else (fallthrough)
-            GenState_emitPhiMoves(self, block, else_block);
+            self.emitPhiMoves( block, else_block);
         } else {
             // Neither is next, emit both branches
             // Emit phi moves for then
-            GenState_emitPhiMoves(self, block, then_block);
-            GenState_emitInst(self, encode_cbnz(cond_reg, 0));  // CBNZ - branch to then if true
-            GenState_addBranchCbz(self, then_block, cond_reg, true);
+            self.emitPhiMoves( block, then_block);
+            self.emitInst( encode_cbnz(cond_reg, 0));  // CBNZ - branch to then if true
+            self.addBranchCbz( then_block, cond_reg, true);
             // Emit phi moves for else
-            GenState_emitPhiMoves(self, block, else_block);
-            GenState_emitInst(self, encode_b(0));  // Unconditional to else
-            GenState_addBranch(self, else_block, false, 0);
+            self.emitPhiMoves( block, else_block);
+            self.emitInst( encode_b(0));  // Unconditional to else
+            self.addBranch( else_block, false, 0);
         }
         return;
     }
 
     // Unknown block kind - emit NOP
-    GenState_emitInst(self, encode_nop());
+    self.emitInst( encode_nop());
 }
 
 // ============================================================================
@@ -2833,13 +2833,13 @@ fn resolveBranches(self: *GenState) {
 
         // Patch the branch instruction based on kind
         if br.kind == BRANCH_B {
-            GenState_patchB(self, branch_offset, rel_offset);
+            self.patchB( branch_offset, rel_offset);
         } else if br.kind == BRANCH_B_COND {
-            GenState_patchBCond(self, branch_offset, rel_offset, br.cond);
+            self.patchBCond( branch_offset, rel_offset, br.cond);
         } else if br.kind == BRANCH_CBZ {
-            GenState_patchCbz(self, branch_offset, rel_offset, br.reg, false);
+            self.patchCbz( branch_offset, rel_offset, br.reg, false);
         } else if br.kind == BRANCH_CBNZ {
-            GenState_patchCbz(self, branch_offset, rel_offset, br.reg, true);
+            self.patchCbz( branch_offset, rel_offset, br.reg, true);
         }
 
         i = i + 1;

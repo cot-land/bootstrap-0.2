@@ -15,7 +15,7 @@ const MAX_SSA_SIZE: i64 = 32;
 // Check if a type can be held in SSA registers
 // Reference: value.zig canSSA
 fn canSSA(pool: *TypeRegistry, type_idx: i64) bool {
-    let size: i64 = TypeRegistry_sizeof(pool, type_idx);
+    let size: i64 = pool.sizeof( type_idx);
     if size <= 0 { return true; }
     if size > MAX_SSA_SIZE { return false; }
     return true;
@@ -48,7 +48,7 @@ fn expandCalls(f: *Func, type_pool: *TypeRegistry) {
                     // Check if stored value is from a call returning large type
                     // Note: SelectN not implemented in cot0 yet
                     if stored_val.op == Op.Call {
-                        let type_size: i64 = TypeRegistry_sizeof(type_pool, stored_val.type_idx);
+                        let type_size: i64 = type_pool.sizeof( stored_val.type_idx);
 
                         // If type > 16 bytes, it uses hidden return pointer
                         // Convert Store to Move for bulk memory copy
@@ -162,7 +162,7 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
                 // Only applies to struct types loaded from memory
                 let is_struct: bool = TypeInfo_isStruct(type_pool, arg.type_idx);
                 if is_struct {
-                    let arg_size: i64 = TypeRegistry_sizeof(type_pool, arg.type_idx);
+                    let arg_size: i64 = type_pool.sizeof( arg.type_idx);
                     if arg_size > 16 and arg.op == Op.Load and arg.args.count >= 1 {
                         needs_rewrite = true;
                         // Pass the source address instead of the loaded value

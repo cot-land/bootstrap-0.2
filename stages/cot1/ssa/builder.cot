@@ -1226,7 +1226,7 @@ impl SSABuilder {
                 var is_large_struct: bool = false;
                 var type_size: i64 = 8;
                 if self.type_registry != null {
-                    type_size = TypeRegistry_sizeof(self.type_registry, param_local.type_idx);
+                    type_size = self.type_registry.sizeof( param_local.type_idx);
                     let is_struct: bool = TypeInfo_isStruct(self.type_registry, param_local.type_idx);
                     if is_struct and type_size > 16 {
                         is_large_struct = true;
@@ -1475,7 +1475,7 @@ impl SSABuilder {
         var is_struct: bool = false;
         var struct_size: i64 = 0;
         if self.type_registry != null and local.type_idx > 0 {
-            let local_type: *Type = TypeRegistry_get(self.type_registry, local.type_idx);
+            let local_type: *Type = self.type_registry.get( local.type_idx);
             if local_type.kind == TypeKind.Struct {
                 is_struct = true;
                 struct_size = local.size;
@@ -1591,7 +1591,7 @@ impl SSABuilder {
         // the address for further field access or indexing.
         // Following Zig ssa_builder.zig:1042-1051
         if self.type_registry != null and ir_node.type_idx > 0 {
-            let field_type: *Type = TypeRegistry_get(self.type_registry, ir_node.type_idx);
+            let field_type: *Type = self.type_registry.get( ir_node.type_idx);
             if field_type != null {
                 if field_type.kind == TypeKind.Struct or field_type.kind == TypeKind.Array {
                     // Nested struct or array - return address for further access
@@ -1624,7 +1624,7 @@ impl SSABuilder {
         // the address for further field access or indexing.
         // Following Zig ssa_builder.zig:1118-1126
         if self.type_registry != null and ir_node.type_idx > 0 {
-            let field_type: *Type = TypeRegistry_get(self.type_registry, ir_node.type_idx);
+            let field_type: *Type = self.type_registry.get( ir_node.type_idx);
             if field_type != null {
                 if field_type.kind == TypeKind.Struct or field_type.kind == TypeKind.Array {
                     // Nested struct or array - return address for further access
@@ -1733,7 +1733,7 @@ impl SSABuilder {
         //   if (elem_type == .struct_type) { break :blk elem_addr; }
         // Structs need address for field access, not loaded value
         if self.type_registry != null and ir_node.type_idx > 0 {
-            let elem_type: *Type = TypeRegistry_get(self.type_registry, ir_node.type_idx);
+            let elem_type: *Type = self.type_registry.get( ir_node.type_idx);
             if elem_type.kind == TypeKind.Struct {
                 return ptr_val.id;
             }

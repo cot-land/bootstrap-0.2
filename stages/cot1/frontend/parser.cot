@@ -32,24 +32,21 @@ struct Parser {
 // Zig uses 10000, following parser.zig:53
 const LIMIT_NEST_LEV: i64 = 10000;
 
+// Static constructor (outside impl block for proper export)
+fn Parser_init(source: string, pool: *NodePool, type_registry: *TypeRegistry) Parser {
+    var p: Parser;
+    p.source = source;
+    p.scanner = Scanner_init(source);
+    p.pool = pool;
+    p.type_registry = type_registry;
+    p.had_error = false;
+    p.nest_lev = 0;  // Initialize nesting depth (follows Zig parser.zig:70)
+    // Prime the parser with first token
+    p.current = p.scanner.next();
+    return p;
+}
+
 impl Parser {
-
-    // ============================================================================
-    // Parser Initialization
-    // ============================================================================
-
-    fn init(source: string, pool: *NodePool, type_registry: *TypeRegistry) Parser {
-        var p: Parser;
-        p.source = source;
-        p.scanner = Scanner_init(source);
-        p.pool = pool;
-        p.type_registry = type_registry;
-        p.had_error = false;
-        p.nest_lev = 0;  // Initialize nesting depth (follows Zig parser.zig:70)
-        // Prime the parser with first token
-        p.current = p.scanner.next();
-        return p;
-    }
 
     // ============================================================================
     // Token Consumption Helpers (following Go's pattern)

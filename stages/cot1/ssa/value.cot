@@ -47,48 +47,48 @@ struct Value {
     spill_slot: i64,      // Stack slot if spilled (-1 if none)
 }
 
-impl Value {
+// ============================================================================
+// Value Constructors (static functions - outside impl block)
+// ============================================================================
 
-    // ============================================================================
-    // Value Constructors
-    // ============================================================================
+fn Value_create(id: i64, op: Op, type_idx: i64, block_id: i64) Value {
+    var v: Value = undefined;
+    v.id = id;
+    v.op = op;
+    v.type_idx = type_idx;
+    // Initialize dynamic args list
+    i64list_init(&v.args);
+    v.uses = 0;
+    v.aux_int = 0;
+    v.aux_ptr = 0;
+    v.block_id = block_id;
+    v.pos = 0;
+    v.reg = -1;
+    v.spill_slot = -1;
+    return v;
+}
 
-    fn create(id: i64, op: Op, type_idx: i64, block_id: i64) Value {
-        var v: Value = undefined;
-        v.id = id;
-        v.op = op;
-        v.type_idx = type_idx;
-        // Initialize dynamic args list
-        i64list_init(&v.args);
-        v.uses = 0;
+fn Value_newConstInt(id: i64, value: i64, type_idx: i64, block_id: i64) Value {
+    var v: Value = Value_create(id, Op.ConstInt, type_idx, block_id);
+    v.aux_int = value;
+    return v;
+}
+
+fn Value_newConstBool(id: i64, value: bool, block_id: i64) Value {
+    var v: Value = Value_create(id, Op.ConstBool, 1, block_id);  // TYPE_BOOL = 1
+    if value {
+        v.aux_int = 1;
+    } else {
         v.aux_int = 0;
-        v.aux_ptr = 0;
-        v.block_id = block_id;
-        v.pos = 0;
-        v.reg = -1;
-        v.spill_slot = -1;
-        return v;
     }
+    return v;
+}
+
+impl Value {
 
     // Get number of arguments (accessor for args.count)
     fn getArgsCount(self: *Value) i64 {
         return self.args.count;
-    }
-
-    fn newConstInt(id: i64, value: i64, type_idx: i64, block_id: i64) Value {
-        var v: Value = Value_create(id, Op.ConstInt, type_idx, block_id);
-        v.aux_int = value;
-        return v;
-    }
-
-    fn newConstBool(id: i64, value: bool, block_id: i64) Value {
-        var v: Value = Value_create(id, Op.ConstBool, 1, block_id);  // TYPE_BOOL = 1
-        if value {
-            v.aux_int = 1;
-        } else {
-            v.aux_int = 0;
-        }
-        return v;
     }
 
     // ============================================================================

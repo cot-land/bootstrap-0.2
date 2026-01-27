@@ -47,35 +47,36 @@ struct Local {
     offset: i64,          // Stack frame offset (computed by stackalloc)
 }
 
+// Static constructors (outside impl block)
+fn Local_create(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) Local {
+    return Local{
+        .name_start = name_start,
+        .name_len = name_len,
+        .type_idx = type_idx,
+        .is_mutable = is_mutable,
+        .is_param = false,
+        .param_idx = 0,
+        .size = 8,
+        .align = 8,
+        .offset = 0,
+    };
+}
+
+fn Local_createParam(name_start: i64, name_len: i64, type_idx: i64, param_idx: i64) Local {
+    return Local{
+        .name_start = name_start,
+        .name_len = name_len,
+        .type_idx = type_idx,
+        .is_mutable = false,
+        .is_param = true,
+        .param_idx = param_idx,
+        .size = 8,
+        .align = 8,
+        .offset = 0,
+    };
+}
+
 impl Local {
-    fn create(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) Local {
-        return Local{
-            .name_start = name_start,
-            .name_len = name_len,
-            .type_idx = type_idx,
-            .is_mutable = is_mutable,
-            .is_param = false,
-            .param_idx = 0,
-            .size = 8,
-            .align = 8,
-            .offset = 0,
-        };
-    }
-
-    fn createParam(name_start: i64, name_len: i64, type_idx: i64, param_idx: i64) Local {
-        return Local{
-            .name_start = name_start,
-            .name_len = name_len,
-            .type_idx = type_idx,
-            .is_mutable = false,
-            .is_param = true,
-            .param_idx = param_idx,
-            .size = 8,
-            .align = 8,
-            .offset = 0,
-        };
-    }
-
     // Local accessor functions
     fn getType(self: *Local) i64 {
         return self.type_idx;
@@ -206,7 +207,7 @@ impl Func {
 
     // Create entry block (call once at start)
     fn newEntryBlock(self: *Func) i64 {
-        let id: i64 = Func_newBlock(self, BlockKind.Plain);
+        let id: i64 = self.newBlock( BlockKind.Plain);
         self.entry_block = id;
         self.current_block = id;
         return id;
@@ -250,7 +251,7 @@ impl Func {
         self.values_count = self.values_count + 1;
 
         // Update block's value range
-        let b: *Block = Func_getBlock(self,self.current_block);
+        let b: *Block = self.getBlock(self.current_block);
         if b.values_count == 0 {
             b.values_start = id;
         }
@@ -374,14 +375,14 @@ impl Func {
 
     // Emit a constant integer
     fn emitConstInt(self: *Func, value: i64, type_idx: i64) *Value {
-        let v: *Value = Func_newValue(self,Op.ConstInt, type_idx);
+        let v: *Value = self.newValue(Op.ConstInt, type_idx);
         v.aux_int = value;
         return v;
     }
 
     // Emit a constant boolean
     fn emitConstBool(self: *Func, value: bool) *Value {
-        let v: *Value = Func_newValue(self,Op.ConstBool, 1);  // TYPE_BOOL = 1
+        let v: *Value = self.newValue(Op.ConstBool, 1);  // TYPE_BOOL = 1
         if value {
             v.aux_int = 1;
         } else {
@@ -392,7 +393,7 @@ impl Func {
 
     // Emit a constant string
     fn emitConstString(self: *Func, str_start: i64, str_len: i64) *Value {
-        let v: *Value = Func_newValue(self,Op.ConstString, 13);  // TYPE_STRING = 13
+        let v: *Value = self.newValue(Op.ConstString, 13);  // TYPE_STRING = 13
         v.aux_int = str_start;  // Offset in source text
         v.aux_ptr = str_len;    // Length of string
         return v;
@@ -400,50 +401,50 @@ impl Func {
 
     // Emit a binary operation
     fn emitBinary(self: *Func, op: Op, left: *Value, right: *Value, type_idx: i64) *Value {
-        let v: *Value = Func_newValue(self,op, type_idx);
+        let v: *Value = self.newValue(op, type_idx);
         v.addArg2( left, right);
         return v;
     }
 
     // Emit a unary operation
     fn emitUnary(self: *Func, op: Op, operand: *Value, type_idx: i64) *Value {
-        let v: *Value = Func_newValue(self,op, type_idx);
+        let v: *Value = self.newValue(op, type_idx);
         v.addArg( operand);
         return v;
     }
 
     // Emit a select (conditional value): cond ? true_val : false_val
     fn emitSelect(self: *Func, cond: *Value, true_val: *Value, false_val: *Value, type_idx: i64) *Value {
-        let v: *Value = Func_newValue(self,Op.Select, type_idx);
+        let v: *Value = self.newValue(Op.Select, type_idx);
         v.addArg3( cond, true_val, false_val);
         return v;
     }
 
     // Emit a load from local
     fn emitLoadLocal(self: *Func, local_idx: i64) *Value {
-        let local: *Local = Func_getLocal(self,local_idx);
-        let v: *Value = Func_newValue(self,Op.LocalAddr, local.type_idx);
+        let local: *Local = self.getLocal(local_idx);
+        let v: *Value = self.newValue(Op.LocalAddr, local.type_idx);
         v.aux_int = local_idx;
 
-        let load: *Value = Func_newValue(self,Op.Load, local.type_idx);
+        let load: *Value = self.newValue(Op.Load, local.type_idx);
         load.addArg( v);
         return load;
     }
 
     // Emit a store to local
     fn emitStoreLocal(self: *Func, local_idx: i64, val: *Value) *Value {
-        let local: *Local = Func_getLocal(self,local_idx);
-        let addr: *Value = Func_newValue(self,Op.LocalAddr, local.type_idx);
+        let local: *Local = self.getLocal(local_idx);
+        let addr: *Value = self.newValue(Op.LocalAddr, local.type_idx);
         addr.aux_int = local_idx;
 
-        let store: *Value = Func_newValue(self,Op.Store, 0);  // Store has no result type
+        let store: *Value = self.newValue(Op.Store, 0);  // Store has no result type
         store.addArg2( addr, val);
         return store;
     }
 
     // Emit a return
     fn emitReturn(self: *Func, val: *Value) *Value {
-        let ret: *Value = Func_newValue(self,Op.Return, 0);
+        let ret: *Value = self.newValue(Op.Return, 0);
         if val.id != INVALID_ID {
             ret.addArg( val);
         }
@@ -453,7 +454,7 @@ impl Func {
     // Emit a function call
     // name_start/name_len refer to positions in source
     fn emitCall(self: *Func, name_start: i64, name_len: i64, type_idx: i64) *Value {
-        let v: *Value = Func_newValue(self,Op.Call, type_idx);
+        let v: *Value = self.newValue(Op.Call, type_idx);
         v.aux_int = name_start;
         v.aux_ptr = name_len;
         return v;
@@ -463,7 +464,7 @@ impl Func {
     // Following Zig pattern: src/frontend/ir.zig:1168
     // The function pointer will be added as first arg by caller
     fn emitCallIndirect(self: *Func, type_idx: i64) *Value {
-        let v: *Value = Func_newValue(self,Op.ClosureCall, type_idx);
+        let v: *Value = self.newValue(Op.ClosureCall, type_idx);
         return v;
     }
 
@@ -473,32 +474,32 @@ impl Func {
 
     // Set up a conditional branch
     fn emitIf(self: *Func, cond: *Value, then_block: i64, else_block: i64) {
-        let b: *Block = Func_getBlock(self,self.current_block);
+        let b: *Block = self.getBlock(self.current_block);
         b.kind = BlockKind.If;
         b.control = cond.id;
 
         b.setSucc( 0, then_block);
         b.setSucc( 1, else_block);
 
-        let then_b: *Block = Func_getBlock(self,then_block);
-        let else_b: *Block = Func_getBlock(self,else_block);
+        let then_b: *Block = self.getBlock(then_block);
+        let else_b: *Block = self.getBlock(else_block);
         then_b.addPred( self.current_block);
         else_b.addPred( self.current_block);
     }
 
     // Set up an unconditional jump
     fn emitJump(self: *Func, target: i64) {
-        let b: *Block = Func_getBlock(self,self.current_block);
+        let b: *Block = self.getBlock(self.current_block);
         b.kind = BlockKind.Plain;
         b.addSucc( target);
 
-        let target_b: *Block = Func_getBlock(self,target);
+        let target_b: *Block = self.getBlock(target);
         target_b.addPred( self.current_block);
     }
 
     // Mark current block as return block
     fn emitReturnBlock(self: *Func) {
-        let b: *Block = Func_getBlock(self,self.current_block);
+        let b: *Block = self.getBlock(self.current_block);
         b.kind = BlockKind.Return;
     }
 }

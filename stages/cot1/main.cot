@@ -515,7 +515,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     g_type_pool.setSource(g_source, g_source_len);
 
     var lowerer: Lowerer = undefined;
-    Lowerer_init(&lowerer,
+    lowerer.init(
                  g_nodes, pool.count,
                  pool.children.items, pool.children.count,
                  g_source, g_source_len,
@@ -525,9 +525,9 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
                  g_ir_funcs, g_ir_funcs_cap,
                  g_constants, g_constants_cap);
     // Lowerer now self-allocates: defer_stack, type_aliases, label_stack
-    Lowerer_setGlobals(&lowerer, g_ir_globals, g_ir_globals_cap);
+    lowerer.setGlobals(g_ir_globals, g_ir_globals_cap);
 
-    let ir_count: i64 = Lowerer_lowerAll(&lowerer);
+    let ir_count: i64 = lowerer.lowerAll();
 
     // Sync globals from Lowerer after potential reallocations
     g_ir_nodes = lowerer.ir_nodes;
@@ -722,7 +722,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     print("Phase 6: Creating Mach-O object...\n");
 
     var writer: MachOWriter = undefined;
-    MachOWriter_init(&writer, gs.code, gs.code_count, gs.data, gs.data_cap);
+    writer.init(gs.code, gs.code_count, gs.data, gs.data_cap);
 
     // GenState_finalize handles:
     // - Resolving internal call sites (patching BL instructions)
@@ -747,7 +747,7 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     }
 
     // Write Mach-O with debug info
-    let macho_bytes: i64 = MachOWriter_writeWithDebug(&writer);
+    let macho_bytes: i64 = writer.writeWithDebug();
     print("  Mach-O bytes: ");
     print(macho_bytes);
     print("\n");
