@@ -240,6 +240,11 @@ fn ARM64_cmp(rn: i64, rm: i64) i64 {
     return encode_cmp_reg(rn, rm);
 }
 
+// Handle SSA comparison with immediate (sets flags)
+fn ARM64_cmp_imm(rn: i64, imm: i64) i64 {
+    return encode_cmp_imm(rn, imm);
+}
+
 // Handle conditional set (result = cond ? 1 : 0)
 fn ARM64_setcc(rd: i64, cond: i64) i64 {
     return encode_cset(rd, cond);

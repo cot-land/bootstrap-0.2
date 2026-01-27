@@ -37,7 +37,8 @@ enum Op {
     Shl64,          // arg0 << arg1
     Shr64,          // arg0 >> arg1 (logical)
     Sar64,          // arg0 >> arg1 (arithmetic)
-    Not64,          // ~arg0
+    Not64,          // ~arg0 (bitwise NOT)
+    LogicalNot64,   // !arg0 (logical NOT: 0 -> 1, non-zero -> 0)
 
     // Comparisons (return bool)
     Eq64,           // arg0 == arg1
@@ -265,6 +266,7 @@ fn Op_numArgs(op: Op) i64 {
     // Unary ops take 1 arg
     if op == Op.Neg64 { return 1; }
     if op == Op.Not64 { return 1; }
+    if op == Op.LogicalNot64 { return 1; }
     if op == Op.Copy { return 1; }
     if op == Op.SliceLen { return 1; }
     if op == Op.SlicePtr { return 1; }
@@ -375,6 +377,7 @@ fn Op_toString(op: Op) string {
     if op == Op.Shr64 { return "Shr64"; }
     if op == Op.Sar64 { return "Sar64"; }
     if op == Op.Not64 { return "Not64"; }
+    if op == Op.LogicalNot64 { return "LogicalNot64"; }
     if op == Op.Eq64 { return "Eq64"; }
     if op == Op.Ne64 { return "Ne64"; }
     if op == Op.Lt64 { return "Lt64"; }

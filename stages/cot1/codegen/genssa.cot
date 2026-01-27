@@ -896,7 +896,9 @@ fn GenState_value(gs: *GenState, v: *Value) {
     } else if v.op == Op.Neg64 {
         GenState_neg(gs, v);
     } else if v.op == Op.Not64 {
-        GenState_not(gs, v);
+        GenState_bitnot(gs, v);
+    } else if v.op == Op.LogicalNot64 {
+        GenState_logical_not(gs, v);
     } else if v.op == Op.Eq64 {
         GenState_compare(gs, v, COND_EQ);
     } else if v.op == Op.Ne64 {
@@ -1429,16 +1431,42 @@ fn GenState_neg(gs: *GenState, v: *Value) {
     GenState_emitInst(gs, encode_sub_reg(rd, XZR, arg0.reg));
 }
 
-fn GenState_not(gs: *GenState, v: *Value) {
+// Bitwise NOT: ~arg0 = MVN (all bits inverted)
+fn GenState_bitnot(gs: *GenState, v: *Value) {
     let rd: i64 = v.reg;
     if rd < 0 { return; }
 
     let f: *Func = gs.func;
     let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
 
-    // Logical NOT: XOR with -1 (all 1s)
-    // Or use MVN (bitwise not): MVN Xd, Xn = ORN Xd, XZR, Xn
+    // MVN Xd, Xn = ORN Xd, XZR, Xn
     GenState_emitInst(gs, encode_orn(rd, XZR, arg0.reg));
+}
+
+// Logical NOT: !arg0 (0 -> 1, non-zero -> 0)
+fn GenState_logical_not(gs: *GenState, v: *Value) {
+    let rd: i64 = v.reg;
+    if rd < 0 { return; }
+
+    let f: *Func = gs.func;
+    let arg0: *Value = Func_getValue(f, Value_getArg(v, 0));
+
+    // CMP Xn, #0
+    // CSET Xd, EQ (set Xd = 1 if zero, 0 if non-zero)
+    var src_reg: i64 = arg0.reg;
+    if src_reg < 0 {
+        // Handle constant case
+        if arg0.op == Op.ConstInt or arg0.op == Op.ConstBool {
+            // Materialize constant to x16 first
+            let imm: i64 = arg0.aux_int;
+            GenState_emitInst(gs, encode_movz(X16, imm & 0xFFFF, 0));
+            src_reg = X16;
+        } else {
+            return;
+        }
+    }
+    GenState_emitInst(gs, ARM64_cmp_imm(src_reg, 0));
+    GenState_emitInst(gs, ARM64_setcc(rd, COND_EQ));
 }
 
 fn GenState_compare(gs: *GenState, v: *Value, cond: i64) {

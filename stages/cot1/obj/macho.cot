@@ -37,8 +37,8 @@ extern fn malloc_u8(count: i64) *u8;
 extern fn malloc_i64(count: i64) *i64;
 
 // Storage capacity constants
-const MW_SYMBOLS_CAP: i64 = 2000;
-const MW_STRINGS_CAP: i64 = 32768;
+const MW_SYMBOLS_CAP: i64 = 5000;  // Needs ~2000 functions + ~2000 strings for self-hosting
+const MW_STRINGS_CAP: i64 = 131072;  // 128KB - enough for self-hosting (~35KB needed)
 const MW_RELOCS_CAP: i64 = 10000;
 const MW_DEBUG_LINE_CAP: i64 = 65536;
 const MW_DEBUG_LINE_RELOCS_CAP: i64 = 16;
