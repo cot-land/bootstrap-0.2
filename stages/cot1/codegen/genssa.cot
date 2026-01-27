@@ -2998,7 +2998,7 @@ fn finalize(
         }
         let sym_len: i64 = 1 + ir_func.name_len;
 
-        let sym_idx: i64 = MachOWriter_addSymbol(writer, sym_name.items, sym_len, ir_func.code_offset, SECT_TEXT, true);
+        let sym_idx: i64 = writer.addSymbol( sym_name.items, sym_len, ir_func.code_offset, SECT_TEXT, true);
 
         if main_sym_idx < 0 {
             main_sym_idx = sym_idx;
@@ -3070,11 +3070,11 @@ fn finalize(
                 ext_sym_len = 1 + copy_len;
             }
 
-            let sym_idx: i64 = MachOWriter_addSymbol(writer, sym_name.items, ext_sym_len, 0, 0, true);
+            let sym_idx: i64 = writer.addSymbol( sym_name.items, ext_sym_len, 0, 0, true);
             let no_ptr: *i64 = writer.sym_name_offsets + sym_idx;
             let name_offset: i64 = no_ptr.*;
             let name_ptr: *u8 = writer.strings + name_offset;
-            MachOWriter_addReloc(writer, cs2.code_offset, name_ptr, ext_sym_len, ARM64_RELOC_BRANCH26, 1);
+            writer.addReloc( cs2.code_offset, name_ptr, ext_sym_len, ARM64_RELOC_BRANCH26, 1);
         }
 
         call_idx = call_idx + 1;
@@ -3092,11 +3092,11 @@ fn finalize(
         (snc + 15).* = 104; (snc + 16).* = 97; (snc + 17).* = 110;
         (snc + 18).* = 100; (snc + 19).* = 108; (snc + 20).* = 101;
         (snc + 21).* = 114;
-        let crash_sym_idx: i64 = MachOWriter_addSymbol(writer, sym_name.items, 22, 0, 0, true);
+        let crash_sym_idx: i64 = writer.addSymbol( sym_name.items, 22, 0, 0, true);
         let crash_no_ptr: *i64 = writer.sym_name_offsets + crash_sym_idx;
         let crash_name_offset: i64 = crash_no_ptr.*;
         let crash_name_ptr: *u8 = writer.strings + crash_name_offset;
-        MachOWriter_addReloc(writer, self.crash_handler_offset, crash_name_ptr, 22, ARM64_RELOC_BRANCH26, 1);
+        writer.addReloc( self.crash_handler_offset, crash_name_ptr, 22, ARM64_RELOC_BRANCH26, 1);
     }
 
     // Phase 6: Add global variable symbols and data
@@ -3117,7 +3117,7 @@ fn finalize(
         let g_sym_len: i64 = 1 + g.name_len;
 
         let g_data_offset: i64 = globals_base_offset + g.data_offset;
-        MachOWriter_addSymbol(writer, sym_name.items, g_sym_len, g_data_offset, SECT_DATA, true);
+        writer.addSymbol( sym_name.items, g_sym_len, g_data_offset, SECT_DATA, true);
 
         global_idx = global_idx + 1;
     }
@@ -3127,11 +3127,11 @@ fn finalize(
     while global_idx < ir_globals_count {
         let g: *IRGlobal = ir_globals + global_idx;
         if g.is_array {
-            MachOWriter_addDataZeros(writer, g.size);
+            writer.addDataZeros( g.size);
         } else if g.has_init {
-            MachOWriter_addDataI64(writer, g.init_value);
+            writer.addDataI64(g.init_value);
         } else {
-            MachOWriter_addDataZeros(writer, 8);
+            writer.addDataZeros( 8);
         }
         global_idx = global_idx + 1;
     }
@@ -3158,8 +3158,8 @@ fn finalize(
         var g_name_len: i64 = 0;
         while (g_name_ptr + g_name_len).* != 0 { g_name_len = g_name_len + 1; }
 
-        MachOWriter_addReloc(writer, code_offset, g_name_ptr, g_name_len, ARM64_RELOC_PAGE21, 1);
-        MachOWriter_addReloc(writer, code_offset + 4, g_name_ptr, g_name_len, ARM64_RELOC_PAGEOFF12, 0);
+        writer.addReloc( code_offset, g_name_ptr, g_name_len, ARM64_RELOC_PAGE21, 1);
+        writer.addReloc( code_offset + 4, g_name_ptr, g_name_len, ARM64_RELOC_PAGEOFF12, 0);
 
         reloc_idx = reloc_idx + 1;
     }
@@ -3215,7 +3215,7 @@ fn finalize(
                 far_name_idx = far_name_idx + 1;
             }
             let far_sym_len: i64 = 1 + far_copy_len;
-            found_sym_idx = MachOWriter_addSymbol(writer, sym_name.items, far_sym_len, 0, 0, true);
+            found_sym_idx = writer.addSymbol( sym_name.items, far_sym_len, 0, 0, true);
         }
 
         let far_no_ptr: *i64 = writer.sym_name_offsets + found_sym_idx;
@@ -3223,8 +3223,8 @@ fn finalize(
         let far_name_ptr: *u8 = writer.strings + far_name_offset;
         var far_name_len2: i64 = 0;
         while (far_name_ptr + far_name_len2).* != 0 { far_name_len2 = far_name_len2 + 1; }
-        MachOWriter_addReloc(writer, far_code_offset, far_name_ptr, far_name_len2, ARM64_RELOC_PAGE21, 1);
-        MachOWriter_addReloc(writer, far_code_offset + 4, far_name_ptr, far_name_len2, ARM64_RELOC_PAGEOFF12, 0);
+        writer.addReloc( far_code_offset, far_name_ptr, far_name_len2, ARM64_RELOC_PAGE21, 1);
+        writer.addReloc( far_code_offset + 4, far_name_ptr, far_name_len2, ARM64_RELOC_PAGEOFF12, 0);
 
         func_addr_idx = func_addr_idx + 1;
     }
@@ -3258,15 +3258,15 @@ fn finalize(
                 else { char_val = next_val; }
             }
 
-            MachOWriter_addDataByte(writer, char_val);
+            writer.addDataByte( char_val);
             actual_len = actual_len + 1;
             str_copy_idx = str_copy_idx + 1;
         }
-        MachOWriter_addDataByte(writer, 0);
+        writer.addDataByte( 0);
         sr_len_ptr.* = actual_len;
 
         while (writer.data_count - strings_base_offset) % 8 != 0 {
-            MachOWriter_addDataByte(writer, 0);
+            writer.addDataByte( 0);
         }
 
         str_idx = str_idx + 1;
@@ -3309,13 +3309,13 @@ fn finalize(
         }
         (sns + sym_name_len).* = 0;
 
-        let str_sym_idx: i64 = MachOWriter_addSymbol(writer, sym_name.items, sym_name_len, str_data_offset, SECT_DATA, false);
+        let str_sym_idx: i64 = writer.addSymbol( sym_name.items, sym_name_len, str_data_offset, SECT_DATA, false);
 
         let str_no_ptr: *i64 = writer.sym_name_offsets + str_sym_idx;
         let str_name_offset: i64 = str_no_ptr.*;
         let str_name_ptr: *u8 = writer.strings + str_name_offset;
-        MachOWriter_addReloc(writer, sr2_code_offset, str_name_ptr, sym_name_len, ARM64_RELOC_PAGE21, 1);
-        MachOWriter_addReloc(writer, sr2_code_offset + 4, str_name_ptr, sym_name_len, ARM64_RELOC_PAGEOFF12, 0);
+        writer.addReloc( sr2_code_offset, str_name_ptr, sym_name_len, ARM64_RELOC_PAGE21, 1);
+        writer.addReloc( sr2_code_offset + 4, str_name_ptr, sym_name_len, ARM64_RELOC_PAGEOFF12, 0);
 
         str_data_offset = str_data_offset + sr2_str_len + 1;
         while str_data_offset % 8 != 0 {
@@ -3326,7 +3326,7 @@ fn finalize(
     }
 
     // Phase 10: Generate DWARF debug info
-    let debug_bytes: i64 = MachOWriter_generateDebugLine(writer,
+    let debug_bytes: i64 = writer.generateDebugLine(
         source_path, source_path_len,
         self.line_entries, self.line_entries_count,
         self.code_count, main_sym_idx);
@@ -3360,7 +3360,7 @@ fn finalize(
 
     // Add relocation for low_pc in debug_info
     let low_pc_offset: i64 = 11 + 1 + (source_path_len + 1) + (comp_dir_len + 1) + 4;
-    MachOWriter_addDebugInfoReloc(writer, low_pc_offset, main_sym_idx);
+    writer.addDebugInfoReloc( low_pc_offset, main_sym_idx);
 
     u8list_deinit(&sym_name);
     return 0;

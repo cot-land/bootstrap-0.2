@@ -406,6 +406,1208 @@ struct MachOWriter {
 // ============================================================================
 
 // Allocate module storage if not already allocated
+
+impl MachOWriter {
+
+    fn init(self: *MachOWriter, code: *u8, code_count: i64, data: *u8, data_cap: i64) {
+        // Allocate module storage on first use
+        MachOWriter_allocateStorage();
+    
+        // Code from GenState (external)
+        self.code = code;
+        self.code_count = code_count;
+        self.code_cap = code_count;  // Already populated
+    
+        // Data from GenState (external, but we may add to it)
+        self.data = data;
+        self.data_count = 0;
+        self.data_cap = data_cap;
+    
+        // Symbol table - uses module storage
+        self.sym_name_offsets = mw_sym_name_offsets;
+        self.sym_values = mw_sym_values;
+        self.sym_sections = mw_sym_sections;
+        self.sym_is_externals = mw_sym_is_externals;
+        self.symbols_count = 0;
+        self.symbols_cap = mw_symbols_cap;
+    
+        // String table starts with null byte - uses module storage
+        self.strings = mw_strings;
+        self.strings_count = 1;  // Reserve byte 0 as null
+        self.strings_cap = mw_strings_cap;
+        mw_strings.* = 0;
+    
+        // Main relocations - uses module storage
+        self.reloc_offsets = mw_reloc_offsets;
+        self.reloc_target_str_offs = mw_reloc_target_str_offs;
+        self.reloc_target_lens = mw_reloc_target_lens;
+        self.reloc_types = mw_reloc_types;
+        self.reloc_is_pcrels = mw_reloc_is_pcrels;
+        self.reloc_lengths = mw_reloc_lengths;
+        self.relocs_count = 0;
+        self.relocs_cap = mw_relocs_cap;
+    
+        // Debug line section - uses module storage
+        self.debug_line = mw_debug_line;
+        self.debug_line_count = 0;
+        self.debug_line_cap = mw_debug_line_cap;
+    
+        // Debug line relocations - uses module storage
+        self.dbg_line_reloc_offsets = mw_dbg_line_reloc_offsets;
+        self.dbg_line_reloc_target_str_offs = mw_dbg_line_reloc_target_str_offs;
+        self.dbg_line_reloc_target_lens = mw_dbg_line_reloc_target_lens;
+        self.dbg_line_reloc_types = mw_dbg_line_reloc_types;
+        self.dbg_line_reloc_is_pcrels = mw_dbg_line_reloc_is_pcrels;
+        self.dbg_line_reloc_lengths = mw_dbg_line_reloc_lengths;
+        self.debug_line_relocs_count = 0;
+        self.debug_line_relocs_cap = mw_debug_line_relocs_cap;
+    
+        // Debug abbrev section - uses module storage
+        self.debug_abbrev = mw_debug_abbrev;
+        self.debug_abbrev_count = 0;
+        self.debug_abbrev_cap = mw_debug_abbrev_cap;
+    
+        // Debug info section - uses module storage
+        self.debug_info = mw_debug_info;
+        self.debug_info_count = 0;
+        self.debug_info_cap = mw_debug_info_cap;
+    
+        // Debug info relocations - uses module storage
+        self.dbg_info_reloc_offsets = mw_dbg_info_reloc_offsets;
+        self.dbg_info_reloc_target_str_offs = mw_dbg_info_reloc_target_str_offs;
+        self.dbg_info_reloc_target_lens = mw_dbg_info_reloc_target_lens;
+        self.dbg_info_reloc_types = mw_dbg_info_reloc_types;
+        self.dbg_info_reloc_is_pcrels = mw_dbg_info_reloc_is_pcrels;
+        self.dbg_info_reloc_lengths = mw_dbg_info_reloc_lengths;
+        self.debug_info_relocs_count = 0;
+        self.debug_info_relocs_cap = mw_debug_info_relocs_cap;
+    
+        // Output buffer - uses module storage
+        self.output = mw_output;
+        self.output_count = 0;
+        self.output_cap = mw_output_cap;
+    }
+
+    fn setDebugLine(self: *MachOWriter, debug_line: *u8, debug_line_cap: i64) {
+        self.debug_line = debug_line;
+        self.debug_line_count = 0;
+        self.debug_line_cap = debug_line_cap;
+    }
+
+    fn setDebugLineRelocs(self: *MachOWriter,
+                                       offsets: *i64, target_str_offs: *i64, target_lens: *i64,
+                                       types: *i64, is_pcrels: *i64, lengths: *i64,
+                                       cap: i64) {
+        self.dbg_line_reloc_offsets = offsets;
+        self.dbg_line_reloc_target_str_offs = target_str_offs;
+        self.dbg_line_reloc_target_lens = target_lens;
+        self.dbg_line_reloc_types = types;
+        self.dbg_line_reloc_is_pcrels = is_pcrels;
+        self.dbg_line_reloc_lengths = lengths;
+        self.debug_line_relocs_count = 0;
+        self.debug_line_relocs_cap = cap;
+    }
+
+    fn addDebugLineReloc(self: *MachOWriter, offset: i64, symbol_idx: i64) {
+        if self.dbg_line_reloc_offsets == null or self.debug_line_relocs_count >= self.debug_line_relocs_cap {
+            return;
+        }
+    
+        // Get symbol name offset from parallel arrays
+        let no_ptr: *i64 = self.sym_name_offsets + symbol_idx;
+        let name_str_off: i64 = no_ptr.*;
+        let name_ptr: *u8 = self.strings + name_str_off;
+        var name_len: i64 = 0;
+        while (name_ptr + name_len).* != 0 { name_len = name_len + 1; }
+    
+        // Store in parallel arrays
+        let idx: i64 = self.debug_line_relocs_count;
+        let off_ptr: *i64 = self.dbg_line_reloc_offsets + idx;
+        let tgt_ptr: *i64 = self.dbg_line_reloc_target_str_offs + idx;
+        let len_ptr: *i64 = self.dbg_line_reloc_target_lens + idx;
+        let typ_ptr: *i64 = self.dbg_line_reloc_types + idx;
+        let pcr_ptr: *i64 = self.dbg_line_reloc_is_pcrels + idx;
+        let lng_ptr: *i64 = self.dbg_line_reloc_lengths + idx;
+    
+        off_ptr.* = offset;
+        tgt_ptr.* = name_str_off;  // Store offset instead of pointer
+        len_ptr.* = name_len;
+        typ_ptr.* = ARM64_RELOC_UNSIGNED;
+        pcr_ptr.* = 0;
+        lng_ptr.* = 3;  // 8 bytes (2^3) for 64-bit address
+    
+        self.debug_line_relocs_count = self.debug_line_relocs_count + 1;
+    }
+
+    fn setDebugAbbrev(self: *MachOWriter, buf: *u8, cap: i64) {
+        self.debug_abbrev = buf;
+        self.debug_abbrev_count = 0;
+        self.debug_abbrev_cap = cap;
+    }
+
+    fn setDebugInfo(self: *MachOWriter, buf: *u8, cap: i64) {
+        self.debug_info = buf;
+        self.debug_info_count = 0;
+        self.debug_info_cap = cap;
+    }
+
+    fn setDebugInfoRelocs(self: *MachOWriter,
+                                       offsets: *i64, target_str_offs: *i64, target_lens: *i64,
+                                       types: *i64, is_pcrels: *i64, lengths: *i64,
+                                       cap: i64) {
+        self.dbg_info_reloc_offsets = offsets;
+        self.dbg_info_reloc_target_str_offs = target_str_offs;
+        self.dbg_info_reloc_target_lens = target_lens;
+        self.dbg_info_reloc_types = types;
+        self.dbg_info_reloc_is_pcrels = is_pcrels;
+        self.dbg_info_reloc_lengths = lengths;
+        self.debug_info_relocs_count = 0;
+        self.debug_info_relocs_cap = cap;
+    }
+
+    fn addDebugInfoReloc(self: *MachOWriter, offset: i64, symbol_idx: i64) {
+        if self.dbg_info_reloc_offsets == null or self.debug_info_relocs_count >= self.debug_info_relocs_cap {
+            return;
+        }
+    
+        // Get symbol name offset from parallel arrays
+        let no_ptr: *i64 = self.sym_name_offsets + symbol_idx;
+        let name_str_off: i64 = no_ptr.*;
+        let name_ptr: *u8 = self.strings + name_str_off;
+        var name_len: i64 = 0;
+        while (name_ptr + name_len).* != 0 { name_len = name_len + 1; }
+    
+        // Store in parallel arrays
+        let idx: i64 = self.debug_info_relocs_count;
+        let off_ptr: *i64 = self.dbg_info_reloc_offsets + idx;
+        let tgt_ptr: *i64 = self.dbg_info_reloc_target_str_offs + idx;
+        let len_ptr: *i64 = self.dbg_info_reloc_target_lens + idx;
+        let typ_ptr: *i64 = self.dbg_info_reloc_types + idx;
+        let pcr_ptr: *i64 = self.dbg_info_reloc_is_pcrels + idx;
+        let lng_ptr: *i64 = self.dbg_info_reloc_lengths + idx;
+    
+        off_ptr.* = offset;
+        tgt_ptr.* = name_str_off;  // Store offset instead of pointer
+        len_ptr.* = name_len;
+        typ_ptr.* = ARM64_RELOC_UNSIGNED;
+        pcr_ptr.* = 0;
+        lng_ptr.* = 3;  // 8 bytes (2^3) for 64-bit address
+    
+        self.debug_info_relocs_count = self.debug_info_relocs_count + 1;
+    }
+
+    fn addCode(self: *MachOWriter, bytes: *u8, len: i64) {
+        var i: i64 = 0;
+        while i < len and self.code_count < self.code_cap {
+            let src: *u8 = bytes + i;
+            let dst: *u8 = self.code + self.code_count;
+            dst.* = src.*;
+            self.code_count = self.code_count + 1;
+            i = i + 1;
+        }
+    }
+
+    fn addData(self: *MachOWriter, bytes: *u8, len: i64) i64 {
+        let offset: i64 = self.data_count;
+        var i: i64 = 0;
+        while i < len and self.data_count < self.data_cap {
+            let src: *u8 = bytes + i;
+            let dst: *u8 = self.data + self.data_count;
+            dst.* = src.*;
+            self.data_count = self.data_count + 1;
+            i = i + 1;
+        }
+        return offset;
+    }
+
+    fn addDataByte(self: *MachOWriter, b: i64) {
+        if self.data_count < self.data_cap {
+            let dst: *u8 = self.data + self.data_count;
+            dst.* = @intCast(u8, b);
+            self.data_count = self.data_count + 1;
+        }
+    }
+
+    fn addDataI64(self: *MachOWriter, value: i64) {
+        // Write 8 bytes in little-endian order
+        self.addDataByte(value & 0xFF);
+        self.addDataByte((value >> 8) & 0xFF);
+        self.addDataByte((value >> 16) & 0xFF);
+        self.addDataByte((value >> 24) & 0xFF);
+        self.addDataByte((value >> 32) & 0xFF);
+        self.addDataByte((value >> 40) & 0xFF);
+        self.addDataByte((value >> 48) & 0xFF);
+        self.addDataByte((value >> 56) & 0xFF);
+    }
+
+    fn addDataZeros(self: *MachOWriter, len: i64) i64 {
+        let offset: i64 = self.data_count;
+        var i: i64 = 0;
+        while i < len and self.data_count < self.data_cap {
+            let dst: *u8 = self.data + self.data_count;
+            dst.* = 0;
+            self.data_count = self.data_count + 1;
+            i = i + 1;
+        }
+        return offset;
+    }
+
+    fn addStringLiteral(self: *MachOWriter, s: *u8, len: i64) i64 {
+        let offset: i64 = self.data_count;
+        var i: i64 = 0;
+        while i < len and self.data_count < self.data_cap {
+            let src: *u8 = s + i;
+            let dst: *u8 = self.data + self.data_count;
+            dst.* = src.*;
+            self.data_count = self.data_count + 1;
+            i = i + 1;
+        }
+        // Add null terminator
+        if self.data_count < self.data_cap {
+            let null_ptr: *u8 = self.data + self.data_count;
+            null_ptr.* = 0;
+            self.data_count = self.data_count + 1;
+        }
+        return offset;
+    }
+
+    fn addString(self: *MachOWriter, s: *u8, len: i64) i64 {
+        let offset: i64 = self.strings_count;
+    
+        var i: i64 = 0;
+        while i < len and self.strings_count < self.strings_cap {
+            let src: *u8 = s + i;
+            let dst: *u8 = self.strings + self.strings_count;
+            dst.* = src.*;
+            self.strings_count = self.strings_count + 1;
+            i = i + 1;
+        }
+    
+        // Add null terminator
+        if self.strings_count < self.strings_cap {
+            let null_ptr: *u8 = self.strings + self.strings_count;
+            null_ptr.* = 0;
+            self.strings_count = self.strings_count + 1;
+        }
+    
+        return offset;
+    }
+
+    fn addSymbol(self: *MachOWriter, name: *u8, name_len: i64,
+                        value: i64, section: i64, is_external: bool) i64 {
+        if self.symbols_count >= self.symbols_cap {
+            return 0 - 1;  // Error
+        }
+    
+        let name_offset: i64 = self.addString(name, name_len);
+    
+        let idx: i64 = self.symbols_count;
+        let no_ptr: *i64 = self.sym_name_offsets + idx;
+        let v_ptr: *i64 = self.sym_values + idx;
+        let s_ptr: *i64 = self.sym_sections + idx;
+        let e_ptr: *i64 = self.sym_is_externals + idx;
+    
+        no_ptr.* = name_offset;
+        v_ptr.* = value;
+        s_ptr.* = section;
+        if is_external {
+            e_ptr.* = 1;
+        } else {
+            e_ptr.* = 0;
+        }
+    
+        self.symbols_count = self.symbols_count + 1;
+        return idx;
+    }
+
+    fn findSymbol(self: *MachOWriter, name: *u8, name_len: i64) i64 {
+        var i: i64 = 0;
+        while i < self.symbols_count {
+            // Get name_offset from parallel array
+            let no_ptr: *i64 = self.sym_name_offsets + i;
+            let sym_name_offset: i64 = no_ptr.*;
+            let sym_name: *u8 = self.strings + sym_name_offset;
+            var match: bool = true;
+            var j: i64 = 0;
+            while j < name_len {
+                let c1: *u8 = name + j;
+                let c2: *u8 = sym_name + j;
+                if c1.* != c2.* {
+                    match = false;
+                }
+                j = j + 1;
+            }
+            // Check null terminator
+            let term: *u8 = sym_name + name_len;
+            if match and term.* == 0 {
+                return i;
+            }
+            i = i + 1;
+        }
+        return -1;
+    }
+
+    fn addReloc(self: *MachOWriter, offset: i64, target_ptr: *u8, target_len: i64,
+                       reloc_type: i64, is_pcrel: i64) {
+        if self.reloc_offsets == null or self.relocs_count >= self.relocs_cap {
+            return;
+        }
+    
+        // Store target name into strings table (NOT symbol index)
+        // This is the Zig approach - resolve symbol index at write time
+        let name_str_off: i64 = self.addString(target_ptr, target_len);
+    
+        // Store in parallel arrays
+        let idx: i64 = self.relocs_count;
+        let off_ptr: *i64 = self.reloc_offsets + idx;
+        let tgt_ptr: *i64 = self.reloc_target_str_offs + idx;  // Stores string offset (not symbol index)
+        let len_ptr: *i64 = self.reloc_target_lens + idx;
+        let typ_ptr: *i64 = self.reloc_types + idx;
+        let pcr_ptr: *i64 = self.reloc_is_pcrels + idx;
+        let lng_ptr: *i64 = self.reloc_lengths + idx;
+    
+        off_ptr.* = offset;
+        tgt_ptr.* = name_str_off;  // Store string offset - symbol index resolved at write time
+        len_ptr.* = target_len;
+        typ_ptr.* = reloc_type;
+        pcr_ptr.* = is_pcrel;
+        lng_ptr.* = 2;  // Default length
+    
+        self.relocs_count = self.relocs_count + 1;
+    }
+
+    fn addDataReloc(self: *MachOWriter, offset: i64, target_ptr: *u8, target_len: i64,
+                            reloc_type: i64) {
+        // Data relocations are not PC-relative
+        self.addReloc(offset, target_ptr, target_len, reloc_type, 0);
+    }
+
+    fn outByte(self: *MachOWriter, b: i64) {
+        if self.output_count < self.output_cap {
+            let p: *u8 = self.output + self.output_count;
+            p.* = @intCast(u8, b & 255);
+            self.output_count = self.output_count + 1;
+        }
+    }
+
+    fn outU32(self: *MachOWriter, val: i64) {
+        self.outByte(val & 255);
+        self.outByte((val >> 8) & 255);
+        self.outByte((val >> 16) & 255);
+        self.outByte((val >> 24) & 255);
+    }
+
+    fn outU64(self: *MachOWriter, val: i64) {
+        self.outU32(val & 0xFFFFFFFF);
+        self.outU32((val >> 32) & 0xFFFFFFFF);
+    }
+
+    fn outZeros(self: *MachOWriter, n: i64) {
+        var i: i64 = 0;
+        while i < n {
+            self.outByte(0);
+            i = i + 1;
+        }
+    }
+
+    fn outBytes(self: *MachOWriter, src: *u8, len: i64) {
+        var i: i64 = 0;
+        while i < len {
+            let p: *u8 = src + i;
+            self.outByte(@intCast(i64, p.*));
+            i = i + 1;
+        }
+    }
+
+    fn writeMachHeader(self: *MachOWriter, ncmds: i64, sizeofcmds: i64) {
+        self.outU32(MH_MAGIC_64);           // magic
+        self.outU32(CPU_TYPE_ARM64);        // cputype
+        self.outU32(CPU_SUBTYPE_ARM64_ALL); // cpusubtype
+        self.outU32(MH_OBJECT);             // filetype
+        self.outU32(ncmds);                 // ncmds
+        self.outU32(sizeofcmds);            // sizeofcmds
+        self.outU32(MH_SUBSECTIONS_VIA_SYMBOLS); // flags
+        self.outU32(0);                     // reserved
+    }
+
+    fn writeSegmentCmd(self: *MachOWriter, vmsize: i64, fileoff: i64,
+                         filesize: i64, nsects: i64) {
+        let cmdsize: i64 = SEGMENT_COMMAND_64_SIZE + nsects * SECTION_64_SIZE;
+    
+        self.outU32(LC_SEGMENT_64);  // cmd
+        self.outU32(cmdsize);        // cmdsize
+        self.outZeros(16);           // segname (empty for relocatable object)
+        self.outU64(0);              // vmaddr
+        self.outU64(vmsize);         // vmsize
+        self.outU64(fileoff);        // fileoff
+        self.outU64(filesize);       // filesize
+        self.outU32(VM_PROT_ALL);    // maxprot (rwx)
+        self.outU32(VM_PROT_ALL);    // initprot
+        self.outU32(nsects);         // nsects
+        self.outU32(0);              // flags
+    }
+
+    fn writeSection(self: *MachOWriter,
+                     sectname: *u8, segname: *u8,
+                     size: i64, offset: i64,
+                     sect_align: i64, flags: i64,
+                     reloff: i64, nreloc: i64) {
+        // Write 16-byte section name (pad with zeros)
+        // Names are null-terminated, so copy until null or 16 bytes
+        var i: i64 = 0;
+        while i < 16 {
+            let p: *u8 = sectname + i;
+            if p.* != 0 {
+                self.outByte(@intCast(i64, p.*));
+            } else {
+                self.outByte(0);
+            }
+            i = i + 1;
+        }
+    
+        // Write 16-byte segment name (pad with zeros)
+        i = 0;
+        while i < 16 {
+            let p: *u8 = segname + i;
+            if p.* != 0 {
+                self.outByte(@intCast(i64, p.*));
+            } else {
+                self.outByte(0);
+            }
+            i = i + 1;
+        }
+    
+        self.outU64(0);          // addr (0 for object file)
+        self.outU64(size);       // size
+        self.outU32(offset);     // offset
+        self.outU32(sect_align); // align (log2)
+        self.outU32(reloff);     // reloff
+        self.outU32(nreloc);     // nreloc
+        self.outU32(flags);      // flags
+        self.outU32(0);          // reserved1
+        self.outU32(0);          // reserved2
+        self.outU32(0);          // reserved3
+    }
+
+    fn writeSymtabCmd(self: *MachOWriter, symoff: i64, nsyms: i64,
+                        stroff: i64, strsize: i64) {
+        self.outU32(LC_SYMTAB);       // cmd
+        self.outU32(SYMTAB_COMMAND_SIZE);  // cmdsize
+        self.outU32(symoff);          // symoff
+        self.outU32(nsyms);           // nsyms
+        self.outU32(stroff);          // stroff
+        self.outU32(strsize);         // strsize
+    }
+
+    fn writeTextReloc(self: *MachOWriter, idx: i64) {
+        let offset_ptr: *i64 = self.reloc_offsets + idx;
+        let target_str_off_ptr: *i64 = self.reloc_target_str_offs + idx;  // String offset in strings table
+        let target_len_ptr: *i64 = self.reloc_target_lens + idx;
+        let type_ptr: *i64 = self.reloc_types + idx;
+        let is_pcrel_ptr: *i64 = self.reloc_is_pcrels + idx;
+        let length_ptr: *i64 = self.reloc_lengths + idx;
+    
+        let offset: i64 = offset_ptr.*;
+        let target_str_off: i64 = target_str_off_ptr.*;
+        let target_len: i64 = target_len_ptr.*;
+        let reloc_type: i64 = type_ptr.*;
+        let is_pcrel: i64 = is_pcrel_ptr.*;
+        let length: i64 = length_ptr.*;
+    
+        // Resolve symbol index at write time using linear search
+        let target_ptr: *u8 = self.strings + target_str_off;
+        var sym_idx: i64 = self.findSymbol(target_ptr, target_len);
+        if sym_idx < 0 {
+            // Should not happen - all symbols were added in write()
+            sym_idx = 0;
+        }
+    
+        self.outU32(offset);  // r_address
+        let is_pcrel_bool: bool = is_pcrel != 0;
+        let info: i64 = RelocInfo_make(sym_idx, is_pcrel_bool, length, true, reloc_type);
+        self.outU32(info);
+    }
+
+    fn writeDbgLineReloc(self: *MachOWriter, idx: i64) {
+        let offset_ptr: *i64 = self.dbg_line_reloc_offsets + idx;
+        let target_str_off_ptr: *i64 = self.dbg_line_reloc_target_str_offs + idx;
+        let target_len_ptr: *i64 = self.dbg_line_reloc_target_lens + idx;
+        let type_ptr: *i64 = self.dbg_line_reloc_types + idx;
+        let is_pcrel_ptr: *i64 = self.dbg_line_reloc_is_pcrels + idx;
+        let length_ptr: *i64 = self.dbg_line_reloc_lengths + idx;
+    
+        let offset: i64 = offset_ptr.*;
+        let target_str_off: i64 = target_str_off_ptr.*;
+        let target_len: i64 = target_len_ptr.*;
+        let reloc_type: i64 = type_ptr.*;
+        let is_pcrel: i64 = is_pcrel_ptr.*;
+        let length: i64 = length_ptr.*;
+    
+        let target_ptr: *u8 = self.strings + target_str_off;
+    
+        self.outU32(offset);
+        var sym_idx: i64 = self.findSymbol(target_ptr, target_len);
+        if sym_idx < 0 { sym_idx = 0; }
+        let is_pcrel_bool: bool = is_pcrel != 0;
+        let info: i64 = RelocInfo_make(sym_idx, is_pcrel_bool, length, true, reloc_type);
+        self.outU32(info);
+    }
+
+    fn writeDbgInfoReloc(self: *MachOWriter, idx: i64) {
+        let offset_ptr: *i64 = self.dbg_info_reloc_offsets + idx;
+        let target_str_off_ptr: *i64 = self.dbg_info_reloc_target_str_offs + idx;
+        let target_len_ptr: *i64 = self.dbg_info_reloc_target_lens + idx;
+        let type_ptr: *i64 = self.dbg_info_reloc_types + idx;
+        let is_pcrel_ptr: *i64 = self.dbg_info_reloc_is_pcrels + idx;
+        let length_ptr: *i64 = self.dbg_info_reloc_lengths + idx;
+    
+        let offset: i64 = offset_ptr.*;
+        let target_str_off: i64 = target_str_off_ptr.*;
+        let target_len: i64 = target_len_ptr.*;
+        let reloc_type: i64 = type_ptr.*;
+        let is_pcrel: i64 = is_pcrel_ptr.*;
+        let length: i64 = length_ptr.*;
+    
+        let target_ptr: *u8 = self.strings + target_str_off;
+    
+        self.outU32(offset);
+        var sym_idx: i64 = self.findSymbol(target_ptr, target_len);
+        if sym_idx < 0 { sym_idx = 0; }
+        let is_pcrel_bool: bool = is_pcrel != 0;
+        let info: i64 = RelocInfo_make(sym_idx, is_pcrel_bool, length, true, reloc_type);
+        self.outU32(info);
+    }
+
+    fn writeNlist64(self: *MachOWriter, sym_idx: i64) {
+        // Read from parallel arrays
+        let no_ptr: *i64 = self.sym_name_offsets + sym_idx;
+        let v_ptr: *i64 = self.sym_values + sym_idx;
+        let s_ptr: *i64 = self.sym_sections + sym_idx;
+        let e_ptr: *i64 = self.sym_is_externals + sym_idx;
+    
+        let sym_name_offset: i64 = no_ptr.*;
+        let sym_value: i64 = v_ptr.*;
+        let sym_section: i64 = s_ptr.*;
+        let sym_is_external: i64 = e_ptr.*;
+    
+        self.outU32(sym_name_offset);  // n_strx
+    
+        // n_type: N_SECT | N_EXT for defined external, N_EXT for undefined
+        var n_type: i64 = 0;
+        if sym_section == 0 {
+            // Undefined external symbol
+            n_type = N_EXT;
+        } else {
+            // Defined in section
+            n_type = N_SECT;
+            if sym_is_external != 0 {
+                n_type = n_type | N_EXT;
+            }
+        }
+        self.outByte(n_type);  // n_type
+    
+        self.outByte(sym_section);  // n_sect
+        self.outByte(0);  // n_desc low byte
+        self.outByte(0);  // n_desc high byte
+        self.outU64(sym_value);  // n_value
+    }
+
+    fn generateDebugLine(self: *MachOWriter,
+                                      filename: *u8, filename_len: i64,
+                                      line_entries: *u8, line_count: i64,
+                                      code_size: i64, main_sym_idx: i64) i64 {
+        if self.debug_line == null or self.debug_line_cap == 0 {
+            return 0;
+        }
+    
+        var dw: DebugLineWriter = undefined;
+        DebugLineWriter_init(&dw, self.debug_line, self.debug_line_cap);
+    
+        // We need to calculate the header length before writing it
+        // For DWARF v4, the structure is:
+        // - unit_length (4 bytes, not including itself)
+        // - version (2 bytes) = 4
+        // - header_length (4 bytes)
+        // - minimum_instruction_length (1 byte) = 4
+        // - maximum_operations_per_instruction (1 byte) = 1
+        // - default_is_stmt (1 byte) = 1
+        // - line_base (1 byte) = -5
+        // - line_range (1 byte) = 14
+        // - opcode_base (1 byte) = 13
+        // - standard_opcode_lengths (12 bytes for opcodes 1-12)
+        // - include_directories (null-terminated list, we use one empty entry)
+        // - file_names (null-terminated list)
+        // - line number program
+    
+        // Header constants (fixed size portion after header_length)
+        // min_inst_len(1) + max_ops(1) + default_is_stmt(1) + line_base(1) +
+        // line_range(1) + opcode_base(1) + std_opcode_lengths(12) = 18 bytes
+        let fixed_header_size: i64 = 18;
+    
+        // Include directories: empty list (just null byte)
+        let include_dirs_size: i64 = 1;
+    
+        // File names: one file entry + terminating null
+        // File entry: filename (null-terminated) + dir_idx (ULEB128) + mtime (ULEB128) + length (ULEB128)
+        // Simplified: filename + 0 + 0 + 0 + 0 (4 null bytes for the 3 ULEB128 zeros and terminator)
+        let file_entry_size: i64 = filename_len + 1 + 3 + 1;  // filename + null + 3 zeros + terminating null
+    
+        // Header length (from after header_length field to end of header)
+        let header_length: i64 = fixed_header_size + include_dirs_size + file_entry_size;
+    
+        // Estimate line program size (will write at the end)
+        // We'll calculate actual size after writing
+    
+        // Placeholder for unit_length (we'll patch this at the end)
+        let unit_length_pos: i64 = dw.count;
+        DebugLineWriter_writeU32(&dw, 0);  // Placeholder
+    
+        // Version
+        DebugLineWriter_writeU16(&dw, DWARF_VERSION);
+    
+        // Header length
+        DebugLineWriter_writeU32(&dw, header_length);
+    
+        // Minimum instruction length
+        DebugLineWriter_writeByte(&dw, MIN_INST_LENGTH);
+    
+        // Maximum operations per instruction (DWARF v4+)
+        DebugLineWriter_writeByte(&dw, MAX_OPS_PER_INST);
+    
+        // Default is_stmt
+        DebugLineWriter_writeByte(&dw, DEFAULT_IS_STMT);
+    
+        // Line base
+        DebugLineWriter_writeByte(&dw, LINE_BASE & 255);  // Signed, so -5 = 251
+    
+        // Line range
+        DebugLineWriter_writeByte(&dw, LINE_RANGE);
+    
+        // Opcode base
+        DebugLineWriter_writeByte(&dw, OPCODE_BASE);
+    
+        // Standard opcode lengths (for opcodes 1 through opcode_base-1)
+        DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_copy
+        DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_advance_pc
+        DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_advance_line
+        DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_set_file
+        DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_set_column
+        DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_negate_stmt
+        DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_set_basic_block
+        DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_const_add_pc
+        DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_fixed_advance_pc
+        DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_set_prologue_end
+        DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_set_epilogue_begin
+        DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_set_isa
+    
+        // Include directories (empty list - just null terminator)
+        DebugLineWriter_writeByte(&dw, 0);
+    
+        // File names
+        // Entry format: filename (null-term), directory index (ULEB128), mtime (ULEB128), length (ULEB128)
+        DebugLineWriter_writeString(&dw, filename, filename_len);
+        DebugLineWriter_writeULEB128(&dw, 0);  // Directory index 0
+        DebugLineWriter_writeULEB128(&dw, 0);  // Modification time (unknown)
+        DebugLineWriter_writeULEB128(&dw, 0);  // File length (unknown)
+        // Terminate file name list
+        DebugLineWriter_writeByte(&dw, 0);
+    
+        // Line number program
+        // We need to emit the program that maps addresses to lines
+    
+        if line_count > 0 {
+            // Each LineEntry is: code_offset(8) + source_pos(8) + line(8) + column(8) = 32 bytes
+            let entry_size: i64 = 32;
+    
+            // Set initial address
+            // Read first entry's code_offset (at byte offset 0)
+            let first_addr: i64 = MachO_readI64(line_entries);
+    
+            // Record position where address will be written (after 3 bytes of opcode prefix)
+            // DW_LNE_set_address format: 0 (1) + length ULEB (1) + opcode (1) + address (8)
+            let addr_reloc_offset: i64 = dw.count + 3;
+            DebugLineWriter_writeSetAddress(&dw, first_addr);
+    
+            // Add relocation for the address (symbol 0 is typically _main)
+            self.addDebugLineReloc(addr_reloc_offset, main_sym_idx);
+    
+            // Set initial line (first entry, at byte offset 16)
+            let first_line: i64 = MachO_readI64(line_entries + 16);
+    
+            // Advance line from 1 to first_line
+            if first_line > 1 {
+                DebugLineWriter_writeByte(&dw, DW_LNS_advance_line);
+                DebugLineWriter_writeSLEB128(&dw, first_line - 1);
+            }
+    
+            // Copy (emit row)
+            DebugLineWriter_writeByte(&dw, DW_LNS_copy);
+    
+            // Process remaining entries
+            var prev_addr: i64 = first_addr;
+            var prev_line: i64 = first_line;
+            var i: i64 = 1;
+    
+            while i < line_count {
+                let entry_ptr: *u8 = line_entries + (i * entry_size);
+                // code_offset is at byte offset 0 within entry
+                let cur_addr: i64 = MachO_readI64(entry_ptr);
+                // line is at byte offset 16 within entry
+                let cur_line: i64 = MachO_readI64(entry_ptr + 16);
+    
+                let addr_delta: i64 = cur_addr - prev_addr;
+                let line_delta: i64 = cur_line - prev_line;
+    
+                // Try special opcode if possible
+                if DWARF_canUseSpecialOpcode(line_delta, addr_delta) {
+                    let opcode: i64 = DWARF_specialOpcode(line_delta, addr_delta);
+                    DebugLineWriter_writeByte(&dw, opcode);
+                } else {
+                    // Use standard opcodes
+                    if addr_delta > 0 {
+                        DebugLineWriter_writeByte(&dw, DW_LNS_advance_pc);
+                        DebugLineWriter_writeULEB128(&dw, addr_delta / MIN_INST_LENGTH);
+                    }
+                    if line_delta != 0 {
+                        DebugLineWriter_writeByte(&dw, DW_LNS_advance_line);
+                        DebugLineWriter_writeSLEB128(&dw, line_delta);
+                    }
+                    DebugLineWriter_writeByte(&dw, DW_LNS_copy);
+                }
+    
+                prev_addr = cur_addr;
+                prev_line = cur_line;
+                i = i + 1;
+            }
+    
+            // Advance to end of code
+            if code_size > prev_addr {
+                let final_delta: i64 = code_size - prev_addr;
+                DebugLineWriter_writeByte(&dw, DW_LNS_advance_pc);
+                DebugLineWriter_writeULEB128(&dw, final_delta / MIN_INST_LENGTH);
+            }
+        }
+    
+        // End sequence
+        DebugLineWriter_writeEndSequence(&dw);
+    
+        // Patch unit_length (total size minus the 4-byte length field itself)
+        let total_size: i64 = dw.count;
+        let unit_length: i64 = total_size - 4;
+    
+        // Write unit_length at the beginning
+        let p0: *u8 = self.debug_line + unit_length_pos;
+        p0.* = @intCast(u8, unit_length & 255);
+        let p1: *u8 = self.debug_line + unit_length_pos + 1;
+        p1.* = @intCast(u8, (unit_length >> 8) & 255);
+        let p2: *u8 = self.debug_line + unit_length_pos + 2;
+        p2.* = @intCast(u8, (unit_length >> 16) & 255);
+        let p3: *u8 = self.debug_line + unit_length_pos + 3;
+        p3.* = @intCast(u8, (unit_length >> 24) & 255);
+    
+        self.debug_line_count = dw.count;
+        return dw.count;
+    }
+
+    fn write(self: *MachOWriter) i64 {
+        // ========================================================================
+        // Add missing external symbols from relocations (using linear search)
+        // ========================================================================
+        var i: i64 = 0;
+        while i < self.relocs_count {
+            let target_str_off: i64 = (self.reloc_target_str_offs + i).*;
+            let target_len: i64 = (self.reloc_target_lens + i).*;
+            let target_ptr: *u8 = self.strings + target_str_off;
+    
+            // Check if symbol exists using linear search
+            let existing_idx: i64 = self.findSymbol(target_ptr, target_len);
+            if existing_idx < 0 {
+                // Add as undefined external symbol (section = 0)
+                self.addSymbol(target_ptr, target_len, 0, 0, true);
+            }
+            i = i + 1;
+        }
+    
+        // ========================================================================
+        // Calculate layout (symbol count may have changed)
+        // ========================================================================
+        let num_sections: i64 = 2;  // __text and __data
+        let load_cmds_size: i64 = SEGMENT_COMMAND_64_SIZE +
+                                  num_sections * SECTION_64_SIZE +
+                                  SYMTAB_COMMAND_SIZE;
+    
+        let text_offset: i64 = MACH_HEADER_64_SIZE + load_cmds_size;
+        let text_size: i64 = self.code_count;
+    
+        let data_offset: i64 = MachO_alignUp(text_offset + text_size, 3);  // 8-byte align
+        let data_size: i64 = self.data_count;
+    
+        let reloc_offset: i64 = MachO_alignUp(data_offset + data_size, 2);  // 4-byte align
+        let reloc_size: i64 = self.relocs_count * RELOCATION_SIZE;
+    
+        let symtab_offset: i64 = MachO_alignUp(reloc_offset + reloc_size, 3);  // 8-byte align
+        let symtab_size: i64 = self.symbols_count * NLIST64_SIZE;
+    
+        let strtab_offset: i64 = symtab_offset + symtab_size;
+        let strtab_size: i64 = self.strings_count;
+    
+        let segment_filesize: i64 = data_offset + data_size - text_offset;
+    
+        // Write header
+        self.writeMachHeader(2, load_cmds_size);
+    
+        // Write segment command
+        self.writeSegmentCmd(segment_filesize, text_offset, segment_filesize, num_sections);
+    
+        // Write __text section
+        let text_flags: i64 = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS;
+        var text_name: [16]u8;
+        text_name[0] = 95;  // '_'
+        text_name[1] = 95;  // '_'
+        text_name[2] = 116; // 't'
+        text_name[3] = 101; // 'e'
+        text_name[4] = 120; // 'x'
+        text_name[5] = 116; // 't'
+    
+        var text_seg: [16]u8;
+        text_seg[0] = 95;   // '_'
+        text_seg[1] = 95;   // '_'
+        text_seg[2] = 84;   // 'T'
+        text_seg[3] = 69;   // 'E'
+        text_seg[4] = 88;   // 'X'
+        text_seg[5] = 84;   // 'T'
+    
+        self.writeSection(&text_name[0], &text_seg[0],
+                      text_size, text_offset,
+                      TEXT_ALIGN, text_flags,
+                      reloc_offset, self.relocs_count);
+    
+        // Write __data section
+        var data_name: [16]u8;
+        data_name[0] = 95;  // '_'
+        data_name[1] = 95;  // '_'
+        data_name[2] = 100; // 'd'
+        data_name[3] = 97;  // 'a'
+        data_name[4] = 116; // 't'
+        data_name[5] = 97;  // 'a'
+    
+        var data_seg: [16]u8;
+        data_seg[0] = 95;   // '_'
+        data_seg[1] = 95;   // '_'
+        data_seg[2] = 68;   // 'D'
+        data_seg[3] = 65;   // 'A'
+        data_seg[4] = 84;   // 'T'
+        data_seg[5] = 65;   // 'A'
+    
+        self.writeSection(&data_name[0], &data_seg[0],
+                      data_size, data_offset,
+                      DATA_ALIGN, S_REGULAR,
+                      0, 0);
+    
+        // Write symtab command
+        self.writeSymtabCmd(symtab_offset, self.symbols_count,
+                         strtab_offset, strtab_size);
+    
+        // Write text section content
+        self.outBytes(self.code, self.code_count);
+    
+        // Pad to data section
+        let pad1: i64 = data_offset - (text_offset + text_size);
+        self.outZeros(pad1);
+    
+        // Write data section content
+        self.outBytes(self.data, self.data_count);
+    
+        // Pad to relocation table
+        let pad2: i64 = reloc_offset - (data_offset + data_size);
+        self.outZeros(pad2);
+    
+        // Write relocations - resolve symbol indices at write time using linear search
+        i = 0;
+        while i < self.relocs_count {
+            self.writeTextReloc(i);
+            i = i + 1;
+        }
+    
+        // Pad to symbol table
+        let pad3: i64 = symtab_offset - (reloc_offset + reloc_size);
+        self.outZeros(pad3);
+    
+        // Write symbol table (using parallel arrays)
+        i = 0;
+        while i < self.symbols_count {
+            self.writeNlist64(i);
+            i = i + 1;
+        }
+    
+        // Write string table
+        self.outBytes(self.strings, self.strings_count);
+    
+        return self.output_count;
+    }
+
+    fn writeWithDebug(self: *MachOWriter) i64 {
+        // Check if we have debug info
+        let has_debug: bool = self.debug_line != null and self.debug_line_count > 0;
+    
+        // If no debug info, use the regular write function
+        if not has_debug {
+            return self.write();
+        }
+    
+        // ========================================================================
+        // Add missing external symbols from relocations (using linear search)
+        // ========================================================================
+        var i: i64 = 0;
+        while i < self.relocs_count {
+            let target_str_off: i64 = (self.reloc_target_str_offs + i).*;
+            let target_len: i64 = (self.reloc_target_lens + i).*;
+            let target_ptr: *u8 = self.strings + target_str_off;
+    
+            // Check if symbol exists using linear search
+            let existing_idx: i64 = self.findSymbol(target_ptr, target_len);
+            if existing_idx < 0 {
+                // Add as undefined external symbol (section = 0)
+                self.addSymbol(target_ptr, target_len, 0, 0, true);
+            }
+            i = i + 1;
+        }
+    
+        // Check if we have full debug info (abbrev + info)
+        let has_full_debug: bool = self.debug_abbrev != null and self.debug_abbrev_count > 0 and
+                                    self.debug_info != null and self.debug_info_count > 0;
+    
+        // ========================================================================
+        // Step 3: Calculate layout (symbol count may have changed)
+        // ========================================================================
+        var num_sections: i64 = 3;   // __text, __data, __debug_line
+        if has_full_debug {
+            num_sections = 5;  // + __debug_abbrev, __debug_info
+        }
+    
+        let load_cmds_size: i64 = SEGMENT_COMMAND_64_SIZE + num_sections * SECTION_64_SIZE +
+                                  SYMTAB_COMMAND_SIZE;
+    
+        let text_offset: i64 = MACH_HEADER_64_SIZE + load_cmds_size;
+        let text_size: i64 = self.code_count;
+    
+        let data_offset: i64 = MachO_alignUp(text_offset + text_size, 3);  // 8-byte align
+        let data_size: i64 = self.data_count;
+    
+        // Debug sections layout
+        let debug_line_offset: i64 = MachO_alignUp(data_offset + data_size, 2);  // 4-byte align
+        let debug_line_size: i64 = self.debug_line_count;
+    
+        var debug_abbrev_offset: i64 = 0;
+        var debug_abbrev_size: i64 = 0;
+        var debug_info_offset: i64 = 0;
+        var debug_info_size: i64 = 0;
+    
+        if has_full_debug {
+            debug_abbrev_offset = MachO_alignUp(debug_line_offset + debug_line_size, 2);
+            debug_abbrev_size = self.debug_abbrev_count;
+    
+            debug_info_offset = MachO_alignUp(debug_abbrev_offset + debug_abbrev_size, 2);
+            debug_info_size = self.debug_info_count;
+        }
+    
+        // Calculate end of debug sections for relocation offset
+        var last_debug_end: i64 = debug_line_offset + debug_line_size;
+        if has_full_debug {
+            last_debug_end = debug_info_offset + debug_info_size;
+        }
+    
+        // Text section relocations
+        let text_reloc_offset: i64 = MachO_alignUp(last_debug_end, 2);  // 4-byte align
+        let text_reloc_size: i64 = self.relocs_count * RELOCATION_SIZE;
+    
+        // Debug line section relocations
+        let debug_line_reloc_offset: i64 = text_reloc_offset + text_reloc_size;
+        let debug_line_reloc_size: i64 = self.debug_line_relocs_count * RELOCATION_SIZE;
+    
+        // Debug info section relocations
+        var debug_info_reloc_offset: i64 = debug_line_reloc_offset + debug_line_reloc_size;
+        var debug_info_reloc_size: i64 = 0;
+        if has_full_debug {
+            debug_info_reloc_size = self.debug_info_relocs_count * RELOCATION_SIZE;
+        }
+    
+        let total_reloc_size: i64 = text_reloc_size + debug_line_reloc_size + debug_info_reloc_size;
+    
+        let symtab_offset: i64 = MachO_alignUp(text_reloc_offset + total_reloc_size, 3);  // 8-byte align
+        let symtab_size: i64 = self.symbols_count * NLIST64_SIZE;
+    
+        let strtab_offset: i64 = symtab_offset + symtab_size;
+        let strtab_size: i64 = self.strings_count;
+    
+        // Write header (2 load commands: 1 segment + symtab)
+        self.writeMachHeader(2, load_cmds_size);
+    
+        // Write single segment command containing all sections
+        var segment_filesize: i64 = debug_line_offset + debug_line_size - text_offset;
+        if has_full_debug {
+            segment_filesize = debug_info_offset + debug_info_size - text_offset;
+        }
+        self.writeSegmentCmd(segment_filesize, text_offset, segment_filesize, num_sections);
+    
+        // Write __text section
+        let text_flags: i64 = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS;
+        var text_name: [16]u8;
+        text_name[0] = 95; text_name[1] = 95; text_name[2] = 116;
+        text_name[3] = 101; text_name[4] = 120; text_name[5] = 116;
+        var text_seg: [16]u8;
+        text_seg[0] = 95; text_seg[1] = 95; text_seg[2] = 84;
+        text_seg[3] = 69; text_seg[4] = 88; text_seg[5] = 84;
+        self.writeSection(&text_name[0], &text_seg[0],
+                      text_size, text_offset,
+                      TEXT_ALIGN, text_flags,
+                      text_reloc_offset, self.relocs_count);
+    
+        // Write __data section
+        var data_name: [16]u8;
+        data_name[0] = 95; data_name[1] = 95; data_name[2] = 100;
+        data_name[3] = 97; data_name[4] = 116; data_name[5] = 97;
+        var data_seg: [16]u8;
+        data_seg[0] = 95; data_seg[1] = 95; data_seg[2] = 68;
+        data_seg[3] = 65; data_seg[4] = 84; data_seg[5] = 65;
+        self.writeSection(&data_name[0], &data_seg[0],
+                      data_size, data_offset,
+                      DATA_ALIGN, S_REGULAR,
+                      0, 0);
+    
+        // Write __debug_line section (__DWARF segment)
+        var dbg_line_name: [16]u8;
+        dbg_line_name[0] = 95; dbg_line_name[1] = 95;   // __
+        dbg_line_name[2] = 100; dbg_line_name[3] = 101; // de
+        dbg_line_name[4] = 98; dbg_line_name[5] = 117;  // bu
+        dbg_line_name[6] = 103; dbg_line_name[7] = 95;  // g_
+        dbg_line_name[8] = 108; dbg_line_name[9] = 105; // li
+        dbg_line_name[10] = 110; dbg_line_name[11] = 101; // ne
+        dbg_line_name[12] = 0;
+        var dwarf_seg: [16]u8;
+        dwarf_seg[0] = 95; dwarf_seg[1] = 95;   // __
+        dwarf_seg[2] = 68; dwarf_seg[3] = 87;   // DW
+        dwarf_seg[4] = 65; dwarf_seg[5] = 82;   // AR
+        dwarf_seg[6] = 70; dwarf_seg[7] = 0;    // F
+        self.writeSection(&dbg_line_name[0], &dwarf_seg[0],
+                      debug_line_size, debug_line_offset,
+                      0, S_REGULAR,
+                      debug_line_reloc_offset, self.debug_line_relocs_count);
+    
+        if has_full_debug {
+            // Write __debug_abbrev section
+            var dbg_abbrev_name: [16]u8;
+            dbg_abbrev_name[0] = 95; dbg_abbrev_name[1] = 95;   // __
+            dbg_abbrev_name[2] = 100; dbg_abbrev_name[3] = 101; // de
+            dbg_abbrev_name[4] = 98; dbg_abbrev_name[5] = 117;  // bu
+            dbg_abbrev_name[6] = 103; dbg_abbrev_name[7] = 95;  // g_
+            dbg_abbrev_name[8] = 97; dbg_abbrev_name[9] = 98;   // ab
+            dbg_abbrev_name[10] = 98; dbg_abbrev_name[11] = 114; // br
+            dbg_abbrev_name[12] = 101; dbg_abbrev_name[13] = 118; // ev
+            dbg_abbrev_name[14] = 0;
+            self.writeSection(&dbg_abbrev_name[0], &dwarf_seg[0],
+                          debug_abbrev_size, debug_abbrev_offset,
+                          0, S_REGULAR,
+                          0, 0);  // No relocations for abbrev
+    
+            // Write __debug_info section
+            var dbg_info_name: [16]u8;
+            dbg_info_name[0] = 95; dbg_info_name[1] = 95;   // __
+            dbg_info_name[2] = 100; dbg_info_name[3] = 101; // de
+            dbg_info_name[4] = 98; dbg_info_name[5] = 117;  // bu
+            dbg_info_name[6] = 103; dbg_info_name[7] = 95;  // g_
+            dbg_info_name[8] = 105; dbg_info_name[9] = 110; // in
+            dbg_info_name[10] = 102; dbg_info_name[11] = 111; // fo
+            dbg_info_name[12] = 0;
+            self.writeSection(&dbg_info_name[0], &dwarf_seg[0],
+                          debug_info_size, debug_info_offset,
+                          0, S_REGULAR,
+                          debug_info_reloc_offset, self.debug_info_relocs_count);
+        }
+    
+        // Write symtab command
+        self.writeSymtabCmd(symtab_offset, self.symbols_count,
+                         strtab_offset, strtab_size);
+    
+        // Write text section content
+        self.outBytes(self.code, self.code_count);
+    
+        // Pad to data section
+        let pad1: i64 = data_offset - (text_offset + text_size);
+        self.outZeros(pad1);
+    
+        // Write data section content
+        self.outBytes(self.data, self.data_count);
+    
+        // Pad to debug_line section
+        let pad2: i64 = debug_line_offset - (data_offset + data_size);
+        self.outZeros(pad2);
+    
+        // Write debug_line section content
+        self.outBytes(self.debug_line, self.debug_line_count);
+    
+        if has_full_debug {
+            // Pad to debug_abbrev section
+            let pad_abbrev: i64 = debug_abbrev_offset - (debug_line_offset + debug_line_size);
+            self.outZeros(pad_abbrev);
+    
+            // Write debug_abbrev section content
+            self.outBytes(self.debug_abbrev, self.debug_abbrev_count);
+    
+            // Pad to debug_info section
+            let pad_info: i64 = debug_info_offset - (debug_abbrev_offset + debug_abbrev_size);
+            self.outZeros(pad_info);
+    
+            // Write debug_info section content
+            self.outBytes(self.debug_info, self.debug_info_count);
+        }
+    
+        // Pad to relocation table
+        let pad3: i64 = text_reloc_offset - last_debug_end;
+        self.outZeros(pad3);
+    
+        // Write text section relocations - resolve symbol indices at write time
+        var j: i64 = 0;
+        while j < self.relocs_count {
+            self.writeTextReloc(j);
+            j = j + 1;
+        }
+    
+        // Write debug_line section relocations
+        j = 0;
+        while j < self.debug_line_relocs_count {
+            self.writeDbgLineReloc(j);
+            j = j + 1;
+        }
+    
+        // Write debug_info section relocations
+        if has_full_debug {
+            j = 0;
+            while j < self.debug_info_relocs_count {
+                self.writeDbgInfoReloc(j);
+                j = j + 1;
+            }
+        }
+    
+        // Pad to symbol table
+        let pad4: i64 = symtab_offset - (text_reloc_offset + total_reloc_size);
+        self.outZeros(pad4);
+    
+        // Write symbol table (using parallel arrays)
+        i = 0;
+        while i < self.symbols_count {
+            self.writeNlist64(i);
+            i = i + 1;
+        }
+    
+        // Write string table
+        self.outBytes(self.strings, self.strings_count);
+    
+        return self.output_count;
+    }
+
+}
+
 fn MachOWriter_allocateStorage() {
     if mw_storage_initialized {
         return;
@@ -462,686 +1664,6 @@ fn MachOWriter_allocateStorage() {
     mw_storage_initialized = true;
 }
 
-// Initialize MachOWriter with self-allocated module storage
-// Only requires code and data from GenState, all other storage is module-owned
-fn MachOWriter_init(w: *MachOWriter, code: *u8, code_count: i64, data: *u8, data_cap: i64) {
-    // Allocate module storage on first use
-    MachOWriter_allocateStorage();
-
-    // Code from GenState (external)
-    w.code = code;
-    w.code_count = code_count;
-    w.code_cap = code_count;  // Already populated
-
-    // Data from GenState (external, but we may add to it)
-    w.data = data;
-    w.data_count = 0;
-    w.data_cap = data_cap;
-
-    // Symbol table - uses module storage
-    w.sym_name_offsets = mw_sym_name_offsets;
-    w.sym_values = mw_sym_values;
-    w.sym_sections = mw_sym_sections;
-    w.sym_is_externals = mw_sym_is_externals;
-    w.symbols_count = 0;
-    w.symbols_cap = mw_symbols_cap;
-
-    // String table starts with null byte - uses module storage
-    w.strings = mw_strings;
-    w.strings_count = 1;  // Reserve byte 0 as null
-    w.strings_cap = mw_strings_cap;
-    mw_strings.* = 0;
-
-    // Main relocations - uses module storage
-    w.reloc_offsets = mw_reloc_offsets;
-    w.reloc_target_str_offs = mw_reloc_target_str_offs;
-    w.reloc_target_lens = mw_reloc_target_lens;
-    w.reloc_types = mw_reloc_types;
-    w.reloc_is_pcrels = mw_reloc_is_pcrels;
-    w.reloc_lengths = mw_reloc_lengths;
-    w.relocs_count = 0;
-    w.relocs_cap = mw_relocs_cap;
-
-    // Debug line section - uses module storage
-    w.debug_line = mw_debug_line;
-    w.debug_line_count = 0;
-    w.debug_line_cap = mw_debug_line_cap;
-
-    // Debug line relocations - uses module storage
-    w.dbg_line_reloc_offsets = mw_dbg_line_reloc_offsets;
-    w.dbg_line_reloc_target_str_offs = mw_dbg_line_reloc_target_str_offs;
-    w.dbg_line_reloc_target_lens = mw_dbg_line_reloc_target_lens;
-    w.dbg_line_reloc_types = mw_dbg_line_reloc_types;
-    w.dbg_line_reloc_is_pcrels = mw_dbg_line_reloc_is_pcrels;
-    w.dbg_line_reloc_lengths = mw_dbg_line_reloc_lengths;
-    w.debug_line_relocs_count = 0;
-    w.debug_line_relocs_cap = mw_debug_line_relocs_cap;
-
-    // Debug abbrev section - uses module storage
-    w.debug_abbrev = mw_debug_abbrev;
-    w.debug_abbrev_count = 0;
-    w.debug_abbrev_cap = mw_debug_abbrev_cap;
-
-    // Debug info section - uses module storage
-    w.debug_info = mw_debug_info;
-    w.debug_info_count = 0;
-    w.debug_info_cap = mw_debug_info_cap;
-
-    // Debug info relocations - uses module storage
-    w.dbg_info_reloc_offsets = mw_dbg_info_reloc_offsets;
-    w.dbg_info_reloc_target_str_offs = mw_dbg_info_reloc_target_str_offs;
-    w.dbg_info_reloc_target_lens = mw_dbg_info_reloc_target_lens;
-    w.dbg_info_reloc_types = mw_dbg_info_reloc_types;
-    w.dbg_info_reloc_is_pcrels = mw_dbg_info_reloc_is_pcrels;
-    w.dbg_info_reloc_lengths = mw_dbg_info_reloc_lengths;
-    w.debug_info_relocs_count = 0;
-    w.debug_info_relocs_cap = mw_debug_info_relocs_cap;
-
-    // Output buffer - uses module storage
-    w.output = mw_output;
-    w.output_count = 0;
-    w.output_cap = mw_output_cap;
-}
-
-// Set up debug line buffer
-fn MachOWriter_setDebugLine(w: *MachOWriter, debug_line: *u8, debug_line_cap: i64) {
-    w.debug_line = debug_line;
-    w.debug_line_count = 0;
-    w.debug_line_cap = debug_line_cap;
-}
-
-// Set up debug line relocations buffer (parallel arrays)
-fn MachOWriter_setDebugLineRelocs(w: *MachOWriter,
-                                   offsets: *i64, target_str_offs: *i64, target_lens: *i64,
-                                   types: *i64, is_pcrels: *i64, lengths: *i64,
-                                   cap: i64) {
-    w.dbg_line_reloc_offsets = offsets;
-    w.dbg_line_reloc_target_str_offs = target_str_offs;
-    w.dbg_line_reloc_target_lens = target_lens;
-    w.dbg_line_reloc_types = types;
-    w.dbg_line_reloc_is_pcrels = is_pcrels;
-    w.dbg_line_reloc_lengths = lengths;
-    w.debug_line_relocs_count = 0;
-    w.debug_line_relocs_cap = cap;
-}
-
-// Add a debug line relocation
-fn MachOWriter_addDebugLineReloc(w: *MachOWriter, offset: i64, symbol_idx: i64) {
-    if w.dbg_line_reloc_offsets == null or w.debug_line_relocs_count >= w.debug_line_relocs_cap {
-        return;
-    }
-
-    // Get symbol name offset from parallel arrays
-    let no_ptr: *i64 = w.sym_name_offsets + symbol_idx;
-    let name_str_off: i64 = no_ptr.*;
-    let name_ptr: *u8 = w.strings + name_str_off;
-    var name_len: i64 = 0;
-    while (name_ptr + name_len).* != 0 { name_len = name_len + 1; }
-
-    // Store in parallel arrays
-    let idx: i64 = w.debug_line_relocs_count;
-    let off_ptr: *i64 = w.dbg_line_reloc_offsets + idx;
-    let tgt_ptr: *i64 = w.dbg_line_reloc_target_str_offs + idx;
-    let len_ptr: *i64 = w.dbg_line_reloc_target_lens + idx;
-    let typ_ptr: *i64 = w.dbg_line_reloc_types + idx;
-    let pcr_ptr: *i64 = w.dbg_line_reloc_is_pcrels + idx;
-    let lng_ptr: *i64 = w.dbg_line_reloc_lengths + idx;
-
-    off_ptr.* = offset;
-    tgt_ptr.* = name_str_off;  // Store offset instead of pointer
-    len_ptr.* = name_len;
-    typ_ptr.* = ARM64_RELOC_UNSIGNED;
-    pcr_ptr.* = 0;
-    lng_ptr.* = 3;  // 8 bytes (2^3) for 64-bit address
-
-    w.debug_line_relocs_count = w.debug_line_relocs_count + 1;
-}
-
-// Set up debug abbrev buffer
-fn MachOWriter_setDebugAbbrev(w: *MachOWriter, buf: *u8, cap: i64) {
-    w.debug_abbrev = buf;
-    w.debug_abbrev_count = 0;
-    w.debug_abbrev_cap = cap;
-}
-
-// Set up debug info buffer
-fn MachOWriter_setDebugInfo(w: *MachOWriter, buf: *u8, cap: i64) {
-    w.debug_info = buf;
-    w.debug_info_count = 0;
-    w.debug_info_cap = cap;
-}
-
-// Set up debug info relocations buffer (parallel arrays)
-fn MachOWriter_setDebugInfoRelocs(w: *MachOWriter,
-                                   offsets: *i64, target_str_offs: *i64, target_lens: *i64,
-                                   types: *i64, is_pcrels: *i64, lengths: *i64,
-                                   cap: i64) {
-    w.dbg_info_reloc_offsets = offsets;
-    w.dbg_info_reloc_target_str_offs = target_str_offs;
-    w.dbg_info_reloc_target_lens = target_lens;
-    w.dbg_info_reloc_types = types;
-    w.dbg_info_reloc_is_pcrels = is_pcrels;
-    w.dbg_info_reloc_lengths = lengths;
-    w.debug_info_relocs_count = 0;
-    w.debug_info_relocs_cap = cap;
-}
-
-// Add a debug info relocation (for low_pc address)
-fn MachOWriter_addDebugInfoReloc(w: *MachOWriter, offset: i64, symbol_idx: i64) {
-    if w.dbg_info_reloc_offsets == null or w.debug_info_relocs_count >= w.debug_info_relocs_cap {
-        return;
-    }
-
-    // Get symbol name offset from parallel arrays
-    let no_ptr: *i64 = w.sym_name_offsets + symbol_idx;
-    let name_str_off: i64 = no_ptr.*;
-    let name_ptr: *u8 = w.strings + name_str_off;
-    var name_len: i64 = 0;
-    while (name_ptr + name_len).* != 0 { name_len = name_len + 1; }
-
-    // Store in parallel arrays
-    let idx: i64 = w.debug_info_relocs_count;
-    let off_ptr: *i64 = w.dbg_info_reloc_offsets + idx;
-    let tgt_ptr: *i64 = w.dbg_info_reloc_target_str_offs + idx;
-    let len_ptr: *i64 = w.dbg_info_reloc_target_lens + idx;
-    let typ_ptr: *i64 = w.dbg_info_reloc_types + idx;
-    let pcr_ptr: *i64 = w.dbg_info_reloc_is_pcrels + idx;
-    let lng_ptr: *i64 = w.dbg_info_reloc_lengths + idx;
-
-    off_ptr.* = offset;
-    tgt_ptr.* = name_str_off;  // Store offset instead of pointer
-    len_ptr.* = name_len;
-    typ_ptr.* = ARM64_RELOC_UNSIGNED;
-    pcr_ptr.* = 0;
-    lng_ptr.* = 3;  // 8 bytes (2^3) for 64-bit address
-
-    w.debug_info_relocs_count = w.debug_info_relocs_count + 1;
-}
-
-// ============================================================================
-// Add Functions
-// ============================================================================
-
-// Add code bytes to text section
-fn MachOWriter_addCode(w: *MachOWriter, bytes: *u8, len: i64) {
-    var i: i64 = 0;
-    while i < len and w.code_count < w.code_cap {
-        let src: *u8 = bytes + i;
-        let dst: *u8 = w.code + w.code_count;
-        dst.* = src.*;
-        w.code_count = w.code_count + 1;
-        i = i + 1;
-    }
-}
-
-// Add data bytes to data section
-// Reference: Zig's MachOWriter.addData()
-fn MachOWriter_addData(w: *MachOWriter, bytes: *u8, len: i64) i64 {
-    let offset: i64 = w.data_count;
-    var i: i64 = 0;
-    while i < len and w.data_count < w.data_cap {
-        let src: *u8 = bytes + i;
-        let dst: *u8 = w.data + w.data_count;
-        dst.* = src.*;
-        w.data_count = w.data_count + 1;
-        i = i + 1;
-    }
-    return offset;
-}
-
-// Add a single byte to data section
-fn MachOWriter_addDataByte(w: *MachOWriter, b: i64) {
-    if w.data_count < w.data_cap {
-        let dst: *u8 = w.data + w.data_count;
-        dst.* = @intCast(u8, b);
-        w.data_count = w.data_count + 1;
-    }
-}
-
-// Add an 8-byte little-endian value to data section
-fn MachOWriter_addDataI64(w: *MachOWriter, value: i64) {
-    // Write 8 bytes in little-endian order
-    MachOWriter_addDataByte(w, value & 0xFF);
-    MachOWriter_addDataByte(w, (value >> 8) & 0xFF);
-    MachOWriter_addDataByte(w, (value >> 16) & 0xFF);
-    MachOWriter_addDataByte(w, (value >> 24) & 0xFF);
-    MachOWriter_addDataByte(w, (value >> 32) & 0xFF);
-    MachOWriter_addDataByte(w, (value >> 40) & 0xFF);
-    MachOWriter_addDataByte(w, (value >> 48) & 0xFF);
-    MachOWriter_addDataByte(w, (value >> 56) & 0xFF);
-}
-
-// Add zero-filled data to data section (for BSS-style globals)
-fn MachOWriter_addDataZeros(w: *MachOWriter, len: i64) i64 {
-    let offset: i64 = w.data_count;
-    var i: i64 = 0;
-    while i < len and w.data_count < w.data_cap {
-        let dst: *u8 = w.data + w.data_count;
-        dst.* = 0;
-        w.data_count = w.data_count + 1;
-        i = i + 1;
-    }
-    return offset;
-}
-
-// Add a string literal to data section (null-terminated)
-// Reference: Zig's MachOWriter.addStringLiteral()
-fn MachOWriter_addStringLiteral(w: *MachOWriter, s: *u8, len: i64) i64 {
-    let offset: i64 = w.data_count;
-    var i: i64 = 0;
-    while i < len and w.data_count < w.data_cap {
-        let src: *u8 = s + i;
-        let dst: *u8 = w.data + w.data_count;
-        dst.* = src.*;
-        w.data_count = w.data_count + 1;
-        i = i + 1;
-    }
-    // Add null terminator
-    if w.data_count < w.data_cap {
-        let null_ptr: *u8 = w.data + w.data_count;
-        null_ptr.* = 0;
-        w.data_count = w.data_count + 1;
-    }
-    return offset;
-}
-
-// Add a string to the string table, return its offset
-fn MachOWriter_addString(w: *MachOWriter, s: *u8, len: i64) i64 {
-    let offset: i64 = w.strings_count;
-
-    var i: i64 = 0;
-    while i < len and w.strings_count < w.strings_cap {
-        let src: *u8 = s + i;
-        let dst: *u8 = w.strings + w.strings_count;
-        dst.* = src.*;
-        w.strings_count = w.strings_count + 1;
-        i = i + 1;
-    }
-
-    // Add null terminator
-    if w.strings_count < w.strings_cap {
-        let null_ptr: *u8 = w.strings + w.strings_count;
-        null_ptr.* = 0;
-        w.strings_count = w.strings_count + 1;
-    }
-
-    return offset;
-}
-
-// Add a symbol (using parallel arrays)
-fn MachOWriter_addSymbol(w: *MachOWriter, name: *u8, name_len: i64,
-                    value: i64, section: i64, is_external: bool) i64 {
-    if w.symbols_count >= w.symbols_cap {
-        return 0 - 1;  // Error
-    }
-
-    let name_offset: i64 = MachOWriter_addString(w, name, name_len);
-
-    let idx: i64 = w.symbols_count;
-    let no_ptr: *i64 = w.sym_name_offsets + idx;
-    let v_ptr: *i64 = w.sym_values + idx;
-    let s_ptr: *i64 = w.sym_sections + idx;
-    let e_ptr: *i64 = w.sym_is_externals + idx;
-
-    no_ptr.* = name_offset;
-    v_ptr.* = value;
-    s_ptr.* = section;
-    if is_external {
-        e_ptr.* = 1;
-    } else {
-        e_ptr.* = 0;
-    }
-
-    w.symbols_count = w.symbols_count + 1;
-    return idx;
-}
-
-// Find symbol index by name (comparing against strings buffer)
-// Following Zig: sym_name_to_idx.get(reloc.target)
-// Returns -1 if not found (using parallel arrays)
-fn MachOWriter_findSymbol(w: *MachOWriter, name: *u8, name_len: i64) i64 {
-    var i: i64 = 0;
-    while i < w.symbols_count {
-        // Get name_offset from parallel array
-        let no_ptr: *i64 = w.sym_name_offsets + i;
-        let sym_name_offset: i64 = no_ptr.*;
-        let sym_name: *u8 = w.strings + sym_name_offset;
-        var match: bool = true;
-        var j: i64 = 0;
-        while j < name_len {
-            let c1: *u8 = name + j;
-            let c2: *u8 = sym_name + j;
-            if c1.* != c2.* {
-                match = false;
-            }
-            j = j + 1;
-        }
-        // Check null terminator
-        let term: *u8 = sym_name + name_len;
-        if match and term.* == 0 {
-            return i;
-        }
-        i = i + 1;
-    }
-    return -1;
-}
-
-// Add a relocation (for code section)
-// Following Zig: stores target NAME (string offset), resolves symbol index at write time
-fn MachOWriter_addReloc(w: *MachOWriter, offset: i64, target_ptr: *u8, target_len: i64,
-                   reloc_type: i64, is_pcrel: i64) {
-    if w.reloc_offsets == null or w.relocs_count >= w.relocs_cap {
-        return;
-    }
-
-    // Store target name into strings table (NOT symbol index)
-    // This is the Zig approach - resolve symbol index at write time
-    let name_str_off: i64 = MachOWriter_addString(w, target_ptr, target_len);
-
-    // Store in parallel arrays
-    let idx: i64 = w.relocs_count;
-    let off_ptr: *i64 = w.reloc_offsets + idx;
-    let tgt_ptr: *i64 = w.reloc_target_str_offs + idx;  // Stores string offset (not symbol index)
-    let len_ptr: *i64 = w.reloc_target_lens + idx;
-    let typ_ptr: *i64 = w.reloc_types + idx;
-    let pcr_ptr: *i64 = w.reloc_is_pcrels + idx;
-    let lng_ptr: *i64 = w.reloc_lengths + idx;
-
-    off_ptr.* = offset;
-    tgt_ptr.* = name_str_off;  // Store string offset - symbol index resolved at write time
-    len_ptr.* = target_len;
-    typ_ptr.* = reloc_type;
-    pcr_ptr.* = is_pcrel;
-    lng_ptr.* = 2;  // Default length
-
-    w.relocs_count = w.relocs_count + 1;
-}
-
-// Add a data section relocation
-// Reference: Zig's MachOWriter.addDataRelocation
-fn MachOWriter_addDataReloc(w: *MachOWriter, offset: i64, target_ptr: *u8, target_len: i64,
-                        reloc_type: i64) {
-    // Data relocations are not PC-relative
-    MachOWriter_addReloc(w, offset, target_ptr, target_len, reloc_type, 0);
-}
-
-// ============================================================================
-// Output Helpers
-// ============================================================================
-
-// Write a single byte to output
-fn MachOWriter_outByte(w: *MachOWriter, b: i64) {
-    if w.output_count < w.output_cap {
-        let p: *u8 = w.output + w.output_count;
-        p.* = @intCast(u8, b & 255);
-        w.output_count = w.output_count + 1;
-    }
-}
-
-// Write a 32-bit value (little-endian)
-fn MachOWriter_outU32(w: *MachOWriter, val: i64) {
-    MachOWriter_outByte(w, val & 255);
-    MachOWriter_outByte(w, (val >> 8) & 255);
-    MachOWriter_outByte(w, (val >> 16) & 255);
-    MachOWriter_outByte(w, (val >> 24) & 255);
-}
-
-// Write a 64-bit value (little-endian)
-fn MachOWriter_outU64(w: *MachOWriter, val: i64) {
-    MachOWriter_outU32(w, val & 0xFFFFFFFF);
-    MachOWriter_outU32(w, (val >> 32) & 0xFFFFFFFF);
-}
-
-// Write n zero bytes
-fn MachOWriter_outZeros(w: *MachOWriter, n: i64) {
-    var i: i64 = 0;
-    while i < n {
-        MachOWriter_outByte(w, 0);
-        i = i + 1;
-    }
-}
-
-// Write bytes from buffer
-fn MachOWriter_outBytes(w: *MachOWriter, src: *u8, len: i64) {
-    var i: i64 = 0;
-    while i < len {
-        let p: *u8 = src + i;
-        MachOWriter_outByte(w, @intCast(i64, p.*));
-        i = i + 1;
-    }
-}
-
-// ============================================================================
-// Mach-O Header Writer
-// ============================================================================
-
-fn MachOWriter_writeMachHeader(w: *MachOWriter, ncmds: i64, sizeofcmds: i64) {
-    MachOWriter_outU32(w, MH_MAGIC_64);           // magic
-    MachOWriter_outU32(w, CPU_TYPE_ARM64);        // cputype
-    MachOWriter_outU32(w, CPU_SUBTYPE_ARM64_ALL); // cpusubtype
-    MachOWriter_outU32(w, MH_OBJECT);             // filetype
-    MachOWriter_outU32(w, ncmds);                 // ncmds
-    MachOWriter_outU32(w, sizeofcmds);            // sizeofcmds
-    MachOWriter_outU32(w, MH_SUBSECTIONS_VIA_SYMBOLS); // flags
-    MachOWriter_outU32(w, 0);                     // reserved
-}
-
-// ============================================================================
-// Segment Command Writer
-// ============================================================================
-
-fn MachOWriter_writeSegmentCmd(w: *MachOWriter, vmsize: i64, fileoff: i64,
-                     filesize: i64, nsects: i64) {
-    let cmdsize: i64 = SEGMENT_COMMAND_64_SIZE + nsects * SECTION_64_SIZE;
-
-    MachOWriter_outU32(w, LC_SEGMENT_64);  // cmd
-    MachOWriter_outU32(w, cmdsize);        // cmdsize
-    MachOWriter_outZeros(w, 16);           // segname (empty for relocatable object)
-    MachOWriter_outU64(w, 0);              // vmaddr
-    MachOWriter_outU64(w, vmsize);         // vmsize
-    MachOWriter_outU64(w, fileoff);        // fileoff
-    MachOWriter_outU64(w, filesize);       // filesize
-    MachOWriter_outU32(w, VM_PROT_ALL);    // maxprot (rwx)
-    MachOWriter_outU32(w, VM_PROT_ALL);    // initprot
-    MachOWriter_outU32(w, nsects);         // nsects
-    MachOWriter_outU32(w, 0);              // flags
-}
-
-// ============================================================================
-// Section Writer
-// ============================================================================
-
-fn MachOWriter_writeSection(w: *MachOWriter,
-                 sectname: *u8, segname: *u8,
-                 size: i64, offset: i64,
-                 sect_align: i64, flags: i64,
-                 reloff: i64, nreloc: i64) {
-    // Write 16-byte section name (pad with zeros)
-    // Names are null-terminated, so copy until null or 16 bytes
-    var i: i64 = 0;
-    while i < 16 {
-        let p: *u8 = sectname + i;
-        if p.* != 0 {
-            MachOWriter_outByte(w, @intCast(i64, p.*));
-        } else {
-            MachOWriter_outByte(w, 0);
-        }
-        i = i + 1;
-    }
-
-    // Write 16-byte segment name (pad with zeros)
-    i = 0;
-    while i < 16 {
-        let p: *u8 = segname + i;
-        if p.* != 0 {
-            MachOWriter_outByte(w, @intCast(i64, p.*));
-        } else {
-            MachOWriter_outByte(w, 0);
-        }
-        i = i + 1;
-    }
-
-    MachOWriter_outU64(w, 0);          // addr (0 for object file)
-    MachOWriter_outU64(w, size);       // size
-    MachOWriter_outU32(w, offset);     // offset
-    MachOWriter_outU32(w, sect_align); // align (log2)
-    MachOWriter_outU32(w, reloff);     // reloff
-    MachOWriter_outU32(w, nreloc);     // nreloc
-    MachOWriter_outU32(w, flags);      // flags
-    MachOWriter_outU32(w, 0);          // reserved1
-    MachOWriter_outU32(w, 0);          // reserved2
-    MachOWriter_outU32(w, 0);          // reserved3
-}
-
-// ============================================================================
-// Symbol Table Command Writer
-// ============================================================================
-
-fn MachOWriter_writeSymtabCmd(w: *MachOWriter, symoff: i64, nsyms: i64,
-                    stroff: i64, strsize: i64) {
-    MachOWriter_outU32(w, LC_SYMTAB);       // cmd
-    MachOWriter_outU32(w, SYMTAB_COMMAND_SIZE);  // cmdsize
-    MachOWriter_outU32(w, symoff);          // symoff
-    MachOWriter_outU32(w, nsyms);           // nsyms
-    MachOWriter_outU32(w, stroff);          // stroff
-    MachOWriter_outU32(w, strsize);         // strsize
-}
-
-// ============================================================================
-// Relocation Entry Writer (using parallel arrays)
-// ============================================================================
-
-// Write a text relocation from parallel arrays
-// Resolves symbol index at write time using linear search
-fn MachOWriter_writeTextReloc(w: *MachOWriter, idx: i64) {
-    let offset_ptr: *i64 = w.reloc_offsets + idx;
-    let target_str_off_ptr: *i64 = w.reloc_target_str_offs + idx;  // String offset in strings table
-    let target_len_ptr: *i64 = w.reloc_target_lens + idx;
-    let type_ptr: *i64 = w.reloc_types + idx;
-    let is_pcrel_ptr: *i64 = w.reloc_is_pcrels + idx;
-    let length_ptr: *i64 = w.reloc_lengths + idx;
-
-    let offset: i64 = offset_ptr.*;
-    let target_str_off: i64 = target_str_off_ptr.*;
-    let target_len: i64 = target_len_ptr.*;
-    let reloc_type: i64 = type_ptr.*;
-    let is_pcrel: i64 = is_pcrel_ptr.*;
-    let length: i64 = length_ptr.*;
-
-    // Resolve symbol index at write time using linear search
-    let target_ptr: *u8 = w.strings + target_str_off;
-    var sym_idx: i64 = MachOWriter_findSymbol(w, target_ptr, target_len);
-    if sym_idx < 0 {
-        // Should not happen - all symbols were added in write()
-        sym_idx = 0;
-    }
-
-    MachOWriter_outU32(w, offset);  // r_address
-    let is_pcrel_bool: bool = is_pcrel != 0;
-    let info: i64 = RelocInfo_make(sym_idx, is_pcrel_bool, length, true, reloc_type);
-    MachOWriter_outU32(w, info);
-}
-
-// Write a debug line relocation from parallel arrays
-fn MachOWriter_writeDbgLineReloc(w: *MachOWriter, idx: i64) {
-    let offset_ptr: *i64 = w.dbg_line_reloc_offsets + idx;
-    let target_str_off_ptr: *i64 = w.dbg_line_reloc_target_str_offs + idx;
-    let target_len_ptr: *i64 = w.dbg_line_reloc_target_lens + idx;
-    let type_ptr: *i64 = w.dbg_line_reloc_types + idx;
-    let is_pcrel_ptr: *i64 = w.dbg_line_reloc_is_pcrels + idx;
-    let length_ptr: *i64 = w.dbg_line_reloc_lengths + idx;
-
-    let offset: i64 = offset_ptr.*;
-    let target_str_off: i64 = target_str_off_ptr.*;
-    let target_len: i64 = target_len_ptr.*;
-    let reloc_type: i64 = type_ptr.*;
-    let is_pcrel: i64 = is_pcrel_ptr.*;
-    let length: i64 = length_ptr.*;
-
-    let target_ptr: *u8 = w.strings + target_str_off;
-
-    MachOWriter_outU32(w, offset);
-    var sym_idx: i64 = MachOWriter_findSymbol(w, target_ptr, target_len);
-    if sym_idx < 0 { sym_idx = 0; }
-    let is_pcrel_bool: bool = is_pcrel != 0;
-    let info: i64 = RelocInfo_make(sym_idx, is_pcrel_bool, length, true, reloc_type);
-    MachOWriter_outU32(w, info);
-}
-
-// Write a debug info relocation from parallel arrays
-fn MachOWriter_writeDbgInfoReloc(w: *MachOWriter, idx: i64) {
-    let offset_ptr: *i64 = w.dbg_info_reloc_offsets + idx;
-    let target_str_off_ptr: *i64 = w.dbg_info_reloc_target_str_offs + idx;
-    let target_len_ptr: *i64 = w.dbg_info_reloc_target_lens + idx;
-    let type_ptr: *i64 = w.dbg_info_reloc_types + idx;
-    let is_pcrel_ptr: *i64 = w.dbg_info_reloc_is_pcrels + idx;
-    let length_ptr: *i64 = w.dbg_info_reloc_lengths + idx;
-
-    let offset: i64 = offset_ptr.*;
-    let target_str_off: i64 = target_str_off_ptr.*;
-    let target_len: i64 = target_len_ptr.*;
-    let reloc_type: i64 = type_ptr.*;
-    let is_pcrel: i64 = is_pcrel_ptr.*;
-    let length: i64 = length_ptr.*;
-
-    let target_ptr: *u8 = w.strings + target_str_off;
-
-    MachOWriter_outU32(w, offset);
-    var sym_idx: i64 = MachOWriter_findSymbol(w, target_ptr, target_len);
-    if sym_idx < 0 { sym_idx = 0; }
-    let is_pcrel_bool: bool = is_pcrel != 0;
-    let info: i64 = RelocInfo_make(sym_idx, is_pcrel_bool, length, true, reloc_type);
-    MachOWriter_outU32(w, info);
-}
-
-// ============================================================================
-// Symbol Entry Writer (nlist64)
-// ============================================================================
-
-fn MachOWriter_writeNlist64(w: *MachOWriter, sym_idx: i64) {
-    // Read from parallel arrays
-    let no_ptr: *i64 = w.sym_name_offsets + sym_idx;
-    let v_ptr: *i64 = w.sym_values + sym_idx;
-    let s_ptr: *i64 = w.sym_sections + sym_idx;
-    let e_ptr: *i64 = w.sym_is_externals + sym_idx;
-
-    let sym_name_offset: i64 = no_ptr.*;
-    let sym_value: i64 = v_ptr.*;
-    let sym_section: i64 = s_ptr.*;
-    let sym_is_external: i64 = e_ptr.*;
-
-    MachOWriter_outU32(w, sym_name_offset);  // n_strx
-
-    // n_type: N_SECT | N_EXT for defined external, N_EXT for undefined
-    var n_type: i64 = 0;
-    if sym_section == 0 {
-        // Undefined external symbol
-        n_type = N_EXT;
-    } else {
-        // Defined in section
-        n_type = N_SECT;
-        if sym_is_external != 0 {
-            n_type = n_type | N_EXT;
-        }
-    }
-    MachOWriter_outByte(w, n_type);  // n_type
-
-    MachOWriter_outByte(w, sym_section);  // n_sect
-    MachOWriter_outByte(w, 0);  // n_desc low byte
-    MachOWriter_outByte(w, 0);  // n_desc high byte
-    MachOWriter_outU64(w, sym_value);  // n_value
-}
-
-// ============================================================================
-// Debug Line Generation
-// Generates DWARF __debug_line section content
-// ============================================================================
-
-// Forward declaration for LineEntry (from genssa.cot)
-// struct LineEntry { code_offset, source_pos, line, column }
-// Each field is i64 (8 bytes), total 32 bytes per entry
-
-// Helper: Read i64 value from memory in little-endian format
 fn MachO_readI64(ptr: *u8) i64 {
     let p0: *u8 = ptr;
     let p1: *u8 = ptr + 1;
@@ -1160,618 +1682,4 @@ fn MachO_readI64(ptr: *u8) i64 {
     val = val | (@intCast(i64, p6.*) << 48);
     val = val | (@intCast(i64, p7.*) << 56);
     return val;
-}
-
-// Generate __debug_line section content
-// filename: source file name (null-terminated string)
-// filename_len: length of filename (not including null)
-// line_entries: array of LineEntry from codegen
-// line_count: number of line entries
-// code_size: total code size (for end_sequence)
-// main_sym_idx: symbol index of _main for relocation
-// Returns bytes written to w.debug_line
-fn MachOWriter_generateDebugLine(w: *MachOWriter,
-                                  filename: *u8, filename_len: i64,
-                                  line_entries: *u8, line_count: i64,
-                                  code_size: i64, main_sym_idx: i64) i64 {
-    if w.debug_line == null or w.debug_line_cap == 0 {
-        return 0;
-    }
-
-    var dw: DebugLineWriter = undefined;
-    DebugLineWriter_init(&dw, w.debug_line, w.debug_line_cap);
-
-    // We need to calculate the header length before writing it
-    // For DWARF v4, the structure is:
-    // - unit_length (4 bytes, not including itself)
-    // - version (2 bytes) = 4
-    // - header_length (4 bytes)
-    // - minimum_instruction_length (1 byte) = 4
-    // - maximum_operations_per_instruction (1 byte) = 1
-    // - default_is_stmt (1 byte) = 1
-    // - line_base (1 byte) = -5
-    // - line_range (1 byte) = 14
-    // - opcode_base (1 byte) = 13
-    // - standard_opcode_lengths (12 bytes for opcodes 1-12)
-    // - include_directories (null-terminated list, we use one empty entry)
-    // - file_names (null-terminated list)
-    // - line number program
-
-    // Header constants (fixed size portion after header_length)
-    // min_inst_len(1) + max_ops(1) + default_is_stmt(1) + line_base(1) +
-    // line_range(1) + opcode_base(1) + std_opcode_lengths(12) = 18 bytes
-    let fixed_header_size: i64 = 18;
-
-    // Include directories: empty list (just null byte)
-    let include_dirs_size: i64 = 1;
-
-    // File names: one file entry + terminating null
-    // File entry: filename (null-terminated) + dir_idx (ULEB128) + mtime (ULEB128) + length (ULEB128)
-    // Simplified: filename + 0 + 0 + 0 + 0 (4 null bytes for the 3 ULEB128 zeros and terminator)
-    let file_entry_size: i64 = filename_len + 1 + 3 + 1;  // filename + null + 3 zeros + terminating null
-
-    // Header length (from after header_length field to end of header)
-    let header_length: i64 = fixed_header_size + include_dirs_size + file_entry_size;
-
-    // Estimate line program size (will write at the end)
-    // We'll calculate actual size after writing
-
-    // Placeholder for unit_length (we'll patch this at the end)
-    let unit_length_pos: i64 = dw.count;
-    DebugLineWriter_writeU32(&dw, 0);  // Placeholder
-
-    // Version
-    DebugLineWriter_writeU16(&dw, DWARF_VERSION);
-
-    // Header length
-    DebugLineWriter_writeU32(&dw, header_length);
-
-    // Minimum instruction length
-    DebugLineWriter_writeByte(&dw, MIN_INST_LENGTH);
-
-    // Maximum operations per instruction (DWARF v4+)
-    DebugLineWriter_writeByte(&dw, MAX_OPS_PER_INST);
-
-    // Default is_stmt
-    DebugLineWriter_writeByte(&dw, DEFAULT_IS_STMT);
-
-    // Line base
-    DebugLineWriter_writeByte(&dw, LINE_BASE & 255);  // Signed, so -5 = 251
-
-    // Line range
-    DebugLineWriter_writeByte(&dw, LINE_RANGE);
-
-    // Opcode base
-    DebugLineWriter_writeByte(&dw, OPCODE_BASE);
-
-    // Standard opcode lengths (for opcodes 1 through opcode_base-1)
-    DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_copy
-    DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_advance_pc
-    DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_advance_line
-    DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_set_file
-    DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_set_column
-    DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_negate_stmt
-    DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_set_basic_block
-    DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_const_add_pc
-    DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_fixed_advance_pc
-    DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_set_prologue_end
-    DebugLineWriter_writeByte(&dw, 0);  // DW_LNS_set_epilogue_begin
-    DebugLineWriter_writeByte(&dw, 1);  // DW_LNS_set_isa
-
-    // Include directories (empty list - just null terminator)
-    DebugLineWriter_writeByte(&dw, 0);
-
-    // File names
-    // Entry format: filename (null-term), directory index (ULEB128), mtime (ULEB128), length (ULEB128)
-    DebugLineWriter_writeString(&dw, filename, filename_len);
-    DebugLineWriter_writeULEB128(&dw, 0);  // Directory index 0
-    DebugLineWriter_writeULEB128(&dw, 0);  // Modification time (unknown)
-    DebugLineWriter_writeULEB128(&dw, 0);  // File length (unknown)
-    // Terminate file name list
-    DebugLineWriter_writeByte(&dw, 0);
-
-    // Line number program
-    // We need to emit the program that maps addresses to lines
-
-    if line_count > 0 {
-        // Each LineEntry is: code_offset(8) + source_pos(8) + line(8) + column(8) = 32 bytes
-        let entry_size: i64 = 32;
-
-        // Set initial address
-        // Read first entry's code_offset (at byte offset 0)
-        let first_addr: i64 = MachO_readI64(line_entries);
-
-        // Record position where address will be written (after 3 bytes of opcode prefix)
-        // DW_LNE_set_address format: 0 (1) + length ULEB (1) + opcode (1) + address (8)
-        let addr_reloc_offset: i64 = dw.count + 3;
-        DebugLineWriter_writeSetAddress(&dw, first_addr);
-
-        // Add relocation for the address (symbol 0 is typically _main)
-        MachOWriter_addDebugLineReloc(w, addr_reloc_offset, main_sym_idx);
-
-        // Set initial line (first entry, at byte offset 16)
-        let first_line: i64 = MachO_readI64(line_entries + 16);
-
-        // Advance line from 1 to first_line
-        if first_line > 1 {
-            DebugLineWriter_writeByte(&dw, DW_LNS_advance_line);
-            DebugLineWriter_writeSLEB128(&dw, first_line - 1);
-        }
-
-        // Copy (emit row)
-        DebugLineWriter_writeByte(&dw, DW_LNS_copy);
-
-        // Process remaining entries
-        var prev_addr: i64 = first_addr;
-        var prev_line: i64 = first_line;
-        var i: i64 = 1;
-
-        while i < line_count {
-            let entry_ptr: *u8 = line_entries + (i * entry_size);
-            // code_offset is at byte offset 0 within entry
-            let cur_addr: i64 = MachO_readI64(entry_ptr);
-            // line is at byte offset 16 within entry
-            let cur_line: i64 = MachO_readI64(entry_ptr + 16);
-
-            let addr_delta: i64 = cur_addr - prev_addr;
-            let line_delta: i64 = cur_line - prev_line;
-
-            // Try special opcode if possible
-            if DWARF_canUseSpecialOpcode(line_delta, addr_delta) {
-                let opcode: i64 = DWARF_specialOpcode(line_delta, addr_delta);
-                DebugLineWriter_writeByte(&dw, opcode);
-            } else {
-                // Use standard opcodes
-                if addr_delta > 0 {
-                    DebugLineWriter_writeByte(&dw, DW_LNS_advance_pc);
-                    DebugLineWriter_writeULEB128(&dw, addr_delta / MIN_INST_LENGTH);
-                }
-                if line_delta != 0 {
-                    DebugLineWriter_writeByte(&dw, DW_LNS_advance_line);
-                    DebugLineWriter_writeSLEB128(&dw, line_delta);
-                }
-                DebugLineWriter_writeByte(&dw, DW_LNS_copy);
-            }
-
-            prev_addr = cur_addr;
-            prev_line = cur_line;
-            i = i + 1;
-        }
-
-        // Advance to end of code
-        if code_size > prev_addr {
-            let final_delta: i64 = code_size - prev_addr;
-            DebugLineWriter_writeByte(&dw, DW_LNS_advance_pc);
-            DebugLineWriter_writeULEB128(&dw, final_delta / MIN_INST_LENGTH);
-        }
-    }
-
-    // End sequence
-    DebugLineWriter_writeEndSequence(&dw);
-
-    // Patch unit_length (total size minus the 4-byte length field itself)
-    let total_size: i64 = dw.count;
-    let unit_length: i64 = total_size - 4;
-
-    // Write unit_length at the beginning
-    let p0: *u8 = w.debug_line + unit_length_pos;
-    p0.* = @intCast(u8, unit_length & 255);
-    let p1: *u8 = w.debug_line + unit_length_pos + 1;
-    p1.* = @intCast(u8, (unit_length >> 8) & 255);
-    let p2: *u8 = w.debug_line + unit_length_pos + 2;
-    p2.* = @intCast(u8, (unit_length >> 16) & 255);
-    let p3: *u8 = w.debug_line + unit_length_pos + 3;
-    p3.* = @intCast(u8, (unit_length >> 24) & 255);
-
-    w.debug_line_count = dw.count;
-    return dw.count;
-}
-
-// ============================================================================
-// Main Write Function
-// Writes complete Mach-O object file to output buffer
-// Returns bytes written, or negative on error
-// ============================================================================
-
-fn MachOWriter_write(w: *MachOWriter) i64 {
-    // ========================================================================
-    // Add missing external symbols from relocations (using linear search)
-    // ========================================================================
-    var i: i64 = 0;
-    while i < w.relocs_count {
-        let target_str_off: i64 = (w.reloc_target_str_offs + i).*;
-        let target_len: i64 = (w.reloc_target_lens + i).*;
-        let target_ptr: *u8 = w.strings + target_str_off;
-
-        // Check if symbol exists using linear search
-        let existing_idx: i64 = MachOWriter_findSymbol(w, target_ptr, target_len);
-        if existing_idx < 0 {
-            // Add as undefined external symbol (section = 0)
-            MachOWriter_addSymbol(w, target_ptr, target_len, 0, 0, true);
-        }
-        i = i + 1;
-    }
-
-    // ========================================================================
-    // Calculate layout (symbol count may have changed)
-    // ========================================================================
-    let num_sections: i64 = 2;  // __text and __data
-    let load_cmds_size: i64 = SEGMENT_COMMAND_64_SIZE +
-                              num_sections * SECTION_64_SIZE +
-                              SYMTAB_COMMAND_SIZE;
-
-    let text_offset: i64 = MACH_HEADER_64_SIZE + load_cmds_size;
-    let text_size: i64 = w.code_count;
-
-    let data_offset: i64 = MachO_alignUp(text_offset + text_size, 3);  // 8-byte align
-    let data_size: i64 = w.data_count;
-
-    let reloc_offset: i64 = MachO_alignUp(data_offset + data_size, 2);  // 4-byte align
-    let reloc_size: i64 = w.relocs_count * RELOCATION_SIZE;
-
-    let symtab_offset: i64 = MachO_alignUp(reloc_offset + reloc_size, 3);  // 8-byte align
-    let symtab_size: i64 = w.symbols_count * NLIST64_SIZE;
-
-    let strtab_offset: i64 = symtab_offset + symtab_size;
-    let strtab_size: i64 = w.strings_count;
-
-    let segment_filesize: i64 = data_offset + data_size - text_offset;
-
-    // Write header
-    MachOWriter_writeMachHeader(w, 2, load_cmds_size);
-
-    // Write segment command
-    MachOWriter_writeSegmentCmd(w, segment_filesize, text_offset, segment_filesize, num_sections);
-
-    // Write __text section
-    let text_flags: i64 = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS;
-    var text_name: [16]u8;
-    text_name[0] = 95;  // '_'
-    text_name[1] = 95;  // '_'
-    text_name[2] = 116; // 't'
-    text_name[3] = 101; // 'e'
-    text_name[4] = 120; // 'x'
-    text_name[5] = 116; // 't'
-
-    var text_seg: [16]u8;
-    text_seg[0] = 95;   // '_'
-    text_seg[1] = 95;   // '_'
-    text_seg[2] = 84;   // 'T'
-    text_seg[3] = 69;   // 'E'
-    text_seg[4] = 88;   // 'X'
-    text_seg[5] = 84;   // 'T'
-
-    MachOWriter_writeSection(w, &text_name[0], &text_seg[0],
-                  text_size, text_offset,
-                  TEXT_ALIGN, text_flags,
-                  reloc_offset, w.relocs_count);
-
-    // Write __data section
-    var data_name: [16]u8;
-    data_name[0] = 95;  // '_'
-    data_name[1] = 95;  // '_'
-    data_name[2] = 100; // 'd'
-    data_name[3] = 97;  // 'a'
-    data_name[4] = 116; // 't'
-    data_name[5] = 97;  // 'a'
-
-    var data_seg: [16]u8;
-    data_seg[0] = 95;   // '_'
-    data_seg[1] = 95;   // '_'
-    data_seg[2] = 68;   // 'D'
-    data_seg[3] = 65;   // 'A'
-    data_seg[4] = 84;   // 'T'
-    data_seg[5] = 65;   // 'A'
-
-    MachOWriter_writeSection(w, &data_name[0], &data_seg[0],
-                  data_size, data_offset,
-                  DATA_ALIGN, S_REGULAR,
-                  0, 0);
-
-    // Write symtab command
-    MachOWriter_writeSymtabCmd(w, symtab_offset, w.symbols_count,
-                     strtab_offset, strtab_size);
-
-    // Write text section content
-    MachOWriter_outBytes(w, w.code, w.code_count);
-
-    // Pad to data section
-    let pad1: i64 = data_offset - (text_offset + text_size);
-    MachOWriter_outZeros(w, pad1);
-
-    // Write data section content
-    MachOWriter_outBytes(w, w.data, w.data_count);
-
-    // Pad to relocation table
-    let pad2: i64 = reloc_offset - (data_offset + data_size);
-    MachOWriter_outZeros(w, pad2);
-
-    // Write relocations - resolve symbol indices at write time using linear search
-    i = 0;
-    while i < w.relocs_count {
-        MachOWriter_writeTextReloc(w, i);
-        i = i + 1;
-    }
-
-    // Pad to symbol table
-    let pad3: i64 = symtab_offset - (reloc_offset + reloc_size);
-    MachOWriter_outZeros(w, pad3);
-
-    // Write symbol table (using parallel arrays)
-    i = 0;
-    while i < w.symbols_count {
-        MachOWriter_writeNlist64(w, i);
-        i = i + 1;
-    }
-
-    // Write string table
-    MachOWriter_outBytes(w, w.strings, w.strings_count);
-
-    return w.output_count;
-}
-
-// ============================================================================
-// Write with Debug Info
-// Writes complete Mach-O object file including __DWARF segment
-// Returns bytes written, or negative on error
-// ============================================================================
-
-fn MachOWriter_writeWithDebug(w: *MachOWriter) i64 {
-    // Check if we have debug info
-    let has_debug: bool = w.debug_line != null and w.debug_line_count > 0;
-
-    // If no debug info, use the regular write function
-    if not has_debug {
-        return MachOWriter_write(w);
-    }
-
-    // ========================================================================
-    // Add missing external symbols from relocations (using linear search)
-    // ========================================================================
-    var i: i64 = 0;
-    while i < w.relocs_count {
-        let target_str_off: i64 = (w.reloc_target_str_offs + i).*;
-        let target_len: i64 = (w.reloc_target_lens + i).*;
-        let target_ptr: *u8 = w.strings + target_str_off;
-
-        // Check if symbol exists using linear search
-        let existing_idx: i64 = MachOWriter_findSymbol(w, target_ptr, target_len);
-        if existing_idx < 0 {
-            // Add as undefined external symbol (section = 0)
-            MachOWriter_addSymbol(w, target_ptr, target_len, 0, 0, true);
-        }
-        i = i + 1;
-    }
-
-    // Check if we have full debug info (abbrev + info)
-    let has_full_debug: bool = w.debug_abbrev != null and w.debug_abbrev_count > 0 and
-                                w.debug_info != null and w.debug_info_count > 0;
-
-    // ========================================================================
-    // Step 3: Calculate layout (symbol count may have changed)
-    // ========================================================================
-    var num_sections: i64 = 3;   // __text, __data, __debug_line
-    if has_full_debug {
-        num_sections = 5;  // + __debug_abbrev, __debug_info
-    }
-
-    let load_cmds_size: i64 = SEGMENT_COMMAND_64_SIZE + num_sections * SECTION_64_SIZE +
-                              SYMTAB_COMMAND_SIZE;
-
-    let text_offset: i64 = MACH_HEADER_64_SIZE + load_cmds_size;
-    let text_size: i64 = w.code_count;
-
-    let data_offset: i64 = MachO_alignUp(text_offset + text_size, 3);  // 8-byte align
-    let data_size: i64 = w.data_count;
-
-    // Debug sections layout
-    let debug_line_offset: i64 = MachO_alignUp(data_offset + data_size, 2);  // 4-byte align
-    let debug_line_size: i64 = w.debug_line_count;
-
-    var debug_abbrev_offset: i64 = 0;
-    var debug_abbrev_size: i64 = 0;
-    var debug_info_offset: i64 = 0;
-    var debug_info_size: i64 = 0;
-
-    if has_full_debug {
-        debug_abbrev_offset = MachO_alignUp(debug_line_offset + debug_line_size, 2);
-        debug_abbrev_size = w.debug_abbrev_count;
-
-        debug_info_offset = MachO_alignUp(debug_abbrev_offset + debug_abbrev_size, 2);
-        debug_info_size = w.debug_info_count;
-    }
-
-    // Calculate end of debug sections for relocation offset
-    var last_debug_end: i64 = debug_line_offset + debug_line_size;
-    if has_full_debug {
-        last_debug_end = debug_info_offset + debug_info_size;
-    }
-
-    // Text section relocations
-    let text_reloc_offset: i64 = MachO_alignUp(last_debug_end, 2);  // 4-byte align
-    let text_reloc_size: i64 = w.relocs_count * RELOCATION_SIZE;
-
-    // Debug line section relocations
-    let debug_line_reloc_offset: i64 = text_reloc_offset + text_reloc_size;
-    let debug_line_reloc_size: i64 = w.debug_line_relocs_count * RELOCATION_SIZE;
-
-    // Debug info section relocations
-    var debug_info_reloc_offset: i64 = debug_line_reloc_offset + debug_line_reloc_size;
-    var debug_info_reloc_size: i64 = 0;
-    if has_full_debug {
-        debug_info_reloc_size = w.debug_info_relocs_count * RELOCATION_SIZE;
-    }
-
-    let total_reloc_size: i64 = text_reloc_size + debug_line_reloc_size + debug_info_reloc_size;
-
-    let symtab_offset: i64 = MachO_alignUp(text_reloc_offset + total_reloc_size, 3);  // 8-byte align
-    let symtab_size: i64 = w.symbols_count * NLIST64_SIZE;
-
-    let strtab_offset: i64 = symtab_offset + symtab_size;
-    let strtab_size: i64 = w.strings_count;
-
-    // Write header (2 load commands: 1 segment + symtab)
-    MachOWriter_writeMachHeader(w, 2, load_cmds_size);
-
-    // Write single segment command containing all sections
-    var segment_filesize: i64 = debug_line_offset + debug_line_size - text_offset;
-    if has_full_debug {
-        segment_filesize = debug_info_offset + debug_info_size - text_offset;
-    }
-    MachOWriter_writeSegmentCmd(w, segment_filesize, text_offset, segment_filesize, num_sections);
-
-    // Write __text section
-    let text_flags: i64 = S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS;
-    var text_name: [16]u8;
-    text_name[0] = 95; text_name[1] = 95; text_name[2] = 116;
-    text_name[3] = 101; text_name[4] = 120; text_name[5] = 116;
-    var text_seg: [16]u8;
-    text_seg[0] = 95; text_seg[1] = 95; text_seg[2] = 84;
-    text_seg[3] = 69; text_seg[4] = 88; text_seg[5] = 84;
-    MachOWriter_writeSection(w, &text_name[0], &text_seg[0],
-                  text_size, text_offset,
-                  TEXT_ALIGN, text_flags,
-                  text_reloc_offset, w.relocs_count);
-
-    // Write __data section
-    var data_name: [16]u8;
-    data_name[0] = 95; data_name[1] = 95; data_name[2] = 100;
-    data_name[3] = 97; data_name[4] = 116; data_name[5] = 97;
-    var data_seg: [16]u8;
-    data_seg[0] = 95; data_seg[1] = 95; data_seg[2] = 68;
-    data_seg[3] = 65; data_seg[4] = 84; data_seg[5] = 65;
-    MachOWriter_writeSection(w, &data_name[0], &data_seg[0],
-                  data_size, data_offset,
-                  DATA_ALIGN, S_REGULAR,
-                  0, 0);
-
-    // Write __debug_line section (__DWARF segment)
-    var dbg_line_name: [16]u8;
-    dbg_line_name[0] = 95; dbg_line_name[1] = 95;   // __
-    dbg_line_name[2] = 100; dbg_line_name[3] = 101; // de
-    dbg_line_name[4] = 98; dbg_line_name[5] = 117;  // bu
-    dbg_line_name[6] = 103; dbg_line_name[7] = 95;  // g_
-    dbg_line_name[8] = 108; dbg_line_name[9] = 105; // li
-    dbg_line_name[10] = 110; dbg_line_name[11] = 101; // ne
-    dbg_line_name[12] = 0;
-    var dwarf_seg: [16]u8;
-    dwarf_seg[0] = 95; dwarf_seg[1] = 95;   // __
-    dwarf_seg[2] = 68; dwarf_seg[3] = 87;   // DW
-    dwarf_seg[4] = 65; dwarf_seg[5] = 82;   // AR
-    dwarf_seg[6] = 70; dwarf_seg[7] = 0;    // F
-    MachOWriter_writeSection(w, &dbg_line_name[0], &dwarf_seg[0],
-                  debug_line_size, debug_line_offset,
-                  0, S_REGULAR,
-                  debug_line_reloc_offset, w.debug_line_relocs_count);
-
-    if has_full_debug {
-        // Write __debug_abbrev section
-        var dbg_abbrev_name: [16]u8;
-        dbg_abbrev_name[0] = 95; dbg_abbrev_name[1] = 95;   // __
-        dbg_abbrev_name[2] = 100; dbg_abbrev_name[3] = 101; // de
-        dbg_abbrev_name[4] = 98; dbg_abbrev_name[5] = 117;  // bu
-        dbg_abbrev_name[6] = 103; dbg_abbrev_name[7] = 95;  // g_
-        dbg_abbrev_name[8] = 97; dbg_abbrev_name[9] = 98;   // ab
-        dbg_abbrev_name[10] = 98; dbg_abbrev_name[11] = 114; // br
-        dbg_abbrev_name[12] = 101; dbg_abbrev_name[13] = 118; // ev
-        dbg_abbrev_name[14] = 0;
-        MachOWriter_writeSection(w, &dbg_abbrev_name[0], &dwarf_seg[0],
-                      debug_abbrev_size, debug_abbrev_offset,
-                      0, S_REGULAR,
-                      0, 0);  // No relocations for abbrev
-
-        // Write __debug_info section
-        var dbg_info_name: [16]u8;
-        dbg_info_name[0] = 95; dbg_info_name[1] = 95;   // __
-        dbg_info_name[2] = 100; dbg_info_name[3] = 101; // de
-        dbg_info_name[4] = 98; dbg_info_name[5] = 117;  // bu
-        dbg_info_name[6] = 103; dbg_info_name[7] = 95;  // g_
-        dbg_info_name[8] = 105; dbg_info_name[9] = 110; // in
-        dbg_info_name[10] = 102; dbg_info_name[11] = 111; // fo
-        dbg_info_name[12] = 0;
-        MachOWriter_writeSection(w, &dbg_info_name[0], &dwarf_seg[0],
-                      debug_info_size, debug_info_offset,
-                      0, S_REGULAR,
-                      debug_info_reloc_offset, w.debug_info_relocs_count);
-    }
-
-    // Write symtab command
-    MachOWriter_writeSymtabCmd(w, symtab_offset, w.symbols_count,
-                     strtab_offset, strtab_size);
-
-    // Write text section content
-    MachOWriter_outBytes(w, w.code, w.code_count);
-
-    // Pad to data section
-    let pad1: i64 = data_offset - (text_offset + text_size);
-    MachOWriter_outZeros(w, pad1);
-
-    // Write data section content
-    MachOWriter_outBytes(w, w.data, w.data_count);
-
-    // Pad to debug_line section
-    let pad2: i64 = debug_line_offset - (data_offset + data_size);
-    MachOWriter_outZeros(w, pad2);
-
-    // Write debug_line section content
-    MachOWriter_outBytes(w, w.debug_line, w.debug_line_count);
-
-    if has_full_debug {
-        // Pad to debug_abbrev section
-        let pad_abbrev: i64 = debug_abbrev_offset - (debug_line_offset + debug_line_size);
-        MachOWriter_outZeros(w, pad_abbrev);
-
-        // Write debug_abbrev section content
-        MachOWriter_outBytes(w, w.debug_abbrev, w.debug_abbrev_count);
-
-        // Pad to debug_info section
-        let pad_info: i64 = debug_info_offset - (debug_abbrev_offset + debug_abbrev_size);
-        MachOWriter_outZeros(w, pad_info);
-
-        // Write debug_info section content
-        MachOWriter_outBytes(w, w.debug_info, w.debug_info_count);
-    }
-
-    // Pad to relocation table
-    let pad3: i64 = text_reloc_offset - last_debug_end;
-    MachOWriter_outZeros(w, pad3);
-
-    // Write text section relocations - resolve symbol indices at write time
-    var j: i64 = 0;
-    while j < w.relocs_count {
-        MachOWriter_writeTextReloc(w, j);
-        j = j + 1;
-    }
-
-    // Write debug_line section relocations
-    j = 0;
-    while j < w.debug_line_relocs_count {
-        MachOWriter_writeDbgLineReloc(w, j);
-        j = j + 1;
-    }
-
-    // Write debug_info section relocations
-    if has_full_debug {
-        j = 0;
-        while j < w.debug_info_relocs_count {
-            MachOWriter_writeDbgInfoReloc(w, j);
-            j = j + 1;
-        }
-    }
-
-    // Pad to symbol table
-    let pad4: i64 = symtab_offset - (text_reloc_offset + total_reloc_size);
-    MachOWriter_outZeros(w, pad4);
-
-    // Write symbol table (using parallel arrays)
-    i = 0;
-    while i < w.symbols_count {
-        MachOWriter_writeNlist64(w, i);
-        i = i + 1;
-    }
-
-    // Write string table
-    MachOWriter_outBytes(w, w.strings, w.strings_count);
-
-    return w.output_count;
 }
