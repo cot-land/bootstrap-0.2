@@ -3137,26 +3137,38 @@ fn stringConcat(self: *GenState, v: *Value) {
         self.call_sites_count = self.call_sites_count + 1;
     }
 
-    // Step 4: Handle return - string returned in x0 (ptr), x1 (len)
-    // The StringConcat value's reg is for the ptr; len goes to x1
+    // Step 4: Handle return - string returned in RAX/x0 (ptr), RDX/x1 (len)
+    // The StringConcat value's reg is for the ptr; len goes to RDX/X1
     // If the result is used, it will be stored via StoreFieldLocal ops
-    // For now, leave result in x0 (ptr) - the caller handles storing both fields
+    // For now, leave result in RAX/X0 (ptr) - the caller handles storing both fields
     let dest_reg: i64 = v.reg;
-    if dest_reg >= 0 and dest_reg != X0 {
-        self.emitInst(ARM64_encodeMovReg(dest_reg, X0));
+    if self.target == TARGET_AMD64 {
+        if dest_reg >= 0 and dest_reg != RAX {
+            self.emitInstPacked(AMD64_encodeMovReg(dest_reg, RAX));
+        }
+    } else {
+        if dest_reg >= 0 and dest_reg != X0 {
+            self.emitInst(ARM64_encodeMovReg(dest_reg, X0));
+        }
     }
 }
 
 // Helper: Materialize an argument value into a target register
-// Handles ConstString (ADRP+ADD), ConstInt (MOV), and register values
+// Handles ConstString (ADRP+ADD or LEA RIP), ConstInt (MOV), and register values
 fn materializeArgToReg(self: *GenState, arg_val: *Value, target_reg: i64) {
     if arg_val.op == Op.ConstString {
-        // String literal: emit ADRP + ADD and record relocation
+        // String literal: emit address computation and record relocation
         let str_start: i64 = arg_val.aux_int;
         let str_len: i64 = arg_val.aux_ptr;
         let reloc_offset: i64 = self.code_count;
-        self.emitInst(encode_adrp(target_reg, 0));
-        self.emitInst(encode_add_imm(target_reg, target_reg, 0));
+        if self.target == TARGET_AMD64 {
+            // AMD64: LEA r64, [RIP+disp32]
+            self.emitInstPacked(AMD64_lea_rip(target_reg, 0));
+        } else {
+            // ARM64: ADRP + ADD
+            self.emitInst(encode_adrp(target_reg, 0));
+            self.emitInst(encode_add_imm(target_reg, target_reg, 0));
+        }
         // Record string relocation
         if self.string_reloc_code_offsets != null and self.string_relocs_count < self.string_relocs_cap {
             let off_ptr: *i64 = self.string_reloc_code_offsets + self.string_relocs_count;
@@ -3170,23 +3182,33 @@ fn materializeArgToReg(self: *GenState, arg_val: *Value, target_reg: i64) {
     } else if arg_val.op == Op.ConstInt {
         // Integer constant: emit MOV immediate
         let imm: i64 = arg_val.aux_int;
-        if imm < 0 and imm >= (0 - 65536) {
-            let notval: i64 = (0 - imm) - 1;
-            self.emitInst(encode_movn(target_reg, notval, 0));
-        } else if imm >= 0 and imm <= 65535 {
-            self.emitInst(encode_movz(target_reg, imm, 0));
+        if self.target == TARGET_AMD64 {
+            // AMD64: MOV r64, imm64
+            self.emitInstPacked(AMD64_encodeMovImm(target_reg, imm));
         } else {
-            // Large value needs MOVZ + MOVK
-            self.emitInst(encode_movz(target_reg, imm & 65535, 0));
-            let bits16: i64 = (imm / 65536) & 65535;
-            if bits16 != 0 {
-                self.emitInst(encode_movk(target_reg, bits16, 1));
+            // ARM64: MOVN/MOVZ/MOVK sequence
+            if imm < 0 and imm >= (0 - 65536) {
+                let notval: i64 = (0 - imm) - 1;
+                self.emitInst(encode_movn(target_reg, notval, 0));
+            } else if imm >= 0 and imm <= 65535 {
+                self.emitInst(encode_movz(target_reg, imm, 0));
+            } else {
+                // Large value needs MOVZ + MOVK
+                self.emitInst(encode_movz(target_reg, imm & 65535, 0));
+                let bits16: i64 = (imm / 65536) & 65535;
+                if bits16 != 0 {
+                    self.emitInst(encode_movk(target_reg, bits16, 1));
+                }
             }
         }
     } else if arg_val.reg >= 0 {
         // Value is in a register - just move it
         if arg_val.reg != target_reg {
-            self.emitInst(ARM64_encodeMovReg(target_reg, arg_val.reg));
+            if self.target == TARGET_AMD64 {
+                self.emitInstPacked(AMD64_encodeMovReg(target_reg, arg_val.reg));
+            } else {
+                self.emitInst(ARM64_encodeMovReg(target_reg, arg_val.reg));
+            }
         }
     }
 }
