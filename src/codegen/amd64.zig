@@ -1004,6 +1004,19 @@ pub const AMD64CodeGen = struct {
     fn generateValueBinary(self: *AMD64CodeGen, value: *const Value) !void {
         debug.log(.codegen, "    v{d}: {s}", .{ value.id, @tagName(value.op) });
 
+        // Skip rematerializeable values that have no register assigned.
+        // They will be rematerialized when used (via ensureInReg).
+        // This matches ARM64 codegen behavior.
+        switch (value.op) {
+            .const_int, .const_64, .const_bool, .local_addr => {
+                if (value.regOrNull() == null) {
+                    debug.log(.codegen, "      (skipped - evicted rematerializeable)", .{});
+                    return;
+                }
+            },
+            else => {},
+        }
+
         switch (value.op) {
             .const_int, .const_64 => {
                 const dest_reg = self.getDestRegForValue(value);
@@ -1280,6 +1293,47 @@ pub const AMD64CodeGen = struct {
                     // Note: XOR before CMP would clobber flags, so we use MOVZX after SETcc
                     try self.emit(4, asm_mod.encodeSetcc(cond, dest_reg));
                     try self.emit(4, asm_mod.encodeMovzxRegReg8(dest_reg, dest_reg));
+                }
+            },
+
+            // cond_select(cond, then_val, else_val) -> if cond != 0 then then_val else else_val
+            .cond_select => {
+                if (value.args.len >= 3) {
+                    const cond_val = value.args[0];
+                    const then_val = value.args[1];
+                    const else_val = value.args[2];
+                    const dest_reg = self.getDestRegForValue(value);
+
+                    // Get registers for operands, using scratch regs to avoid conflicts
+                    const else_reg = self.getRegForValue(else_val) orelse blk: {
+                        try self.ensureInReg(else_val, .r10);
+                        break :blk Reg.r10;
+                    };
+                    const then_reg = self.getRegForValue(then_val) orelse blk: {
+                        const scratch: Reg = if (else_reg == .r11) .r10 else .r11;
+                        try self.ensureInReg(then_val, scratch);
+                        break :blk scratch;
+                    };
+                    const cond_reg = self.getRegForValue(cond_val) orelse blk: {
+                        var scratch: Reg = .rcx;
+                        if (scratch == then_reg or scratch == else_reg) scratch = .rax;
+                        if (scratch == then_reg or scratch == else_reg) scratch = .rdx;
+                        try self.ensureInReg(cond_val, scratch);
+                        break :blk scratch;
+                    };
+
+                    // Move else_val to dest (default value)
+                    if (dest_reg != else_reg) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, else_reg));
+                    }
+
+                    // TEST cond, cond (sets ZF if cond is 0)
+                    try self.emit(3, asm_mod.encodeTestRegReg(cond_reg, cond_reg));
+
+                    // CMOVNE dest, then_val (if cond != 0, use then_val)
+                    try self.emit(4, asm_mod.encodeCmovcc(.ne, dest_reg, then_reg));
+
+                    debug.log(.codegen, "      cond_select: TEST {s}; CMOVNE {s}, {s}", .{ cond_reg.name(), dest_reg.name(), then_reg.name() });
                 }
             },
 

@@ -1250,6 +1250,8 @@ fn isRematerializeable(v: *Value) bool {
     return switch (v.op) {
         // Constants can always be rematerialized
         .const_int, .const_64, .const_bool => true,
+        // local_addr is just LEA from RBP, can be recomputed
+        .local_addr => true,
         // SP/SB (if we had them) would be rematerializeable
         // Args are NOT rematerializeable (they're passed in registers)
         else => false,

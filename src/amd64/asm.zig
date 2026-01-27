@@ -406,6 +406,17 @@ pub fn encodeCmpRegImm8(reg: Reg, imm: i8) [4]u8 {
     };
 }
 
+/// TEST r64, r64 (3 bytes: REX.W + 85 /r)
+/// Sets ZF if result is zero (i.e., if both operands have no common bits)
+/// Common use: TEST reg, reg to check if reg == 0
+pub fn encodeTestRegReg(a: Reg, b: Reg) [3]u8 {
+    return .{
+        encodeREX64(b, a),
+        0x85, // TEST r/m64, r64
+        encodeModRM_RR(b, a),
+    };
+}
+
 // =========================================
 // Division (special handling for RDX:RAX)
 // =========================================
@@ -914,6 +925,17 @@ pub fn encodeSetcc(cond: Cond, dst: Reg) [4]u8 {
         0x0F,
         0x90 + @as(u8, @intFromEnum(cond)),
         encodeModRM_Ext(0, dst),
+    };
+}
+
+/// CMOVcc r64, r64 - Conditional move based on condition flags
+/// 4 bytes: REX.W + 0F 4x /r where x is condition code
+pub fn encodeCmovcc(cond: Cond, dst: Reg, src: Reg) [4]u8 {
+    return .{
+        encodeREX64(dst, src),
+        0x0F,
+        0x40 + @as(u8, @intFromEnum(cond)),
+        encodeModRM_RR(dst, src),
     };
 }
 
