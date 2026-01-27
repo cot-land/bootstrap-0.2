@@ -1212,3 +1212,166 @@ test "array sum" {
     var arr: [4]i64 = [10, 11, 12, 9]
     @assert(arr[0] + arr[1] + arr[2] + arr[3] == 42)
 }
+
+test "array copy" {
+    var a: [3]i64 = [10, 20, 30]
+    var b: [3]i64 = a
+    b[0] = 99
+    @assert(a[0] == 10)  // Original unchanged
+    @assert(b[0] == 99)  // Copy modified
+}
+
+test "array loop" {
+    var arr: [5]i64 = [1, 2, 3, 4, 5]
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 5 {
+        sum = sum + arr[i]
+        i = i + 1
+    }
+    @assert(sum == 15)
+}
+
+// ============================================================================
+// INLINE TESTS - Slice Types
+// ============================================================================
+
+test "slice create" {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[0:3]
+    @assert(len(s) == 3)
+}
+
+test "slice index" {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[1:4]
+    @assert(s[0] == 20)
+    @assert(s[1] == 30)
+    @assert(s[2] == 40)
+}
+
+test "slice offset" {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[2:5]
+    @assert(s[0] == 30)
+}
+
+test "slice write" {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[0:3]
+    s[0] = 42
+    @assert(arr[0] == 42)  // Shared memory
+}
+
+test "slice implicit end" {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[2:]
+    @assert(s[0] == 30)
+    @assert(len(s) == 3)
+}
+
+test "slice implicit start" {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[:3]
+    @assert(s[2] == 30)
+    @assert(len(s) == 3)
+}
+
+test "slice full" {
+    var arr: [5]i64 = [10, 20, 30, 40, 50]
+    let s: []i64 = arr[:]
+    @assert(len(s) == 5)
+}
+
+// ============================================================================
+// INLINE TESTS - String Types
+// ============================================================================
+
+test "string literal" {
+    let s: string = "hello"
+    @assert(len(s) == 5)
+}
+
+test "string empty" {
+    let s: string = ""
+    @assert(len(s) == 0)
+}
+
+test "string escape" {
+    let s: string = "a\nb"
+    @assert(len(s) == 3)
+}
+
+test "string index" {
+    let s: string = "hello"
+    let c: u8 = s[0]
+    @assert(c == 104)  // 'h' = 104
+}
+
+test "string copy" {
+    let s1: string = "hello"
+    let s2: string = s1
+    @assert(len(s2) == 5)
+}
+
+test "string slice" {
+    let s: string = "hello"
+    let sub: string = s[0:3]
+    @assert(len(sub) == 3)
+}
+
+test "string concat" {
+    let a: string = "hello"
+    let b: string = " world"
+    let c: string = a + b
+    @assert(len(c) == 11)
+}
+
+test "string concat empty" {
+    let a: string = "foo"
+    let b: string = ""
+    let c: string = a + b
+    @assert(len(c) == 3)
+}
+
+// ============================================================================
+// INLINE TESTS - Null Pointers
+// ============================================================================
+
+test "null eq" {
+    let p: *i64 = null
+    @assert(p == null)
+}
+
+test "null ne" {
+    var x: i64 = 42
+    let p: *i64 = &x
+    @assert(p != null)
+}
+
+test "null eq right" {
+    let p: *i64 = null
+    @assert(null == p)
+}
+
+// ============================================================================
+// INLINE TESTS - Characters
+// ============================================================================
+
+test "char simple" {
+    let c: u8 = 'A'
+    @assert(c == 65)
+}
+
+test "char compare" {
+    let a: u8 = 'a'
+    let b: u8 = 'b'
+    @assert(a < b)
+}
+
+test "char escape" {
+    let newline: u8 = '\n'
+    let tab: u8 = '\t'
+    @assert(newline == 10)
+    @assert(tab == 9)
+}
