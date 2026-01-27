@@ -493,8 +493,35 @@ pub const Checker = struct {
                     }
                 }
             },
-            .import_decl, .bad_decl, .test_decl => {},
+            .import_decl, .bad_decl => {},
+            .test_decl => |t| try self.checkTestDecl(t),
         }
+    }
+
+    /// Check test declaration - type-check the body like a void function.
+    fn checkTestDecl(self: *Checker, t: ast.TestDecl) CheckError!void {
+        debug.log(.check, "checkTestDecl: '{s}'", .{t.name});
+
+        // Create new scope for test body (like function body)
+        var test_scope = Scope.init(self.allocator, self.scope);
+        defer test_scope.deinit();
+
+        // Save state
+        const old_scope = self.scope;
+        const old_return = self.current_return_type;
+
+        // Set up for test body (tests are void functions)
+        self.scope = &test_scope;
+        self.current_return_type = TypeRegistry.VOID;
+
+        // Type-check the test body as a block
+        if (t.body != null_node) {
+            try self.checkStmt(t.body);
+        }
+
+        // Restore state
+        self.scope = old_scope;
+        self.current_return_type = old_return;
     }
 
     /// Check function declaration.
