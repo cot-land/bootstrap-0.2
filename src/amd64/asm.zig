@@ -240,6 +240,25 @@ pub fn encodeCall(rel32: i32) [5]u8 {
     return buf;
 }
 
+/// CALL *reg (indirect call through register)
+/// For 64-bit: optional REX + FF /2 (ModR/M with Mod=11, Reg=2)
+/// ModR/M = 11 010 rrr = 0xD0 | rrr (Mod=11=reg, Opcode=2, R/M=reg)
+pub fn encodeCallReg(reg: Reg) struct { data: [3]u8, len: u8 } {
+    const modrm: u8 = 0xD0 | @as(u8, reg.enc3());
+    if (reg.needsRex()) {
+        // REX.B for R8-R15
+        return .{
+            .data = .{ 0x41, 0xFF, modrm },
+            .len = 3,
+        };
+    } else {
+        return .{
+            .data = .{ 0xFF, modrm, 0x00 },
+            .len = 2,
+        };
+    }
+}
+
 /// JMP rel32 (5 bytes: E9 + rel32)
 pub fn encodeJmpRel32(rel32: i32) [5]u8 {
     var buf: [5]u8 = undefined;
@@ -415,6 +434,171 @@ pub fn encodeTestRegReg(a: Reg, b: Reg) [3]u8 {
         0x85, // TEST r/m64, r64
         encodeModRM_RR(b, a),
     };
+}
+
+// =========================================
+// Sign/Zero Extension (MOVSX, MOVZX, MOVSXD)
+// =========================================
+
+/// MOVSX r64, r8 - Sign extend byte to 64-bit (REX.W + 0F BE /r)
+pub fn encodeMovsxByte64(dst: Reg, src: Reg) [4]u8 {
+    return .{
+        encodeREX64(dst, src),
+        0x0F,
+        0xBE,
+        encodeModRM_RR(dst, src),
+    };
+}
+
+/// MOVSX r32, r8 - Sign extend byte to 32-bit (0F BE /r)
+pub fn encodeMovsxByte32(dst: Reg, src: Reg) struct { data: [4]u8, len: u8 } {
+    var buf: [4]u8 = .{0} ** 4;
+    var len: u8 = 0;
+
+    // Only need REX if extended regs
+    if (dst.needsRex() or src.needsRex()) {
+        buf[len] = 0x40 |
+            (@as(u8, @intFromBool(dst.needsRex())) << 2) |
+            @as(u8, @intFromBool(src.needsRex()));
+        len += 1;
+    }
+
+    buf[len] = 0x0F;
+    len += 1;
+    buf[len] = 0xBE;
+    len += 1;
+    buf[len] = encodeModRM_RR(dst, src);
+    len += 1;
+
+    return .{ .data = buf, .len = len };
+}
+
+/// MOVSX r64, r16 - Sign extend word to 64-bit (REX.W + 0F BF /r)
+pub fn encodeMovsxWord64(dst: Reg, src: Reg) [4]u8 {
+    return .{
+        encodeREX64(dst, src),
+        0x0F,
+        0xBF,
+        encodeModRM_RR(dst, src),
+    };
+}
+
+/// MOVSX r32, r16 - Sign extend word to 32-bit (0F BF /r)
+pub fn encodeMovsxWord32(dst: Reg, src: Reg) struct { data: [4]u8, len: u8 } {
+    var buf: [4]u8 = .{0} ** 4;
+    var len: u8 = 0;
+
+    if (dst.needsRex() or src.needsRex()) {
+        buf[len] = 0x40 |
+            (@as(u8, @intFromBool(dst.needsRex())) << 2) |
+            @as(u8, @intFromBool(src.needsRex()));
+        len += 1;
+    }
+
+    buf[len] = 0x0F;
+    len += 1;
+    buf[len] = 0xBF;
+    len += 1;
+    buf[len] = encodeModRM_RR(dst, src);
+    len += 1;
+
+    return .{ .data = buf, .len = len };
+}
+
+/// MOVSXD r64, r32 - Sign extend dword to 64-bit (REX.W + 63 /r)
+pub fn encodeMovsxd(dst: Reg, src: Reg) [3]u8 {
+    return .{
+        encodeREX64(dst, src),
+        0x63, // MOVSXD
+        encodeModRM_RR(dst, src),
+    };
+}
+
+/// MOVZX r64, r8 - Zero extend byte to 64-bit (REX.W + 0F B6 /r)
+pub fn encodeMovzxByte64(dst: Reg, src: Reg) [4]u8 {
+    return .{
+        encodeREX64(dst, src),
+        0x0F,
+        0xB6,
+        encodeModRM_RR(dst, src),
+    };
+}
+
+/// MOVZX r32, r8 - Zero extend byte to 32-bit (0F B6 /r)
+/// Note: upper 32 bits are automatically zeroed in 64-bit mode
+pub fn encodeMovzxByte32(dst: Reg, src: Reg) struct { data: [4]u8, len: u8 } {
+    var buf: [4]u8 = .{0} ** 4;
+    var len: u8 = 0;
+
+    if (dst.needsRex() or src.needsRex()) {
+        buf[len] = 0x40 |
+            (@as(u8, @intFromBool(dst.needsRex())) << 2) |
+            @as(u8, @intFromBool(src.needsRex()));
+        len += 1;
+    }
+
+    buf[len] = 0x0F;
+    len += 1;
+    buf[len] = 0xB6;
+    len += 1;
+    buf[len] = encodeModRM_RR(dst, src);
+    len += 1;
+
+    return .{ .data = buf, .len = len };
+}
+
+/// MOVZX r64, r16 - Zero extend word to 64-bit (REX.W + 0F B7 /r)
+pub fn encodeMovzxWord64(dst: Reg, src: Reg) [4]u8 {
+    return .{
+        encodeREX64(dst, src),
+        0x0F,
+        0xB7,
+        encodeModRM_RR(dst, src),
+    };
+}
+
+/// MOVZX r32, r16 - Zero extend word to 32-bit (0F B7 /r)
+pub fn encodeMovzxWord32(dst: Reg, src: Reg) struct { data: [4]u8, len: u8 } {
+    var buf: [4]u8 = .{0} ** 4;
+    var len: u8 = 0;
+
+    if (dst.needsRex() or src.needsRex()) {
+        buf[len] = 0x40 |
+            (@as(u8, @intFromBool(dst.needsRex())) << 2) |
+            @as(u8, @intFromBool(src.needsRex()));
+        len += 1;
+    }
+
+    buf[len] = 0x0F;
+    len += 1;
+    buf[len] = 0xB7;
+    len += 1;
+    buf[len] = encodeModRM_RR(dst, src);
+    len += 1;
+
+    return .{ .data = buf, .len = len };
+}
+
+/// MOV r32, r32 - Zero extend 32-bit to 64-bit (implicit in 64-bit mode)
+/// Writing to a 32-bit register automatically zeroes upper 32 bits
+pub fn encodeMovReg32(dst: Reg, src: Reg) struct { data: [3]u8, len: u8 } {
+    var buf: [3]u8 = .{0} ** 3;
+    var len: u8 = 0;
+
+    // Only need REX if extended regs (no W bit for 32-bit operation)
+    if (dst.needsRex() or src.needsRex()) {
+        buf[len] = 0x40 |
+            (@as(u8, @intFromBool(src.needsRex())) << 2) |
+            @as(u8, @intFromBool(dst.needsRex()));
+        len += 1;
+    }
+
+    buf[len] = 0x89; // MOV r/m32, r32
+    len += 1;
+    buf[len] = encodeModRM_RR(src, dst);
+    len += 1;
+
+    return .{ .data = buf, .len = len };
 }
 
 // =========================================

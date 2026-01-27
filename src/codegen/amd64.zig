@@ -182,6 +182,11 @@ pub const AMD64CodeGen = struct {
         try self.code.appendSlice(self.allocator, &bytes);
     }
 
+    /// Emit variable-length instruction (for instructions that may or may not need REX prefix)
+    fn emitVarLen(self: *AMD64CodeGen, data: anytype, len: u8) !void {
+        try self.code.appendSlice(self.allocator, data[0..len]);
+    }
+
     // ========================================================================
     // Register Mapping
     // ========================================================================
@@ -1337,6 +1342,163 @@ pub const AMD64CodeGen = struct {
                 }
             },
 
+            // Sign extension operations
+            .sign_ext8to16, .sign_ext8to32 => {
+                const dest_reg = self.getDestRegForValue(value);
+                if (value.args.len > 0) {
+                    const src = value.args[0];
+                    const src_reg = self.getRegForValue(src) orelse blk: {
+                        try self.ensureInReg(src, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    // MOVSX r32, r8 - sign extend byte to 32-bit
+                    const enc = asm_mod.encodeMovsxByte32(dest_reg, src_reg);
+                    try self.emitVarLen(enc.data, enc.len);
+                    debug.log(.codegen, "      sign_ext8to32: MOVSX {s}, {s}", .{ dest_reg.name(), src_reg.name() });
+                }
+            },
+            .sign_ext8to64 => {
+                const dest_reg = self.getDestRegForValue(value);
+                if (value.args.len > 0) {
+                    const src = value.args[0];
+                    const src_reg = self.getRegForValue(src) orelse blk: {
+                        try self.ensureInReg(src, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    // MOVSX r64, r8 - sign extend byte to 64-bit
+                    try self.emit(4, asm_mod.encodeMovsxByte64(dest_reg, src_reg));
+                    debug.log(.codegen, "      sign_ext8to64: MOVSX {s}, {s}", .{ dest_reg.name(), src_reg.name() });
+                }
+            },
+            .sign_ext16to32 => {
+                const dest_reg = self.getDestRegForValue(value);
+                if (value.args.len > 0) {
+                    const src = value.args[0];
+                    const src_reg = self.getRegForValue(src) orelse blk: {
+                        try self.ensureInReg(src, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    // MOVSX r32, r16 - sign extend word to 32-bit
+                    const enc = asm_mod.encodeMovsxWord32(dest_reg, src_reg);
+                    try self.emitVarLen(enc.data, enc.len);
+                    debug.log(.codegen, "      sign_ext16to32: MOVSX {s}, {s}", .{ dest_reg.name(), src_reg.name() });
+                }
+            },
+            .sign_ext16to64 => {
+                const dest_reg = self.getDestRegForValue(value);
+                if (value.args.len > 0) {
+                    const src = value.args[0];
+                    const src_reg = self.getRegForValue(src) orelse blk: {
+                        try self.ensureInReg(src, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    // MOVSX r64, r16 - sign extend word to 64-bit
+                    try self.emit(4, asm_mod.encodeMovsxWord64(dest_reg, src_reg));
+                    debug.log(.codegen, "      sign_ext16to64: MOVSX {s}, {s}", .{ dest_reg.name(), src_reg.name() });
+                }
+            },
+            .sign_ext32to64 => {
+                const dest_reg = self.getDestRegForValue(value);
+                if (value.args.len > 0) {
+                    const src = value.args[0];
+                    const src_reg = self.getRegForValue(src) orelse blk: {
+                        try self.ensureInReg(src, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    // MOVSXD r64, r32 - sign extend dword to 64-bit
+                    try self.emit(3, asm_mod.encodeMovsxd(dest_reg, src_reg));
+                    debug.log(.codegen, "      sign_ext32to64: MOVSXD {s}, {s}", .{ dest_reg.name(), src_reg.name() });
+                }
+            },
+
+            // Zero extension operations
+            .zero_ext8to16, .zero_ext8to32 => {
+                const dest_reg = self.getDestRegForValue(value);
+                if (value.args.len > 0) {
+                    const src = value.args[0];
+                    const src_reg = self.getRegForValue(src) orelse blk: {
+                        try self.ensureInReg(src, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    // MOVZX r32, r8 - zero extend byte to 32-bit
+                    const enc = asm_mod.encodeMovzxByte32(dest_reg, src_reg);
+                    try self.emitVarLen(enc.data, enc.len);
+                    debug.log(.codegen, "      zero_ext8to32: MOVZX {s}, {s}", .{ dest_reg.name(), src_reg.name() });
+                }
+            },
+            .zero_ext8to64 => {
+                const dest_reg = self.getDestRegForValue(value);
+                if (value.args.len > 0) {
+                    const src = value.args[0];
+                    const src_reg = self.getRegForValue(src) orelse blk: {
+                        try self.ensureInReg(src, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    // MOVZX r64, r8 - zero extend byte to 64-bit
+                    try self.emit(4, asm_mod.encodeMovzxByte64(dest_reg, src_reg));
+                    debug.log(.codegen, "      zero_ext8to64: MOVZX {s}, {s}", .{ dest_reg.name(), src_reg.name() });
+                }
+            },
+            .zero_ext16to32 => {
+                const dest_reg = self.getDestRegForValue(value);
+                if (value.args.len > 0) {
+                    const src = value.args[0];
+                    const src_reg = self.getRegForValue(src) orelse blk: {
+                        try self.ensureInReg(src, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    // MOVZX r32, r16 - zero extend word to 32-bit
+                    const enc = asm_mod.encodeMovzxWord32(dest_reg, src_reg);
+                    try self.emitVarLen(enc.data, enc.len);
+                    debug.log(.codegen, "      zero_ext16to32: MOVZX {s}, {s}", .{ dest_reg.name(), src_reg.name() });
+                }
+            },
+            .zero_ext16to64 => {
+                const dest_reg = self.getDestRegForValue(value);
+                if (value.args.len > 0) {
+                    const src = value.args[0];
+                    const src_reg = self.getRegForValue(src) orelse blk: {
+                        try self.ensureInReg(src, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    // MOVZX r64, r16 - zero extend word to 64-bit
+                    try self.emit(4, asm_mod.encodeMovzxWord64(dest_reg, src_reg));
+                    debug.log(.codegen, "      zero_ext16to64: MOVZX {s}, {s}", .{ dest_reg.name(), src_reg.name() });
+                }
+            },
+            .zero_ext32to64 => {
+                // In x86-64, writing to 32-bit register automatically zeroes upper 32 bits
+                const dest_reg = self.getDestRegForValue(value);
+                if (value.args.len > 0) {
+                    const src = value.args[0];
+                    const src_reg = self.getRegForValue(src) orelse blk: {
+                        try self.ensureInReg(src, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    // MOV r32, r32 - implicit zero extension
+                    const enc = asm_mod.encodeMovReg32(dest_reg, src_reg);
+                    try self.emitVarLen(enc.data, enc.len);
+                    debug.log(.codegen, "      zero_ext32to64: MOV {s}d, {s}d", .{ dest_reg.name(), src_reg.name() });
+                }
+            },
+
+            // Truncation operations - copy to destination register (use lower bits)
+            .trunc64to32, .trunc32to16, .trunc16to8, .trunc64to16, .trunc64to8, .trunc32to8 => {
+                const dest_reg = self.getDestRegForValue(value);
+                if (value.args.len > 0) {
+                    const src = value.args[0];
+                    const src_reg = self.getRegForValue(src) orelse blk: {
+                        try self.ensureInReg(src, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    // Copy to destination register - truncation just uses lower bits
+                    if (dest_reg != src_reg) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, src_reg));
+                    }
+                    debug.log(.codegen, "      trunc: MOV {s}, {s}", .{ dest_reg.name(), src_reg.name() });
+                }
+            },
+
             .copy => {
                 // Copy value from one register to another
                 const args = value.args;
@@ -1414,6 +1576,59 @@ pub const AMD64CodeGen = struct {
                 // Result is in RAX - regalloc will handle spill/reload if needed
                 // Go's approach: don't move to callee-saved, let regalloc spill
                 // (Same pattern as ARM64 backend)
+            },
+
+            .closure_call => {
+                // Indirect function call through function pointer
+                // System V AMD64 ABI: args in RDI, RSI, RDX, RCX, R8, R9, result in RAX
+                // First arg is function pointer, rest are actual call arguments
+                const args = value.args;
+                if (args.len == 0) {
+                    debug.log(.codegen, "      closure_call: no function pointer!", .{});
+                    return;
+                }
+
+                // Get function pointer - use R11 as it's caller-saved and not an arg reg
+                const fn_ptr = args[0];
+                var fn_ptr_reg = self.getRegForValue(fn_ptr) orelse blk: {
+                    try self.ensureInReg(fn_ptr, .r11);
+                    break :blk Reg.r11;
+                };
+
+                // Setup actual arguments (skip args[0] which is the function pointer)
+                const actual_args = args[1..];
+                if (actual_args.len > 0) {
+                    // If fn_ptr is in an arg register, save it to R11 first
+                    for (regs.AMD64.arg_regs) |arg_reg| {
+                        if (fn_ptr_reg == arg_reg) {
+                            try self.emit(3, asm_mod.encodeMovRegReg(.r11, fn_ptr_reg));
+                            fn_ptr_reg = .r11;
+                            break;
+                        }
+                    }
+
+                    // Setup actual arguments
+                    const stack_cleanup = try self.setupCallArgs(actual_args);
+
+                    // Emit CALL *reg (indirect call)
+                    const call_inst = asm_mod.encodeCallReg(fn_ptr_reg);
+                    try self.emitBytes(call_inst.data[0..call_inst.len]);
+
+                    // Clean up stack arguments if any
+                    if (stack_cleanup > 0) {
+                        const cleanup_size: i32 = @intCast(stack_cleanup);
+                        try self.emit(7, asm_mod.encodeAddRegImm32(.rsp, cleanup_size));
+                        debug.log(.codegen, "      stack cleanup: ADD RSP, {d}", .{cleanup_size});
+                    }
+                    debug.log(.codegen, "      -> CALL *{s} (indirect with {} args)", .{ fn_ptr_reg.name(), actual_args.len });
+                } else {
+                    // No arguments, just call through function pointer
+                    const call_inst = asm_mod.encodeCallReg(fn_ptr_reg);
+                    try self.emitBytes(call_inst.data[0..call_inst.len]);
+                    debug.log(.codegen, "      -> CALL *{s} (indirect, no args)", .{fn_ptr_reg.name()});
+                }
+
+                // Result is in RAX - regalloc will handle spill/reload if needed
             },
 
             .load => {
