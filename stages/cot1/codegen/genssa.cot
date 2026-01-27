@@ -880,7 +880,11 @@ fn blockValues(self: *GenState, block: *Block) {
             if !is_param_setup {
                 // Emit crash handler call before this value
                 self.crash_handler_offset = self.code_count;
-                self.emitInst(encode_bl(0));  // Offset will be patched
+                if self.target == TARGET_AMD64 {
+                    self.emitInstPacked(AMD64_call(0));  // Offset will be patched
+                } else {
+                    self.emitInst(encode_bl(0));  // Offset will be patched
+                }
                 self.crash_handler_emitted = true;
             }
         }
@@ -2116,8 +2120,12 @@ fn localAddr(self: *GenState, v: *Value) {
     let local_idx: i64 = v.aux_int;
     let local: *Local = f.getLocal(local_idx);
 
-    // Compute address: SP + offset (no FP setup in simple prologue)
-    self.emitInst(encode_add_imm(rd, SP, local.offset));
+    // Compute address: SP + offset
+    if self.target == TARGET_AMD64 {
+        self.emitInstPacked(AMD64_lea(rd, RSP, local.offset));
+    } else {
+        self.emitInst(encode_add_imm(rd, SP, local.offset));
+    }
 }
 
 // Function address for function pointers
@@ -2315,12 +2323,19 @@ fn call(self: *GenState, v: *Value) {
     var hidden_ret_stack_size: i64 = 0;
     if needs_hidden_return {
         hidden_ret_stack_size = (call_ret_size + 15) & (0 - 16);
-        // Allocate stack space: SUB SP, SP, #size
-        self.emitInst(encode_sub_imm(SP, SP, hidden_ret_stack_size));
-        // Set x8 = SP (hidden return destination)
-        // NOTE: Can't use MOV x8, SP because SP/XZR share encoding (31)
-        // Use ADD x8, SP, #0 instead
-        self.emitInst(encode_add_imm(X8, SP, 0));
+        if self.target == TARGET_AMD64 {
+            // Allocate stack space: SUB RSP, #size
+            self.emitInstPacked(AMD64_subConst(RSP, RSP, hidden_ret_stack_size));
+            // Set RDI = RSP (hidden return destination is first arg on AMD64)
+            self.emitInstPacked(AMD64_encodeMovReg(RDI, RSP));
+        } else {
+            // Allocate stack space: SUB SP, SP, #size
+            self.emitInst(encode_sub_imm(SP, SP, hidden_ret_stack_size));
+            // Set x8 = SP (hidden return destination)
+            // NOTE: Can't use MOV x8, SP because SP/XZR share encoding (31)
+            // Use ADD x8, SP, #0 instead
+            self.emitInst(encode_add_imm(X8, SP, 0));
+        }
     }
 
     // Use ABI module for proper parameter assignment
@@ -2346,7 +2361,11 @@ fn call(self: *GenState, v: *Value) {
 
     // Step 1: Allocate stack space for stack arguments FIRST
     if abi_info.arg_stack_size > 0 {
-        self.emitInst(encode_sub_imm(SP, SP, abi_info.arg_stack_size));
+        if self.target == TARGET_AMD64 {
+            self.emitInstPacked(AMD64_subConst(RSP, RSP, abi_info.arg_stack_size));
+        } else {
+            self.emitInst(encode_sub_imm(SP, SP, abi_info.arg_stack_size));
+        }
     }
 
     // Step 2: Store stack arguments (args 9+)
@@ -2639,33 +2658,47 @@ fn call(self: *GenState, v: *Value) {
         self.call_sites_count = self.call_sites_count + 1;
     }
 
-    // Emit BL instruction placeholder (offset 0, to be patched later)
-    self.emitInst(encode_bl(0));
+    // Emit call instruction placeholder (offset 0, to be patched later)
+    if self.target == TARGET_AMD64 {
+        self.emitInstPacked(AMD64_call(0));
+    } else {
+        self.emitInst(encode_bl(0));
+    }
 
     // Restore stack if we allocated for args
     if abi_info.arg_stack_size > 0 {
-        self.emitInst(encode_add_imm(SP, SP, abi_info.arg_stack_size));
+        if self.target == TARGET_AMD64 {
+            self.emitInstPacked(AMD64_addConst(RSP, RSP, abi_info.arg_stack_size));
+        } else {
+            self.emitInst(encode_add_imm(SP, SP, abi_info.arg_stack_size));
+        }
     }
 
-    // BUG-054: For hidden return, result is at SP (the hidden return area)
-    // x0 contains the address where the result was stored
-    // Move x0 to dest_reg so subsequent code can use it as an address
+    // For hidden return, result is at SP (the hidden return area)
+    // Return register (RAX/X0) contains the address where result was stored
+    // Move to dest_reg so subsequent code can use it as an address
     let dest_reg: i64 = v.reg;
-    if needs_hidden_return {
-        // For hidden return, x0 has the address of the result
-        // Copy the result address to dest_reg before deallocating
-        if dest_reg >= 0 and dest_reg != X0 {
-            self.emitInst(ARM64_encodeMovReg(dest_reg, X0));
+    if self.target == TARGET_AMD64 {
+        if needs_hidden_return {
+            if dest_reg >= 0 and dest_reg != RAX {
+                self.emitInstPacked(AMD64_encodeMovReg(dest_reg, RAX));
+            }
+            self.emitInstPacked(AMD64_addConst(RSP, RSP, hidden_ret_stack_size));
+        } else {
+            if dest_reg >= 0 and dest_reg != RAX {
+                self.emitInstPacked(AMD64_encodeMovReg(dest_reg, RAX));
+            }
         }
-        // Restore the hidden return stack space
-        // IMPORTANT: x0/dest_reg now points to potentially invalid stack memory,
-        // but the copy to the local destination happens immediately after this
-        // in the generated code, so it works as long as we don't clobber the memory
-        self.emitInst(encode_add_imm(SP, SP, hidden_ret_stack_size));
     } else {
-        // Regular return: move result from X0 to the assigned register
-        if dest_reg >= 0 and dest_reg != X0 {
-            self.emitInst(ARM64_encodeMovReg(dest_reg, X0));
+        if needs_hidden_return {
+            if dest_reg >= 0 and dest_reg != X0 {
+                self.emitInst(ARM64_encodeMovReg(dest_reg, X0));
+            }
+            self.emitInst(encode_add_imm(SP, SP, hidden_ret_stack_size));
+        } else {
+            if dest_reg >= 0 and dest_reg != X0 {
+                self.emitInst(ARM64_encodeMovReg(dest_reg, X0));
+            }
         }
     }
 
@@ -2785,10 +2818,14 @@ fn stringConcat(self: *GenState, v: *Value) {
     self.emitInst(ARM64_encodeMovReg(X2, X12));
     self.emitInst(ARM64_encodeMovReg(X3, X13));
 
-    // Step 3: Emit BL to __cot_str_concat
+    // Step 3: Emit call to __cot_str_concat
     // Record call site for relocation
     let call_offset: i64 = self.code_count;
-    self.emitInst(encode_bl(0));  // Placeholder offset
+    if self.target == TARGET_AMD64 {
+        self.emitInstPacked(AMD64_call(0));  // Placeholder offset
+    } else {
+        self.emitInst(encode_bl(0));  // Placeholder offset
+    }
 
     // Record call site for later relocation
     if self.call_sites_count < self.call_sites_cap {
