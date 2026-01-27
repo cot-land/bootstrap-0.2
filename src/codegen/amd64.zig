@@ -1533,25 +1533,98 @@ pub const AMD64CodeGen = struct {
                         debug.log(.codegen, "      ret hidden: returning dest ptr in RAX", .{});
                     } else if (ret_val.op == .slice_make and ret_val.args.len >= 2) {
                         // Handle slice returns: ptr in RAX, len in RDX
-                        // Put ptr in RAX
                         const ptr_val = ret_val.args[0];
+                        const len_val = ret_val.args[1];
+
                         const ptr_reg = self.getRegForValue(ptr_val) orelse blk: {
                             try self.ensureInReg(ptr_val, .rax);
+                            break :blk Reg.rax;
+                        };
+                        const len_reg = self.getRegForValue(len_val) orelse blk: {
+                            try self.ensureInReg(len_val, .rdx);
+                            break :blk Reg.rdx;
+                        };
+
+                        // CRITICAL: Handle register conflicts to avoid clobbering
+                        // If len is in RAX and we need to move ptr to RAX, save len first
+                        // If ptr is in RDX and we need to move len to RDX, save ptr first
+                        if (len_reg == .rax and ptr_reg != .rax) {
+                            // len is in RAX, move it to RDX first before ptr clobbers RAX
+                            try self.emit(3, asm_mod.encodeMovRegReg(.rdx, .rax));
+                            try self.emit(3, asm_mod.encodeMovRegReg(.rax, ptr_reg));
+                        } else if (ptr_reg == .rdx and len_reg != .rdx) {
+                            // ptr is in RDX, move it to RAX first before len clobbers RDX
+                            try self.emit(3, asm_mod.encodeMovRegReg(.rax, .rdx));
+                            try self.emit(3, asm_mod.encodeMovRegReg(.rdx, len_reg));
+                        } else {
+                            // No conflict - can do either order
+                            if (ptr_reg != .rax) {
+                                try self.emit(3, asm_mod.encodeMovRegReg(.rax, ptr_reg));
+                            }
+                            if (len_reg != .rdx) {
+                                try self.emit(3, asm_mod.encodeMovRegReg(.rdx, len_reg));
+                            }
+                        }
+                        debug.log(.codegen, "      ret slice: ptr={s}->RAX, len={s}->RDX", .{ ptr_reg.name(), len_reg.name() });
+                    } else if (ret_val.op == .string_make and ret_val.args.len >= 2) {
+                        // Handle string_make returns: ptr in RAX, len in RDX
+                        // string_make(ptr, len) aggregates components from const_string/select_n
+                        const ptr_val = ret_val.args[0];
+                        const len_val = ret_val.args[1];
+
+                        const ptr_reg = self.getRegForValue(ptr_val) orelse blk: {
+                            try self.ensureInReg(ptr_val, .rax);
+                            break :blk Reg.rax;
+                        };
+                        const len_reg = self.getRegForValue(len_val) orelse blk: {
+                            try self.ensureInReg(len_val, .rdx);
+                            break :blk Reg.rdx;
+                        };
+
+                        // CRITICAL: Handle register conflicts to avoid clobbering
+                        // If len is in RAX and we need to move ptr to RAX, save len first
+                        // If ptr is in RDX and we need to move len to RDX, save ptr first
+                        if (len_reg == .rax and ptr_reg != .rax) {
+                            // len is in RAX, move it to RDX first before ptr clobbers RAX
+                            try self.emit(3, asm_mod.encodeMovRegReg(.rdx, .rax));
+                            try self.emit(3, asm_mod.encodeMovRegReg(.rax, ptr_reg));
+                        } else if (ptr_reg == .rdx and len_reg != .rdx) {
+                            // ptr is in RDX, move it to RAX first before len clobbers RDX
+                            try self.emit(3, asm_mod.encodeMovRegReg(.rax, .rdx));
+                            try self.emit(3, asm_mod.encodeMovRegReg(.rdx, len_reg));
+                        } else {
+                            // No conflict - can do either order
+                            if (ptr_reg != .rax) {
+                                try self.emit(3, asm_mod.encodeMovRegReg(.rax, ptr_reg));
+                            }
+                            if (len_reg != .rdx) {
+                                try self.emit(3, asm_mod.encodeMovRegReg(.rdx, len_reg));
+                            }
+                        }
+                        debug.log(.codegen, "      ret string_make: ptr={s}->RAX, len={s}->RDX", .{ ptr_reg.name(), len_reg.name() });
+                    } else if (ret_val.op == .const_string) {
+                        // String literal return: ptr in RAX, len in RDX
+                        // The const_string codegen already put ptr in a register
+                        const ptr_reg = self.getRegForValue(ret_val) orelse blk: {
+                            try self.ensureInReg(ret_val, .rax);
                             break :blk Reg.rax;
                         };
                         if (ptr_reg != .rax) {
                             try self.emit(3, asm_mod.encodeMovRegReg(.rax, ptr_reg));
                         }
-                        // Put len in RDX
-                        const len_val = ret_val.args[1];
-                        const len_reg = self.getRegForValue(len_val) orelse blk: {
-                            try self.ensureInReg(len_val, .rdx);
-                            break :blk Reg.rdx;
-                        };
-                        if (len_reg != .rdx) {
-                            try self.emit(3, asm_mod.encodeMovRegReg(.rdx, len_reg));
-                        }
-                        debug.log(.codegen, "      ret slice: ptr={s}->RAX, len={s}->RDX", .{ ptr_reg.name(), len_reg.name() });
+                        // Get string length from string_literals
+                        const string_index: usize = @intCast(ret_val.aux_int);
+                        const str_len: i64 = if (string_index < self.func.string_literals.len)
+                            @intCast(self.func.string_literals[string_index].len)
+                        else
+                            0;
+                        // Emit MOV RDX, #len
+                        try self.emitLoadImmediate(.rdx, str_len);
+                        debug.log(.codegen, "      ret const_string: ptr={s}->RAX, len={d}->RDX", .{ ptr_reg.name(), str_len });
+                    } else if (ret_val.op == .static_call) {
+                        // Call result that returns a string: already in RAX/RDX
+                        // Just ensure they stay there (no-op, but log it)
+                        debug.log(.codegen, "      ret static_call: result already in RAX/RDX", .{});
                     } else {
                         try self.moveToRAX(ret_val);
                     }
@@ -2361,18 +2434,19 @@ pub const AMD64CodeGen = struct {
             .select_n => {
                 // select_n(call, idx) -> extract the idx-th result from a multi-value call
                 //
+                // Following Go's architecture: select_n is created IMMEDIATELY after the call
+                // by expand_calls, so RAX/RDX still have the return values.
+                // Regalloc tracks select_n as a normal SSA value.
+                //
                 // AMD64 ABI for 16-byte return (like string = ptr + len):
                 // - idx=0 → RAX (ptr)
-                // - idx=1 → R8 (len, saved from RDX by caller to avoid clobbering)
-                //
-                // The call (string_concat/static_call) saves RDX to R8 immediately after
-                // return, so select_n[1] reads from R8.
+                // - idx=1 → RDX (len)
                 if (value.args.len >= 1) {
                     const idx: usize = @intCast(value.aux_int);
                     const dest_reg = self.getDestRegForValue(value);
 
-                    // idx=0 → RAX, idx=1 → R8 (saved from RDX)
-                    const src_reg: Reg = if (idx == 0) .rax else .r8;
+                    // idx=0 → RAX, idx=1 → RDX
+                    const src_reg: Reg = if (idx == 0) .rax else .rdx;
 
                     if (dest_reg != src_reg) {
                         try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, src_reg));
@@ -2636,6 +2710,25 @@ pub const AMD64CodeGen = struct {
                 debug.log(.codegen, "      -> {s} = addr '{s}' (pending reloc)", .{ dest_reg.name(), func_name });
             },
 
+            .slice_make => {
+                // slice_make(ptr, len) -> creates a slice value
+                // For MVP: track ptr in dest_reg (full impl would need 16-byte storage)
+                const args = value.args;
+                if (args.len >= 2) {
+                    const ptr_val = args[0];
+                    const ptr_reg = self.getRegForValue(ptr_val) orelse blk: {
+                        try self.ensureInReg(ptr_val, .rax);
+                        break :blk Reg.rax;
+                    };
+                    const dest_reg = self.getDestRegForValue(value);
+                    // Copy ptr to dest
+                    if (ptr_reg != dest_reg) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, ptr_reg));
+                    }
+                    debug.log(.codegen, "      slice_make ptr={s} -> {s}", .{ ptr_reg.name(), dest_reg.name() });
+                }
+            },
+
             .slice_ptr => {
                 // Get pointer from a slice (first 8 bytes of 16-byte slice)
                 const slice_val = value.args[0];
@@ -2697,6 +2790,62 @@ pub const AMD64CodeGen = struct {
                     try self.emitBytes(load.data[0..load.len]);
                 }
                 debug.log(.codegen, "      -> slice_len {s}", .{dest_reg.name()});
+            },
+
+            .string_ptr => {
+                // string_ptr(val) -> copy ptr value to dest register
+                // After expand_calls decomposition: string_ptr(string_make(ptr, len)) → copy(ptr)
+                const args = value.args;
+                if (args.len >= 1) {
+                    const ptr_val = args[0];
+                    const dest_reg = self.getDestRegForValue(value);
+
+                    const src_reg = self.getRegForValue(ptr_val) orelse blk: {
+                        try self.ensureInReg(ptr_val, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    if (src_reg != dest_reg) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, src_reg));
+                    }
+                    debug.log(.codegen, "      string_ptr {s} -> {s}", .{ src_reg.name(), dest_reg.name() });
+                }
+            },
+
+            .string_len => {
+                // string_len(val) -> copy len value to dest register
+                // After expand_calls decomposition: string_len(string_make(ptr, len)) → copy(len)
+                const args = value.args;
+                if (args.len >= 1) {
+                    const len_val = args[0];
+                    const dest_reg = self.getDestRegForValue(value);
+
+                    const src_reg = self.getRegForValue(len_val) orelse blk: {
+                        try self.ensureInReg(len_val, dest_reg);
+                        break :blk dest_reg;
+                    };
+                    if (src_reg != dest_reg) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, src_reg));
+                    }
+                    debug.log(.codegen, "      string_len {s} -> {s}", .{ src_reg.name(), dest_reg.name() });
+                }
+            },
+
+            .string_make => {
+                // string_make(ptr, len) -> creates a string value from components
+                // This is a VIRTUAL op - it doesn't generate code.
+                // Following Go's pattern: OpStringMake just aggregates components.
+                // The ptr/len values remain in their original registers.
+                // Consumers (string_ptr, string_len) look at args directly.
+                const args = value.args;
+                if (args.len >= 2) {
+                    const ptr_reg = self.getRegForValue(args[0]);
+                    // NO code generated - just track that this value is at ptr's location
+                    if (ptr_reg) |reg| {
+                        debug.log(.codegen, "      string_make (virtual) ptr={s}", .{reg.name()});
+                    } else {
+                        debug.log(.codegen, "      string_make (virtual) ptr=?", .{});
+                    }
+                }
             },
 
             .and_ => {
@@ -2923,13 +3072,6 @@ pub const AMD64CodeGen = struct {
                 }
             },
 
-            .string_make => {
-                // String construction from ptr and len - this is a marker op
-                // The actual work is done by the ptr and len values that feed into
-                // whatever consumes this string. No code generation needed here.
-                debug.log(.codegen, "      (string_make: no code, components used directly)", .{});
-            },
-
             .store_reg => {
                 // Store value to a stack spill slot
                 if (value.args.len > 0) {
@@ -2946,8 +3088,11 @@ pub const AMD64CodeGen = struct {
                         break :blk Reg.r11;
                     };
 
-                    // MOV [RBP - offset], src_reg
-                    const disp: i32 = -@as(i32, @intCast(byte_off));
+                    // MOV [RBP - (offset + 8)], src_reg
+                    // The +8 is because stackalloc assigns the START of the slot,
+                    // but AMD64 RBP-relative addressing needs the END (like local_addr).
+                    // This matches local_addr which uses -(byte_offset + local_size).
+                    const disp: i32 = -@as(i32, @intCast(byte_off + 8));
                     const store = asm_mod.encodeStoreDisp32(.rbp, disp, src_reg);
                     try self.emitBytes(store.data[0..store.len]);
                     debug.log(.codegen, "      -> MOV [RBP{d}], {s}", .{ disp, src_reg.name() });
@@ -2965,8 +3110,9 @@ pub const AMD64CodeGen = struct {
                     const byte_off = loc.stackOffset();
                     const dest_reg = self.getDestRegForValue(value);
 
-                    // MOV dest_reg, [RBP - offset]
-                    const disp: i32 = -@as(i32, @intCast(byte_off));
+                    // MOV dest_reg, [RBP - (offset + 8)]
+                    // The +8 matches store_reg - see comment there.
+                    const disp: i32 = -@as(i32, @intCast(byte_off + 8));
                     const load = asm_mod.encodeLoadDisp32(dest_reg, .rbp, disp);
                     try self.emitBytes(load.data[0..load.len]);
                     debug.log(.codegen, "      -> MOV {s}, [RBP{d}]", .{ dest_reg.name(), disp });

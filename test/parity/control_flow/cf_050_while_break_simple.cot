@@ -1,4 +1,4 @@
-fn main() i64 {
+fn sum_until_threshold() i64 {
     var sum: i64 = 0;
     var i: i64 = 0;
     while i < 100 {
@@ -11,5 +11,10 @@ fn main() i64 {
         }
         i = i + 1;
     }
+    return 0;
+}
+fn main() i64 {
+    // sum should be 21 when it first exceeds 20 (0+1+2+3+4+5+6=21)
+    if sum_until_threshold() == 21 { return 0; }
     return 1;
 }

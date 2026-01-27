@@ -7,6 +7,6 @@ fn main() i64 {
     var quot: i64 = a / b;
     var rem: i64 = a % b;
     var result: i64 = sum + diff + prod + quot + rem;
-    if result == 51 { return 0; }
+    if result == 54 { return 0; }  // 13+7+30+3+1=54
     return 1;
 }

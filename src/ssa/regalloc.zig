@@ -267,6 +267,7 @@ pub const RegAllocState = struct {
     caller_saved_mask: RegMask,
     num_arg_regs: u8,
     arg_regs: []const RegNum,
+    target: Target,
 
     const Self = @This();
 
@@ -295,6 +296,7 @@ pub const RegAllocState = struct {
             .caller_saved_mask = caller_saved,
             .num_arg_regs = num_args,
             .arg_regs = arg_regs,
+            .target = target,
         };
     }
 
@@ -871,17 +873,63 @@ pub const RegAllocState = struct {
             // when arg use counts reach 0.
 
             // Handle calls - spill caller-saved registers BEFORE the call
+            // Use caller_saved_mask to handle both ARM64 and AMD64 correctly
+            // ARM64: x0-x17 (bits 0-17)
+            // AMD64: RAX, RCX, RDX, RSI, RDI, R8-R11 (bits 0,1,2,6,7,8,9,10,11)
             if (v.op.info().call) {
-                debug.log(.regalloc, "    CALL - spilling caller-saved", .{});
+                debug.log(.regalloc, "    CALL - spilling caller-saved (mask=0x{x})", .{self.caller_saved_mask});
                 var reg: RegNum = 0;
-                while (reg < 18) : (reg += 1) {
-                    if (self.regs[reg].v != null) {
+                while (reg < NUM_REGS) : (reg += 1) {
+                    const reg_bit = @as(RegMask, 1) << reg;
+                    if ((self.caller_saved_mask & reg_bit) != 0 and self.regs[reg].v != null) {
                         // for_call=true: don't clear home assignment for call eviction
                         // because values have already been used to set up call args
                         if (try self.spillReg(reg, block)) |spill| {
                             // Insert spill BEFORE the call
                             try new_values.append(self.allocator, spill);
                         }
+                    }
+                }
+            }
+
+            // AMD64: Division/mod clobbers RAX (dividend) and RDX (CQO sign-extends RAX into RDX:RAX)
+            // Must spill both before div/mod to avoid clobbering live values
+            if ((v.op == .div or v.op == .mod) and self.target.arch == .amd64) {
+                // First spill RAX if it has a live value (not one of the div operands)
+                if (self.regs[AMD64Regs.rax].v != null) {
+                    const rax_val = self.regs[AMD64Regs.rax].v.?;
+                    // Check if this value is one of the div operands (no need to spill if so)
+                    var is_operand = false;
+                    for (v.args) |arg| {
+                        if (arg == rax_val) {
+                            is_operand = true;
+                            break;
+                        }
+                    }
+                    if (!is_operand) {
+                        debug.log(.regalloc, "    DIV/MOD - spilling RAX (clobbered by dividend)", .{});
+                        if (try self.spillReg(AMD64Regs.rax, block)) |spill| {
+                            try new_values.append(self.allocator, spill);
+                        }
+                    }
+                }
+                // Then spill RDX
+                if (self.regs[AMD64Regs.rdx].v != null) {
+                    debug.log(.regalloc, "    DIV/MOD - spilling RDX (clobbered by CQO)", .{});
+                    if (try self.spillReg(AMD64Regs.rdx, block)) |spill| {
+                        try new_values.append(self.allocator, spill);
+                    }
+                }
+            }
+
+            // AMD64: Shift operations (shl, shr, sar) use CL (part of RCX) for variable shifts
+            // Must spill RCX before shift to avoid clobbering live values
+            // Note: Constant shifts don't need RCX, but we spill conservatively
+            if ((v.op == .shl or v.op == .shr or v.op == .sar) and self.target.arch == .amd64) {
+                if (self.regs[AMD64Regs.rcx].v != null) {
+                    debug.log(.regalloc, "    SHIFT - spilling RCX (used for shift count)", .{});
+                    if (try self.spillReg(AMD64Regs.rcx, block)) |spill| {
+                        try new_values.append(self.allocator, spill);
                     }
                 }
             }
