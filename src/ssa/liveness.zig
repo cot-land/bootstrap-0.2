@@ -554,22 +554,31 @@ fn branchDistance(from: *Block, to: *Block) i32 {
 
 /// Process phi arguments from successor blocks
 fn processSuccessorPhis(allocator: std.mem.Allocator, live: *LiveMap, block: *Block) !void {
+    debug.log(.regalloc, "        processSuccessorPhis: block b{d} has {d} succs", .{ block.id, block.succs.len });
     for (block.succs) |succ_edge| {
         const succ = succ_edge.b;
         const edge_idx = succ_edge.i;
         const delta = branchDistance(block, succ);
 
+        debug.log(.regalloc, "        succ b{d}, edge_idx={d}", .{ succ.id, edge_idx });
+
         // Find phi nodes in successor
         for (succ.values.items) |v| {
             if (v.op != .phi) continue;
+
+            debug.log(.regalloc, "          phi v{d} has {d} args", .{ v.id, v.args.len });
 
             // Get the argument from this edge
             const args = v.args;
             if (edge_idx < args.len) {
                 const arg = args[edge_idx];
+                debug.log(.regalloc, "          arg[{d}] = v{d} ({s})", .{ edge_idx, arg.id, @tagName(arg.op) });
                 if (needsRegister(arg)) {
                     try live.set(allocator, arg.id, delta, v.pos);
+                    debug.log(.regalloc, "          added v{d} to live", .{arg.id});
                 }
+            } else {
+                debug.log(.regalloc, "          edge_idx {d} >= args.len {d}", .{ edge_idx, args.len });
             }
         }
     }
