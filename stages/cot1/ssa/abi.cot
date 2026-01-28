@@ -439,3 +439,49 @@ fn ABI_regMask(reg: i64) i64 {
     }
     return one;
 }
+
+// ============================================================================
+// Inline Tests
+// ============================================================================
+
+test "ParamLocation conversion round-trip" {
+    @assert(ParamLocation_fromI64(ParamLocation_toI64(ParamLocation.Register)) == ParamLocation.Register)
+    @assert(ParamLocation_fromI64(ParamLocation_toI64(ParamLocation.Stack)) == ParamLocation.Stack)
+    @assert(ParamLocation_fromI64(ParamLocation_toI64(ParamLocation.HiddenPtr)) == ParamLocation.HiddenPtr)
+}
+
+test "ParamLocation_toI64 values" {
+    @assert(ParamLocation_toI64(ParamLocation.Register) == 0)
+    @assert(ParamLocation_toI64(ParamLocation.Stack) == 1)
+    @assert(ParamLocation_toI64(ParamLocation.HiddenPtr) == 2)
+}
+
+test "ABIParamAssignment_init" {
+    var a: ABIParamAssignment = ABIParamAssignment_init()
+    @assert(a.type_idx == 0)
+    @assert(a.location == ParamLocation.Register)
+    @assert(a.reg0 == -1)
+    @assert(a.reg1 == -1)
+    @assert(a.regs_count == 0)
+    @assert(a.offset == 0)
+}
+
+test "ABI_alignUp" {
+    @assert(ABI_alignUp(0, 8) == 0)
+    @assert(ABI_alignUp(1, 8) == 8)
+    @assert(ABI_alignUp(7, 8) == 8)
+    @assert(ABI_alignUp(8, 8) == 8)
+    @assert(ABI_alignUp(9, 8) == 16)
+    @assert(ABI_alignUp(15, 16) == 16)
+    @assert(ABI_alignUp(16, 16) == 16)
+    @assert(ABI_alignUp(17, 16) == 32)
+}
+
+test "ABI_regMask" {
+    @assert(ABI_regMask(0) == 1)
+    @assert(ABI_regMask(1) == 2)
+    @assert(ABI_regMask(2) == 4)
+    @assert(ABI_regMask(3) == 8)
+    @assert(ABI_regMask(-1) == 0)
+    @assert(ABI_regMask(64) == 0)
+}

@@ -503,3 +503,27 @@ impl Func {
         b.kind = BlockKind.Return;
     }
 }
+
+// ============================================================================
+// Inline Tests
+// ============================================================================
+
+test "Local_create initializes fields" {
+    var loc: Local = Local_create(0, 5, 2, true)
+    @assert(loc.name_start == 0)
+    @assert(loc.name_len == 5)
+    @assert(loc.type_idx == 2)
+    @assert(loc.is_mutable)
+    @assert(!loc.is_param)
+    @assert(loc.size == 8)
+    @assert(loc.align == 8)
+}
+
+test "Local_createParam sets is_param" {
+    var loc: Local = Local_createParam(10, 3, 1, 0)
+    @assert(loc.name_start == 10)
+    @assert(loc.name_len == 3)
+    @assert(loc.type_idx == 1)
+    @assert(loc.is_param)
+    @assert(loc.param_idx == 0)
+}

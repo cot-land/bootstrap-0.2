@@ -326,3 +326,54 @@ impl ValuePool {
         return self.values + id;
     }
 }
+
+// ============================================================================
+// Inline Tests
+// ============================================================================
+
+test "Value_create initializes fields" {
+    var v: Value = Value_create(42, Op.Add64, 0, 1)
+    @assert(v.id == 42)
+    @assert(v.op == Op.Add64)
+    @assert(v.type_idx == 0)
+    @assert(v.block_id == 1)
+    @assert(v.uses == 0)
+    @assert(v.reg == -1)
+    @assert(v.spill_slot == -1)
+}
+
+test "Value_newConstInt sets aux_int" {
+    var v: Value = Value_newConstInt(1, 999, 2, 0)
+    @assert(v.id == 1)
+    @assert(v.op == Op.ConstInt)
+    @assert(v.aux_int == 999)
+    @assert(v.type_idx == 2)
+}
+
+test "Value_newConstBool true" {
+    var v: Value = Value_newConstBool(5, true, 0)
+    @assert(v.op == Op.ConstBool)
+    @assert(v.aux_int == 1)
+}
+
+test "Value_newConstBool false" {
+    var v: Value = Value_newConstBool(6, false, 0)
+    @assert(v.op == Op.ConstBool)
+    @assert(v.aux_int == 0)
+}
+
+test "Value getArgsCount starts at zero" {
+    var v: Value = Value_create(0, Op.Add64, 0, 0)
+    @assert(v.getArgsCount() == 0)
+}
+
+test "Value use count tracking" {
+    var v: Value = Value_create(0, Op.Add64, 0, 0)
+    @assert(v.uses == 0)
+    v.incUses()
+    @assert(v.uses == 1)
+    v.incUses()
+    @assert(v.uses == 2)
+    v.decUses()
+    @assert(v.uses == 1)
+}

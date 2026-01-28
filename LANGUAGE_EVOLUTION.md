@@ -41,7 +41,7 @@
 ║                                                                               ║
 ║   1. 3-5 tests written BEFORE implementing the feature                        ║
 ║   2. Tests in test/stages/cot1/, test/stages/cot2/, etc. directories          ║
-║   3. ALL existing tests must continue to pass (166 e2e + new feature tests)   ║
+║   3. ALL existing tests must continue to pass (754 e2e + new feature tests)   ║
 ║   4. Feature is not complete until all its tests pass                         ║
 ║                                                                               ║
 ║   Test Pattern:                                                               ║

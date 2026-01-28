@@ -17,7 +17,7 @@ Cot is a new programming language designed for:
 |---------|--------|-------|
 | Native ARM64 compilation | Working | Mach-O object files |
 | Zig-like syntax | Working | See [SYNTAX.md](SYNTAX.md) |
-| Self-hosting compiler | In Progress | Stage 1 working, Stage 2 in progress |
+| Self-hosting compiler | Working | Stage 1 compiles and runs correctly |
 | ARC memory management | Planned | Replace manual malloc/free |
 | x86-64 backend | Planned | After self-hosting |
 | Standard library | Planned | After self-hosting |
@@ -39,8 +39,7 @@ bootstrap-0.2/
 │       └── obj/            # Mirrors src/obj
 ├── runtime/                # Runtime library (signal handlers, malloc)
 ├── test/
-│   ├── bootstrap/          # Bootstrap tests (166 tests)
-│   └── stages/cot1/        # cot1 feature tests (14 tests)
+│   └── bootstrap/          # Bootstrap tests (754 tests)
 └── archive/
     └── cot0/               # Historical reference (deprecated)
 ```
@@ -61,9 +60,9 @@ The compiler is being bootstrapped in stages:
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
-1. **Stage 0**: Zig compiler (`src/*.zig`) - fully working, 166 tests pass
-2. **Stage 1**: Zig compiles cot1 → `cot1-stage1` executable (working, 180 tests pass)
-3. **Stage 2**: cot1-stage1 compiles cot1 → `cot1-stage2` (compiles, crashes at runtime)
+1. **Stage 0**: Zig compiler (`src/*.zig`) - fully working, 754 tests pass
+2. **Stage 1**: Zig compiles cot1 → `cot1-stage1` executable - working, compiles tests correctly
+3. **Stage 2**: cot1-stage1 compiles cot1 → `cot1-stage2` - in progress
 4. **Stage 3+**: cot1-stageN compiles cot1 → identical binary (self-hosting achieved)
 
 ## Quick Start
@@ -94,21 +93,22 @@ zig cc /tmp/test2.o runtime/cot_runtime.o -o /tmp/test2 && /tmp/test2
 |----------|---------|
 | [CLAUDE.md](CLAUDE.md) | Development workflow and principles |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Compiler design and key decisions |
-| [SELF_HOSTING.md](SELF_HOSTING.md) | Path to self-hosting with milestones |
 | [SYNTAX.md](SYNTAX.md) | Language syntax reference |
 | [REFERENCE.md](REFERENCE.md) | Technical reference (data structures, algorithms) |
-| [COT1_GAPS.md](COT1_GAPS.md) | Functional coverage analysis |
+| [COT1_GAPS.md](COT1_GAPS.md) | Functional coverage analysis (95% complete) |
+| [BUGS.md](BUGS.md) | Active bug tracking |
+| [TESTING.md](TESTING.md) | Testing strategy |
 
 ## Current Status
 
-**Self-hosting is blocked by a runtime crash in stage 2.**
+**754 bootstrap tests pass. Stage 1 compiler working.**
 
-- cot1-stage1 works correctly (180 tests pass: 166 bootstrap + 14 feature tests)
-- cot1-stage2 compiles successfully (459KB Mach-O object)
-- cot1-stage2 crashes at startup (SIGBUS - likely stack overflow during SSA building)
-- Root cause under investigation
+- Zig compiler (stage 0) fully functional
+- cot1-stage1 compiles and executes tests correctly
+- 185 inline tests in cot1 source files
+- Focus: expanding test coverage and fixing remaining edge case bugs
 
-See [STATUS.md](STATUS.md) for detailed status and [SELF_HOSTING.md](SELF_HOSTING.md) for next steps.
+See [BUGS.md](BUGS.md) for known issues.
 
 ## Design Philosophy
 

@@ -340,3 +340,38 @@ fn BlockPool_setIf(pool: *BlockPool, from_id: i64, control: i64, then_id: i64, e
     then_b.addPred(from_id);
     else_b.addPred(from_id);
 }
+
+// ============================================================================
+// Inline Tests
+// ============================================================================
+
+test "BlockKind_isConditional" {
+    @assert(BlockKind_isConditional(BlockKind.If))
+    @assert(!BlockKind_isConditional(BlockKind.Plain))
+    @assert(!BlockKind_isConditional(BlockKind.Return))
+    @assert(!BlockKind_isConditional(BlockKind.Exit))
+}
+
+test "BlockKind_numSuccs Plain" {
+    @assert(BlockKind_numSuccs(BlockKind.Plain) == 1)
+}
+
+test "BlockKind_numSuccs If" {
+    @assert(BlockKind_numSuccs(BlockKind.If) == 2)
+}
+
+test "BlockKind_numSuccs Return and Exit" {
+    @assert(BlockKind_numSuccs(BlockKind.Return) == 0)
+    @assert(BlockKind_numSuccs(BlockKind.Exit) == 0)
+}
+
+test "Block_new initializes fields" {
+    var b: Block = Block_new(5, BlockKind.Plain)
+    @assert(b.id == 5)
+    @assert(b.kind == BlockKind.Plain)
+    @assert(b.control == -1)
+    @assert(b.succs_count == 0)
+    @assert(b.values_start == 0)
+    @assert(b.values_count == 0)
+    @assert(b.dom == -1)
+}

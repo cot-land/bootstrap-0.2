@@ -225,3 +225,97 @@ fn str_equal(a_ptr: *u8, a_len: i64, b_ptr: *u8, b_len: i64) bool {
 // Key is copied - caller doesn't need to keep it alive
 
 // Check if map contains key
+
+// Typed malloc for u8 (for key copies)
+extern fn malloc_u8(size: i64) *u8;
+
+// ============================================================================
+// Inline Tests
+// ============================================================================
+
+test "djb2 hash returns positive value" {
+    let s: string = "hello"
+    let h: i64 = djb2_hash(s.ptr, s.len)
+    @assert(h > 0)
+}
+
+test "djb2 same input same hash" {
+    let s1: string = "test"
+    let s2: string = "test"
+    @assert(djb2_hash(s1.ptr, s1.len) == djb2_hash(s2.ptr, s2.len))
+}
+
+test "djb2 different input different hash" {
+    let s1: string = "foo"
+    let s2: string = "bar"
+    @assert(djb2_hash(s1.ptr, s1.len) != djb2_hash(s2.ptr, s2.len))
+}
+
+test "str_equal same strings" {
+    let s1: string = "hello"
+    let s2: string = "hello"
+    @assert(str_equal(s1.ptr, s1.len, s2.ptr, s2.len))
+}
+
+test "str_equal different strings" {
+    let s1: string = "hello"
+    let s2: string = "world"
+    @assert(!str_equal(s1.ptr, s1.len, s2.ptr, s2.len))
+}
+
+test "str_equal different lengths" {
+    let s1: string = "hi"
+    let s2: string = "hello"
+    @assert(!str_equal(s1.ptr, s1.len, s2.ptr, s2.len))
+}
+
+test "strmap init creates empty map" {
+    var m: StrMap = StrMap_init(16)
+    @assert(m.count == 0)
+    @assert(m.cap >= 16)
+}
+
+test "strmap put and get" {
+    var m: StrMap = StrMap_init(16)
+    let key: string = "mykey"
+    m.put(key.ptr, key.len, 42)
+    @assert(m.get(key.ptr, key.len) == 42)
+}
+
+test "strmap get missing returns -1" {
+    var m: StrMap = StrMap_init(16)
+    let key: string = "missing"
+    @assert(m.get(key.ptr, key.len) == -1)
+}
+
+test "strmap contains" {
+    var m: StrMap = StrMap_init(16)
+    let key: string = "exists"
+    @assert(!m.contains(key.ptr, key.len))
+    m.put(key.ptr, key.len, 1)
+    @assert(m.contains(key.ptr, key.len))
+}
+
+test "strmap update existing key" {
+    var m: StrMap = StrMap_init(16)
+    let key: string = "key"
+    m.put(key.ptr, key.len, 100)
+    @assert(m.get(key.ptr, key.len) == 100)
+    m.put(key.ptr, key.len, 200)
+    @assert(m.get(key.ptr, key.len) == 200)
+    @assert(m.count == 1)  // Still only one entry
+}
+
+test "strmap multiple keys" {
+    var m: StrMap = StrMap_init(16)
+    let k1: string = "one"
+    let k2: string = "two"
+    let k3: string = "three"
+    m.put(k1.ptr, k1.len, 1)
+    m.put(k2.ptr, k2.len, 2)
+    m.put(k3.ptr, k3.len, 3)
+    @assert(m.count == 3)
+    @assert(m.get(k1.ptr, k1.len) == 1)
+    @assert(m.get(k2.ptr, k2.len) == 2)
+    @assert(m.get(k3.ptr, k3.len) == 3)
+}

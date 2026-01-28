@@ -45,3 +45,18 @@ fn eprintln(s: string) {
     var nl: u8 = 10;
     write(2, &nl, 1);
 }
+
+// ============================================================================
+// Inline Tests
+// ============================================================================
+
+test "len returns string length" {
+    @assert(len("hello") == 5)
+    @assert(len("") == 0)
+    @assert(len("x") == 1)
+}
+
+test "len of literal with escape" {
+    @assert(len("a\nb") == 3)
+    @assert(len("\t") == 1)
+}

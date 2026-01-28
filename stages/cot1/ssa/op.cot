@@ -453,3 +453,96 @@ fn Op_toString(op: Op) string {
     if op == Op.Select { return "Select"; }
     return "Unknown";
 }
+
+// ============================================================================
+// Inline Tests
+// ============================================================================
+
+test "Op_isConstant identifies constants" {
+    @assert(Op_isConstant(Op.ConstInt))
+    @assert(Op_isConstant(Op.ConstBool))
+    @assert(Op_isConstant(Op.ConstNil))
+    @assert(Op_isConstant(Op.ConstString))
+    @assert(!Op_isConstant(Op.Add64))
+    @assert(!Op_isConstant(Op.Load))
+}
+
+test "Op_isComparison identifies comparisons" {
+    @assert(Op_isComparison(Op.Eq64))
+    @assert(Op_isComparison(Op.Ne64))
+    @assert(Op_isComparison(Op.Lt64))
+    @assert(Op_isComparison(Op.Gt64))
+    @assert(!Op_isComparison(Op.Add64))
+    @assert(!Op_isComparison(Op.Mul64))
+}
+
+test "Op_isCommutative identifies commutative ops" {
+    @assert(Op_isCommutative(Op.Add64))
+    @assert(Op_isCommutative(Op.Mul64))
+    @assert(Op_isCommutative(Op.And64))
+    @assert(Op_isCommutative(Op.Or64))
+    @assert(!Op_isCommutative(Op.Sub64))
+    @assert(!Op_isCommutative(Op.Div64))
+}
+
+test "Op_hasSideEffects identifies side effects" {
+    @assert(Op_hasSideEffects(Op.Store))
+    @assert(Op_hasSideEffects(Op.Call))
+    @assert(Op_hasSideEffects(Op.GlobalStore))
+    @assert(!Op_hasSideEffects(Op.Add64))
+    @assert(!Op_hasSideEffects(Op.ConstInt))
+}
+
+test "Op_readsMemory identifies memory reads" {
+    @assert(Op_readsMemory(Op.Load))
+    @assert(Op_readsMemory(Op.GlobalLoad))
+    @assert(!Op_readsMemory(Op.Store))
+    @assert(!Op_readsMemory(Op.Add64))
+}
+
+test "Op_writesMemory identifies memory writes" {
+    @assert(Op_writesMemory(Op.Store))
+    @assert(Op_writesMemory(Op.GlobalStore))
+    @assert(!Op_writesMemory(Op.Load))
+    @assert(!Op_writesMemory(Op.Add64))
+}
+
+test "Op_isTerminator identifies terminators" {
+    @assert(Op_isTerminator(Op.Return))
+    @assert(!Op_isTerminator(Op.Add64))
+    @assert(!Op_isTerminator(Op.Call))
+}
+
+test "Op_isBranch identifies branches" {
+    @assert(Op_isBranch(Op.Return))
+    @assert(Op_isBranch(Op.TailCall))
+    @assert(!Op_isBranch(Op.Add64))
+    @assert(!Op_isBranch(Op.Call))
+}
+
+test "Op_isCall identifies calls" {
+    @assert(Op_isCall(Op.Call))
+    @assert(Op_isCall(Op.TailCall))
+    @assert(!Op_isCall(Op.Add64))
+    @assert(!Op_isCall(Op.Return))
+}
+
+test "Op_isLoad identifies loads" {
+    @assert(Op_isLoad(Op.Load))
+    @assert(Op_isLoad(Op.GlobalLoad))
+    @assert(!Op_isLoad(Op.Store))
+    @assert(!Op_isLoad(Op.Add64))
+}
+
+test "Op_isStore identifies stores" {
+    @assert(Op_isStore(Op.Store))
+    @assert(Op_isStore(Op.GlobalStore))
+    @assert(!Op_isStore(Op.Load))
+    @assert(!Op_isStore(Op.Add64))
+}
+
+test "Op_toString returns valid names" {
+    @assert(Op_toString(Op.Add64).len > 0)
+    @assert(Op_toString(Op.ConstInt).len > 0)
+    @assert(Op_toString(Op.Load).len > 0)
+}

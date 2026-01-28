@@ -347,3 +347,65 @@ fn Token_string(t: TokenType) string {
     if t == TokenType.Test { return "test"; }
     return "UNKNOWN";
 }
+
+// ============================================================================
+// INLINE TESTS
+// ============================================================================
+
+test "token creation" {
+    let t: Token = Token_new(TokenType.Int, 10, 5)
+    @assert(t.kind == TokenType.Int)
+    @assert(t.start == 10)
+    @assert(t.end == 5)  // end field stores length
+}
+
+test "token type categories - literals" {
+    @assert(TokenType.Int != TokenType.Ident)
+    @assert(TokenType.StringLit != TokenType.CharLit)
+}
+
+test "token type categories - keywords" {
+    // Declaration keywords
+    @assert(TokenType.Fn != TokenType.Let)
+    @assert(TokenType.Var != TokenType.Const)
+    @assert(TokenType.Struct != TokenType.Enum)
+
+    // Control flow keywords
+    @assert(TokenType.If != TokenType.Else)
+    @assert(TokenType.While != TokenType.For)
+    @assert(TokenType.Break != TokenType.Continue)
+}
+
+test "token type categories - operators" {
+    // Arithmetic
+    @assert(TokenType.Plus != TokenType.Minus)
+    @assert(TokenType.Star != TokenType.Slash)
+
+    // Comparison
+    @assert(TokenType.EqEq != TokenType.NotEq)
+    @assert(TokenType.Less != TokenType.Greater)
+    @assert(TokenType.LessEq != TokenType.GreaterEq)
+}
+
+test "token type categories - punctuation" {
+    @assert(TokenType.LParen != TokenType.RParen)
+    @assert(TokenType.LBrace != TokenType.RBrace)
+    @assert(TokenType.LBracket != TokenType.RBracket)
+}
+
+test "token precedence function" {
+    // Non-operators have precedence 0
+    @assert(Token_precedence(TokenType.LParen) == 0)
+    @assert(Token_precedence(TokenType.Ident) == 0)
+
+    // Logical operators
+    @assert(Token_precedence(TokenType.Or) > 0)
+    @assert(Token_precedence(TokenType.And) > Token_precedence(TokenType.Or))
+
+    // Comparison
+    @assert(Token_precedence(TokenType.EqEq) > Token_precedence(TokenType.And))
+
+    // Arithmetic (highest)
+    @assert(Token_precedence(TokenType.Plus) > Token_precedence(TokenType.EqEq))
+    @assert(Token_precedence(TokenType.Star) > Token_precedence(TokenType.Plus))
+}

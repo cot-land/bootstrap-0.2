@@ -443,3 +443,177 @@ test "scanner init and basic ops" {
     @assert(s.peek() == 0)  // End of string returns 0
 }
 
+test "scan decimal numbers" {
+    var s: Scanner = Scanner_init("42 123 0")
+    var t: Token = s.next()
+    @assert(t.kind == TokenType.Int)
+    @assert(t.end == 2)  // "42"
+
+    t = s.next()
+    @assert(t.kind == TokenType.Int)
+    @assert(t.end == 3)  // "123"
+
+    t = s.next()
+    @assert(t.kind == TokenType.Int)
+    @assert(t.end == 1)  // "0"
+}
+
+test "scan hex numbers" {
+    var s: Scanner = Scanner_init("0xff 0x1A")
+    var t: Token = s.next()
+    @assert(t.kind == TokenType.Int)
+    @assert(t.end == 4)  // "0xff"
+
+    t = s.next()
+    @assert(t.kind == TokenType.Int)
+    @assert(t.end == 4)  // "0x1A"
+}
+
+test "scan binary and octal" {
+    var s: Scanner = Scanner_init("0b1010 0o77")
+    var t: Token = s.next()
+    @assert(t.kind == TokenType.Int)
+    @assert(t.end == 6)  // "0b1010"
+
+    t = s.next()
+    @assert(t.kind == TokenType.Int)
+    @assert(t.end == 4)  // "0o77"
+}
+
+test "scan identifiers" {
+    var s: Scanner = Scanner_init("foo bar_baz _x x123")
+    var t: Token = s.next()
+    @assert(t.kind == TokenType.Ident)
+    @assert(t.end == 3)  // "foo"
+
+    t = s.next()
+    @assert(t.kind == TokenType.Ident)
+    @assert(t.end == 7)  // "bar_baz"
+
+    t = s.next()
+    @assert(t.kind == TokenType.Ident)
+    @assert(t.end == 2)  // "_x"
+
+    t = s.next()
+    @assert(t.kind == TokenType.Ident)
+    @assert(t.end == 4)  // "x123"
+}
+
+test "scan keywords" {
+    var s: Scanner = Scanner_init("fn let var if else while return")
+    @assert(s.next().kind == TokenType.Fn)
+    @assert(s.next().kind == TokenType.Let)
+    @assert(s.next().kind == TokenType.Var)
+    @assert(s.next().kind == TokenType.If)
+    @assert(s.next().kind == TokenType.Else)
+    @assert(s.next().kind == TokenType.While)
+    @assert(s.next().kind == TokenType.Return)
+}
+
+test "scan more keywords" {
+    var s: Scanner = Scanner_init("struct enum true false null and or not")
+    @assert(s.next().kind == TokenType.Struct)
+    @assert(s.next().kind == TokenType.Enum)
+    @assert(s.next().kind == TokenType.True)
+    @assert(s.next().kind == TokenType.False)
+    @assert(s.next().kind == TokenType.Null)
+    @assert(s.next().kind == TokenType.And)
+    @assert(s.next().kind == TokenType.Or)
+    @assert(s.next().kind == TokenType.Not)
+}
+
+test "scan type keywords" {
+    var s: Scanner = Scanner_init("i64 u8 bool string void")
+    @assert(s.next().kind == TokenType.I64)
+    @assert(s.next().kind == TokenType.U8)
+    @assert(s.next().kind == TokenType.Bool)
+    @assert(s.next().kind == TokenType.String)
+    @assert(s.next().kind == TokenType.Void)
+}
+
+test "scan single char operators" {
+    var s: Scanner = Scanner_init("+ - * / % = < > ! & | ^")
+    @assert(s.next().kind == TokenType.Plus)
+    @assert(s.next().kind == TokenType.Minus)
+    @assert(s.next().kind == TokenType.Star)
+    @assert(s.next().kind == TokenType.Slash)
+    @assert(s.next().kind == TokenType.Percent)
+    @assert(s.next().kind == TokenType.Eq)
+    @assert(s.next().kind == TokenType.Less)
+    @assert(s.next().kind == TokenType.Greater)
+    @assert(s.next().kind == TokenType.Bang)
+    @assert(s.next().kind == TokenType.Amp)
+    @assert(s.next().kind == TokenType.Pipe)
+    @assert(s.next().kind == TokenType.Caret)
+}
+
+test "scan two char operators" {
+    var s: Scanner = Scanner_init("== != <= >= += -= *= /= << >>")
+    @assert(s.next().kind == TokenType.EqEq)
+    @assert(s.next().kind == TokenType.NotEq)
+    @assert(s.next().kind == TokenType.LessEq)
+    @assert(s.next().kind == TokenType.GreaterEq)
+    @assert(s.next().kind == TokenType.PlusEq)
+    @assert(s.next().kind == TokenType.MinusEq)
+    @assert(s.next().kind == TokenType.StarEq)
+    @assert(s.next().kind == TokenType.SlashEq)
+    @assert(s.next().kind == TokenType.LessLess)
+    @assert(s.next().kind == TokenType.GreaterGreater)
+}
+
+test "scan punctuation" {
+    var s: Scanner = Scanner_init("( ) { } [ ] , ; : . ->")
+    @assert(s.next().kind == TokenType.LParen)
+    @assert(s.next().kind == TokenType.RParen)
+    @assert(s.next().kind == TokenType.LBrace)
+    @assert(s.next().kind == TokenType.RBrace)
+    @assert(s.next().kind == TokenType.LBracket)
+    @assert(s.next().kind == TokenType.RBracket)
+    @assert(s.next().kind == TokenType.Comma)
+    @assert(s.next().kind == TokenType.Semi)
+    @assert(s.next().kind == TokenType.Colon)
+    @assert(s.next().kind == TokenType.Dot)
+    @assert(s.next().kind == TokenType.Arrow)
+}
+
+test "scan string literal" {
+    var s: Scanner = Scanner_init("\"hello\"")
+    var t: Token = s.next()
+    @assert(t.kind == TokenType.StringLit)
+    @assert(t.end == 7)  // includes quotes
+}
+
+test "scan char literal" {
+    var s: Scanner = Scanner_init("'a' '\\n' '\\''")
+    var t: Token = s.next()
+    @assert(t.kind == TokenType.CharLit)
+    @assert(t.end == 3)  // 'a'
+
+    t = s.next()
+    @assert(t.kind == TokenType.CharLit)
+    @assert(t.end == 4)  // '\n'
+
+    t = s.next()
+    @assert(t.kind == TokenType.CharLit)
+    @assert(t.end == 4)  // '\''
+}
+
+test "skip whitespace and comments" {
+    var s: Scanner = Scanner_init("  \t\n  42 // comment\n 7")
+    var t: Token = s.next()
+    @assert(t.kind == TokenType.Int)
+    @assert(t.end == 2)  // "42"
+
+    t = s.next()
+    @assert(t.kind == TokenType.Int)
+    @assert(t.end == 1)  // "7"
+}
+
+test "scan eof" {
+    var s: Scanner = Scanner_init("")
+    @assert(s.next().kind == TokenType.Eof)
+
+    var s2: Scanner = Scanner_init("   ")
+    @assert(s2.next().kind == TokenType.Eof)
+}
+

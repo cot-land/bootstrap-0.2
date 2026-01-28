@@ -168,3 +168,112 @@ fn u8list_set(list: *U8List, index: i64, value: u8) {
     let ptr: *u8 = list.items + index;
     ptr.* = value;
 }
+
+// ============================================================================
+// Inline Tests
+// ============================================================================
+
+test "i64list init sets empty state" {
+    var list: I64List
+    i64list_init(&list)
+    @assert(list.count == 0)
+    @assert(list.capacity == 0)
+    @assert(list.items == null)
+}
+
+test "i64list isEmpty on empty list" {
+    var list: I64List
+    i64list_init(&list)
+    @assert(i64list_isEmpty(&list))
+    @assert(i64list_len(&list) == 0)
+}
+
+test "i64list append and get" {
+    var list: I64List
+    i64list_init(&list)
+    i64list_append(&list, 42)
+    i64list_append(&list, 7)
+    i64list_append(&list, 99)
+    @assert(list.count == 3)
+    @assert(i64list_get(&list, 0) == 42)
+    @assert(i64list_get(&list, 1) == 7)
+    @assert(i64list_get(&list, 2) == 99)
+}
+
+test "i64list set modifies value" {
+    var list: I64List
+    i64list_init(&list)
+    i64list_append(&list, 1)
+    i64list_append(&list, 2)
+    i64list_set(&list, 0, 100)
+    i64list_set(&list, 1, 200)
+    @assert(i64list_get(&list, 0) == 100)
+    @assert(i64list_get(&list, 1) == 200)
+}
+
+test "i64list pop returns last element" {
+    var list: I64List
+    i64list_init(&list)
+    i64list_append(&list, 10)
+    i64list_append(&list, 20)
+    i64list_append(&list, 30)
+    @assert(i64list_pop(&list) == 30)
+    @assert(list.count == 2)
+    @assert(i64list_pop(&list) == 20)
+    @assert(list.count == 1)
+}
+
+test "i64list clear resets count" {
+    var list: I64List
+    i64list_init(&list)
+    i64list_append(&list, 1)
+    i64list_append(&list, 2)
+    i64list_append(&list, 3)
+    @assert(list.count == 3)
+    i64list_clear(&list)
+    @assert(list.count == 0)
+    @assert(i64list_isEmpty(&list))
+}
+
+test "i64list capacity growth" {
+    var list: I64List
+    i64list_init(&list)
+    // Append more than initial capacity to trigger growth
+    var i: i64 = 0
+    while i < 20 {
+        i64list_append(&list, i)
+        i = i + 1
+    }
+    @assert(list.count == 20)
+    @assert(list.capacity >= 20)
+    @assert(i64list_get(&list, 0) == 0)
+    @assert(i64list_get(&list, 19) == 19)
+}
+
+test "u8list init sets empty state" {
+    var list: U8List
+    u8list_init(&list)
+    @assert(list.count == 0)
+    @assert(list.capacity == 0)
+    @assert(list.items == null)
+}
+
+test "u8list append and get" {
+    var list: U8List
+    u8list_init(&list)
+    u8list_append(&list, 65)  // 'A'
+    u8list_append(&list, 66)  // 'B'
+    u8list_append(&list, 67)  // 'C'
+    @assert(list.count == 3)
+    @assert(u8list_get(&list, 0) == 65)
+    @assert(u8list_get(&list, 1) == 66)
+    @assert(u8list_get(&list, 2) == 67)
+}
+
+test "u8list set modifies value" {
+    var list: U8List
+    u8list_init(&list)
+    u8list_append(&list, 0)
+    u8list_set(&list, 0, 255)
+    @assert(u8list_get(&list, 0) == 255)
+}

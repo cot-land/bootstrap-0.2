@@ -422,3 +422,17 @@ fn DomTree_dominates(f: *Func, a_id: i64, b_id: i64) bool {
 fn DomTree_strictlyDominates(f: *Func, a_id: i64, b_id: i64) bool {
     return a_id != b_id and DomTree_dominates(f, a_id, b_id);
 }
+
+// ============================================================================
+// Inline Tests
+// ============================================================================
+
+test "DomTree init creates empty lists" {
+    var dt: DomTree
+    dt.init()
+    @assert(dt.rpo.count == 0)
+    @assert(dt.rpo_num.count == 0)
+    @assert(dt.visited.count == 0)
+    @assert(dt.children.count == 0)
+    @assert(dt.frontier.count == 0)
+}

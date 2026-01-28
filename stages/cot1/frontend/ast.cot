@@ -1391,3 +1391,108 @@ fn token_precedence(tok_kind: TokenType) i64 {
 
     return 0;  // Not a binary operator
 }
+
+// ============================================================================
+// INLINE TESTS
+// ============================================================================
+
+test "node kinds are distinct" {
+    // Expressions
+    @assert(NodeKind.IntLit != NodeKind.StringLit)
+    @assert(NodeKind.Ident != NodeKind.BinaryExpr)
+    @assert(NodeKind.CallExpr != NodeKind.UnaryExpr)
+
+    // Statements
+    @assert(NodeKind.ReturnStmt != NodeKind.ExprStmt)
+    @assert(NodeKind.IfStmt != NodeKind.WhileStmt)
+    @assert(NodeKind.BreakStmt != NodeKind.ContinueStmt)
+
+    // Declarations
+    @assert(NodeKind.FnDecl != NodeKind.VarDecl)
+    @assert(NodeKind.StructDecl != NodeKind.EnumDecl)
+}
+
+test "binary operator precedence levels" {
+    // MUL (5) > ADD (4) > CMP (3) > AND (2) > OR (1)
+    @assert(PREC_MUL > PREC_ADD)
+    @assert(PREC_ADD > PREC_CMP)
+    @assert(PREC_CMP > PREC_AND)
+    @assert(PREC_AND > PREC_OR)
+}
+
+test "token_precedence arithmetic" {
+    // Multiplicative operators have highest precedence
+    @assert(token_precedence(TokenType.Star) == PREC_MUL)
+    @assert(token_precedence(TokenType.Slash) == PREC_MUL)
+    @assert(token_precedence(TokenType.Percent) == PREC_MUL)
+
+    // Additive operators
+    @assert(token_precedence(TokenType.Plus) == PREC_ADD)
+    @assert(token_precedence(TokenType.Minus) == PREC_ADD)
+}
+
+test "token_precedence bitwise" {
+    // Shifts and bitwise AND are at MUL level (following Go)
+    @assert(token_precedence(TokenType.LessLess) == PREC_MUL)
+    @assert(token_precedence(TokenType.GreaterGreater) == PREC_MUL)
+    @assert(token_precedence(TokenType.Amp) == PREC_MUL)
+
+    // Bitwise OR and XOR are at ADD level
+    @assert(token_precedence(TokenType.Pipe) == PREC_ADD)
+    @assert(token_precedence(TokenType.Caret) == PREC_ADD)
+}
+
+test "token_precedence comparison" {
+    @assert(token_precedence(TokenType.EqEq) == PREC_CMP)
+    @assert(token_precedence(TokenType.NotEq) == PREC_CMP)
+    @assert(token_precedence(TokenType.Less) == PREC_CMP)
+    @assert(token_precedence(TokenType.LessEq) == PREC_CMP)
+    @assert(token_precedence(TokenType.Greater) == PREC_CMP)
+    @assert(token_precedence(TokenType.GreaterEq) == PREC_CMP)
+}
+
+test "token_precedence logical" {
+    // AND higher than OR
+    @assert(token_precedence(TokenType.And) == PREC_AND)
+    @assert(token_precedence(TokenType.AmpAmp) == PREC_AND)
+    @assert(token_precedence(TokenType.Or) == PREC_OR)
+    @assert(token_precedence(TokenType.PipePipe) == PREC_OR)
+
+    @assert(token_precedence(TokenType.And) > token_precedence(TokenType.Or))
+}
+
+test "token_precedence non-operator returns zero" {
+    @assert(token_precedence(TokenType.LParen) == 0)
+    @assert(token_precedence(TokenType.Comma) == 0)
+    @assert(token_precedence(TokenType.Semi) == 0)
+    @assert(token_precedence(TokenType.Ident) == 0)
+}
+
+test "binary op conversion" {
+    // Arithmetic - Token_toBinaryOp returns i64, so use BinaryOp_fromInt
+    @assert(BinaryOp_fromInt(Token_toBinaryOp(TokenType.Plus)) == BinaryOp.Add)
+    @assert(BinaryOp_fromInt(Token_toBinaryOp(TokenType.Minus)) == BinaryOp.Sub)
+    @assert(BinaryOp_fromInt(Token_toBinaryOp(TokenType.Star)) == BinaryOp.Mul)
+    @assert(BinaryOp_fromInt(Token_toBinaryOp(TokenType.Slash)) == BinaryOp.Div)
+    @assert(BinaryOp_fromInt(Token_toBinaryOp(TokenType.Percent)) == BinaryOp.Mod)
+
+    // Comparison
+    @assert(BinaryOp_fromInt(Token_toBinaryOp(TokenType.EqEq)) == BinaryOp.Equal)
+    @assert(BinaryOp_fromInt(Token_toBinaryOp(TokenType.NotEq)) == BinaryOp.NotEqual)
+    @assert(BinaryOp_fromInt(Token_toBinaryOp(TokenType.Less)) == BinaryOp.Less)
+    @assert(BinaryOp_fromInt(Token_toBinaryOp(TokenType.Greater)) == BinaryOp.Greater)
+}
+
+test "binary op categories" {
+    // Arithmetic ops
+    @assert(BinaryOp.Add != BinaryOp.Sub)
+    @assert(BinaryOp.Mul != BinaryOp.Div)
+
+    // Comparison ops
+    @assert(BinaryOp.Equal != BinaryOp.NotEqual)
+    @assert(BinaryOp.Less != BinaryOp.Greater)
+
+    // Bitwise ops
+    @assert(BinaryOp.BitAnd != BinaryOp.BitOr)
+    @assert(BinaryOp.Shl != BinaryOp.Shr)
+}
