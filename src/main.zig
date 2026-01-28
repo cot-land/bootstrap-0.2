@@ -199,9 +199,16 @@ pub fn main() !void {
     // Initialize debug infrastructure from COT_DEBUG env var
     pipeline_debug.initGlobal();
 
+    // Use an arena allocator for compilation.
+    // Like Go/Zig/LLVM, compilers allocate many intermediate objects that don't need
+    // individual cleanup - they're all freed when compilation ends.
+    // This eliminates leak warnings from the GPA and improves performance.
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
     // Parse command-line arguments
     var args = std.process.args();
