@@ -2015,6 +2015,60 @@ pub const Lowerer = struct {
             return try fb.emitFieldValue(ptr_val, field_idx, field_offset, field_type, fa.span);
         }
 
+        // BUG-067 fix: Handle arr[i].field - need to compute element address, not load element
+        // Following Go's ODOT pattern for index expressions into struct arrays
+        if (base_expr == .index) {
+            const idx = base_expr.index;
+            const idx_base_type_idx = self.inferExprType(idx.base);
+            const idx_base_type = self.type_reg.get(idx_base_type_idx);
+
+            // Check if this is an array of structs
+            const elem_type: TypeIndex = switch (idx_base_type) {
+                .array => |a| a.elem,
+                else => {
+                    // Not an array - fall through to default handling
+                    const base_val = try self.lowerExprNode(fa.base);
+                    return try fb.emitFieldValue(base_val, field_idx, field_offset, field_type, fa.span);
+                },
+            };
+            const elem_size = self.type_reg.sizeOf(elem_type);
+
+            // Lower the index expression
+            const index_node = try self.lowerExprNode(idx.idx);
+
+            // Get the array base address
+            const idx_base_node = self.tree.getNode(idx.base) orelse return ir.null_node;
+            const idx_base_expr = idx_base_node.asExpr() orelse return ir.null_node;
+
+            if (idx_base_expr == .ident) {
+                // Check if it's a local array
+                if (fb.lookupLocal(idx_base_expr.ident.name)) |local_idx| {
+                    const local = fb.locals.items[local_idx];
+                    const array_ptr_type = self.type_reg.makePointer(local.type_idx) catch TypeRegistry.VOID;
+                    const array_addr = try fb.emitAddrLocal(local_idx, array_ptr_type, fa.span);
+                    const elem_ptr_type = self.type_reg.makePointer(elem_type) catch TypeRegistry.VOID;
+                    const elem_addr = try fb.emitAddrIndex(array_addr, index_node, elem_size, elem_ptr_type, fa.span);
+                    return try fb.emitFieldValue(elem_addr, field_idx, field_offset, field_type, fa.span);
+                }
+
+                // Check if it's a global array
+                if (self.builder.lookupGlobal(idx_base_expr.ident.name)) |g| {
+                    const global_type = g.global.type_idx;
+                    const ptr_type = self.type_reg.makePointer(global_type) catch TypeRegistry.VOID;
+                    const global_addr = try fb.emitAddrGlobal(g.idx, idx_base_expr.ident.name, ptr_type, fa.span);
+                    const elem_ptr_type = self.type_reg.makePointer(elem_type) catch TypeRegistry.VOID;
+                    const elem_addr = try fb.emitAddrIndex(global_addr, index_node, elem_size, elem_ptr_type, fa.span);
+                    return try fb.emitFieldValue(elem_addr, field_idx, field_offset, field_type, fa.span);
+                }
+            }
+
+            // Fallback: computed base
+            const base_val = try self.lowerExprNode(idx.base);
+            const elem_ptr_type = self.type_reg.makePointer(elem_type) catch TypeRegistry.VOID;
+            const elem_addr = try fb.emitAddrIndex(base_val, index_node, elem_size, elem_ptr_type, fa.span);
+            return try fb.emitFieldValue(elem_addr, field_idx, field_offset, field_type, fa.span);
+        }
+
         // Base is a computed expression - lower it and emit FieldValue
         const base_val = try self.lowerExprNode(fa.base);
         return try fb.emitFieldValue(base_val, field_idx, field_offset, field_type, fa.span);

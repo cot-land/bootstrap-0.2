@@ -2611,16 +2611,49 @@ pub const ARM64CodeGen = struct {
                         try self.emit(asm_mod.encodeLdpStp(0, 8, actual_addr_reg, 0, .signed_offset, false));
                         debug.log(.codegen, "      -> STP x0, x8, [x{d}] (store call 16B)", .{actual_addr_reg});
                     } else if (type_size == 16 and val.op == .load) {
-                        // 16-byte load (string/slice) was loaded with LDP into val_reg and val_reg+1
-                        // Store both halves with STP
-                        const val_reg = self.getRegForValue(val) orelse blk: {
-                            const temp_reg: u5 = 16; // Phase 1: use x16 as scratch
-                            try self.ensureInReg(val, temp_reg);
-                            break :blk temp_reg;
-                        };
-                        // val_reg has first half, val_reg+1 has second half
-                        try self.emit(asm_mod.encodeLdpStp(val_reg, val_reg + 1, addr_reg, 0, .signed_offset, false));
-                        debug.log(.codegen, "      -> STP x{d}, x{d}, [x{d}] (store 16B from load)", .{ val_reg, val_reg + 1, addr_reg });
+                        // 16-byte load (struct/slice) - val_reg+1 may have been clobbered by later ops
+                        // BUG-067 fix: Reload from source address instead of assuming consecutive regs
+                        // The source address is in val.args[0]
+                        if (val.args.len > 0) {
+                            const src_addr = val.args[0];
+                            debug.log(.codegen, "      16B store: src_addr.op={s}, src_addr.id=v{d}", .{ @tagName(src_addr.op), src_addr.id });
+
+                            // CRITICAL: The source address register has likely been clobbered by
+                            // intermediate computations. We CANNOT trust getRegForValue here.
+                            // For local_addr, regenerate directly from the local offset.
+                            const src_scratch: u5 = 16;
+                            if (src_addr.op == .local_addr) {
+                                // Regenerate local_addr directly - don't trust regalloc
+                                const local_idx: usize = @intCast(src_addr.aux_int);
+                                if (local_idx < self.func.local_offsets.len) {
+                                    const local_offset = self.func.local_offsets[local_idx];
+                                    try self.emitAddImm(src_scratch, 31, @intCast(local_offset));
+                                    debug.log(.codegen, "      regenerated local_addr {d} (SP+{d}) -> x{d}", .{ local_idx, local_offset, src_scratch });
+                                } else {
+                                    debug.log(.codegen, "      local_addr {d} out of bounds!", .{local_idx});
+                                    try self.emit(asm_mod.encodeMOVZ(src_scratch, 0, 0));
+                                }
+                            } else {
+                                // Other address types - try normal ensureInReg
+                                try self.ensureInReg(src_addr, src_scratch);
+                            }
+
+                            // Use x14/x15 as dedicated scratch for 16B value to avoid clobber issues
+                            const scratch1: u5 = 14;
+                            const scratch2: u5 = 15;
+                            try self.emit(asm_mod.encodeLdpStp(scratch1, scratch2, src_scratch, 0, .signed_offset, true));
+                            try self.emit(asm_mod.encodeLdpStp(scratch1, scratch2, addr_reg, 0, .signed_offset, false));
+                            debug.log(.codegen, "      -> LDP x{d}, x{d}, [x{d}] then STP to [x{d}] (store 16B reload)", .{ scratch1, scratch2, src_scratch, addr_reg });
+                        } else {
+                            // Fallback: try old behavior
+                            const val_reg = self.getRegForValue(val) orelse blk: {
+                                const temp_reg: u5 = 16;
+                                try self.ensureInReg(val, temp_reg);
+                                break :blk temp_reg;
+                            };
+                            try self.emit(asm_mod.encodeLdpStp(val_reg, val_reg + 1, addr_reg, 0, .signed_offset, false));
+                            debug.log(.codegen, "      -> STP x{d}, x{d}, [x{d}] (store 16B from load)", .{ val_reg, val_reg + 1, addr_reg });
+                        }
                     } else if (type_size == 16 and val.op == .string_make) {
                         // After expand_calls: string_make holds (ptr, len) from decomposed call
                         // val.args[0] = select_n idx=0 (ptr), val.args[1] = select_n idx=1 (len)
@@ -2843,6 +2876,7 @@ pub const ARM64CodeGen = struct {
     fn ensureInReg(self: *ARM64CodeGen, value: *const Value, dest: u5) !void {
         // Check regalloc first, then fallback tracking
         if (self.getRegForValue(value)) |src_reg| {
+            debug.log(.codegen, "      ensureInReg v{d}: regalloc says x{d}, moving to x{d}", .{ value.id, src_reg, dest });
             if (src_reg != dest) {
                 // Move from src to dest (using ADD Rd, Rn, #0)
                 try self.emit(asm_mod.encodeADDImm(dest, src_reg, 0, 0));
@@ -2918,6 +2952,19 @@ pub const ARM64CodeGen = struct {
                 });
 
                 debug.log(.codegen, "      ensureInReg: regenerated const_string v{d} -> x{d}", .{ value.id, dest });
+            },
+            .local_addr => {
+                // Regenerate local address: ADD dest, SP, #offset
+                // local_idx is in aux_int
+                const local_idx: usize = @intCast(value.aux_int);
+                if (local_idx < self.func.local_offsets.len) {
+                    const local_offset = self.func.local_offsets[local_idx];
+                    try self.emitAddImm(dest, 31, @intCast(local_offset));
+                    debug.log(.codegen, "      ensureInReg: regenerated local_addr {d} (SP+{d}) -> x{d}", .{ local_idx, local_offset, dest });
+                } else {
+                    debug.log(.codegen, "      ensureInReg: local_addr {d} out of bounds!", .{local_idx});
+                    try self.emit(asm_mod.encodeMOVZ(dest, 0, 0));
+                }
             },
             else => {
                 // Fallback: log warning and emit 0
