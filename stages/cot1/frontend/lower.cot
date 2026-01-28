@@ -6058,8 +6058,22 @@ fn test_g_reset() void {
     test_g_counter = 0
 }
 
-fn test_array_sum(arr: [4]i64) i64 {
-    return arr[0] + arr[1] + arr[2] + arr[3]
+fn test_slice_sum(arr: []i64) i64 {
+    var sum: i64 = 0
+    for x in arr {
+        sum = sum + x
+    }
+    return sum
+}
+
+test "slice parameter with for-in (BUG-074)" {
+    var data: [5]i64 = [1, 2, 3, 4, 5]
+    let slice: []i64 = data[0:5]
+    @assert(test_slice_sum(slice) == 15)
+
+    // Partial slice
+    let partial: []i64 = data[1:4]
+    @assert(test_slice_sum(partial) == 9)  // 2+3+4
 }
 
 // ============================================================================
