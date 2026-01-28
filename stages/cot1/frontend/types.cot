@@ -1260,13 +1260,11 @@ test "array operations" {
     @assert(a[0] == 10)
     @assert(b[0] == 99)
 
-    // Loop over array
+    // Loop over array using for-in
     var arr4: [5]i64 = [1, 2, 3, 4, 5]
     var sum: i64 = 0
-    var j: i64 = 0
-    while j < 5 {
-        sum = sum + arr4[j]
-        j = j + 1
+    for x in arr4 {
+        sum = sum + x
     }
     @assert(sum == 15)
 }
@@ -1599,12 +1597,10 @@ test "slice of structs" {
     @assert(s[1].x == 2)  // arr[2]
     @assert(s[2].x == 3)  // arr[3]
 
-    // Sum x values in slice (using index loop - for-range on struct slices has bug)
+    // Sum x values in slice using for-in (BUG-068 fixed)
     var sum: i64 = 0
-    i = 0
-    while i < len(s) {
-        sum = sum + s[i].x
-        i = i + 1
+    for elem in s {
+        sum = sum + elem.x
     }
     @assert(sum == 6)  // 1+2+3
 }
