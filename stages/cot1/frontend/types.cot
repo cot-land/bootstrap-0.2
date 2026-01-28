@@ -1094,282 +1094,227 @@ fn test_make_big_return(x: i64, y: i64, z: i64) TestBigReturn {
 }
 
 // ============================================================================
-// INLINE TESTS - Struct Types
+// INLINE TESTS - Struct Types (consolidated)
 // ============================================================================
 
-test "struct simple" {
+test "struct operations" {
+    // Simple struct
     var p: TestPoint
     p.x = 20
     p.y = 22
     @assert(p.x + p.y == 42)
-}
 
-test "struct reassign" {
-    var p: TestPoint
-    p.x = 10
-    p.y = 10
-    p.x = p.x + 12
-    p.y = p.y + 10
-    @assert(p.x + p.y == 42)
-}
+    // Reassign fields
+    var p2: TestPoint
+    p2.x = 10
+    p2.y = 10
+    p2.x = p2.x + 12
+    p2.y = p2.y + 10
+    @assert(p2.x + p2.y == 42)
 
-test "nested struct" {
+    // Nested struct access
     var o: TestOuter
     o.inner.a = 10
     o.inner.b = 20
     o.c = 12
     @assert(o.inner.a + o.inner.b + o.c == 42)
-}
 
-test "large struct" {
+    // Large struct (>16 bytes)
     var s: TestLargeStruct
-    s.a = 1
-    s.b = 2
-    s.c = 3
-    s.d = 4
-    s.e = 5
-    s.f = 6
-    s.g = 7
-    s.h = 14
+    s.a = 1; s.b = 2; s.c = 3; s.d = 4
+    s.e = 5; s.f = 6; s.g = 7; s.h = 14
     @assert(s.a + s.b + s.c + s.d + s.e + s.f + s.g + s.h == 42)
 }
 
 // ============================================================================
-// INLINE TESTS - Enum Types
+// INLINE TESTS - Enum Types (consolidated)
 // ============================================================================
 
-test "enum pending" {
-    let s: TestStatus = TestStatus.Pending
-    @assert(test_check_status(s) == 10)
-}
-
-test "enum active" {
-    let s: TestStatus = TestStatus.Active
-    @assert(test_check_status(s) == 20)
-}
-
-test "enum done" {
-    let s: TestStatus = TestStatus.Done
-    @assert(test_check_status(s) == 42)
+test "enum operations" {
+    @assert(test_check_status(TestStatus.Pending) == 10)
+    @assert(test_check_status(TestStatus.Active) == 20)
+    @assert(test_check_status(TestStatus.Done) == 42)
 }
 
 // ============================================================================
-// INLINE TESTS - Pointer Types
+// INLINE TESTS - Pointer Types (consolidated)
 // ============================================================================
 
-test "ptr read" {
+test "pointer operations" {
+    // Read through pointer
     var x: i64 = 42
     var p: *i64 = &x
     @assert(p.* == 42)
-}
 
-test "ptr write" {
-    var x: i64 = 0
-    var p: *i64 = &x
-    p.* = 42
-    @assert(x == 42)
-}
+    // Write through pointer
+    var y: i64 = 0
+    var q: *i64 = &y
+    q.* = 42
+    @assert(y == 42)
 
-test "ptr modify" {
-    var x: i64 = 10
-    test_add_via_ptr(&x, 32)
-    @assert(x == 42)
-}
+    // Modify via pointer parameter
+    var z: i64 = 10
+    test_add_via_ptr(&z, 32)
+    @assert(z == 42)
 
-test "ptr struct field" {
-    var p: TestPoint
-    p.x = 0
-    p.y = 22
-    test_set_point_x(&p, 20)
-    @assert(p.x + p.y == 42)
+    // Pointer to struct field
+    var pt: TestPoint
+    pt.x = 0
+    pt.y = 22
+    test_set_point_x(&pt, 20)
+    @assert(pt.x + pt.y == 42)
 }
 
 // ============================================================================
-// INLINE TESTS - Array Types
+// INLINE TESTS - Array Types (consolidated)
 // ============================================================================
 
-test "array index const" {
+test "array operations" {
+    // Index with constant
     var arr: [4]i64 = [10, 20, 30, 40]
     @assert(arr[0] == 10)
-}
 
-test "array index var" {
-    var arr: [4]i64 = [10, 20, 30, 40]
+    // Index with variable
     var i: i64 = 2
     @assert(arr[i] == 30)
-}
 
-test "array assign" {
-    var arr: [4]i64 = [0, 0, 0, 0]
-    arr[0] = 10
-    arr[1] = 20
-    arr[2] = 30
-    arr[3] = 40
-    @assert(arr[0] + arr[3] == 50)
-}
+    // Assignment
+    var arr2: [4]i64 = [0, 0, 0, 0]
+    arr2[0] = 10; arr2[1] = 20
+    arr2[2] = 30; arr2[3] = 40
+    @assert(arr2[0] + arr2[3] == 50)
 
-test "array sum" {
-    var arr: [4]i64 = [10, 11, 12, 9]
-    @assert(arr[0] + arr[1] + arr[2] + arr[3] == 42)
-}
+    // Sum elements
+    var arr3: [4]i64 = [10, 11, 12, 9]
+    @assert(arr3[0] + arr3[1] + arr3[2] + arr3[3] == 42)
 
-test "array copy" {
+    // Copy semantics
     var a: [3]i64 = [10, 20, 30]
     var b: [3]i64 = a
     b[0] = 99
-    @assert(a[0] == 10)  // Original unchanged
-    @assert(b[0] == 99)  // Copy modified
-}
+    @assert(a[0] == 10)
+    @assert(b[0] == 99)
 
-test "array loop" {
-    var arr: [5]i64 = [1, 2, 3, 4, 5]
+    // Loop over array
+    var arr4: [5]i64 = [1, 2, 3, 4, 5]
     var sum: i64 = 0
-    var i: i64 = 0
-    while i < 5 {
-        sum = sum + arr[i]
-        i = i + 1
+    var j: i64 = 0
+    while j < 5 {
+        sum = sum + arr4[j]
+        j = j + 1
     }
     @assert(sum == 15)
 }
 
 // ============================================================================
-// INLINE TESTS - Slice Types
+// INLINE TESTS - Slice Types (consolidated)
 // ============================================================================
 
-test "slice create" {
+test "slice operations" {
+    // Create slice
     var arr: [5]i64 = [10, 20, 30, 40, 50]
-    let s: []i64 = arr[0:3]
-    @assert(len(s) == 3)
-}
+    let s1: []i64 = arr[0:3]
+    @assert(len(s1) == 3)
 
-test "slice index" {
-    var arr: [5]i64 = [10, 20, 30, 40, 50]
-    let s: []i64 = arr[1:4]
-    @assert(s[0] == 20)
-    @assert(s[1] == 30)
-    @assert(s[2] == 40)
-}
+    // Index slice
+    let s2: []i64 = arr[1:4]
+    @assert(s2[0] == 20)
+    @assert(s2[1] == 30)
+    @assert(s2[2] == 40)
 
-test "slice offset" {
-    var arr: [5]i64 = [10, 20, 30, 40, 50]
-    let s: []i64 = arr[2:5]
-    @assert(s[0] == 30)
-}
+    // Offset slice
+    let s3: []i64 = arr[2:5]
+    @assert(s3[0] == 30)
 
-test "slice write" {
-    var arr: [5]i64 = [10, 20, 30, 40, 50]
-    let s: []i64 = arr[0:3]
-    s[0] = 42
-    @assert(arr[0] == 42)  // Shared memory
-}
+    // Write through slice (shared memory)
+    let s4: []i64 = arr[0:3]
+    s4[0] = 42
+    @assert(arr[0] == 42)
 
-test "slice implicit end" {
-    var arr: [5]i64 = [10, 20, 30, 40, 50]
-    let s: []i64 = arr[2:]
-    @assert(s[0] == 30)
-    @assert(len(s) == 3)
-}
+    // Implicit end
+    arr[0] = 10  // restore
+    let s5: []i64 = arr[2:]
+    @assert(s5[0] == 30)
+    @assert(len(s5) == 3)
 
-test "slice implicit start" {
-    var arr: [5]i64 = [10, 20, 30, 40, 50]
-    let s: []i64 = arr[:3]
-    @assert(s[2] == 30)
-    @assert(len(s) == 3)
-}
+    // Implicit start
+    let s6: []i64 = arr[:3]
+    @assert(s6[2] == 30)
+    @assert(len(s6) == 3)
 
-test "slice full" {
-    var arr: [5]i64 = [10, 20, 30, 40, 50]
-    let s: []i64 = arr[:]
-    @assert(len(s) == 5)
+    // Full slice
+    let s7: []i64 = arr[:]
+    @assert(len(s7) == 5)
 }
 
 // ============================================================================
-// INLINE TESTS - String Types
+// INLINE TESTS - String Types (consolidated)
 // ============================================================================
 
-test "string literal" {
-    let s: string = "hello"
-    @assert(len(s) == 5)
-}
-
-test "string empty" {
-    let s: string = ""
-    @assert(len(s) == 0)
-}
-
-test "string escape" {
-    let s: string = "a\nb"
-    @assert(len(s) == 3)
-}
-
-test "string index" {
-    let s: string = "hello"
-    let c: u8 = s[0]
-    @assert(c == 104)  // 'h' = 104
-}
-
-test "string copy" {
+test "string operations" {
+    // Literal
     let s1: string = "hello"
-    let s2: string = s1
-    @assert(len(s2) == 5)
-}
+    @assert(len(s1) == 5)
 
-test "string slice" {
-    let s: string = "hello"
-    let sub: string = s[0:3]
+    // Empty
+    let s2: string = ""
+    @assert(len(s2) == 0)
+
+    // Escape sequences
+    let s3: string = "a\nb"
+    @assert(len(s3) == 3)
+
+    // Index
+    let c: u8 = s1[0]
+    @assert(c == 104)  // 'h'
+
+    // Copy
+    let s4: string = s1
+    @assert(len(s4) == 5)
+
+    // Slice
+    let sub: string = s1[0:3]
     @assert(len(sub) == 3)
-}
 
-test "string concat" {
-    let a: string = "hello"
-    let b: string = " world"
-    let c: string = a + b
-    @assert(len(c) == 11)
-}
+    // Concat
+    let s5: string = "hello"
+    let s6: string = " world"
+    let s7: string = s5 + s6
+    @assert(len(s7) == 11)
 
-test "string concat empty" {
-    let a: string = "foo"
-    let b: string = ""
-    let c: string = a + b
-    @assert(len(c) == 3)
+    // Concat with empty
+    let s8: string = "foo"
+    let s9: string = ""
+    let s10: string = s8 + s9
+    @assert(len(s10) == 3)
 }
 
 // ============================================================================
-// INLINE TESTS - Null Pointers
+// INLINE TESTS - Null Pointers (consolidated)
 // ============================================================================
 
-test "null eq" {
-    let p: *i64 = null
-    @assert(p == null)
-}
+test "null pointer operations" {
+    let p1: *i64 = null
+    @assert(p1 == null)
+    @assert(null == p1)
 
-test "null ne" {
     var x: i64 = 42
-    let p: *i64 = &x
-    @assert(p != null)
-}
-
-test "null eq right" {
-    let p: *i64 = null
-    @assert(null == p)
+    let p2: *i64 = &x
+    @assert(p2 != null)
 }
 
 // ============================================================================
-// INLINE TESTS - Characters
+// INLINE TESTS - Characters (consolidated)
 // ============================================================================
 
-test "char simple" {
+test "character operations" {
     let c: u8 = 'A'
     @assert(c == 65)
-}
 
-test "char compare" {
     let a: u8 = 'a'
     let b: u8 = 'b'
     @assert(a < b)
-}
 
-test "char escape" {
     let newline: u8 = '\n'
     let tab: u8 = '\t'
     @assert(newline == 10)
