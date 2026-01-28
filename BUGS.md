@@ -14,26 +14,88 @@
 
 ## Open Bugs
 
-### BUG-063: cot1 stage2 compilation crashes during SSA building
+### BUG-063: cot1 stage2 compilation issues (META-BUG - MULTIPLE ROOT CAUSES)
 
-**Status:** Partially fixed (parser loops fixed, crash remains)
-**Priority:** HIGH
+**Status:** CLOSED - split into separate bugs
+**Priority:** N/A (see individual bugs)
 **Discovered:** 2026-01-25
 
-When stage1 compiles the full cot1 codebase to produce stage2, it crashes during SSA building/codegen phase.
+This bug became a catch-all for multiple different issues preventing stage2 from working. The root causes have been identified and tracked separately:
 
-**Fixed (2026-01-28):**
-- Parser infinite loops on incomplete structs/blocks - added position tracking and safety breaks
+**Fixed sub-issues:**
+1. Parser infinite loops on incomplete structs/blocks (fixed 2026-01-28)
+2. AMD64: Callee-saved register clobbering in struct copies (fixed 2026-01-28, see commit 7405902)
+3. String field initialization in struct literals - Zig compiler (fixed 2026-01-28)
 
-**Current symptoms:**
-- Parser completes (with some warnings for incomplete imports)
-- Type checking completes
-- IR lowering completes (78122 nodes, 1552 functions, 176 globals)
-- Crash with NULL pointer dereference during Phase 4/5 (SSA building)
+**Remaining sub-issues (tracked separately):**
+- BUG-073: ARM64 stage2 scanner hang - string field in struct literal return not preserved
 
-**Remaining issues:**
-- "Warning: Parse error in import" for some files (incomplete code at EOF?)
-- NULL pointer crash during SSA building - needs investigation
+---
+
+### BUG-073: ARM64 stage2 scanner hang - control flow bug with >16B struct returns
+
+**Status:** OPEN (partially fixed)
+**Priority:** HIGH
+**Discovered:** 2026-01-28
+**Platform:** ARM64 (macOS)
+
+Stage2 (compiled by stage1) hangs during Scanner_init when processing even the simplest source files.
+
+**Partial fix applied (2026-01-28):**
+- Fixed sp_adjust_for_call bug in genssa.cot - when loading SliceLen or LocalAddr during call argument setup, the stack offset wasn't adjusted for prior SP changes (hidden return allocation + arg stack space)
+- This fix ensures `len(s.source)` returns correct value after Scanner_init
+
+**Remaining issue:**
+When an if-statement follows a function call returning >16B struct, the control flow is broken. The "then" block's code executes unconditionally because the conditional branch is placed AFTER the return instruction (dead code).
+
+**Working tests:**
+- `return len(s.source)` → returns 3 correctly
+- `s.getSourceLen()` (method call) → returns 3 correctly
+
+**Failing tests:**
+- `if len(s.source) != 3 { return 1; } return 42;` → returns 1 (wrong)
+- `if s.pos >= len(s.source) { return 1; } return 42;` → returns 1 (wrong)
+
+**Disassembly shows:**
+```asm
+// Block 0: setup, call, copy result, cset condition
+11c: mov x14, #1
+120: mov x0, x14
+124-12c: epilogue + ret   // UNCONDITIONAL RETURN!
+130: cbz x13, 0x148      // Dead code - branch AFTER return
+```
+
+**Root cause:**
+The SSA or codegen in stage1 is placing the Return value from the "then" block into block 0 instead of the correct block. This causes blockValues to emit the return code before blockControl emits the conditional branch.
+
+**Symptoms:**
+- Stage2 binary builds successfully (1.8MB)
+- Stage2 prints "Phase 1: Scanning..." then hangs
+- isAtEnd() always returns true because the if-statement control flow is broken
+
+**Reproduction:**
+```bash
+# Build stage1
+./zig-out/bin/cot stages/cot1/main.cot -o /tmp/cot1-stage1
+
+# Build stage2
+/tmp/cot1-stage1 stages/cot1/main.cot -o /tmp/s2.o
+zig cc /tmp/s2.o runtime/cot_runtime.o -o /tmp/cot1-stage2 -lSystem
+
+# Test with simplest file - HANGS
+echo 'fn main() i64 { return 42; }' > /tmp/simple.cot
+/tmp/cot1-stage2 /tmp/simple.cot -o /tmp/out.o
+```
+
+**Key code path:**
+- `stages/cot1/frontend/scanner.cot` - Scanner_init function
+- `stages/cot1/frontend/lower.cot` - lowerStructLitToLocal (string field handling)
+- `stages/cot1/codegen/genssa.cot` - SlicePtr/SliceLen codegen
+
+**Investigation notes:**
+- Zig compiler correctly generates code for this pattern (all 754 tests pass)
+- The issue is in cot1's codegen for ARM64 specifically
+- May be related to how struct literal returns with string fields are lowered
 
 ---
 

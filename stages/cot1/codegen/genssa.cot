@@ -2627,6 +2627,11 @@ fn call(self: *GenState, v: *Value) {
         }
     }
 
+    // BUG-073: Track total SP adjustment so we can fix up stack-relative loads
+    // When loading from locals during argument materialization, we need to add
+    // this offset because SP has already been adjusted
+    let sp_adjust_for_call: i64 = hidden_ret_stack_size + abi_info.arg_stack_size;
+
     // Step 2: Store stack arguments (args 9+)
     // For values without registers (constants, etc.), materialize first using x16
     i = 8;
@@ -2806,12 +2811,14 @@ fn call(self: *GenState, v: *Value) {
                         } else if mi_val.op == Op.LocalAddr {
                             // BUG-019: LocalAddr as call arg (>16B struct pass-by-reference)
                             // emit LEA/ADD dest, SP, #offset to compute local address
+                            // BUG-073: Add sp_adjust_for_call because SP has been adjusted
                             let local_idx: i64 = mi_val.aux_int;
                             let local: *Local = f.getLocal(local_idx);
+                            let adjusted_offset: i64 = local.offset + sp_adjust_for_call;
                             if self.target == TARGET_AMD64 {
-                                self.emitInstPacked(AMD64_lea(mi_dest, RSP, local.offset));
+                                self.emitInstPacked(AMD64_lea(mi_dest, RSP, adjusted_offset));
                             } else {
-                                self.emitInst(encode_add_imm(mi_dest, SP, local.offset));
+                                self.emitInst(encode_add_imm(mi_dest, SP, adjusted_offset));
                             }
                         } else if mi_val.op == Op.StringPtr or mi_val.op == Op.SlicePtr {
                             // StringPtr/SlicePtr as call arg: need to materialize the ptr
@@ -2870,7 +2877,8 @@ fn call(self: *GenState, v: *Value) {
                                     if addr_val.op == Op.LocalAddr {
                                         let local_idx: i64 = addr_val.aux_int;
                                         let local: *Local = f.getLocal(local_idx);
-                                        let len_offset: i64 = local.offset + 8;
+                                        // BUG-073: Add sp_adjust_for_call because SP has been adjusted
+                                        let len_offset: i64 = local.offset + 8 + sp_adjust_for_call;
                                         if self.target == TARGET_AMD64 {
                                             self.emitInstPacked(AMD64_load64(mi_dest, RSP, len_offset));
                                         } else {
