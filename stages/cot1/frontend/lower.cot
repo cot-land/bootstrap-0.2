@@ -7502,13 +7502,11 @@ test "array algorithms via direct indexing" {
     }
     @assert(min == 2)
 
-    // Sum
+    // Sum - DOGFOOD: using for-in loop
     var arr3: [5]i64 = [1, 2, 3, 4, 5]
     var sum: i64 = 0
-    var n: i64 = 0
-    while n < 5 {
-        sum = sum + arr3[n]
-        n = n + 1
+    for x in arr3 {
+        sum = sum + x
     }
     @assert(sum == 15)
 
@@ -8338,60 +8336,54 @@ test "memory: array of pointers" {
 // INLINE TESTS - String Operations (consolidated from parity)
 // ============================================================================
 
-fn inline_test_str_len(s: []u8) i64 {
+// DOGFOOD: Using string type and for-in loops
+fn inline_test_str_len(s: string) i64 {
     return len(s)
 }
 
-fn inline_test_str_eq(a: []u8, b: []u8) bool {
-    if len(a) != len(b) { return false }
-    var i: i64 = 0
-    while i < len(a) {
-        if a[i] != b[i] { return false }
-        i = i + 1
-    }
-    return true
-}
-
-fn inline_test_count_char(s: []u8, c: u8) i64 {
+fn inline_test_count_char(s: string, c: u8) i64 {
     var count: i64 = 0
-    var i: i64 = 0
-    while i < len(s) {
-        if s[i] == c { count = count + 1 }
-        i = i + 1
+    for ch in s {
+        if ch == c { count = count + 1 }
     }
     return count
 }
 
 test "string: length operations" {
-    let s1: []u8 = "hello"
+    let s1: string = "hello"
 
-    // Direct len() usage only - avoid passing slices to functions
+    // DOGFOOD: Using string type (works with function calls)
     @assert(len(s1) == 5)
     @assert(len("world") == 5)
     @assert(len("a") == 1)
+    @assert(inline_test_str_len(s1) == 5)
 }
 
 test "string: character access" {
-    let s1: []u8 = "hello"
+    let s1: string = "hello"
 
-    // Test character access
-    @assert(s1[0] == 'h')
-    @assert(s1[1] == 'e')
-    @assert(s1[4] == 'o')
+    // Test character access via .ptr with pointer arithmetic
+    @assert((s1.ptr + 0).* == 'h')
+    @assert((s1.ptr + 1).* == 'e')
+    @assert((s1.ptr + 4).* == 'o')
 }
 
-test "string: manual character counting" {
-    let s: []u8 = "mississippi"
+test "string: for-in character counting" {
+    // DOGFOOD: Using for-in loop instead of while with index
+    let s: string = "mississippi"
     var count_s: i64 = 0
     var count_i: i64 = 0
-    var idx: i64 = 0
-    while idx < len(s) {
-        if s[idx] == 's' { count_s = count_s + 1 }
-        if s[idx] == 'i' { count_i = count_i + 1 }
-        idx = idx + 1
+    for c in s {
+        if c == 's' { count_s = count_s + 1 }
+        if c == 'i' { count_i = count_i + 1 }
     }
     @assert(count_s == 4)
     @assert(count_i == 4)
+
+    // Also test with helper function
+    @assert(inline_test_count_char(s, 's') == 4)
+    @assert(inline_test_count_char(s, 'i') == 4)
+    @assert(inline_test_count_char(s, 'm') == 1)
 }
 
 // ============================================================================
