@@ -1208,6 +1208,26 @@ test "pointer operations" {
     pt.y = 22
     test_set_point_x(&pt, 20)
     @assert(pt.x + pt.y == 42)
+
+    // Pointer to pointer (double dereference)
+    var a: i64 = 42
+    var pa: *i64 = &a
+    var ppa: **i64 = &pa
+    @assert(ppa.*.* == 42)
+
+    // Modify through pointer-to-pointer
+    ppa.*.* = 100
+    @assert(a == 100)
+
+    // Pointer comparison
+    var b: i64 = 42
+    var pb: *i64 = &b
+    var pb2: *i64 = &b
+    @assert(pb == pb2)  // Same address
+
+    var c: i64 = 42
+    var pc: *i64 = &c
+    @assert(pb != pc)  // Different addresses
 }
 
 // ============================================================================
@@ -1364,4 +1384,40 @@ test "character operations" {
     let tab: u8 = '\t'
     @assert(newline == 10)
     @assert(tab == 9)
+}
+
+// ============================================================================
+// INLINE TESTS - Integer Types (consolidated)
+// ============================================================================
+
+test "integer type operations" {
+    // u8 type
+    let byte: u8 = 255
+    @assert(byte == 255)
+
+    // i32 type
+    let small: i32 = 1000
+    @assert(small == 1000)
+
+    // Negative i32
+    let neg: i32 = -500
+    @assert(neg == -500)
+
+    // u32 type
+    let unsigned: u32 = 4000000000
+    @assert(unsigned > 0)
+
+    // Type casting with @intCast
+    let a: u8 = 100
+    let b: i64 = @intCast(i64, a)
+    @assert(b == 100)
+
+    // Truncating cast
+    let c: i64 = 300
+    let d: u8 = @intCast(u8, c)  // 300 mod 256 = 44
+    @assert(d == 44)
+
+    // i64 extremes
+    let max: i64 = 9223372036854775807
+    @assert(max > 0)
 }
