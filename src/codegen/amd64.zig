@@ -697,7 +697,7 @@ pub const AMD64CodeGen = struct {
                 }
             },
             .not => {
-                // Rematerialize bitwise not
+                // Rematerialize NOT - distinguish between boolean and integer
                 if (value.args.len >= 1) {
                     const op_reg = self.getRegForValue(value.args[0]) orelse blk: {
                         const scratch: Reg = if (hint_reg == .rax) .rcx else .rax;
@@ -707,8 +707,17 @@ pub const AMD64CodeGen = struct {
                     if (hint_reg != op_reg) {
                         try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, op_reg));
                     }
-                    try self.emit(3, asm_mod.encodeNotReg(hint_reg));
-                    debug.log(.codegen, "      rematerialize not to {s}", .{hint_reg.name()});
+                    // Check if this is a boolean (1-byte type)
+                    const type_size = self.getTypeSize(value.type_idx);
+                    if (type_size == 1) {
+                        // Boolean: XOR with 1
+                        try self.emitBytes(&[_]u8{ 0x48, 0x83, 0xF0 | @as(u8, @intFromEnum(hint_reg) & 7), 0x01 });
+                        debug.log(.codegen, "      rematerialize not (bool) to {s}", .{hint_reg.name()});
+                    } else {
+                        // Integer: bitwise NOT
+                        try self.emit(3, asm_mod.encodeNotReg(hint_reg));
+                        debug.log(.codegen, "      rematerialize not (int) to {s}", .{hint_reg.name()});
+                    }
                 }
             },
             else => {
@@ -1107,7 +1116,22 @@ pub const AMD64CodeGen = struct {
     /// RDI is already set up with the hidden return address.
     /// Args go in RSI, RDX, RCX, R8, R9 (only 5 register args, then stack).
     fn setupCallArgsWithHiddenRet(self: *AMD64CodeGen, args: []*Value) !usize {
+        return self.setupCallArgsWithHiddenRetSafe(args, false);
+    }
+
+    /// Same as setupCallArgsWithHiddenRet, but if rdi_saved is true,
+    /// any source register that was RDI should use R11 instead (RDI was saved there).
+    fn setupCallArgsWithHiddenRetSafe(self: *AMD64CodeGen, args: []*Value, rdi_saved: bool) !usize {
         if (args.len == 0) return 0;
+
+        debug.log(.codegen, "      setupCallArgsWithHiddenRetSafe: {d} args, rdi_saved={}", .{ args.len, rdi_saved });
+        for (args, 0..) |arg, i| {
+            if (self.getRegForValue(arg)) |reg| {
+                debug.log(.codegen, "        arg[{d}] v{d} op={s} in {s}", .{ i, arg.id, @tagName(arg.op), reg.name() });
+            } else {
+                debug.log(.codegen, "        arg[{d}] v{d} op={s} NOT in reg", .{ i, arg.id, @tagName(arg.op) });
+            }
+        }
 
         // With hidden return, only 5 register args available (RDI is taken)
         const num_stack_args: usize = if (args.len > 5) args.len - 5 else 0;
@@ -1147,7 +1171,11 @@ pub const AMD64CodeGen = struct {
         for (args[0..max_reg_args], 0..) |arg, i| {
             // arg_regs[1..] = RSI, RDX, RCX, R8, R9
             const dest = regs.AMD64.arg_regs[i + 1];
-            const src = self.getRegForValue(arg);
+            var src = self.getRegForValue(arg);
+            // If RDI was saved to R11, substitute R11 for any RDI source
+            if (rdi_saved and src != null and src.? == .rdi) {
+                src = .r11;
+            }
             moves[num_moves] = .{
                 .src = src,
                 .dest = dest,
@@ -1168,7 +1196,9 @@ pub const AMD64CodeGen = struct {
                 for (0..num_moves) |oi| {
                     if (moves[oi].done) continue;
                     if (moves[oi].src) |other_src| {
-                        if (other_src == moves[mi].dest and oi != mi) {
+                        // Don't count R11 as conflicting with RDI if we saved RDI there
+                        const actual_src = if (rdi_saved and other_src == .r11) Reg.rdi else other_src;
+                        if (actual_src == moves[mi].dest and oi != mi) {
                             would_clobber = true;
                             break;
                         }
@@ -1551,13 +1581,14 @@ pub const AMD64CodeGen = struct {
                         debug.log(.codegen, "      ret hidden: copying {d}B from [{s}] to [{s}]", .{ ret_size, src_addr_reg.name(), dest_ptr_reg.name() });
 
                         // Copy data in 8-byte chunks using MOV
+                        // Use RCX as scratch (dest_ptr_reg is R11, so can't use R11 here)
                         var copy_off: u32 = 0;
                         while (copy_off < ret_size) : (copy_off += 8) {
-                            // MOV R12, [src + copy_off]
-                            const src_enc = asm_mod.encodeMovRegMemDisp(.r12, src_addr_reg, @intCast(copy_off));
+                            // MOV RCX, [src + copy_off]
+                            const src_enc = asm_mod.encodeMovRegMemDisp(.rcx, src_addr_reg, @intCast(copy_off));
                             try self.code.appendSlice(self.allocator, src_enc.data[0..src_enc.len]);
-                            // MOV [dest + copy_off], R12
-                            const dst_enc = asm_mod.encodeMovMemReg(dest_ptr_reg, @intCast(copy_off), .r12);
+                            // MOV [dest + copy_off], RCX
+                            const dst_enc = asm_mod.encodeMovMemReg(dest_ptr_reg, @intCast(copy_off), .rcx);
                             try self.code.appendSlice(self.allocator, dst_enc.data[0..dst_enc.len]);
                         }
 
@@ -2224,13 +2255,21 @@ pub const AMD64CodeGen = struct {
                 // Copy value from one register to another
                 const args = value.args;
                 if (args.len >= 1) {
-                    const src_reg = self.getRegForValue(args[0]) orelse blk: {
+                    debug.log(.codegen, "      copy: src v{d} ({s})", .{ args[0].id, @tagName(args[0].op) });
+                    const src_result = self.getRegForValue(args[0]);
+                    debug.log(.codegen, "      copy: getRegForValue = {?s}", .{ if (src_result) |r| r.name() else null });
+                    const src_reg = src_result orelse blk: {
+                        debug.log(.codegen, "      copy: calling ensureInReg for v{d}", .{args[0].id});
                         try self.ensureInReg(args[0], .rax);
                         break :blk Reg.rax;
                     };
                     const dest_reg = self.getDestRegForValue(value);
+                    debug.log(.codegen, "      copy: src={s}, dest={s}", .{ src_reg.name(), dest_reg.name() });
                     if (dest_reg != src_reg) {
                         try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, src_reg));
+                        debug.log(.codegen, "      copy: MOV {s}, {s}", .{ dest_reg.name(), src_reg.name() });
+                    } else {
+                        debug.log(.codegen, "      copy: SKIP (same reg)", .{});
                     }
                 }
             },
@@ -2295,12 +2334,23 @@ pub const AMD64CodeGen = struct {
 
                     debug.log(.codegen, "      static_call {s}: >16B return ({d}B), frame offset={d}", .{ target_name, ret_size, frame_offset });
 
+                    // BUG FIX: For calls with hidden return, we ALWAYS save RDI to R11 before
+                    // setting up the hidden return pointer. This is necessary because:
+                    // 1. Arguments might be in RDI directly
+                    // 2. Arguments might be COMPUTED FROM RDI (e.g., field_addr of self)
+                    // Case 2 is particularly tricky because the SSA value for field_addr might
+                    // be in a different register, but the computation itself needs RDI.
+                    // By always saving RDI, we ensure the original value is preserved.
+                    try self.emit(3, asm_mod.encodeMovRegReg(.r11, .rdi));
+                    debug.log(.codegen, "      MOV R11, RDI (save before hidden return)", .{});
+
                     // Set RDI to point to return location: LEA RDI, [RBP - frame_offset]
                     try self.emitLeaFromFrame(.rdi, neg_offset);
                     debug.log(.codegen, "      LEA RDI, [RBP{d}] (hidden return ptr)", .{neg_offset});
 
                     // Setup args shifted by 1 (RDI is hidden return, actual args start at RSI)
-                    const stack_cleanup = try self.setupCallArgsWithHiddenRet(value.args);
+                    // Always translate RDI->R11 in the source register since we always save.
+                    const stack_cleanup = try self.setupCallArgsWithHiddenRetSafe(value.args, true);
 
                     // Emit CALL rel32 with relocation
                     const call_offset = self.offset();
@@ -2412,6 +2462,7 @@ pub const AMD64CodeGen = struct {
                     debug.log(.codegen, "      string_concat (decomposed): 4 scalar args", .{});
 
                     // Get current registers for each arg
+                    // Use only caller-saved registers (R10, R11, R8, R9) to avoid corrupting callee-saved regs
                     const ptr1_reg = self.getRegForValue(args[0]) orelse blk: {
                         try self.ensureInReg(args[0], .r10);
                         break :blk Reg.r10;
@@ -2421,12 +2472,12 @@ pub const AMD64CodeGen = struct {
                         break :blk Reg.r11;
                     };
                     const ptr2_reg = self.getRegForValue(args[2]) orelse blk: {
-                        try self.ensureInReg(args[2], .r12);
-                        break :blk Reg.r12;
+                        try self.ensureInReg(args[2], .r8);
+                        break :blk Reg.r8;
                     };
                     const len2_reg = self.getRegForValue(args[3]) orelse blk: {
-                        try self.ensureInReg(args[3], .r13);
-                        break :blk Reg.r13;
+                        try self.ensureInReg(args[3], .r9);
+                        break :blk Reg.r9;
                     };
 
                     debug.log(.codegen, "      Current locations: ptr1={s}, len1={s}, ptr2={s}, len2={s}", .{
@@ -2531,7 +2582,10 @@ pub const AMD64CodeGen = struct {
                 if (value.args.len >= 2) {
                     const addr = value.args[0];
                     const val = value.args[1];
-                    const type_size = self.getTypeSize(val.type_idx);
+                    // CRITICAL: If aux_int is set (from store_index_local/store_index_value),
+                    // use it as the store size. This fixes storing u8 values where the
+                    // source is an untyped integer constant (8 bytes) but destination is 1 byte.
+                    const type_size: u32 = if (value.aux_int > 0) @intCast(value.aux_int) else self.getTypeSize(val.type_idx);
 
                     // Get destination address first
                     const addr_reg = self.getRegForValue(addr) orelse blk: {
@@ -2552,13 +2606,15 @@ pub const AMD64CodeGen = struct {
                             debug.log(.codegen, "      store >16B: src at frame offset {d} -> R10", .{frame_offset});
 
                             // Copy data in 8-byte chunks
+                            // Use RAX as scratch (addr_reg could be any reg including RCX, and R10 is source)
+                            // RAX is safe since >16B returns use hidden return, not RAX
                             var copy_off: u32 = 0;
                             while (copy_off < type_size) : (copy_off += 8) {
-                                // MOV R12, [R10 + copy_off]
-                                const src_enc = asm_mod.encodeMovRegMemDisp(.r12, .r10, @intCast(copy_off));
+                                // MOV RAX, [R10 + copy_off]
+                                const src_enc = asm_mod.encodeMovRegMemDisp(.rax, .r10, @intCast(copy_off));
                                 try self.code.appendSlice(self.allocator, src_enc.data[0..src_enc.len]);
-                                // MOV [addr_reg + copy_off], R12
-                                const dst_enc = asm_mod.encodeMovMemReg(addr_reg, @intCast(copy_off), .r12);
+                                // MOV [addr_reg + copy_off], RAX
+                                const dst_enc = asm_mod.encodeMovMemReg(addr_reg, @intCast(copy_off), .rax);
                                 try self.code.appendSlice(self.allocator, dst_enc.data[0..dst_enc.len]);
                             }
                             debug.log(.codegen, "      -> copied {d}B from hidden ret to [{s}]", .{ type_size, addr_reg.name() });
@@ -3089,7 +3145,7 @@ pub const AMD64CodeGen = struct {
             },
 
             .not => {
-                // Bitwise NOT
+                // NOT operation - distinguish between boolean and integer
                 const args = value.args;
                 if (args.len >= 1) {
                     const op_reg = self.getRegForValue(args[0]) orelse blk: {
@@ -3098,10 +3154,25 @@ pub const AMD64CodeGen = struct {
                     };
                     const dest_reg = self.getDestRegForValue(value);
 
-                    if (dest_reg != op_reg) {
-                        try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, op_reg));
+                    // Check if this is a boolean (1-byte type)
+                    const type_size = self.getTypeSize(value.type_idx);
+                    if (type_size == 1) {
+                        // Boolean: XOR with 1 to flip the bit
+                        // Go: (Not x) -> (XOR (MOVDconst [1]) x)
+                        if (dest_reg != op_reg) {
+                            try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, op_reg));
+                        }
+                        // XOR dest, 1 - flip the low bit
+                        try self.emitBytes(&[_]u8{ 0x48, 0x83, 0xF0 | @as(u8, @intFromEnum(dest_reg) & 7), 0x01 });
+                        debug.log(.codegen, "      -> NOT (bool): XOR {s}, 1", .{dest_reg.name()});
+                    } else {
+                        // Integer: bitwise NOT
+                        if (dest_reg != op_reg) {
+                            try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, op_reg));
+                        }
+                        try self.emit(3, asm_mod.encodeNotReg(dest_reg));
+                        debug.log(.codegen, "      -> NOT (int): NOT {s}", .{dest_reg.name()});
                     }
-                    try self.emit(3, asm_mod.encodeNotReg(dest_reg));
                 }
             },
 
@@ -3195,29 +3266,36 @@ pub const AMD64CodeGen = struct {
 
                     debug.log(.codegen, "      -> OpMove {d}B: [{s}] <- [{s}]", .{ type_size, dest_reg.name(), src_reg.name() });
 
+                    // Choose scratch register that doesn't conflict with src_reg or dest_reg
+                    // Use RCX by default, but R9 if RCX would conflict
+                    const scratch_reg: Reg = if (src_reg == .rcx or dest_reg == .rcx)
+                        .r9
+                    else
+                        .rcx;
+
                     // Copy data in 8-byte chunks using MOV
                     var copy_off: u32 = 0;
                     while (copy_off + 8 <= type_size) {
-                        // MOV R12, [src + offset]
-                        const load = asm_mod.encodeMovRegMemDisp(.r12, src_reg, @intCast(copy_off));
+                        // MOV scratch, [src + offset]
+                        const load = asm_mod.encodeMovRegMemDisp(scratch_reg, src_reg, @intCast(copy_off));
                         try self.code.appendSlice(self.allocator, load.data[0..load.len]);
-                        // MOV [dest + offset], R12
-                        const store = asm_mod.encodeMovMemReg(dest_reg, @intCast(copy_off), .r12);
+                        // MOV [dest + offset], scratch
+                        const store = asm_mod.encodeMovMemReg(dest_reg, @intCast(copy_off), scratch_reg);
                         try self.code.appendSlice(self.allocator, store.data[0..store.len]);
                         copy_off += 8;
                     }
                     // Handle remaining bytes (4 or fewer)
                     if (copy_off + 4 <= type_size) {
-                        const load = asm_mod.encodeLoadDwordDisp32(.r12, src_reg, @intCast(copy_off));
+                        const load = asm_mod.encodeLoadDwordDisp32(scratch_reg, src_reg, @intCast(copy_off));
                         try self.emitBytes(load.data[0..load.len]);
-                        const store = asm_mod.encodeStoreDwordDisp32(dest_reg, @intCast(copy_off), .r12);
+                        const store = asm_mod.encodeStoreDwordDisp32(dest_reg, @intCast(copy_off), scratch_reg);
                         try self.emitBytes(store.data[0..store.len]);
                         copy_off += 4;
                     }
                     while (copy_off < type_size) {
-                        const load = asm_mod.encodeLoadByteDisp32(.r12, src_reg, @intCast(copy_off));
+                        const load = asm_mod.encodeLoadByteDisp32(scratch_reg, src_reg, @intCast(copy_off));
                         try self.emitBytes(load.data[0..load.len]);
-                        const store = asm_mod.encodeStoreByteDisp32(dest_reg, @intCast(copy_off), .r12);
+                        const store = asm_mod.encodeStoreByteDisp32(dest_reg, @intCast(copy_off), scratch_reg);
                         try self.emitBytes(store.data[0..store.len]);
                         copy_off += 1;
                     }

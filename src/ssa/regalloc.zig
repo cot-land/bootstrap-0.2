@@ -107,18 +107,22 @@ pub const AMD64Regs = struct {
     pub const r14: RegNum = 14;
     pub const r15: RegNum = 15;
 
-    /// Registers available for allocation (all except RSP=4 and RBP=5)
+    /// Registers available for allocation (caller-saved only)
+    /// We only use caller-saved registers to avoid having to save/restore callee-saved regs.
+    /// Excludes: RSP(4), RBP(5), RBX(3), R12-R15(12-15)
+    /// Available: RAX(0), RCX(1), RDX(2), RSI(6), RDI(7), R8-R11(8-11)
     pub const allocatable: RegMask = blk: {
         var mask: RegMask = 0;
-        // 0-3: RAX, RCX, RDX, RBX
-        for (0..4) |i| {
+        // 0-2: RAX, RCX, RDX (skip RBX=3 which is callee-saved)
+        for (0..3) |i| {
             mask |= @as(RegMask, 1) << i;
         }
-        // Skip 4 (RSP) and 5 (RBP)
-        // 6-15: RSI, RDI, R8-R15
-        for (6..16) |i| {
+        // Skip 3 (RBX - callee-saved), 4 (RSP), 5 (RBP)
+        // 6-11: RSI, RDI, R8-R11 (all caller-saved)
+        for (6..12) |i| {
             mask |= @as(RegMask, 1) << i;
         }
+        // Skip 12-15 (R12-R15 - callee-saved)
         break :blk mask;
     };
 
