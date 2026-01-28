@@ -494,11 +494,17 @@ pub const AMD64CodeGen = struct {
             },
             .add_ptr => {
                 // Rematerialize pointer addition: hint_reg = base + offset
+                // CRITICAL: Don't trust getRegForValue - always rematerialize both operands.
+                // Use R8 for base, R9 for offset to avoid conflicts.
                 if (value.args.len >= 2) {
                     const base = value.args[0];
                     const off_val = value.args[1];
 
-                    // Get or rematerialize base pointer
+                    // Rematerialize offset first into R9
+                    try self.rematerializeValue(off_val, .r9);
+                    const off_reg = Reg.r9;
+
+                    // Rematerialize base into R8
                     var base_reg: Reg = undefined;
                     if (base.op == .local_addr) {
                         const local_idx: usize = @intCast(base.aux_int);
@@ -506,28 +512,18 @@ pub const AMD64CodeGen = struct {
                             const local_offset = self.func.local_offsets[local_idx];
                             const local_size: i32 = @intCast(self.func.local_sizes[local_idx]);
                             const disp: i32 = -(local_offset + local_size);
-                            const lea = asm_mod.encodeLeaDisp32(hint_reg, .rbp, disp);
+                            const lea = asm_mod.encodeLeaDisp32(.r8, .rbp, disp);
                             try self.emitBytes(lea.data[0..lea.len]);
-                            base_reg = hint_reg;
+                            base_reg = .r8;
                         } else {
-                            const lea = asm_mod.encodeLeaDisp32(hint_reg, .rbp, 0);
+                            const lea = asm_mod.encodeLeaDisp32(.r8, .rbp, 0);
                             try self.emitBytes(lea.data[0..lea.len]);
-                            base_reg = hint_reg;
+                            base_reg = .r8;
                         }
                     } else {
-                        base_reg = self.getRegForValue(base) orelse blk: {
-                            const scratch: Reg = if (hint_reg == .r11) .r10 else .r11;
-                            try self.rematerializeValue(base, scratch);
-                            break :blk scratch;
-                        };
+                        try self.rematerializeValue(base, .r8);
+                        base_reg = .r8;
                     }
-
-                    // Get or rematerialize offset
-                    const off_reg = self.getRegForValue(off_val) orelse blk: {
-                        const scratch: Reg = if (hint_reg == .r10 or base_reg == .r10) .r11 else .r10;
-                        try self.rematerializeValue(off_val, scratch);
-                        break :blk scratch;
-                    };
 
                     // LEA hint_reg, [base + off]
                     const lea = asm_mod.encodeLeaBaseIndex(hint_reg, base_reg, off_reg);
@@ -2143,15 +2139,18 @@ pub const AMD64CodeGen = struct {
                 // Used for array indexing: base + (index * element_size)
                 const args = value.args;
                 if (args.len >= 2) {
-                    const ptr_reg = self.getRegForValue(args[0]) orelse blk: {
-                        try self.ensureInReg(args[0], .rax);
-                        break :blk Reg.rax;
-                    };
-                    const off_reg = self.getRegForValue(args[1]) orelse blk: {
-                        try self.ensureInReg(args[1], .rcx);
-                        break :blk Reg.rcx;
-                    };
                     const dest_reg = self.getDestRegForValue(value);
+
+                    // CRITICAL: Use R8 for base pointer, R9 for offset.
+                    // These are caller-saved but not commonly used for holding values.
+                    // RAX/RCX might hold the value to store in a store operation.
+                    // R10/R11 are used as scratch in rematerializeValue.
+                    // R8/R9 are the safest choice.
+                    // Load offset first (into R9), then base (into R8).
+                    try self.forceInReg(args[1], .r9);
+                    const off_reg = Reg.r9;
+                    try self.forceInReg(args[0], .r8);
+                    const ptr_reg = Reg.r8;
 
                     // LEA dest, [ptr + off]
                     const lea = asm_mod.encodeLeaBaseIndex(dest_reg, ptr_reg, off_reg);
@@ -2164,15 +2163,14 @@ pub const AMD64CodeGen = struct {
                 // Pointer subtraction: ptr - offset
                 const args = value.args;
                 if (args.len >= 2) {
-                    const ptr_reg = self.getRegForValue(args[0]) orelse blk: {
-                        try self.ensureInReg(args[0], .rax);
-                        break :blk Reg.rax;
-                    };
-                    const off_reg = self.getRegForValue(args[1]) orelse blk: {
-                        try self.ensureInReg(args[1], .rcx);
-                        break :blk Reg.rcx;
-                    };
                     const dest_reg = self.getDestRegForValue(value);
+
+                    // CRITICAL: Use R8 for base pointer, R9 for offset.
+                    // Same reasoning as add_ptr.
+                    try self.forceInReg(args[1], .r9);
+                    const off_reg = Reg.r9;
+                    try self.forceInReg(args[0], .r8);
+                    const ptr_reg = Reg.r8;
 
                     if (dest_reg != ptr_reg) {
                         try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, ptr_reg));
