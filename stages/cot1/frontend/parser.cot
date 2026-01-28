@@ -1541,8 +1541,17 @@ fn Type_pointee(type_handle: i64) i64 {
 
         // Parse statements until '}'
         while not self.check(TokenType.RBrace) and not self.atEnd() {
+            // BUG-063 fix: Track position to detect infinite loop on parse error
+            let pos_before: i64 = self.scanner.pos;
+
             let stmt: i64 = self.parseStmt();
             i64list_append(&stmt_indices, stmt);
+
+            // Safety check: if position didn't advance, break to avoid infinite loop
+            if self.scanner.pos == pos_before {
+                self.had_error = true;
+                break;
+            }
         }
 
         let end: i64 = self.current.start + self.current.end;
@@ -1829,12 +1838,28 @@ fn Type_pointee(type_handle: i64) i64 {
         var fields_count: i64 = 0;
 
         while not self.check(TokenType.RBrace) and not self.atEnd() {
+            // BUG-063 fix: Track position to detect infinite loop on parse error
+            let pos_before: i64 = self.scanner.pos;
+
+            // Only parse field if current token looks like a field name (Ident)
+            if not self.check(TokenType.Ident) {
+                // Not a field - break to avoid infinite loop
+                self.had_error = true;
+                break;
+            }
+
             let field: i64 = self.parseStructField();
             Node_addChild(self.pool, field);
             fields_count = fields_count + 1;
 
             // Optional comma between fields
             self.got(TokenType.Comma);
+
+            // Safety check: if position didn't advance, break to avoid infinite loop
+            if self.scanner.pos == pos_before {
+                self.had_error = true;
+                break;
+            }
         }
 
         let end: i64 = self.current.start + self.current.end;
