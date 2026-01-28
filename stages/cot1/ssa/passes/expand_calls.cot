@@ -111,13 +111,18 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
 
                 let arg: *Value = f.getValue(arg_id);
 
-                // STRING: Decompose string arguments into ptr and len
+                // BUG-074 FIX: Decompose both string AND slice arguments into ptr and len
+                // Slices ([]T) have the same layout as strings: { ptr: *T, len: i64 }
                 // Reference: expand_calls.zig:361-406
-                if arg.type_idx == TYPE_STRING {
+                let is_string: bool = arg.type_idx == TYPE_STRING;
+                let is_slice: bool = arg.type_idx == TYPE_SLICE or TypeInfo_isSlice(type_pool, arg.type_idx);
+
+                if is_string or is_slice {
                     needs_rewrite = true;
 
-                    // Check if arg is already string_make with available components
-                    if arg.op == Op.StringMake and arg.args.count >= 2 {
+                    // Check if arg is already string_make/slice_make with available components
+                    let is_make_op: bool = arg.op == Op.StringMake or arg.op == Op.SliceMake;
+                    if is_make_op and arg.args.count >= 2 {
                         // Directly use the ptr and len components
                         let ptr_id: i64 = arg.getArg(0);
                         let len_id: i64 = arg.getArg(1);
@@ -131,17 +136,24 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
                         ptr_val.uses = ptr_val.uses + 1;
                         len_val.uses = len_val.uses + 1;
                     } else {
-                        // Create StringPtr and StringLen to extract components
-                        // Set current_block temporarily for Func_newValue
+                        // Create extraction ops for ptr and len
+                        // Use SlicePtr/SliceLen for slices, StringPtr/StringLen for strings
                         let saved_block: i64 = f.current_block;
                         f.current_block = block.id;
 
-                        let ptr_val: *Value = f.newValue(Op.StringPtr, TYPE_I64);
-                        ptr_val.addArg(arg);  // arg is the string value
+                        var ptr_op: Op = Op.StringPtr;
+                        var len_op: Op = Op.StringLen;
+                        if is_slice {
+                            ptr_op = Op.SlicePtr;
+                            len_op = Op.SliceLen;
+                        }
+
+                        let ptr_val: *Value = f.newValue(ptr_op, TYPE_I64);
+                        ptr_val.addArg(arg);
                         let ptr_val_id: i64 = ptr_val.id;
 
-                        let len_val: *Value = f.newValue(Op.StringLen, TYPE_I64);
-                        len_val.addArg(arg);  // arg is the string value
+                        let len_val: *Value = f.newValue(len_op, TYPE_I64);
+                        len_val.addArg(arg);
                         let len_val_id: i64 = len_val.id;
 
                         f.current_block = saved_block;

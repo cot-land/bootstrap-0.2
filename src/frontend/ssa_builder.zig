@@ -130,8 +130,9 @@ pub const SSABuilder = struct {
         var param_indices = std.ArrayListUnmanaged(usize){};
         var phys_reg_idx: i32 = 0; // Physical register index (x0, x1, ...)
 
-        // Track string params separately so we can create slice_make after all args
-        var string_params = std.ArrayListUnmanaged(struct { ptr: *Value, len: *Value, idx: usize }){};
+        // Track string/slice params separately so we can create slice_make after all args
+        // BUG-074 FIX: Also store type_idx for non-STRING slices
+        var string_params = std.ArrayListUnmanaged(struct { ptr: *Value, len: *Value, idx: usize, type_idx: u32 }){};
         defer string_params.deinit(allocator);
 
         // Track 2-register struct params (9-16 bytes) separately
@@ -142,8 +143,12 @@ pub const SSABuilder = struct {
         // Phase 1: Create ALL arg ops first
         for (ir_func.locals, 0..) |local, i| {
             if (local.is_param) {
-                if (local.type_idx == TypeRegistry.STRING) {
-                    // String parameter: comes in TWO registers (ptr, len)
+                // BUG-074 FIX: Check for both STRING and any slice type
+                const local_type = type_registry.get(local.type_idx);
+                const is_string_or_slice = local.type_idx == TypeRegistry.STRING or local_type == .slice;
+
+                if (is_string_or_slice) {
+                    // String/slice parameter: comes in TWO registers (ptr, len)
                     // Create arg for ptr
                     const ptr_val = try func.newValue(.arg, TypeRegistry.I64, entry, .{});
                     ptr_val.aux_int = phys_reg_idx;
@@ -157,7 +162,7 @@ pub const SSABuilder = struct {
                     phys_reg_idx += 1;
 
                     // Remember for Phase 2 - don't create slice_make yet!
-                    try string_params.append(allocator, .{ .ptr = ptr_val, .len = len_val, .idx = i });
+                    try string_params.append(allocator, .{ .ptr = ptr_val, .len = len_val, .idx = i, .type_idx = local.type_idx });
                 } else {
                     // Regular parameter: check struct size for ABI handling
                     // BUG-019 FIX: >16B struct types are passed by reference (pointer in x0)
@@ -215,23 +220,28 @@ pub const SSABuilder = struct {
             }
         }
 
-        // Phase 2: Create slice_make ops for string params (AFTER all args are captured)
+        // Phase 2: Create slice_make ops for string/slice params (AFTER all args are captured)
+        // BUG-074 FIX: Use the actual type_idx, not always STRING
         for (string_params.items) |sp| {
-            const string_val = try func.newValue(.slice_make, TypeRegistry.STRING, entry, .{});
-            string_val.addArg2(sp.ptr, sp.len);
-            try entry.addValue(allocator, string_val);
+            const slice_val = try func.newValue(.slice_make, sp.type_idx, entry, .{});
+            slice_val.addArg2(sp.ptr, sp.len);
+            try entry.addValue(allocator, slice_val);
 
-            try param_values.append(allocator, string_val);
+            try param_values.append(allocator, slice_val);
             try param_indices.append(allocator, sp.idx);
-            try vars.put(@intCast(sp.idx), string_val);
+            try vars.put(@intCast(sp.idx), slice_val);
         }
 
         // Phase 3: Store all args to their stack slots
         for (param_values.items, param_indices.items) |param_val, local_idx| {
             const local = ir_func.locals[local_idx];
 
-            if (local.type_idx == TypeRegistry.STRING) {
-                // String: store ptr and len separately
+            // BUG-074 FIX: Check for both STRING and any slice type
+            const local_type = type_registry.get(local.type_idx);
+            const is_string_or_slice = local.type_idx == TypeRegistry.STRING or local_type == .slice;
+
+            if (is_string_or_slice) {
+                // String/slice: store ptr and len separately
                 // param_val is a slice_make with args[0]=ptr, args[1]=len
                 const ptr_val = param_val.args[0];
                 const len_val = param_val.args[1];

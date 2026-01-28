@@ -339,15 +339,16 @@ fn expandCallArgs(f: *Func, call_val: *Value, type_reg: *const TypeRegistry) !vo
     // For closure_call, first arg is the function pointer - skip it
     const start_idx: usize = if (call_val.op == .closure_call) 1 else 0;
 
-    // Check if any args need expansion (strings OR >16B struct loads)
+    // Check if any args need expansion (strings, slices, OR >16B struct loads)
     for (call_val.args[start_idx..]) |arg| {
-        if (arg.type_idx == TypeRegistry.STRING) {
+        const arg_type = type_reg.get(arg.type_idx);
+        // BUG-074 FIX: Check for both STRING and any slice type
+        if (arg.type_idx == TypeRegistry.STRING or arg_type == .slice) {
             needs_expansion = true;
             break;
         }
         // BUG-019: Check for >16B struct types that need pass-by-reference
         // Only applies to struct types loaded from memory, not other large types
-        const arg_type = type_reg.get(arg.type_idx);
         if (arg_type == .struct_type) {
             const arg_size = type_reg.sizeOf(arg.type_idx);
             if (arg_size > 16 and arg.op == .load) {
@@ -370,10 +371,23 @@ fn expandCallArgs(f: *Func, call_val: *Value, type_reg: *const TypeRegistry) !vo
 
     // Process each argument
     for (call_val.args[start_idx..]) |arg| {
-        if (arg.type_idx == TypeRegistry.STRING) {
-            // Decompose string into ptr/len components
+        // BUG-074 FIX: Check for both STRING and any slice type
+        // STRING is []u8, but []T for other T creates a different type index
+        const arg_type = type_reg.get(arg.type_idx);
+        const is_string_or_slice = arg.type_idx == TypeRegistry.STRING or arg_type == .slice;
+
+        debug.log(.ssa, "    arg v{d}: type_idx={d}, is_string={}, is_slice_type={}, arg_type={s}", .{
+            arg.id,
+            arg.type_idx,
+            arg.type_idx == TypeRegistry.STRING,
+            arg_type == .slice,
+            @tagName(arg_type),
+        });
+
+        if (is_string_or_slice) {
+            // Decompose string/slice into ptr/len components
             // For slice_make/string_make, extract the components directly
-            // For other ops, create string_ptr/string_len extraction ops
+            // For other ops, create slice_ptr/slice_len extraction ops
             const ptr_val = getStringPtrComponent(arg);
             const len_val = getStringLenComponent(arg);
 
@@ -383,17 +397,18 @@ fn expandCallArgs(f: *Func, call_val: *Value, type_reg: *const TypeRegistry) !vo
                 // Components extracted directly - use them
                 try new_args.append(f.allocator, ptr_val);
                 try new_args.append(f.allocator, len_val);
-                debug.log(.ssa, "    expanded string arg v{d} -> ptr v{d}, len v{d} (direct)", .{
+                debug.log(.ssa, "    expanded slice arg v{d} -> ptr v{d}, len v{d} (direct)", .{
                     arg.id,
                     ptr_val.id,
                     len_val.id,
                 });
             } else {
-                // Need extraction ops for other string sources
-                const extract_ptr = try f.newValue(.string_ptr, TypeRegistry.I64, call_val.block, call_val.pos);
+                // Need extraction ops for other slice sources
+                // Use slice_ptr/slice_len which work for both strings and slices
+                const extract_ptr = try f.newValue(.slice_ptr, TypeRegistry.I64, call_val.block, call_val.pos);
                 extract_ptr.addArg(arg);
 
-                const extract_len = try f.newValue(.string_len, TypeRegistry.I64, call_val.block, call_val.pos);
+                const extract_len = try f.newValue(.slice_len, TypeRegistry.I64, call_val.block, call_val.pos);
                 extract_len.addArg(arg);
 
                 // CRITICAL: Insert the new values BEFORE the call so they're defined when used
@@ -405,7 +420,7 @@ fn expandCallArgs(f: *Func, call_val: *Value, type_reg: *const TypeRegistry) !vo
                 try new_args.append(f.allocator, extract_ptr);
                 try new_args.append(f.allocator, extract_len);
 
-                debug.log(.ssa, "    expanded string arg v{d} -> ptr v{d}, len v{d} (extraction)", .{
+                debug.log(.ssa, "    expanded slice arg v{d} -> ptr v{d}, len v{d} (extraction)", .{
                     arg.id,
                     extract_ptr.id,
                     extract_len.id,
@@ -413,7 +428,7 @@ fn expandCallArgs(f: *Func, call_val: *Value, type_reg: *const TypeRegistry) !vo
             }
         } else {
             // Check for >16B struct types that need pass-by-reference (BUG-019)
-            const arg_type = type_reg.get(arg.type_idx);
+            // Note: arg_type already computed above for slice check
             const arg_size = type_reg.sizeOf(arg.type_idx);
             if (arg_type == .struct_type and arg_size > 16 and arg.op == .load and arg.args.len >= 1) {
                 // BUG-019 FIX: Pass the source address, not the loaded value

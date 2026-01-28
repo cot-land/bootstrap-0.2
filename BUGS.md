@@ -99,10 +99,57 @@ echo 'fn main() i64 { return 42; }' > /tmp/simple.cot
 
 ---
 
+### BUG-074: []u8 slice as function parameter causes segfault
+
+**Status:** FIXED
+**Priority:** MEDIUM
+**Discovered:** 2026-01-29
+**Fixed:** 2026-01-29
+**Platform:** Both AMD64 and ARM64
+
+Using `[]u8` as a function parameter type caused a segfault when the function was called. The `string` type (which is semantically the same as `[]u8`) worked correctly.
+
+**Root cause:**
+The expand_calls pass and ssa_builder only checked for `TypeRegistry.STRING` (type_idx 17) when decomposing slice/string arguments into ptr+len pairs. When `[]u8` was used, it created a new slice type with a different type_idx, which wasn't recognized as needing decomposition.
+
+**Fix:**
+1. `src/ssa/passes/expand_calls.zig`: Added check for general slice types (`type_reg.get(type_idx) == .slice`) in addition to STRING constant
+2. `src/frontend/ssa_builder.zig`: Added same slice type detection for function parameter handling (Phase 1, 2, 3)
+3. `stages/cot1/ssa/passes/expand_calls.cot`: Added `TypeInfo_isSlice()` check for slice type detection
+
+**Reproduction:**
+```cot
+fn count_char(s: []u8, target: u8) i64 {
+    var count: i64 = 0
+    for c in s {
+        if c == target { count = count + 1 }
+    }
+    return count
+}
+
+fn main() i64 {
+    var arr: [11]u8 = ['m', 'i', 's', 's', 'i', 's', 's', 'i', 'p', 'p', 'i']
+    let s: []u8 = arr[0:11]
+    let result: i64 = count_char(s, 's')
+    if result == 4 { return 42 }
+    return result
+}
+```
+
+**Verification:**
+```bash
+./zig-out/bin/cot /tmp/slice_bug.cot -o /tmp/sb.o
+zig cc /tmp/sb.o runtime/cot_runtime_linux.o -o /tmp/sb
+/tmp/sb  # Returns 42 (success)
+```
+
+---
+
 ## Fixed Bugs Summary
 
 | Bug | Description | Fixed |
 |-----|-------------|-------|
+| BUG-074 | []u8 slice as function parameter causes segfault | 2026-01-29 |
 | BUG-069 | i64 minimum literal parsing overflow | 2026-01-28 |
 | BUG-068 | For-range over struct slices returns garbage | 2026-01-28 |
 | BUG-066 | Multiple nested field access in single expression fails | 2026-01-28 |
