@@ -1281,7 +1281,7 @@ impl SSABuilder {
         ir_idx = self.ir_nodes_start;
         while ir_idx < self.ir_nodes_end {
             let ir_node: *IRNode = self.ir_nodes + ir_idx;
-    
+
             // Handle block transitions
             if ir_node.block_id != current_ir_block {
                 current_ir_block = ir_node.block_id;
@@ -1290,7 +1290,7 @@ impl SSABuilder {
                     self.setBlock(ssa_block);
                 }
             }
-    
+
             // Convert this node
             self.convertNode(ir_node, ir_idx);
     
@@ -1974,6 +1974,8 @@ impl SSABuilder {
         } else {
             // Void return - emit return with no value
             let void_ret: *Value = self.func.newValue(Op.Return, TYPE_VOID);
+            // BUG-073: Also set block kind to Return for void returns
+            self.func.emitReturnBlock();
         }
     }
 

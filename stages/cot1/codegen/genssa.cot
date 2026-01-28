@@ -910,10 +910,18 @@ fn generate(self: *GenState) i64 {
 // Generate code for all values in a block
 fn blockValues(self: *GenState, block: *Block) {
     let f: *Func = self.func;
-    var i: i64 = 0;
-    while i < block.values_count {
-        let value_id: i64 = block.values_start + i;
+    // BUG-073 FIX: Iterate by value's block_id instead of block's values_start/values_count.
+    // The expand_calls pass adds new values that break the contiguous values assumption.
+    var value_id: i64 = 0;
+    while value_id < f.values_count {
         let v: *Value = f.getValue(value_id);
+        // Skip values that don't belong to this block
+        if v.block_id != block.id {
+            value_id = value_id + 1;
+            continue;
+        }
+        // Use i for compatibility with rest of function
+        let i: i64 = value_id;
 
         // In entry block of main(), insert crash handler after param setup
         // The param setup ops are: Arg, LocalAddr, Store, Phi, Nop
@@ -947,7 +955,7 @@ fn blockValues(self: *GenState, block: *Block) {
         // Spill the result if it was marked for spilling
         self.emitSpill(v);
 
-        i = i + 1;
+        value_id = value_id + 1;
     }
 }
 
@@ -3013,9 +3021,10 @@ fn call(self: *GenState, v: *Value) {
         }
     }
 
-    // For hidden return, result is at SP (the hidden return area)
-    // Return register (RAX/X0) contains the address where result was stored
-    // Move to dest_reg so subsequent code can use it as an address
+    // For hidden return, result is at SP (the hidden return area before restoration).
+    // ARM64: x0 is UNDEFINED for >16B returns! The result is at [SP+0..N].
+    //        We need dest_reg = SP (current) BEFORE restoring SP.
+    // AMD64: RAX contains the address where result was stored (ABI-compliant).
     let dest_reg: i64 = v.reg;
     if self.target == TARGET_AMD64 {
         if needs_hidden_return {
@@ -3030,8 +3039,10 @@ fn call(self: *GenState, v: *Value) {
         }
     } else {
         if needs_hidden_return {
-            if dest_reg >= 0 and dest_reg != X0 {
-                self.emitInst(ARM64_encodeMovReg(dest_reg, X0));
+            // BUG-073 FIX: For >16B returns, x0 is UNDEFINED. Result is at [SP+0..N].
+            // Set dest_reg = SP (current, BEFORE restoration) so Move can read from it.
+            if dest_reg >= 0 {
+                self.emitInst(encode_add_imm(dest_reg, SP, 0));  // dest_reg = SP
             }
             self.emitInst(encode_add_imm(SP, SP, hidden_ret_stack_size));
         } else {

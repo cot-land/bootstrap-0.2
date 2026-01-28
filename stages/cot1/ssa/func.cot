@@ -448,6 +448,11 @@ impl Func {
         if val.id != INVALID_ID {
             ret.addArg(val);
         }
+        // BUG-073: Set block kind to Return when emitting a Return value.
+        // This ensures blockControl() won't emit additional control flow
+        // after the Return value's epilogue + ret instruction.
+        let b: *Block = self.getBlock(self.current_block);
+        b.kind = BlockKind.Return;
         return ret;
     }
 
