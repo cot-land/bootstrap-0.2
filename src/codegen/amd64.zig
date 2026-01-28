@@ -2629,10 +2629,13 @@ pub const AMD64CodeGen = struct {
 
                     // Move args to calling convention registers via scratch regs to avoid clobbering
                     // AMD64 System V: RDI=arg1, RSI=arg2, RDX=arg3, RCX=arg4
+                    // CRITICAL: Save ptr2 and len2 FIRST because they might be in r10/r11
+                    // which we use as scratch for ptr1/len1. This fixes the clobbering bug
+                    // where ptr2 was in r11 but r11 got overwritten with len1.
+                    try self.emit(3, asm_mod.encodeMovRegReg(.r14, ptr2_reg)); // r14 = ptr2 (save first!)
+                    try self.emit(3, asm_mod.encodeMovRegReg(.r15, len2_reg)); // r15 = len2 (save first!)
                     try self.emit(3, asm_mod.encodeMovRegReg(.r10, ptr1_reg)); // r10 = ptr1
-                    try self.emit(3, asm_mod.encodeMovRegReg(.r11, len1_reg)); // r11 = len1
-                    try self.emit(3, asm_mod.encodeMovRegReg(.r14, ptr2_reg)); // r14 = ptr2
-                    try self.emit(3, asm_mod.encodeMovRegReg(.r15, len2_reg)); // r15 = len2
+                    try self.emit(3, asm_mod.encodeMovRegReg(.r11, len1_reg)); // r11 = len1 (now safe)
                     try self.emit(3, asm_mod.encodeMovRegReg(.rdi, .r10)); // RDI = ptr1
                     try self.emit(3, asm_mod.encodeMovRegReg(.rsi, .r11)); // RSI = len1
                     try self.emit(3, asm_mod.encodeMovRegReg(.rdx, .r14)); // RDX = ptr2
@@ -2689,10 +2692,19 @@ pub const AMD64CodeGen = struct {
                     const addr = value.args[0];
                     const dest_reg = self.getDestRegForValue(value);
 
-                    const addr_reg = self.getRegForValue(addr) orelse blk: {
-                        // Address should already be computed - use R11 as scratch
-                        try self.ensureInReg(addr, .r11);
-                        break :blk Reg.r11;
+                    // CRITICAL FIX: Always rematerialize local_addr values.
+                    // local_addr is skipped during codegen (rematerializeable), so its
+                    // "home" register may contain a completely different value.
+                    // getRegForValue returns stale home assignments for skipped values.
+                    // Use r10 as scratch if dest_reg is r11, to avoid conflict.
+                    const addr_scratch: Reg = if (dest_reg == .r11) .r10 else .r11;
+                    const addr_reg = if (addr.op == .local_addr) blk: {
+                        try self.forceInReg(addr, addr_scratch);
+                        break :blk addr_scratch;
+                    } else self.getRegForValue(addr) orelse blk: {
+                        // Address should already be computed - use scratch register
+                        try self.ensureInReg(addr, addr_scratch);
+                        break :blk addr_scratch;
                     };
 
                     // Use type-sized load instruction
@@ -2730,10 +2742,21 @@ pub const AMD64CodeGen = struct {
                     // source is an untyped integer constant (8 bytes) but destination is 1 byte.
                     const type_size: u32 = if (value.aux_int > 0) @intCast(value.aux_int) else self.getTypeSize(val.type_idx);
 
-                    // Get destination address first
-                    const addr_reg = self.getRegForValue(addr) orelse blk: {
-                        try self.ensureInReg(addr, .r11);
-                        break :blk Reg.r11;
+                    // CRITICAL: First check what register the value is in, BEFORE we
+                    // rematerialize the address. This prevents clobbering the value
+                    // when the value happens to be in r11.
+                    const val_existing_reg = self.getRegForValue(val);
+
+                    // Get destination address - choose scratch register that won't conflict
+                    // CRITICAL FIX: Always rematerialize local_addr (see .load fix above)
+                    // Use r10 if value is in r11, otherwise use r11
+                    const addr_scratch: Reg = if (val_existing_reg == .r11) .r10 else .r11;
+                    const addr_reg = if (addr.op == .local_addr) blk: {
+                        try self.forceInReg(addr, addr_scratch);
+                        break :blk addr_scratch;
+                    } else self.getRegForValue(addr) orelse blk: {
+                        try self.ensureInReg(addr, addr_scratch);
+                        break :blk addr_scratch;
                     };
 
                     // Special handling for >16B call results with hidden return
@@ -2833,24 +2856,14 @@ pub const AMD64CodeGen = struct {
                     const field_offset: i64 = value.aux_int;
                     const dest_reg = self.getDestRegForValue(value);
 
-                    // Handle local_addr specially - regenerate if needed
+                    // Handle local_addr specially - ALWAYS regenerate to avoid stale registers
+                    // CRITICAL FIX: getRegForValue returns stale home assignments for
+                    // values that were skipped during codegen (like local_addr).
                     var base_reg: Reg = undefined;
                     if (base.op == .local_addr) {
-                        // Regenerate local address to avoid register reuse issues
-                        const local_idx: usize = @intCast(base.aux_int);
-                        if (local_idx < self.func.local_offsets.len and local_idx < self.func.local_sizes.len) {
-                            const local_offset = self.func.local_offsets[local_idx];
-                            const local_size: i32 = @intCast(self.func.local_sizes[local_idx]);
-                            const disp: i32 = -(local_offset + local_size);
-                            const lea = asm_mod.encodeLeaDisp32(dest_reg, .rbp, disp);
-                            try self.emitBytes(lea.data[0..lea.len]);
-                            base_reg = dest_reg;
-                        } else {
-                            base_reg = self.getRegForValue(base) orelse blk: {
-                                try self.ensureInReg(base, dest_reg);
-                                break :blk dest_reg;
-                            };
-                        }
+                        // ALWAYS regenerate local address - never trust getRegForValue
+                        try self.forceInReg(base, dest_reg);
+                        base_reg = dest_reg;
                     } else {
                         base_reg = self.getRegForValue(base) orelse blk: {
                             try self.ensureInReg(base, dest_reg);
