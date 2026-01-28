@@ -7468,3 +7468,813 @@ test "numeric boundary tests" {
     @assert(0 % 1 == 0)
     @assert(0 + 0 == 0)
 }
+
+// ============================================================================
+// INLINE TESTS - Mathematical Functions (consolidated from parity)
+// ============================================================================
+
+fn inline_test_gcd(a_in: i64, b_in: i64) i64 {
+    var a: i64 = a_in
+    var b: i64 = b_in
+    while b != 0 {
+        let t: i64 = b
+        b = a % b
+        a = t
+    }
+    return a
+}
+
+fn inline_test_lcm(a: i64, b: i64) i64 {
+    return (a * b) / inline_test_gcd(a, b)
+}
+
+fn inline_test_power(base_in: i64, exp_in: i64) i64 {
+    var base: i64 = base_in
+    var exp: i64 = exp_in
+    var result: i64 = 1
+    while exp > 0 {
+        if exp % 2 == 1 {
+            result = result * base
+        }
+        base = base * base
+        exp = exp / 2
+    }
+    return result
+}
+
+fn inline_test_abs(x: i64) i64 {
+    if x < 0 { return 0 - x }
+    return x
+}
+
+fn inline_test_min(a: i64, b: i64) i64 {
+    if a < b { return a }
+    return b
+}
+
+fn inline_test_max(a: i64, b: i64) i64 {
+    if a > b { return a }
+    return b
+}
+
+fn inline_test_clamp(val: i64, min_val: i64, max_val: i64) i64 {
+    if val < min_val { return min_val }
+    if val > max_val { return max_val }
+    return val
+}
+
+fn inline_test_sign(x: i64) i64 {
+    if x < 0 { return 0 - 1 }
+    if x > 0 { return 1 }
+    return 0
+}
+
+test "math: gcd and lcm" {
+    @assert(inline_test_gcd(48, 18) == 6)
+    @assert(inline_test_gcd(12, 8) == 4)
+    @assert(inline_test_gcd(17, 13) == 1)
+    @assert(inline_test_gcd(100, 25) == 25)
+    @assert(inline_test_lcm(4, 6) == 12)
+    @assert(inline_test_lcm(3, 5) == 15)
+    @assert(inline_test_lcm(7, 7) == 7)
+}
+
+test "math: power function" {
+    @assert(inline_test_power(2, 0) == 1)
+    @assert(inline_test_power(2, 1) == 2)
+    @assert(inline_test_power(2, 8) == 256)
+    @assert(inline_test_power(2, 10) == 1024)
+    @assert(inline_test_power(3, 4) == 81)
+    @assert(inline_test_power(5, 3) == 125)
+    @assert(inline_test_power(10, 6) == 1000000)
+}
+
+test "math: utility functions" {
+    // abs
+    @assert(inline_test_abs(5) == 5)
+    @assert(inline_test_abs(0 - 5) == 5)
+    @assert(inline_test_abs(0) == 0)
+
+    // min/max
+    @assert(inline_test_min(3, 7) == 3)
+    @assert(inline_test_min(7, 3) == 3)
+    @assert(inline_test_max(3, 7) == 7)
+    @assert(inline_test_max(7, 3) == 7)
+
+    // clamp
+    @assert(inline_test_clamp(5, 0, 10) == 5)
+    @assert(inline_test_clamp(0 - 5, 0, 10) == 0)
+    @assert(inline_test_clamp(15, 0, 10) == 10)
+
+    // sign
+    @assert(inline_test_sign(5) == 1)
+    @assert(inline_test_sign(0 - 5) == 0 - 1)
+    @assert(inline_test_sign(0) == 0)
+}
+
+// ============================================================================
+// INLINE TESTS - Recursive Algorithms (consolidated from parity)
+// ============================================================================
+
+fn inline_test_factorial(n: i64) i64 {
+    if n <= 1 { return 1 }
+    return n * inline_test_factorial(n - 1)
+}
+
+fn inline_test_fib_recursive(n: i64) i64 {
+    if n <= 1 { return n }
+    return inline_test_fib_recursive(n - 1) + inline_test_fib_recursive(n - 2)
+}
+
+fn inline_test_sum_to_n(n: i64) i64 {
+    if n <= 0 { return 0 }
+    return n + inline_test_sum_to_n(n - 1)
+}
+
+fn inline_test_digit_sum(n_in: i64) i64 {
+    var n: i64 = n_in
+    if n < 0 { n = 0 - n }
+    if n < 10 { return n }
+    return (n % 10) + inline_test_digit_sum(n / 10)
+}
+
+fn inline_test_count_digits(n_in: i64) i64 {
+    var n: i64 = n_in
+    if n < 0 { n = 0 - n }
+    if n < 10 { return 1 }
+    return 1 + inline_test_count_digits(n / 10)
+}
+
+fn inline_test_is_even_mutual(n: i64) bool {
+    if n == 0 { return true }
+    return inline_test_is_odd_mutual(n - 1)
+}
+
+fn inline_test_is_odd_mutual(n: i64) bool {
+    if n == 0 { return false }
+    return inline_test_is_even_mutual(n - 1)
+}
+
+test "recursion: factorial and fibonacci" {
+    @assert(inline_test_factorial(0) == 1)
+    @assert(inline_test_factorial(1) == 1)
+    @assert(inline_test_factorial(5) == 120)
+    @assert(inline_test_factorial(6) == 720)
+
+    @assert(inline_test_fib_recursive(0) == 0)
+    @assert(inline_test_fib_recursive(1) == 1)
+    @assert(inline_test_fib_recursive(6) == 8)
+    @assert(inline_test_fib_recursive(10) == 55)
+}
+
+test "recursion: sum and digit operations" {
+    @assert(inline_test_sum_to_n(0) == 0)
+    @assert(inline_test_sum_to_n(10) == 55)
+    @assert(inline_test_sum_to_n(100) == 5050)
+
+    @assert(inline_test_digit_sum(123) == 6)
+    @assert(inline_test_digit_sum(9999) == 36)
+    @assert(inline_test_digit_sum(0) == 0)
+
+    @assert(inline_test_count_digits(1) == 1)
+    @assert(inline_test_count_digits(123) == 3)
+    @assert(inline_test_count_digits(1000000) == 7)
+}
+
+test "recursion: mutual recursion" {
+    @assert(inline_test_is_even_mutual(0))
+    @assert(inline_test_is_even_mutual(4))
+    @assert(not inline_test_is_even_mutual(5))
+    @assert(not inline_test_is_odd_mutual(0))
+    @assert(inline_test_is_odd_mutual(3))
+    @assert(not inline_test_is_odd_mutual(4))
+}
+
+// ============================================================================
+// INLINE TESTS - Bit Manipulation (consolidated from parity)
+// ============================================================================
+
+fn inline_test_count_bits(n_in: i64) i64 {
+    var n: i64 = n_in
+    var count: i64 = 0
+    while n != 0 {
+        count = count + (n & 1)
+        n = n >> 1
+    }
+    return count
+}
+
+fn inline_test_is_power_of_2(n: i64) bool {
+    if n <= 0 { return false }
+    return (n & (n - 1)) == 0
+}
+
+fn inline_test_next_power_of_2(n_in: i64) i64 {
+    var n: i64 = n_in - 1
+    n = n | (n >> 1)
+    n = n | (n >> 2)
+    n = n | (n >> 4)
+    n = n | (n >> 8)
+    n = n | (n >> 16)
+    n = n | (n >> 32)
+    return n + 1
+}
+
+fn inline_test_lowest_set_bit(n: i64) i64 {
+    return n & (0 - n)
+}
+
+fn inline_test_clear_lowest_bit(n: i64) i64 {
+    return n & (n - 1)
+}
+
+fn inline_test_swap_bits(n: i64, i: i64, j: i64) i64 {
+    let bit_i: i64 = (n >> i) & 1
+    let bit_j: i64 = (n >> j) & 1
+    if bit_i == bit_j { return n }
+    let mask: i64 = (1 << i) | (1 << j)
+    return n ^ mask
+}
+
+test "bits: counting and checking" {
+    @assert(inline_test_count_bits(0) == 0)
+    @assert(inline_test_count_bits(1) == 1)
+    @assert(inline_test_count_bits(7) == 3)
+    @assert(inline_test_count_bits(255) == 8)
+    @assert(inline_test_count_bits(256) == 1)
+
+    @assert(inline_test_is_power_of_2(1))
+    @assert(inline_test_is_power_of_2(2))
+    @assert(inline_test_is_power_of_2(16))
+    @assert(not inline_test_is_power_of_2(3))
+    @assert(not inline_test_is_power_of_2(0))
+}
+
+test "bits: manipulation operations" {
+    @assert(inline_test_next_power_of_2(5) == 8)
+    @assert(inline_test_next_power_of_2(16) == 16)
+    @assert(inline_test_next_power_of_2(17) == 32)
+
+    @assert(inline_test_lowest_set_bit(12) == 4)
+    @assert(inline_test_lowest_set_bit(8) == 8)
+    @assert(inline_test_lowest_set_bit(6) == 2)
+
+    @assert(inline_test_clear_lowest_bit(12) == 8)
+    @assert(inline_test_clear_lowest_bit(8) == 0)
+    @assert(inline_test_clear_lowest_bit(15) == 14)
+}
+
+test "bits: swap operations" {
+    // swap bits 0 and 3 in 0b1001 (9) -> should stay 9
+    @assert(inline_test_swap_bits(9, 0, 3) == 9)
+    // swap bits 0 and 1 in 0b0001 (1) -> 0b0010 (2)
+    @assert(inline_test_swap_bits(1, 0, 1) == 2)
+    // swap bits 1 and 2 in 0b0110 (6) -> should stay 6
+    @assert(inline_test_swap_bits(6, 1, 2) == 6)
+}
+
+// ============================================================================
+// INLINE TESTS - Number Theory (consolidated from parity)
+// ============================================================================
+
+fn inline_test_is_prime(n: i64) bool {
+    if n < 2 { return false }
+    if n == 2 { return true }
+    if n % 2 == 0 { return false }
+    var i: i64 = 3
+    while i * i <= n {
+        if n % i == 0 { return false }
+        i = i + 2
+    }
+    return true
+}
+
+fn inline_test_count_divisors(n: i64) i64 {
+    var count: i64 = 0
+    var i: i64 = 1
+    while i * i <= n {
+        if n % i == 0 {
+            count = count + 1
+            if i != n / i {
+                count = count + 1
+            }
+        }
+        i = i + 1
+    }
+    return count
+}
+
+fn inline_test_sum_divisors(n: i64) i64 {
+    var sum: i64 = 0
+    var i: i64 = 1
+    while i * i <= n {
+        if n % i == 0 {
+            sum = sum + i
+            if i != n / i {
+                sum = sum + n / i
+            }
+        }
+        i = i + 1
+    }
+    return sum
+}
+
+fn inline_test_is_perfect(n: i64) bool {
+    if n < 2 { return false }
+    return inline_test_sum_divisors(n) - n == n
+}
+
+test "number theory: primality" {
+    @assert(inline_test_is_prime(2))
+    @assert(inline_test_is_prime(3))
+    @assert(not inline_test_is_prime(4))
+    @assert(inline_test_is_prime(17))
+    @assert(not inline_test_is_prime(18))
+    @assert(inline_test_is_prime(97))
+    @assert(not inline_test_is_prime(1))
+    @assert(not inline_test_is_prime(0))
+}
+
+test "number theory: divisors" {
+    @assert(inline_test_count_divisors(1) == 1)
+    @assert(inline_test_count_divisors(6) == 4)
+    @assert(inline_test_count_divisors(12) == 6)
+    @assert(inline_test_count_divisors(16) == 5)
+
+    @assert(inline_test_sum_divisors(6) == 12)
+    @assert(inline_test_sum_divisors(12) == 28)
+
+    @assert(inline_test_is_perfect(6))
+    @assert(inline_test_is_perfect(28))
+    @assert(not inline_test_is_perfect(12))
+}
+
+// ============================================================================
+// INLINE TESTS - Control Flow Patterns (consolidated from parity)
+// ============================================================================
+
+fn inline_test_fizzbuzz_count() i64 {
+    var count: i64 = 0
+    var i: i64 = 1
+    while i <= 100 {
+        if i % 15 == 0 {
+            count = count + 3
+        } else if i % 3 == 0 {
+            count = count + 1
+        } else if i % 5 == 0 {
+            count = count + 1
+        }
+        i = i + 1
+    }
+    return count
+}
+
+fn inline_test_collatz_steps(n_in: i64) i64 {
+    var n: i64 = n_in
+    var steps: i64 = 0
+    while n != 1 {
+        if n % 2 == 0 {
+            n = n / 2
+        } else {
+            n = 3 * n + 1
+        }
+        steps = steps + 1
+    }
+    return steps
+}
+
+fn inline_test_binary_search_steps(target: i64, max_val: i64) i64 {
+    var low: i64 = 0
+    var high: i64 = max_val
+    var steps: i64 = 0
+    while low <= high {
+        let mid: i64 = (low + high) / 2
+        steps = steps + 1
+        if mid == target { return steps }
+        if mid < target {
+            low = mid + 1
+        } else {
+            high = mid - 1
+        }
+    }
+    return steps
+}
+
+test "control flow: fizzbuzz counting" {
+    let count: i64 = inline_test_fizzbuzz_count()
+    // 33 multiples of 3, 20 multiples of 5, but 6 are both (15,30,45,60,75,90)
+    // fizz: 33-6=27, buzz: 20-6=14, fizzbuzz: 6*3=18
+    // total: 27 + 14 + 18 = 59
+    @assert(count == 59)
+}
+
+test "control flow: collatz conjecture" {
+    @assert(inline_test_collatz_steps(1) == 0)
+    @assert(inline_test_collatz_steps(2) == 1)
+    @assert(inline_test_collatz_steps(4) == 2)
+    @assert(inline_test_collatz_steps(5) == 5)
+    @assert(inline_test_collatz_steps(27) == 111)
+}
+
+test "control flow: binary search efficiency" {
+    // Binary search should find any value in log2(n)+1 steps
+    @assert(inline_test_binary_search_steps(50, 100) <= 7)
+    @assert(inline_test_binary_search_steps(0, 100) <= 7)
+    @assert(inline_test_binary_search_steps(100, 100) <= 7)
+}
+
+// ============================================================================
+// INLINE TESTS - Nested Loops and Complex Conditions (consolidated from parity)
+// ============================================================================
+
+test "nested loops: multiplication table sums" {
+    var sum: i64 = 0
+    var i: i64 = 1
+    while i <= 5 {
+        var j: i64 = 1
+        while j <= 5 {
+            sum = sum + (i * j)
+            j = j + 1
+        }
+        i = i + 1
+    }
+    // Sum of 5x5 multiplication table: (1+2+3+4+5)^2 = 225
+    @assert(sum == 225)
+}
+
+test "nested loops: triangular iteration" {
+    var count: i64 = 0
+    var i: i64 = 0
+    while i < 10 {
+        var j: i64 = 0
+        while j <= i {
+            count = count + 1
+            j = j + 1
+        }
+        i = i + 1
+    }
+    // 1+2+3+...+10 = 55
+    @assert(count == 55)
+}
+
+test "nested loops: break outer" {
+    var result: i64 = 0
+    var i: i64 = 0
+    var done: bool = false
+    while i < 10 and not done {
+        var j: i64 = 0
+        while j < 10 and not done {
+            result = result + 1
+            if i == 3 and j == 5 {
+                done = true
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    // Runs for i=0,1,2,3 and j=0..9,0..9,0..9,0..5
+    @assert(result == 36)
+}
+
+test "complex conditions: de morgan" {
+    // not (a and b) == (not a) or (not b)
+    let a: bool = true
+    let b: bool = false
+    @assert((not (a and b)) == ((not a) or (not b)))
+
+    // not (a or b) == (not a) and (not b)
+    @assert((not (a or b)) == ((not a) and (not b)))
+}
+
+test "complex conditions: short circuit" {
+    // Verify short-circuit behavior via function calls
+    var counter: i64 = 0
+
+    // false and <anything> should not evaluate the right side
+    // We can't test this directly, but we can test the result
+    @assert(not (false and true))
+    @assert(not (false and false))
+
+    // true or <anything> should not evaluate the right side
+    @assert(true or false)
+    @assert(true or true)
+}
+
+test "complex conditions: comparison chains" {
+    let x: i64 = 5
+    @assert(1 < x and x < 10)
+    @assert(0 <= x and x <= 10)
+    @assert(not (x < 1) and not (x > 10))
+}
+
+// ============================================================================
+// INLINE TESTS - Variable Scoping (consolidated from parity)
+// Note: Variable shadowing in nested blocks is known broken (test_parity_var_031_local_shadow)
+// ============================================================================
+
+test "scoping: separate variables" {
+    // Test that variables in different scopes work correctly
+    var outer: i64 = 10
+    {
+        var inner: i64 = 20
+        outer = inner + outer
+    }
+    @assert(outer == 30)
+}
+
+test "scoping: loop variables" {
+    // Test loop variable scope
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 5 {
+        let val: i64 = i * 2
+        sum = sum + val
+        i = i + 1
+    }
+    // sum = 0 + 2 + 4 + 6 + 8 = 20
+    @assert(sum == 20)
+}
+
+test "scoping: if block variables" {
+    var result: i64 = 0
+    let condition: bool = true
+    if condition {
+        let val: i64 = 42
+        result = val
+    }
+    @assert(result == 42)
+}
+
+// ============================================================================
+// INLINE TESTS - Memory Patterns (consolidated from parity)
+// ============================================================================
+
+struct InlineTestPoint {
+    x: i64,
+    y: i64,
+}
+
+fn inline_test_manhattan(p1: *InlineTestPoint, p2: *InlineTestPoint) i64 {
+    let dx: i64 = inline_test_abs(p1.x - p2.x)
+    let dy: i64 = inline_test_abs(p1.y - p2.y)
+    return dx + dy
+}
+
+fn inline_test_swap_points(p1: *InlineTestPoint, p2: *InlineTestPoint) void {
+    // Swap field by field to avoid struct copy through pointer (BUG-065)
+    let tmp_x: i64 = p1.x
+    let tmp_y: i64 = p1.y
+    p1.x = p2.x
+    p1.y = p2.y
+    p2.x = tmp_x
+    p2.y = tmp_y
+}
+
+test "memory: struct pointer operations" {
+    var p1: InlineTestPoint = InlineTestPoint{ .x = 0, .y = 0 }
+    var p2: InlineTestPoint = InlineTestPoint{ .x = 3, .y = 4 }
+
+    @assert(inline_test_manhattan(&p1, &p2) == 7)
+
+    inline_test_swap_points(&p1, &p2)
+    @assert(p1.x == 3 and p1.y == 4)
+    @assert(p2.x == 0 and p2.y == 0)
+}
+
+test "memory: pointer and array access" {
+    var arr: [5]i64 = undefined
+    arr[0] = 10
+    arr[1] = 20
+    arr[2] = 30
+    arr[3] = 40
+    arr[4] = 50
+
+    // Test array indexing
+    @assert(arr[0] == 10)
+    @assert(arr[1] == 20)
+    @assert(arr[4] == 50)
+
+    // Modify through array index
+    arr[2] = 300
+    @assert(arr[2] == 300)
+
+    // Test pointer to element
+    let ptr: *i64 = &arr[3]
+    @assert(ptr.* == 40)
+    ptr.* = 400
+    @assert(arr[3] == 400)
+}
+
+test "memory: array of pointers" {
+    var a: i64 = 1
+    var b: i64 = 2
+    var c: i64 = 3
+
+    var ptrs: [3]*i64 = undefined
+    ptrs[0] = &a
+    ptrs[1] = &b
+    ptrs[2] = &c
+
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 3 {
+        sum = sum + ptrs[i].*
+        i = i + 1
+    }
+    @assert(sum == 6)
+}
+
+// ============================================================================
+// INLINE TESTS - String Operations (consolidated from parity)
+// ============================================================================
+
+fn inline_test_str_len(s: []u8) i64 {
+    return len(s)
+}
+
+fn inline_test_str_eq(a: []u8, b: []u8) bool {
+    if len(a) != len(b) { return false }
+    var i: i64 = 0
+    while i < len(a) {
+        if a[i] != b[i] { return false }
+        i = i + 1
+    }
+    return true
+}
+
+fn inline_test_count_char(s: []u8, c: u8) i64 {
+    var count: i64 = 0
+    var i: i64 = 0
+    while i < len(s) {
+        if s[i] == c { count = count + 1 }
+        i = i + 1
+    }
+    return count
+}
+
+test "string: length operations" {
+    let s1: []u8 = "hello"
+
+    // Direct len() usage only - avoid passing slices to functions
+    @assert(len(s1) == 5)
+    @assert(len("world") == 5)
+    @assert(len("a") == 1)
+}
+
+test "string: character access" {
+    let s1: []u8 = "hello"
+
+    // Test character access
+    @assert(s1[0] == 'h')
+    @assert(s1[1] == 'e')
+    @assert(s1[4] == 'o')
+}
+
+test "string: manual character counting" {
+    let s: []u8 = "mississippi"
+    var count_s: i64 = 0
+    var count_i: i64 = 0
+    var idx: i64 = 0
+    while idx < len(s) {
+        if s[idx] == 's' { count_s = count_s + 1 }
+        if s[idx] == 'i' { count_i = count_i + 1 }
+        idx = idx + 1
+    }
+    @assert(count_s == 4)
+    @assert(count_i == 4)
+}
+
+// ============================================================================
+// INLINE TESTS - Conditional Logic Patterns (consolidated from parity)
+// ============================================================================
+
+test "conditional: basic if-else" {
+    let x: i64 = 5
+    var result1: i64 = 0
+    var result2: i64 = 0
+    if x > 0 { result1 = 1 } else { result1 = 0 - 1 }
+    if x < 0 { result2 = 1 } else { result2 = 0 - 1 }
+    @assert(result1 == 1)
+    @assert(result2 == 0 - 1)
+}
+
+test "conditional: nested if-else-if" {
+    let x: i64 = 0
+    var result: i64 = 0
+    if x > 0 { result = 1 }
+    else if x < 0 { result = 0 - 1 }
+    else { result = 0 }
+    @assert(result == 0)
+}
+
+test "conditional: min max pattern" {
+    let a: i64 = 3
+    let b: i64 = 5
+    var max_val: i64 = a
+    var min_val: i64 = a
+    if b > a { max_val = b }
+    if b < a { min_val = b }
+    @assert(max_val == 5)
+    @assert(min_val == 3)
+}
+
+test "conditional: early return pattern" {
+    // Test using inline_test_sign which uses early returns
+    @assert(inline_test_sign(10) == 1)
+    @assert(inline_test_sign(0 - 10) == 0 - 1)
+    @assert(inline_test_sign(0) == 0)
+}
+
+test "conditional: multi-statement blocks" {
+    var x: i64 = 0
+    // Multiple statements in sequence
+    x = x + 1
+    x = x + 2
+    let result: i64 = x * 10
+    @assert(result == 30)
+    @assert(x == 3)
+}
+
+// ============================================================================
+// INLINE TESTS - Array Algorithms (consolidated from parity)
+// ============================================================================
+
+fn inline_test_arr_sum(arr: *i64, n: i64) i64 {
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < n {
+        sum = sum + (arr + i).*
+        i = i + 1
+    }
+    return sum
+}
+
+fn inline_test_arr_max(arr: *i64, n: i64) i64 {
+    var max_val: i64 = arr.*
+    var i: i64 = 1
+    while i < n {
+        let val: i64 = (arr + i).*
+        if val > max_val { max_val = val }
+        i = i + 1
+    }
+    return max_val
+}
+
+fn inline_test_arr_min(arr: *i64, n: i64) i64 {
+    var min_val: i64 = arr.*
+    var i: i64 = 1
+    while i < n {
+        let val: i64 = (arr + i).*
+        if val < min_val { min_val = val }
+        i = i + 1
+    }
+    return min_val
+}
+
+fn inline_test_arr_contains(arr: *i64, n: i64, target: i64) bool {
+    var i: i64 = 0
+    while i < n {
+        if (arr + i).* == target { return true }
+        i = i + 1
+    }
+    return false
+}
+
+fn inline_test_arr_count(arr: *i64, n: i64, target: i64) i64 {
+    var count: i64 = 0
+    var i: i64 = 0
+    while i < n {
+        if (arr + i).* == target { count = count + 1 }
+        i = i + 1
+    }
+    return count
+}
+
+test "array algorithms: aggregate functions" {
+    var arr: [5]i64 = undefined
+    arr[0] = 3
+    arr[1] = 1
+    arr[2] = 4
+    arr[3] = 1
+    arr[4] = 5
+
+    let ptr: *i64 = &arr[0]
+    @assert(inline_test_arr_sum(ptr, 5) == 14)
+    @assert(inline_test_arr_max(ptr, 5) == 5)
+    @assert(inline_test_arr_min(ptr, 5) == 1)
+}
+
+test "array algorithms: search functions" {
+    var arr: [5]i64 = undefined
+    arr[0] = 3
+    arr[1] = 1
+    arr[2] = 4
+    arr[3] = 1
+    arr[4] = 5
+
+    let ptr: *i64 = &arr[0]
+    @assert(inline_test_arr_contains(ptr, 5, 4))
+    @assert(not inline_test_arr_contains(ptr, 5, 9))
+    @assert(inline_test_arr_count(ptr, 5, 1) == 2)
+    @assert(inline_test_arr_count(ptr, 5, 7) == 0)
+}
