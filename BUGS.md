@@ -145,6 +145,45 @@ zig cc /tmp/sb.o runtime/cot_runtime_linux.o -o /tmp/sb
 
 ---
 
+### BUG-075: cot1 stage1 crashes on Linux - hardcoded Mach-O format
+
+**Status:** IN PROGRESS
+**Priority:** HIGH
+**Discovered:** 2026-01-29
+**Platform:** Linux (AMD64)
+
+cot1 stage1 compiler crashes when compiling any file on Linux because it's hardcoded to produce Mach-O object files (macOS format) instead of ELF (Linux format).
+
+**Symptoms:**
+1. Simple programs crash in `GenState_finalize` during "Phase 6: Creating Mach-O object"
+2. Programs with structs crash earlier in `resolve_type_expr` during "Phase 3: Lowering to IR"
+
+**Root cause:**
+- `stages/cot1/main.cot` only imports and uses `obj/macho.cot`
+- No platform detection - always creates MachOWriter
+- `stages/cot1/obj/elf.cot` exists but is not integrated
+
+**Progress (2026-01-29):**
+- Enhanced `stages/cot1/obj/elf.cot` with MachOWriter-compatible interface:
+  - Added `addDataZeros()`, `addDataI64()`, `addDataByte()` methods
+  - Added `addSymbol()` returning index (was void)
+  - Added `generateDebugLine()`, `addDebugInfoReloc()` stubs
+  - Added `writeWithDebug()`, `finalize()` methods
+  - Added debug info fields (stubs for compatibility)
+
+**Remaining work:**
+1. `genssa.cot` finalize function takes `*MachOWriter` - needs refactoring
+2. Either: Create generic writer interface OR duplicate finalize for ELF
+3. Add target detection in main.cot
+
+**Key files:**
+- `stages/cot1/main.cot` - needs platform detection and ELF integration
+- `stages/cot1/obj/elf.cot` - ELF writer (enhanced but not integrated)
+- `stages/cot1/obj/macho.cot` - Mach-O writer (currently hardcoded)
+- `stages/cot1/codegen/genssa.cot` - finalize() needs refactoring
+
+---
+
 ## Fixed Bugs Summary
 
 | Bug | Description | Fixed |

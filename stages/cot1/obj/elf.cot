@@ -199,6 +199,14 @@ struct ElfWriter {
     shstrtab_strtab_off: i64,
     shstrtab_shstrtab_off: i64,
     shstrtab_rela_off: i64,
+
+    // Debug info (stubs for compatibility with MachOWriter interface)
+    debug_abbrev: *u8,
+    debug_abbrev_count: i64,
+    debug_abbrev_cap: i64,
+    debug_info: *u8,
+    debug_info_count: i64,
+    debug_info_cap: i64,
 }
 
 impl ElfWriter {
@@ -246,6 +254,14 @@ impl ElfWriter {
         self.shstrtab_strtab_off = 21;   // ".strtab" at offset 21
         self.shstrtab_shstrtab_off = 29; // ".shstrtab" at offset 29
         self.shstrtab_rela_off = 39;     // ".rela.text" at offset 39
+
+        // Debug info (stub - not fully implemented for ELF yet)
+        self.debug_abbrev = null;
+        self.debug_abbrev_count = 0;
+        self.debug_abbrev_cap = 0;
+        self.debug_info = null;
+        self.debug_info_count = 0;
+        self.debug_info_cap = 0;
     }
 
     // Add a string to strtab, return offset
@@ -270,9 +286,9 @@ impl ElfWriter {
         return offset;
     }
 
-    // Add a symbol
-    fn addSymbol(self: *ElfWriter, name_ptr: *u8, name_len: i64, value: i64, section: i64, is_external: bool) {
-        if self.symbols_count >= self.symbols_cap { return; }
+    // Add a symbol, returns symbol index
+    fn addSymbol(self: *ElfWriter, name_ptr: *u8, name_len: i64, value: i64, section: i64, is_external: bool) i64 {
+        if self.symbols_count >= self.symbols_cap { return 0 - 1; }
 
         let name_off: i64 = self.addString(name_ptr, name_len);
 
@@ -301,6 +317,7 @@ impl ElfWriter {
         }
 
         self.symbols_count = self.symbols_count + 1;
+        return idx;
     }
 
     // Add a relocation (for CALL instructions)
@@ -324,6 +341,195 @@ impl ElfWriter {
         add_ptr.* = addend;
 
         self.relocs_count = self.relocs_count + 1;
+    }
+
+    // Add bytes to data section (zeros)
+    fn addDataZeros(self: *ElfWriter, size: i64) {
+        var i: i64 = 0;
+        while i < size {
+            if self.data_count >= self.data_cap { return; }
+            let ptr: *u8 = self.data + self.data_count;
+            ptr.* = 0;
+            self.data_count = self.data_count + 1;
+            i = i + 1;
+        }
+    }
+
+    // Add 8-byte value to data section (little-endian)
+    fn addDataI64(self: *ElfWriter, value: i64) {
+        if self.data_count + 8 > self.data_cap { return; }
+        var i: i64 = 0;
+        while i < 8 {
+            let ptr: *u8 = self.data + self.data_count;
+            ptr.* = @intCast(u8, (value >> (i * 8)) & 0xFF);
+            self.data_count = self.data_count + 1;
+            i = i + 1;
+        }
+    }
+
+    // Add single byte to data section
+    fn addDataByte(self: *ElfWriter, b: i64) {
+        if self.data_count >= self.data_cap { return; }
+        let ptr: *u8 = self.data + self.data_count;
+        ptr.* = @intCast(u8, b & 0xFF);
+        self.data_count = self.data_count + 1;
+    }
+
+    // Generate debug line info (stub - returns 0, debug info not yet implemented for ELF)
+    // Note: ir_funcs parameter uses *u8 instead of *IRFunc to avoid import dependency
+    fn generateDebugLine(self: *ElfWriter,
+                          source: *u8, source_len: i64,
+                          ir_funcs: *u8, ir_funcs_count: i64,
+                          main_sym_idx: i64) i64 {
+        // Debug line info not implemented for ELF yet
+        return 0;
+    }
+
+    // Add debug info relocation (stub - does nothing for ELF yet)
+    fn addDebugInfoReloc(self: *ElfWriter, offset: i64, symbol_idx: i64) {
+        // Debug info relocations not implemented for ELF yet
+    }
+
+    // Write ELF with debug info (stub - just calls write() for now)
+    fn writeWithDebug(self: *ElfWriter) i64 {
+        // ELF debug sections not implemented yet, just write basic ELF
+        return self.finalize();
+    }
+
+    // Finalize and return output size
+    fn finalize(self: *ElfWriter) i64 {
+        // Build the ELF file in output buffer
+        self.output_count = 0;
+
+        // Build section header string table
+        let shstrtab_size: i64 = self.buildShstrtab();
+
+        // Calculate sizes and offsets
+        let text_size: i64 = self.code_count;
+        let data_size: i64 = self.data_count;
+        let symtab_size: i64 = (self.symbols_count + 1) * ELF64_SYM_SIZE;  // +1 for null entry
+        let strtab_size: i64 = self.strings_count;
+        let rela_size: i64 = self.relocs_count * ELF64_RELA_SIZE;
+
+        // Number of sections: null, .text, .data, .symtab, .strtab, .shstrtab, .rela.text
+        let num_sections: i64 = 7;
+
+        // Section offsets (after ELF header)
+        let text_offset: i64 = ELF64_EHDR_SIZE;
+        let data_offset: i64 = text_offset + text_size;
+        let symtab_offset: i64 = data_offset + data_size;
+        let strtab_offset: i64 = symtab_offset + symtab_size;
+        let shstrtab_offset: i64 = strtab_offset + strtab_size;
+        let rela_offset: i64 = shstrtab_offset + shstrtab_size;
+        let shdr_offset: i64 = rela_offset + rela_size;
+
+        // Write ELF header
+        self.writeElfHeader(shdr_offset, num_sections, 5);  // shstrndx = 5
+
+        // Write .text section (code)
+        self.writeBytes(self.code, self.code_count);
+
+        // Write .data section
+        self.writeBytes(self.data, self.data_count);
+
+        // Write .symtab section (symbols)
+        // Null entry first
+        self.writeSymbol(0, 0, 0, 0, 0);
+        // Then all symbols
+        var i: i64 = 0;
+        while i < self.symbols_count {
+            let name_off: *i64 = self.sym_name_offsets + i;
+            let value: *i64 = self.sym_values + i;
+            let section: *i64 = self.sym_sections + i;
+            let binding: *i64 = self.sym_bindings + i;
+            let sym_type: *i64 = self.sym_types + i;
+            let info: i64 = (binding.* << 4) | sym_type.*;
+            self.writeSymbol(name_off.*, info, section.*, value.*, 0);
+            i = i + 1;
+        }
+
+        // Write .strtab section (string table)
+        self.writeBytes(self.strings, self.strings_count);
+
+        // Write .shstrtab section (section header string table)
+        // Fixed layout: \0.text\0.data\0.symtab\0.strtab\0.shstrtab\0.rela.text\0
+        self.writeByte(0);                            // offset 0: null
+        // ".text" at offset 1
+        self.writeByte(46); self.writeByte(116); self.writeByte(101);
+        self.writeByte(120); self.writeByte(116); self.writeByte(0);
+        // ".data" at offset 7
+        self.writeByte(46); self.writeByte(100); self.writeByte(97);
+        self.writeByte(116); self.writeByte(97); self.writeByte(0);
+        // ".symtab" at offset 13
+        self.writeByte(46); self.writeByte(115); self.writeByte(121);
+        self.writeByte(109); self.writeByte(116); self.writeByte(97);
+        self.writeByte(98); self.writeByte(0);
+        // ".strtab" at offset 21
+        self.writeByte(46); self.writeByte(115); self.writeByte(116);
+        self.writeByte(114); self.writeByte(116); self.writeByte(97);
+        self.writeByte(98); self.writeByte(0);
+        // ".shstrtab" at offset 29
+        self.writeByte(46); self.writeByte(115); self.writeByte(104);
+        self.writeByte(115); self.writeByte(116); self.writeByte(114);
+        self.writeByte(116); self.writeByte(97); self.writeByte(98);
+        self.writeByte(0);
+        // ".rela.text" at offset 39
+        self.writeByte(46); self.writeByte(114); self.writeByte(101);
+        self.writeByte(108); self.writeByte(97); self.writeByte(46);
+        self.writeByte(116); self.writeByte(101); self.writeByte(120);
+        self.writeByte(116); self.writeByte(0);
+
+        // Write .rela.text section (relocations)
+        i = 0;
+        while i < self.relocs_count {
+            let off_ptr: *i64 = self.reloc_offsets + i;
+            let tgt_off_ptr: *i64 = self.reloc_target_str_offs + i;
+            let type_ptr: *i64 = self.reloc_types + i;
+            let add_ptr: *i64 = self.reloc_addends + i;
+
+            // Find symbol index by name offset
+            let sym_idx: i64 = self.findSymbolIndex(tgt_off_ptr.*, 1) + 1;  // +1 for null entry
+            self.writeRela(off_ptr.*, sym_idx, type_ptr.*, add_ptr.*);
+            i = i + 1;
+        }
+
+        // Write section headers (name, type, flags, offset, size, link, info, align, entsize)
+        // 0: null section
+        self.writeSectionHeader(0, SHT_NULL, 0, 0, 0, 0, 0, 0, 0);
+
+        // 1: .text
+        self.writeSectionHeader(self.shstrtab_text_off, SHT_PROGBITS,
+                               SHF_ALLOC | SHF_EXECINSTR,
+                               text_offset, text_size,
+                               0, 0, 16, 0);
+
+        // 2: .data
+        self.writeSectionHeader(self.shstrtab_data_off, SHT_PROGBITS,
+                               SHF_ALLOC | SHF_WRITE,
+                               data_offset, data_size,
+                               0, 0, 8, 0);
+
+        // 3: .symtab (link to strtab, info = num locals)
+        self.writeSectionHeader(self.shstrtab_symtab_off, SHT_SYMTAB, 0,
+                               symtab_offset, symtab_size,
+                               4, 1, 8, ELF64_SYM_SIZE);
+
+        // 4: .strtab
+        self.writeSectionHeader(self.shstrtab_strtab_off, SHT_STRTAB, 0,
+                               strtab_offset, strtab_size,
+                               0, 0, 1, 0);
+
+        // 5: .shstrtab
+        self.writeSectionHeader(self.shstrtab_shstrtab_off, SHT_STRTAB, 0,
+                               shstrtab_offset, shstrtab_size,
+                               0, 0, 1, 0);
+
+        // 6: .rela.text (link to symtab, info = .text index)
+        self.writeSectionHeader(self.shstrtab_rela_off, SHT_RELA, SHF_INFO_LINK,
+                               rela_offset, rela_size,
+                               3, 1, 8, ELF64_RELA_SIZE);
+
+        return self.output_count;
     }
 
     // Helper: write a byte to output
