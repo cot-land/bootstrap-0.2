@@ -327,6 +327,17 @@ pub const AMD64CodeGen = struct {
             return; // Already in register
         }
 
+        return self.rematerializeValue(value, hint_reg);
+    }
+
+    /// Force rematerialize a value into a register, ignoring any existing register allocation.
+    /// Use this when you know the register might have been reused for other values.
+    fn forceInReg(self: *AMD64CodeGen, value: *const Value, hint_reg: Reg) !void {
+        return self.rematerializeValue(value, hint_reg);
+    }
+
+    /// Internal: actually rematerialize a value into hint_reg
+    fn rematerializeValue(self: *AMD64CodeGen, value: *const Value, hint_reg: Reg) !void {
         // Need to reload from spill slot or rematerialize
         switch (value.op) {
             .const_int, .const_64 => {
@@ -360,13 +371,13 @@ pub const AMD64CodeGen = struct {
                 // Need to regenerate the load
                 if (value.args.len > 0) {
                     const addr_val = value.args[0];
-                    // Get the address register
-                    const addr_reg = self.getRegForValue(addr_val) orelse blk: {
-                        // Use a different scratch register for address
-                        const scratch: Reg = if (hint_reg == .r11) .r10 else .r11;
-                        try self.ensureInReg(addr_val, scratch);
-                        break :blk scratch;
-                    };
+                    // ALWAYS rematerialize the address - don't trust getRegForValue.
+                    // The register allocator may have reused the register for another value.
+                    // Use a scratch register that's different from hint_reg.
+                    const scratch: Reg = if (hint_reg == .r11) .r10 else .r11;
+                    try self.rematerializeValue(addr_val, scratch);
+                    const addr_reg = scratch;
+
                     // Emit load
                     const type_size = self.getTypeSize(value.type_idx);
                     if (type_size == 1) {
@@ -401,6 +412,23 @@ pub const AMD64CodeGen = struct {
                     .code_offset = lea_offset,
                     .string_data = str_copy,
                 });
+            },
+            .global_addr => {
+                // Rematerialize global variable address via LEA
+                const global_name = switch (value.aux) {
+                    .string => |s| s,
+                    else => "unknown_global",
+                };
+
+                const lea_offset = self.offset();
+                try self.emit(7, asm_mod.encodeLeaRipRel32(hint_reg, 0));
+
+                // Record global reference for relocation
+                try self.relocations.append(self.allocator, .{
+                    .offset = @intCast(lea_offset + 3), // Skip REX+opcode+ModRM to get to disp32
+                    .target = global_name,
+                });
+                debug.log(.codegen, "      rematerialize global_addr '{s}' to {s}", .{ global_name, hint_reg.name() });
             },
             .arg => {
                 // Rematerialize function argument from ABI register
@@ -450,7 +478,7 @@ pub const AMD64CodeGen = struct {
                         base_reg = self.getRegForValue(base) orelse blk: {
                             // Use different scratch register for base
                             const scratch: Reg = if (hint_reg == .r11) .r10 else .r11;
-                            try self.ensureInReg(base, scratch);
+                            try self.rematerializeValue(base, scratch);
                             break :blk scratch;
                         };
                     }
@@ -490,7 +518,7 @@ pub const AMD64CodeGen = struct {
                     } else {
                         base_reg = self.getRegForValue(base) orelse blk: {
                             const scratch: Reg = if (hint_reg == .r11) .r10 else .r11;
-                            try self.ensureInReg(base, scratch);
+                            try self.rematerializeValue(base, scratch);
                             break :blk scratch;
                         };
                     }
@@ -498,7 +526,7 @@ pub const AMD64CodeGen = struct {
                     // Get or rematerialize offset
                     const off_reg = self.getRegForValue(off_val) orelse blk: {
                         const scratch: Reg = if (hint_reg == .r10 or base_reg == .r10) .r11 else .r10;
-                        try self.ensureInReg(off_val, scratch);
+                        try self.rematerializeValue(off_val, scratch);
                         break :blk scratch;
                     };
 
@@ -524,12 +552,12 @@ pub const AMD64CodeGen = struct {
                     }
 
                     const op1_reg = self.getRegForValue(op1) orelse blk: {
-                        try self.ensureInReg(op1, op1_scratch);
+                        try self.rematerializeValue(op1, op1_scratch);
                         break :blk op1_scratch;
                     };
 
                     const op2_reg = self.getRegForValue(op2) orelse blk: {
-                        try self.ensureInReg(op2, op2_scratch);
+                        try self.rematerializeValue(op2, op2_scratch);
                         break :blk op2_scratch;
                     };
 
@@ -560,12 +588,12 @@ pub const AMD64CodeGen = struct {
                     }
 
                     const op1_reg = self.getRegForValue(op1) orelse blk: {
-                        try self.ensureInReg(op1, op1_scratch);
+                        try self.rematerializeValue(op1, op1_scratch);
                         break :blk op1_scratch;
                     };
 
                     const op2_reg = self.getRegForValue(op2) orelse blk: {
-                        try self.ensureInReg(op2, op2_scratch);
+                        try self.rematerializeValue(op2, op2_scratch);
                         break :blk op2_scratch;
                     };
 
@@ -593,12 +621,12 @@ pub const AMD64CodeGen = struct {
                     }
 
                     const op1_reg = self.getRegForValue(op1) orelse blk: {
-                        try self.ensureInReg(op1, op1_scratch);
+                        try self.rematerializeValue(op1, op1_scratch);
                         break :blk op1_scratch;
                     };
 
                     const op2_reg = self.getRegForValue(op2) orelse blk: {
-                        try self.ensureInReg(op2, op2_scratch);
+                        try self.rematerializeValue(op2, op2_scratch);
                         break :blk op2_scratch;
                     };
 
@@ -611,14 +639,14 @@ pub const AMD64CodeGen = struct {
             .copy => {
                 // Copy needs to trace through to the source value
                 if (value.args.len > 0) {
-                    try self.ensureInReg(value.args[0], hint_reg);
+                    try self.rematerializeValue(value.args[0], hint_reg);
                 }
             },
             .string_make => {
                 // For string_make, we need the ptr component (first arg)
                 // This is used when a string is passed as an argument to a function
                 if (value.args.len > 0) {
-                    try self.ensureInReg(value.args[0], hint_reg);
+                    try self.rematerializeValue(value.args[0], hint_reg);
                 }
             },
             .static_call => {
@@ -654,12 +682,12 @@ pub const AMD64CodeGen = struct {
                 if (value.args.len >= 2) {
                     // Get operands - be careful not to clobber each other
                     const op2_reg = self.getRegForValue(value.args[1]) orelse blk: {
-                        try self.ensureInReg(value.args[1], .rcx);
+                        try self.rematerializeValue(value.args[1], .rcx);
                         break :blk Reg.rcx;
                     };
                     const op1_reg = self.getRegForValue(value.args[0]) orelse blk: {
                         const scratch: Reg = if (op2_reg == .rax) .rdx else .rax;
-                        try self.ensureInReg(value.args[0], scratch);
+                        try self.rematerializeValue(value.args[0], scratch);
                         break :blk scratch;
                     };
 
@@ -686,7 +714,7 @@ pub const AMD64CodeGen = struct {
                 if (value.args.len >= 1) {
                     const op_reg = self.getRegForValue(value.args[0]) orelse blk: {
                         const scratch: Reg = if (hint_reg == .rax) .rcx else .rax;
-                        try self.ensureInReg(value.args[0], scratch);
+                        try self.rematerializeValue(value.args[0], scratch);
                         break :blk scratch;
                     };
                     if (hint_reg != op_reg) {
@@ -701,7 +729,7 @@ pub const AMD64CodeGen = struct {
                 if (value.args.len >= 1) {
                     const op_reg = self.getRegForValue(value.args[0]) orelse blk: {
                         const scratch: Reg = if (hint_reg == .rax) .rcx else .rax;
-                        try self.ensureInReg(value.args[0], scratch);
+                        try self.rematerializeValue(value.args[0], scratch);
                         break :blk scratch;
                     };
                     if (hint_reg != op_reg) {
@@ -896,17 +924,16 @@ pub const AMD64CodeGen = struct {
                 abi_idx += 1;
             }
             // Push remaining args in reverse
+            // IMPORTANT: Always use forceInReg to rematerialize each value before pushing.
+            // We cannot trust getRegForValue here because by the time we get to this loop,
+            // the registers assigned to these values may have been reused for other values.
+            // This ensures each value is freshly loaded before being pushed.
             while (i > abi_idx) {
                 i -= 1;
                 const arg = args[i];
-                if (self.getRegForValue(arg)) |src_reg| {
-                    const push = asm_mod.encodePush(src_reg);
-                    try self.emitBytes(push.data[0..push.len]);
-                } else {
-                    try self.ensureInReg(arg, .rax);
-                    const push = asm_mod.encodePush(.rax);
-                    try self.emitBytes(push.data[0..push.len]);
-                }
+                try self.forceInReg(arg, .rax);
+                const push = asm_mod.encodePush(.rax);
+                try self.emitBytes(push.data[0..push.len]);
                 debug.log(.codegen, "      PUSH (stack arg {d})", .{i});
             }
             stack_cleanup = (args.len - abi_idx) * 8;
@@ -1248,18 +1275,15 @@ pub const AMD64CodeGen = struct {
 
         if (num_stack_args > 0) {
             // Push stack arguments in reverse order
+            // IMPORTANT: Always use forceInReg to rematerialize each value before pushing.
+            // We cannot trust getRegForValue here because registers may have been reused.
             var i: usize = args.len;
             while (i > 5) {
                 i -= 1;
                 const arg = args[i];
-                if (self.getRegForValue(arg)) |src_reg| {
-                    const push = asm_mod.encodePush(src_reg);
-                    try self.emitBytes(push.data[0..push.len]);
-                } else {
-                    try self.ensureInReg(arg, .rax);
-                    const push = asm_mod.encodePush(.rax);
-                    try self.emitBytes(push.data[0..push.len]);
-                }
+                try self.forceInReg(arg, .rax);
+                const push = asm_mod.encodePush(.rax);
+                try self.emitBytes(push.data[0..push.len]);
                 debug.log(.codegen, "      PUSH (stack arg {d})", .{i});
             }
             stack_cleanup = num_stack_args * 8;
