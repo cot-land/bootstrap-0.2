@@ -3641,11 +3641,12 @@ impl Lowerer {
     fn lowerMethodCall(self: *Lowerer, call_node: *Node, field_access: *Node) i64 {
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
-    
+
         // Extract receiver and method name from FieldAccess
         let receiver_idx: i64 = field_access.field0;
         let method_name_start: i64 = field_access.field1;
         let method_name_len: i64 = field_access.field2;
+
         let receiver_node: *Node = self.nodes + receiver_idx;
     
         // Determine the receiver's struct type
@@ -3658,11 +3659,13 @@ impl Lowerer {
             // Look up the local variable to get its type
             let recv_name_start: i64 = receiver_node.field0;
             let recv_name_len: i64 = receiver_node.field1;
-    
+
+            var local_found: bool = false;
             var local_idx: i64 = 0;
             while local_idx < fb.locals_count {
                 let local: *IRLocal = fb.locals + local_idx;
                 if names_equal(self.source, local.name_start, local.name_len, recv_name_start, recv_name_len) {
+                    local_found = true;
                     // Found the local - get its type info
                     let type_info: *Type = self.type_pool.get(local.type_idx);
                     if type_info != null {
@@ -3682,6 +3685,32 @@ impl Lowerer {
                     }
                 }
                 local_idx = local_idx + 1;
+            }
+            // If not found as local, check globals
+            if not local_found {
+                var global_idx: i64 = 0;
+                while global_idx < self.ir_globals_count {
+                    let global: *IRGlobal = self.ir_globals + global_idx;
+                    if names_equal(self.source, global.name_start, global.name_len, recv_name_start, recv_name_len) {
+                        // Found the global - get its type info
+                        let gtype_info: *Type = self.type_pool.get(global.type_idx);
+                        if gtype_info != null {
+                            if gtype_info.kind == TypeKind.Struct {
+                                type_name_start = gtype_info.name_start;
+                                type_name_len = gtype_info.name_len;
+                                receiver_is_pointer = false;
+                            } else if gtype_info.kind == TypeKind.Pointer {
+                                let gpointee: *Type = self.type_pool.get(gtype_info.elem);
+                                if gpointee != null and gpointee.kind == TypeKind.Struct {
+                                    type_name_start = gpointee.name_start;
+                                    type_name_len = gpointee.name_len;
+                                    receiver_is_pointer = true;
+                                }
+                            }
+                        }
+                    }
+                    global_idx = global_idx + 1;
+                }
             }
         }
     
@@ -3714,8 +3743,19 @@ impl Lowerer {
         let args_start: i64 = call_node.field1;
         let args_count: i64 = call_node.field2;
     
-        // Create the call node with synthesized name
-        var ir_node: IRNode = IRNode_new(IRNodeKind.Call, TYPE_I64);
+        // BUG-074: Look up the method's actual return type for hidden return detection
+        // This enables codegen to detect method calls returning >16B structs (like Token)
+        var call_ret_type: i64 = TYPE_I64;  // Default fallback
+        let ret_type_handle: i64 = self.func_ret_map.get(@intToPtr(*u8, method_entry.synth_name_ptr), method_entry.synth_name_len);
+        if ret_type_handle >= 0 {
+            call_ret_type = resolve_type_expr(self, ret_type_handle);
+            if call_ret_type < 0 {
+                call_ret_type = TYPE_I64;  // Fallback if resolution fails
+            }
+        }
+
+        // Create the call node with synthesized name and proper return type
+        var ir_node: IRNode = IRNode_new(IRNodeKind.Call, call_ret_type);
         ir_node.func_name_start = method_entry.synth_name_ptr;
         ir_node.func_name_len = method_entry.synth_name_len;
     
@@ -3869,7 +3909,7 @@ impl Lowerer {
             let arg_node_idx: i64 = arg_child_ptr.*;
             let arg_node: *Node = self.nodes + arg_node_idx;
             let arg_ir_idx: i64 = self.lowerExpr(arg_node);
-    
+
             i64list_append(&arg_ir, arg_ir_idx);
             if has_any_call {
                 // Store ALL arguments to temp locals when any call exists
