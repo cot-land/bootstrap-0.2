@@ -692,13 +692,36 @@ pub const Lowerer = struct {
                 // Special handling for struct literals: initialize field-by-field
                 try self.lowerStructInit(local_idx, var_stmt.value, var_stmt.span);
             } else {
-                debug.log(.lower, "  -> default path", .{});
-                const value_node = try self.lowerExprNode(var_stmt.value);
-                if (value_node == ir.null_node) {
-                    debug.log(.lower, "lowerLocalVarDecl: value lowered to null_node", .{});
-                    return;
+                // BUG-065 fix: Check if we're copying a struct from a field access or other
+                // expression that returns an address. If so, emit memcpy instead of store.
+                const type_info = self.type_reg.get(type_idx);
+                const is_struct_copy = type_info == .struct_type and value_expr != null and
+                    (value_expr.? == .field_access or value_expr.? == .index or value_expr.? == .deref);
+
+                if (is_struct_copy) {
+                    debug.log(.lower, "  -> struct copy path (size={d})", .{size});
+                    // Get source address (field_access/index/deref returns address for structs)
+                    const src_addr = try self.lowerExprNode(var_stmt.value);
+                    if (src_addr == ir.null_node) {
+                        debug.log(.lower, "lowerLocalVarDecl: src_addr is null_node", .{});
+                        return;
+                    }
+                    // Get destination address
+                    const ptr_type = self.type_reg.makePointer(TypeRegistry.U8) catch TypeRegistry.VOID;
+                    const dst_addr = try fb.emitAddrLocal(local_idx, ptr_type, var_stmt.span);
+                    // Emit memcpy(dst, src, size)
+                    const size_node = try fb.emitConstInt(@intCast(size), TypeRegistry.I64, var_stmt.span);
+                    var args = [_]ir.NodeIndex{ dst_addr, src_addr, size_node };
+                    _ = try fb.emitCall("memcpy", &args, false, TypeRegistry.VOID, var_stmt.span);
+                } else {
+                    debug.log(.lower, "  -> default path", .{});
+                    const value_node = try self.lowerExprNode(var_stmt.value);
+                    if (value_node == ir.null_node) {
+                        debug.log(.lower, "lowerLocalVarDecl: value lowered to null_node", .{});
+                        return;
+                    }
+                    _ = try fb.emitStoreLocal(local_idx, value_node, var_stmt.span);
                 }
-                _ = try fb.emitStoreLocal(local_idx, value_node, var_stmt.span);
             }
         }
     }
@@ -1395,6 +1418,10 @@ pub const Lowerer = struct {
         const cur_idx = try fb.emitLoadLocal(idx_local, TypeRegistry.I64, for_stmt.span);
 
         // Get element at index based on iterable type
+        // BUG-068 fix: For struct elements, we need to use memcpy to copy the data
+        const elem_type_info = self.type_reg.get(elem_type);
+        const is_struct_elem = elem_type_info == .struct_type;
+
         switch (iter_info) {
             .array => {
                 // For arrays: arr[__idx]
@@ -1403,8 +1430,22 @@ pub const Lowerer = struct {
 
                 if (iter_expr == .ident) {
                     if (fb.lookupLocal(iter_expr.ident.name)) |arr_local| {
-                        const elem_val = try fb.emitIndexLocal(arr_local, cur_idx, elem_size, elem_type, for_stmt.span);
-                        _ = try fb.emitStoreLocal(binding_local, elem_val, for_stmt.span);
+                        if (is_struct_elem) {
+                            // BUG-068: For struct elements, use memcpy
+                            // Get source address: base address of array + index offset
+                            const u8_ptr_type = self.type_reg.makePointer(TypeRegistry.U8) catch TypeRegistry.VOID;
+                            const arr_base = try fb.emitAddrLocal(arr_local, u8_ptr_type, for_stmt.span);
+                            const src_addr = try fb.emitAddrIndex(arr_base, cur_idx, elem_size, u8_ptr_type, for_stmt.span);
+                            // Get destination address
+                            const dst_addr = try fb.emitAddrLocal(binding_local, u8_ptr_type, for_stmt.span);
+                            // Emit memcpy
+                            const size_node = try fb.emitConstInt(@intCast(elem_size), TypeRegistry.I64, for_stmt.span);
+                            var args = [_]ir.NodeIndex{ dst_addr, src_addr, size_node };
+                            _ = try fb.emitCall("memcpy", &args, false, TypeRegistry.VOID, for_stmt.span);
+                        } else {
+                            const elem_val = try fb.emitIndexLocal(arr_local, cur_idx, elem_size, elem_type, for_stmt.span);
+                            _ = try fb.emitStoreLocal(binding_local, elem_val, for_stmt.span);
+                        }
                     }
                 }
             },
@@ -1418,8 +1459,22 @@ pub const Lowerer = struct {
                         const slice_val = try fb.emitLoadLocal(slice_local, iter_type, for_stmt.span);
                         const ptr_type = self.type_reg.makePointer(elem_type) catch TypeRegistry.I64;
                         const ptr_val = try fb.emitSlicePtr(slice_val, ptr_type, for_stmt.span);
-                        const elem_val = try fb.emitIndexValue(ptr_val, cur_idx, elem_size, elem_type, for_stmt.span);
-                        _ = try fb.emitStoreLocal(binding_local, elem_val, for_stmt.span);
+
+                        if (is_struct_elem) {
+                            // BUG-068: For struct elements, use memcpy
+                            // Get source address (address of slice[__idx])
+                            const u8_ptr_type = self.type_reg.makePointer(TypeRegistry.U8) catch TypeRegistry.VOID;
+                            const src_addr = try fb.emitAddrIndex(ptr_val, cur_idx, elem_size, u8_ptr_type, for_stmt.span);
+                            // Get destination address
+                            const dst_addr = try fb.emitAddrLocal(binding_local, u8_ptr_type, for_stmt.span);
+                            // Emit memcpy
+                            const size_node = try fb.emitConstInt(@intCast(elem_size), TypeRegistry.I64, for_stmt.span);
+                            var args = [_]ir.NodeIndex{ dst_addr, src_addr, size_node };
+                            _ = try fb.emitCall("memcpy", &args, false, TypeRegistry.VOID, for_stmt.span);
+                        } else {
+                            const elem_val = try fb.emitIndexValue(ptr_val, cur_idx, elem_size, elem_type, for_stmt.span);
+                            _ = try fb.emitStoreLocal(binding_local, elem_val, for_stmt.span);
+                        }
                     }
                 }
             },

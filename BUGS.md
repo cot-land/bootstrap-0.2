@@ -14,72 +14,6 @@
 
 ## Open Bugs
 
-
-
----
-
-### BUG-065: Nested struct field copy fails
-
-**Status:** Open
-**Priority:** P1
-**Discovered:** 2026-01-28
-
-Copying a nested struct field to a new variable fails:
-```cot
-let inner_copy: TestInnerStruct = outer.inner  // FAILS - garbage values
-```
-
-**Likely Cause:** Struct copy from nested field access not implemented. Lowerer may not emit proper memcpy.
-
----
-
-### BUG-066: Multiple nested field access in single expression fails
-
-**Status:** Open
-**Priority:** P1
-**Discovered:** 2026-01-28
-
-Multiple nested struct fields in one expression give wrong results:
-```cot
-let sum: i64 = outer.inner.x + outer.inner.y + outer.z  // WRONG RESULT
-```
-
-**Likely Cause:** Register allocation clobbers base address needed by subsequent accesses.
-
----
-
-### BUG-068: For-range over struct slices returns garbage
-
-**Status:** Open
-**Priority:** P1
-**Discovered:** 2026-01-28
-
-Iterating over a slice of structs with for-range returns pointer values instead of struct values:
-```cot
-for item in struct_slice {
-    item.x  // Returns garbage (memory address)
-}
-```
-
-**Workaround:** Use index-based iteration instead: `while i < len(s) { s[i].x; i = i + 1 }`
-
----
-
-### BUG-069: i64 minimum literal parsing overflow
-
-**Status:** Open
-**Priority:** P2
-**Discovered:** 2026-01-28
-
-The minimum i64 value -9223372036854775808 is parsed as 0 due to overflow when parsing the positive part.
-```cot
-let min: i64 = -9223372036854775808  // Becomes 0
-```
-
-**Workaround:** Use -9223372036854775807 (min+1) instead.
-
----
-
 ### BUG-063: cot1 struct field offset architecture broken
 
 **Status:** Requires Rewrite
@@ -96,6 +30,10 @@ Architectural flaw: offsets computed in THREE places with different logic. Check
 
 | Bug | Description | Fixed |
 |-----|-------------|-------|
+| BUG-069 | i64 minimum literal parsing overflow | 2026-01-28 |
+| BUG-068 | For-range over struct slices returns garbage | 2026-01-28 |
+| BUG-066 | Multiple nested field access in single expression fails | 2026-01-28 |
+| BUG-065 | Nested struct field copy fails | 2026-01-28 |
 | BUG-071 | Assignment through computed slice fails | 2026-01-28 |
 | BUG-070 | Variable shadowing in nested blocks fails | 2026-01-28 |
 | BUG-067 | Array of structs with computed index crashes | 2026-01-28 |
