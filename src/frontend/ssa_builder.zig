@@ -1409,7 +1409,10 @@ pub const SSABuilder = struct {
                 try cur.addValue(self.allocator, elem_addr);
 
                 // Store the value to the element address
+                // CRITICAL: Set aux_int to elem_size so codegen uses correct store width
+                // This fixes the bug where UNTYPED_INT (8 bytes) was stored to u8 (1 byte)
                 const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
+                store_val.aux_int = @intCast(s.elem_size);
                 store_val.addArg2(elem_addr, value);
                 try cur.addValue(self.allocator, store_val);
 
@@ -1484,7 +1487,9 @@ pub const SSABuilder = struct {
                 try cur.addValue(self.allocator, elem_addr);
 
                 // Store the value to the element address
+                // CRITICAL: Set aux_int to elem_size so codegen uses correct store width
                 const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
+                store_val.aux_int = @intCast(s.elem_size);
                 store_val.addArg2(elem_addr, value);
                 try cur.addValue(self.allocator, store_val);
 

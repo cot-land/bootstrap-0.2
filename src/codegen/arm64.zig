@@ -2474,7 +2474,10 @@ pub const ARM64CodeGen = struct {
 
                     // CRITICAL: Use type-sized store instruction
                     // BUG-003 fix: Use getTypeSize to handle enum types correctly
-                    const type_size = self.getTypeSize(val.type_idx);
+                    // If aux_int is set (from store_index_local/store_index_value),
+                    // use it as the store size. This fixes storing u8 values where the
+                    // source is an untyped integer constant (8 bytes) but destination is 1 byte.
+                    const type_size: u32 = if (value.aux_int > 0) @intCast(value.aux_int) else self.getTypeSize(val.type_idx);
 
                     // Special handling for 16-byte types (string/slice)
                     // These are stored as (ptr, len) pairs
@@ -2715,7 +2718,7 @@ pub const ARM64CodeGen = struct {
                             break :blk temp_reg;
                         };
 
-                        const st_size = asm_mod.LdStSize.fromBytes(type_size);
+                        const st_size = asm_mod.LdStSize.fromBytes(@intCast(type_size));
                         const type_name = TypeRegistry.basicTypeName(val.type_idx);
 
                         try self.emit(asm_mod.encodeLdrStrSized(val_reg, addr_reg, 0, st_size, false));
