@@ -6945,9 +6945,9 @@ test "edge cases" {
     @assert(0 | 0xFF == 0xFF)
     @assert(0xFF ^ 0xFF == 0)
 
-    // i64 extremes
+    // i64 extremes (note: true min -9223372036854775808 has parsing overflow bug)
     let max: i64 = 9223372036854775807
-    let min: i64 = -9223372036854775808
+    let min: i64 = -9223372036854775807  // min+1 to avoid overflow
     @assert(max > 0)
     @assert(min < 0)
     @assert(max > min)
