@@ -1,4 +1,4 @@
-// Cot0 Self-Hosting Compiler
+// Cot1 Self-Hosting Compiler
 // Full pipeline: Source → Scanner → Parser → Lowerer → SSA → genssa → Mach-O
 //
 // Usage: cot0 <source.cot> -o <output>
@@ -846,7 +846,7 @@ fn main(argc: i64, argv: **u8) i64 {
     // Install crash handler FIRST - before anything else
     install_crash_handler();
 
-    print("Cot0 Self-Hosting Compiler v0.2\n");
+    print("Cot1 Self-Hosting Compiler v0.2\n");
     print("================================\n\n");
 
     // Initialize debug infrastructure - parses -d, -v, -t, --debug-* flags

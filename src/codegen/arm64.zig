@@ -240,6 +240,11 @@ pub const ARM64CodeGen = struct {
     debug_source_file: []const u8 = "",
     debug_source_text: []const u8 = "",
 
+    /// BUG-072: Track current stack adjustment during call setup.
+    /// When stack args are being set up, SP is temporarily adjusted.
+    /// local_addr must account for this when regenerating.
+    call_stack_adjustment: u32 = 0,
+
     pub const LineEntry = struct {
         code_offset: u32,
         source_offset: u32, // Byte offset in source file (stored in Value.pos.line)
@@ -2140,6 +2145,9 @@ pub const ARM64CodeGen = struct {
                         debug.log(.codegen, "      stack cleanup: ADD SP, SP, #{d}", .{stack_cleanup});
                     }
 
+                    // BUG-072 FIX: Reset stack adjustment after call completes
+                    self.call_stack_adjustment = 0;
+
                     // 4. After call: result is at [sp + frame_offset]. Store address in scratch reg.
                     // CRITICAL: Use x0 since the call is complete and x0 is free.
                     // DO NOT use x16 because the store code uses LDP x16, x17, [src_reg]
@@ -2174,6 +2182,9 @@ pub const ARM64CodeGen = struct {
                     try self.emit(asm_mod.encodeADDImm(31, 31, stack_cleanup, 0));
                     debug.log(.codegen, "      stack cleanup: ADD SP, SP, #{d}", .{stack_cleanup});
                 }
+
+                // BUG-072 FIX: Reset stack adjustment after call completes
+                self.call_stack_adjustment = 0;
 
                 // For multi-value returns (16-byte types like strings), save x1 to x8.
                 // This is necessary because regalloc might assign x1 to select_n[0],
@@ -2987,12 +2998,18 @@ pub const ARM64CodeGen = struct {
             },
             .local_addr => {
                 // Regenerate local address: ADD dest, SP, #offset
+                // BUG-072 FIX: Account for stack adjustment during call setup.
                 // local_idx is in aux_int
                 const local_idx: usize = @intCast(value.aux_int);
                 if (local_idx < self.func.local_offsets.len) {
-                    const local_offset = self.func.local_offsets[local_idx];
+                    const base_offset: u32 = @intCast(self.func.local_offsets[local_idx]);
+                    const local_offset = base_offset + self.call_stack_adjustment;
                     try self.emitAddImm(dest, 31, @intCast(local_offset));
-                    debug.log(.codegen, "      ensureInReg: regenerated local_addr {d} (SP+{d}) -> x{d}", .{ local_idx, local_offset, dest });
+                    if (self.call_stack_adjustment > 0) {
+                        debug.log(.codegen, "      ensureInReg: regenerated local_addr {d} (SP+{d}, base={d}+adj={d}) -> x{d}", .{ local_idx, local_offset, base_offset, self.call_stack_adjustment, dest });
+                    } else {
+                        debug.log(.codegen, "      ensureInReg: regenerated local_addr {d} (SP+{d}) -> x{d}", .{ local_idx, local_offset, dest });
+                    }
                 } else {
                     debug.log(.codegen, "      ensureInReg: local_addr {d} out of bounds!", .{local_idx});
                     try self.emit(asm_mod.encodeMOVZ(dest, 0, 0));
@@ -3086,6 +3103,9 @@ pub const ARM64CodeGen = struct {
             // SUB SP, SP, #stack_size
             try self.emit(asm_mod.encodeSUBImm(31, 31, stack_size, 0));
             debug.log(.codegen, "      stack args: SUB SP, SP, #{d} ({d} args)", .{ stack_size, num_stack_args });
+
+            // BUG-072 FIX: Track stack adjustment for local_addr regeneration
+            self.call_stack_adjustment = stack_size;
 
             var stack_slot: usize = 0;
 
@@ -3279,15 +3299,24 @@ pub const ARM64CodeGen = struct {
             .const_nil => try self.emitLoadImmediate(dest, 0),
             .local_addr => {
                 // Regenerate local variable address: ADD dest, SP, #offset
+                // BUG-072 FIX: Account for stack adjustment during call setup.
+                // When overflow args are pushed to stack, SP moves down but locals don't.
                 const local_idx: usize = @intCast(value.aux_int);
                 if (local_idx < self.func.local_offsets.len) {
-                    const byte_off = self.func.local_offsets[local_idx];
+                    const base_off: u32 = @intCast(self.func.local_offsets[local_idx]);
+                    // Add call_stack_adjustment to compensate for SP being lower
+                    const byte_off = base_off + self.call_stack_adjustment;
                     try self.emitAddImm(dest, 31, @intCast(byte_off));
-                    debug.log(.codegen, "      regen local_addr {d} -> x{d} = SP+{d}", .{ local_idx, dest, byte_off });
+                    if (self.call_stack_adjustment > 0) {
+                        debug.log(.codegen, "      regen local_addr {d} -> x{d} = SP+{d} (base={d}+adj={d})", .{ local_idx, dest, byte_off, base_off, self.call_stack_adjustment });
+                    } else {
+                        debug.log(.codegen, "      regen local_addr {d} -> x{d} = SP+{d}", .{ local_idx, dest, byte_off });
+                    }
                 } else {
                     // Fallback: offset 0
-                    try self.emit(asm_mod.encodeADDImm(dest, 31, 0, 0));
-                    debug.log(.codegen, "      regen local_addr {d} -> x{d} = SP+0 (NO OFFSET!)", .{ local_idx, dest });
+                    const byte_off = self.call_stack_adjustment;
+                    try self.emit(asm_mod.encodeADDImm(dest, 31, @intCast(byte_off), 0));
+                    debug.log(.codegen, "      regen local_addr {d} -> x{d} = SP+{d} (NO BASE OFFSET!)", .{ local_idx, dest, byte_off });
                 }
             },
             .global_addr => {

@@ -825,6 +825,15 @@ pub const FuncBuilder = struct {
     // Name to local index mapping
     local_map: std.StringHashMap(LocalIdx),
 
+    // Shadow stack for tracking overwritten mappings when variables are shadowed
+    // Each entry is (name, old_idx_or_null) - null means name didn't exist before
+    shadow_stack: std.ArrayListUnmanaged(ShadowEntry),
+
+    const ShadowEntry = struct {
+        name: []const u8,
+        old_idx: ?LocalIdx,
+    };
+
     pub fn init(allocator: Allocator, name: []const u8, type_idx: TypeIndex, return_type: TypeIndex, span: Span) FuncBuilder {
         var fb = FuncBuilder{
             .allocator = allocator,
@@ -838,6 +847,7 @@ pub const FuncBuilder = struct {
             .string_literals = .{},
             .current_block = 0,
             .local_map = std.StringHashMap(LocalIdx).init(allocator),
+            .shadow_stack = .{},
         };
 
         // Create entry block (block 0)
@@ -852,6 +862,7 @@ pub const FuncBuilder = struct {
         self.nodes.deinit(self.allocator);
         self.string_literals.deinit(self.allocator);
         self.local_map.deinit();
+        self.shadow_stack.deinit(self.allocator);
     }
 
     // ========================================================================
@@ -876,9 +887,17 @@ pub const FuncBuilder = struct {
     }
 
     /// Add a local variable with explicit size.
+    /// If name shadows an existing variable, saves old mapping to shadow_stack.
     pub fn addLocalWithSize(self: *FuncBuilder, name: []const u8, type_idx: TypeIndex, mutable: bool, size: u32) !LocalIdx {
         const idx: LocalIdx = @intCast(self.locals.items.len);
         try self.locals.append(self.allocator, Local.initWithSize(name, type_idx, mutable, size));
+
+        // Save old mapping before overwriting (for variable shadowing)
+        const old_idx = self.local_map.get(name);
+        try self.shadow_stack.append(self.allocator, .{ .name = name, .old_idx = old_idx });
+
+        debug.log(.lower, "addLocalWithSize: '{s}' -> idx {d} (old_idx: {?})", .{ name, idx, old_idx });
+
         try self.local_map.put(name, idx);
         return idx;
     }
@@ -886,6 +905,32 @@ pub const FuncBuilder = struct {
     /// Look up a local by name.
     pub fn lookupLocal(self: *const FuncBuilder, name: []const u8) ?LocalIdx {
         return self.local_map.get(name);
+    }
+
+    /// Mark the current scope entry point. Returns depth to pass to restoreScope.
+    pub fn markScopeEntry(self: *const FuncBuilder) usize {
+        return self.shadow_stack.items.len;
+    }
+
+    /// Restore variable mappings to what they were at scope entry.
+    /// Pops shadow stack entries and restores old mappings.
+    pub fn restoreScope(self: *FuncBuilder, entry_depth: usize) void {
+        debug.log(.lower, "restoreScope: depth {d} -> {d}", .{ self.shadow_stack.items.len, entry_depth });
+        while (self.shadow_stack.items.len > entry_depth) {
+            const len = self.shadow_stack.items.len;
+            const entry = self.shadow_stack.items[len - 1];
+            self.shadow_stack.items.len = len - 1;
+
+            debug.log(.lower, "  restoring '{s}' to {?}", .{ entry.name, entry.old_idx });
+
+            if (entry.old_idx) |old| {
+                // Restore the old mapping
+                self.local_map.put(entry.name, old) catch {};
+            } else {
+                // Name didn't exist before - remove it
+                _ = self.local_map.remove(entry.name);
+            }
+        }
     }
 
     // ========================================================================
