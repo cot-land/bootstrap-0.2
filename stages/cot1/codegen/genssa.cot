@@ -1418,6 +1418,42 @@ fn slicePtr(self: *GenState, v: *Value) {
             len_ptr.* = str_len;
             self.string_relocs_count = self.string_relocs_count + 1;
         }
+    } else if slice_val.op == Op.OffPtr and slice_val.args.count >= 1 {
+        // BUG-063 FIX: OffPtr is address of a string field in a struct
+        // The string's ptr is at offset 0 from this address
+        if slice_val.reg >= 0 {
+            if self.target == TARGET_AMD64 {
+                self.emitInstPacked(AMD64_load64(rd, slice_val.reg, 0));
+            } else {
+                self.emitInst(encode_ldr(rd, slice_val.reg, 0));
+            }
+        } else {
+            // Address not in a register - check if we can compute from base
+            let base_val: *Value = f.getValue(slice_val.getArg(0));
+            let field_offset: i64 = slice_val.aux_int;
+            if base_val.op == Op.LocalAddr {
+                // Direct local access
+                let local_idx: i64 = base_val.aux_int;
+                let local: *Local = f.getLocal(local_idx);
+                if self.target == TARGET_AMD64 {
+                    let ptr_offset: i64 = 0 - (local.offset + field_offset);
+                    self.emitInstPacked(AMD64_load64(rd, RBP, ptr_offset));
+                } else {
+                    let ptr_offset: i64 = local.offset + field_offset;
+                    self.emitInst(encode_ldr(rd, SP, ptr_offset));
+                }
+            } else if base_val.reg >= 0 {
+                // Base is in a register (e.g., loaded pointer)
+                // Load from base_reg + field_offset (to get address of string)
+                // Then load again at offset 0 (to get ptr field of string)
+                // But we can combine: load from base_reg + field_offset + 0
+                if self.target == TARGET_AMD64 {
+                    self.emitInstPacked(AMD64_load64(rd, base_val.reg, field_offset));
+                } else {
+                    self.emitInst(encode_ldr(rd, base_val.reg, field_offset));
+                }
+            }
+        }
     } else {
         // Other cases: just copy the register (assume ptr is there)
         if slice_val.reg >= 0 and slice_val.reg != rd {
@@ -1509,6 +1545,40 @@ fn sliceLen(self: *GenState, v: *Value) {
                     self.emitInstPacked(AMD64_encodeMovReg(rd, slice_val.reg));
                 } else {
                     self.emitInst(ARM64_encodeMovReg(rd, slice_val.reg));
+                }
+            }
+        }
+    } else if slice_val.op == Op.OffPtr and slice_val.args.count >= 1 {
+        // BUG-063 FIX: OffPtr is address of a string field in a struct
+        // The string's len is at offset 8 from this address
+        if slice_val.reg >= 0 {
+            if self.target == TARGET_AMD64 {
+                self.emitInstPacked(AMD64_load64(rd, slice_val.reg, 8));
+            } else {
+                self.emitInst(encode_ldr(rd, slice_val.reg, 8));
+            }
+        } else {
+            // Address not in a register - check if we can compute from base
+            let base_val: *Value = f.getValue(slice_val.getArg(0));
+            let field_offset: i64 = slice_val.aux_int;
+            if base_val.op == Op.LocalAddr {
+                // Direct local access
+                let local_idx: i64 = base_val.aux_int;
+                let local: *Local = f.getLocal(local_idx);
+                if self.target == TARGET_AMD64 {
+                    let len_offset: i64 = 0 - (local.offset + field_offset + 8);
+                    self.emitInstPacked(AMD64_load64(rd, RBP, len_offset));
+                } else {
+                    let len_offset: i64 = local.offset + field_offset + 8;
+                    self.emitInst(encode_ldr(rd, SP, len_offset));
+                }
+            } else if base_val.reg >= 0 {
+                // Base is in a register (e.g., loaded pointer)
+                // Load len from base_reg + field_offset + 8
+                if self.target == TARGET_AMD64 {
+                    self.emitInstPacked(AMD64_load64(rd, base_val.reg, field_offset + 8));
+                } else {
+                    self.emitInst(encode_ldr(rd, base_val.reg, field_offset + 8));
                 }
             }
         }

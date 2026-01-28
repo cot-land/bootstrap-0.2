@@ -938,6 +938,65 @@ impl Lowerer {
                 }
             }
         }
+        // BUG-063 FIX: Check if field access returns a string/slice type
+        if node.kind == NodeKind.FieldAccess {
+            let field_name_start: i64 = node.field1;
+            let field_name_len: i64 = node.field2;
+            // Check if this is .ptr or .len access on a slice (those return non-slice)
+            if name_is_ptr(self.source, field_name_start, field_name_len) or
+               name_is_len(self.source, field_name_start, field_name_len) {
+                return false;
+            }
+            // For other field accesses, check the field type
+            let base_node: *Node = self.nodes + node.field0;
+            // Walk to find the root struct type
+            var walk_node: *Node = base_node;
+            var depth: i64 = 0;
+            while walk_node.kind == NodeKind.FieldAccess and depth < 10 {
+                walk_node = self.nodes + walk_node.field0;
+                depth = depth + 1;
+            }
+            if walk_node.kind == NodeKind.Ident {
+                // Find the local
+                let fb: *FuncBuilder = self.current_func;
+                if fb != null {
+                    var i: i64 = 0;
+                    while i < fb.locals_count {
+                        let local: *IRLocal = fb.locals + i;
+                        if names_equal(self.source, local.name_start, local.name_len,
+                                      walk_node.field0, walk_node.field1) {
+                            // Found the root local - get its struct type
+                            var struct_type_idx: i64 = local.type_idx;
+                            // Dereference pointer if needed
+                            if struct_type_idx > 0 {
+                                let type_info: *Type = self.type_pool.get(struct_type_idx);
+                                if type_info != null and type_info.kind == TypeKind.Pointer {
+                                    struct_type_idx = type_info.elem;
+                                }
+                            }
+                            // Look up the field type
+                            if struct_type_idx > 0 {
+                                let field_info: *FieldInfo = self.type_pool.lookupField(struct_type_idx,
+                                                                   self.source + field_name_start, field_name_len);
+                                if field_info != null {
+                                    // Check if field type is string/slice
+                                    if field_info.type_idx == TYPE_STRING or field_info.type_idx == TYPE_SLICE {
+                                        return true;
+                                    }
+                                    if field_info.type_idx > 0 {
+                                        let ft: *Type = self.type_pool.get(field_info.type_idx);
+                                        if ft != null and (ft.kind == TypeKind.Slice or ft.kind == TypeKind.String) {
+                                            return true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        i = i + 1;
+                    }
+                }
+            }
+        }
         return false;
     }
 
@@ -2332,17 +2391,36 @@ impl Lowerer {
     
             // Look up field offset from TypeRegistry (single source of truth)
             var field_offset: i64 = i * 8;  // Fallback
+            var field_type_idx: i64 = TYPE_I64;
             let struct_type_idx: i64 = self.type_pool.lookupByName(self.source, struct_name_start, struct_name_len);
             if struct_type_idx > 0 {
                 let field_info: *FieldInfo = self.type_pool.lookupField(struct_type_idx,
                                                                        self.source + fname_start, fname_len);
                 if field_info != null {
                     field_offset = field_info.offset;
+                    field_type_idx = field_info.type_idx;
                 }
             }
-    
-            // Emit store to local's field using StoreFieldLocal
-            fb.emitStoreFieldLocal(local_idx, field_offset, value_ir);
+
+            // BUG-063 FIX: Check if field is string/slice - need to store ptr and len separately
+            var is_string_field: bool = field_type_idx == TYPE_STRING or field_type_idx == TYPE_SLICE;
+            if not is_string_field and field_type_idx > 0 {
+                let ft: *Type = self.type_pool.get(field_type_idx);
+                if ft != null and (ft.kind == TypeKind.String or ft.kind == TypeKind.Slice) {
+                    is_string_field = true;
+                }
+            }
+
+            if is_string_field {
+                // Extract ptr and len from value and store separately
+                let ptr_ir: i64 = fb.emitSlicePtr(value_ir, TYPE_I64);
+                let len_ir: i64 = fb.emitSliceLen(value_ir);
+                fb.emitStoreFieldLocal(local_idx, field_offset, ptr_ir);
+                fb.emitStoreFieldLocal(local_idx, field_offset + 8, len_ir);
+            } else {
+                // Emit store to local's field using StoreFieldLocal
+                fb.emitStoreFieldLocal(local_idx, field_offset, value_ir);
+            }
     
             i = i + 1;
         }
@@ -2956,7 +3034,25 @@ impl Lowerer {
                                                                   self.source + field_name_start, field_name_len);
             if field_info != null {
                 let field_offset: i64 = field_info.offset;
-                fb.emitStoreFieldLocal(temp_idx, field_offset, value_ir);
+
+                // BUG-063 FIX: Check if field is string/slice - need to store ptr and len separately
+                var is_str_field: bool = field_info.type_idx == TYPE_STRING or field_info.type_idx == TYPE_SLICE;
+                if not is_str_field and field_info.type_idx > 0 {
+                    let ft: *Type = self.type_pool.get(field_info.type_idx);
+                    if ft != null and (ft.kind == TypeKind.String or ft.kind == TypeKind.Slice) {
+                        is_str_field = true;
+                    }
+                }
+
+                if is_str_field {
+                    // Extract ptr and len from value and store separately
+                    let ptr_ir: i64 = fb.emitSlicePtr(value_ir, TYPE_I64);
+                    let len_ir: i64 = fb.emitSliceLen(value_ir);
+                    fb.emitStoreFieldLocal(temp_idx, field_offset, ptr_ir);
+                    fb.emitStoreFieldLocal(temp_idx, field_offset + 8, len_ir);
+                } else {
+                    fb.emitStoreFieldLocal(temp_idx, field_offset, value_ir);
+                }
             }
     
             i = i + 1;
@@ -3457,54 +3553,88 @@ impl Lowerer {
                 return fb.emitFieldLocal(local_idx, 8, TYPE_I64);
             }
         }
-    
+
+        // BUG-063 FIX: Handle FieldAccess like len(self.source)
+        // Lower the field access and extract the length from the string/slice
+        if arg_node.kind == NodeKind.FieldAccess {
+            let field_val: i64 = self.lowerFieldAccess(arg_node);
+            return fb.emitSliceLen(field_val);
+        }
+
         return NULL_NODE;
     }
 
     fn lowerBuiltinPrint(self: *Lowerer, node: *Node, is_println: bool) i64 {
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
-    
+
         // Find "write" in source - it must be declared as extern fn write(...)
         let write_pos: i64 = find_write_in_source(self.source, self.source_len);
         if write_pos < 0 {
             // write not found in source, fall through to regular call handling
             return NULL_NODE;
         }
-    
+
         // CallExpr: field1 = args_start, field2 = args_count
         let args_start: i64 = node.field1;
         let args_count: i64 = node.field2;
         if args_count != 1 { return NULL_NODE; }
-    
+
         // Get the argument node
         let arg_child_ptr: *i64 = self.children + args_start;
         let arg_node_idx: i64 = arg_child_ptr.*;
         let arg_node: *Node = self.nodes + arg_node_idx;
-    
-        // Lower the string argument
-        let str_val: i64 = self.lowerExpr(arg_node);
-    
-        // Extract ptr and len from the string (following Zig's pattern)
-        let ptr_val: i64 = fb.emitSlicePtr(str_val, TYPE_I64);
-        let len_val: i64 = fb.emitSliceLen(str_val);
-    
-        // Create fd=1 (stdout) constant
-        let fd_val: i64 = fb.emitConstInt(1);
-    
-        // Build args for write call: write(fd, ptr, len)
-        // Following Zig: args stored directly in Call node
-        var call_node: IRNode = IRNode_new(IRNodeKind.Call, TYPE_I64);
-        call_node.func_name_start = copy_func_name(self.source, write_pos, 5);  // Copy "write" to owned buffer
-        call_node.func_name_len = 5;
-        i64list_append(&call_node.call_args, fd_val);   // arg0: fd
-        i64list_append(&call_node.call_args, ptr_val);  // arg1: ptr
-        i64list_append(&call_node.call_args, len_val);  // arg2: len
-        let write_result: i64 = fb.emit(call_node);
-    
+
+        // BUG-063 FIX: Check argument type for integer vs string printing
+        // Following Zig pattern: lower.zig:2680-2709
+        let arg_type: i64 = self.inferExprType(arg_node);
+        let is_integer: bool = arg_type == TYPE_I8 or arg_type == TYPE_I16 or
+                               arg_type == TYPE_I32 or arg_type == TYPE_I64 or
+                               arg_type == TYPE_U8 or arg_type == TYPE_U16 or
+                               arg_type == TYPE_U32 or arg_type == TYPE_U64;
+
+        if is_integer {
+            // Integer: call runtime __print_int(n)
+            let int_val: i64 = self.lowerExpr(arg_node);
+            var call_node: IRNode = IRNode_new(IRNodeKind.Call, TYPE_VOID);
+            // Find __print_int in source or use fixed name
+            let print_int_name: i64 = copy_func_name(self.source, 0, 11);  // Allocate for "__print_int"
+            let name_ptr: *u8 = @intToPtr(*u8, print_int_name);
+            (name_ptr + 0).* = 95;   // '_'
+            (name_ptr + 1).* = 95;   // '_'
+            (name_ptr + 2).* = 112;  // 'p'
+            (name_ptr + 3).* = 114;  // 'r'
+            (name_ptr + 4).* = 105;  // 'i'
+            (name_ptr + 5).* = 110;  // 'n'
+            (name_ptr + 6).* = 116;  // 't'
+            (name_ptr + 7).* = 95;   // '_'
+            (name_ptr + 8).* = 105;  // 'i'
+            (name_ptr + 9).* = 110;  // 'n'
+            (name_ptr + 10).* = 116; // 't'
+            (name_ptr + 11).* = 0;   // null terminator
+            call_node.func_name_start = print_int_name;
+            call_node.func_name_len = 11;
+            i64list_append(&call_node.call_args, int_val);
+            fb.emit(call_node);
+        } else {
+            // String: extract ptr and len, call write()
+            let str_val: i64 = self.lowerExpr(arg_node);
+            let ptr_val: i64 = fb.emitSlicePtr(str_val, TYPE_I64);
+            let len_val: i64 = fb.emitSliceLen(str_val);
+            let fd_val: i64 = fb.emitConstInt(1);  // stdout
+
+            var call_node: IRNode = IRNode_new(IRNodeKind.Call, TYPE_I64);
+            call_node.func_name_start = copy_func_name(self.source, write_pos, 5);
+            call_node.func_name_len = 5;
+            i64list_append(&call_node.call_args, fd_val);
+            i64list_append(&call_node.call_args, ptr_val);
+            i64list_append(&call_node.call_args, len_val);
+            fb.emit(call_node);
+        }
+
         // TODO: For println, also write a newline
         // For now, print and println behave the same (no trailing newline)
-    
+
         return NULL_NODE;  // print/println returns void
     }
 
@@ -4360,14 +4490,41 @@ impl Lowerer {
     
             // Now look up the final field in the base's struct type
             var final_offset: i64 = 0;
-            if base_struct_type_idx > 0 {
+
+            // BUG-063 FIX: Special handling for slice/string types in chained field access
+            // When base_struct_type_idx is a slice or string, handle .ptr/.len directly
+            // This handles patterns like ptr.source.len where ptr.source is a string
+            var is_base_slice: bool = base_struct_type_idx == TYPE_SLICE or base_struct_type_idx == TYPE_STRING;
+            if base_struct_type_idx > 0 and not is_base_slice {
+                let base_type: *Type = self.type_pool.get(base_struct_type_idx);
+                if base_type != null {
+                    if base_type.kind == TypeKind.Slice or base_type.kind == TypeKind.String {
+                        is_base_slice = true;
+                    }
+                }
+            }
+
+            if is_base_slice {
+                // Slice/string: .ptr at offset 0, .len at offset 8
+                if name_is_ptr(self.source, field_name_start, field_name_len) {
+                    let base_val: i64 = self.lowerFieldAccess(base_node);
+                    return fb.emitSlicePtr(base_val, TYPE_I64);
+                }
+                if name_is_len(self.source, field_name_start, field_name_len) {
+                    let base_val: i64 = self.lowerFieldAccess(base_node);
+                    return fb.emitSliceLen(base_val);
+                }
+                // Unknown slice field - fall through to generic handling
+            }
+
+            if base_struct_type_idx > 0 and not is_base_slice {
                 let final_info: *FieldInfo = self.type_pool.lookupField(base_struct_type_idx,
                                                                        self.source + field_name_start, field_name_len);
                 if final_info != null {
                     final_offset = final_info.offset;
                 }
             }
-    
+
             // Lower the base expression and access the field at computed offset
             let base_val: i64 = self.lowerFieldAccess(base_node);
             return fb.emitFieldValue(base_val, final_offset, TYPE_I64);
@@ -4738,6 +4895,26 @@ impl Lowerer {
     
                 // Load the pointer value
                 let ptr_val: i64 = fb.emitLoadLocal(local_idx);
+
+                // BUG-063 FIX: Check if field is string/slice - need to store ptr and len separately
+                var is_string_field: bool = field_info.type_idx == TYPE_STRING or field_info.type_idx == TYPE_SLICE;
+                if not is_string_field and field_info.type_idx > 0 {
+                    let ft: *Type = self.type_pool.get(field_info.type_idx);
+                    if ft != null {
+                        if ft.kind == TypeKind.Slice or ft.kind == TypeKind.String {
+                            is_string_field = true;
+                        }
+                    }
+                }
+                if is_string_field {
+                    // String/slice field: store ptr at offset, len at offset+8
+                    let str_ptr_ir: i64 = fb.emitSlicePtr(value_idx, TYPE_I64);
+                    let str_len_ir: i64 = fb.emitSliceLen(value_idx);
+                    fb.emitStoreField(ptr_val, field_info.offset, str_ptr_ir);
+                    fb.emitStoreField(ptr_val, field_info.offset + 8, str_len_ir);
+                    return value_idx;
+                }
+
                 // Store value through the pointer at field offset
                 return fb.emitStoreField(ptr_val, field_info.offset, value_idx);
             }
@@ -4746,6 +4923,24 @@ impl Lowerer {
             let field_info: *FieldInfo = self.type_pool.lookupField(struct_type_idx,
                                                            self.source + field_name_start, field_name_len);
             if field_info != null {
+                // BUG-063 FIX: Check if field is string/slice - need to store ptr and len separately
+                var is_string_field: bool = field_info.type_idx == TYPE_STRING or field_info.type_idx == TYPE_SLICE;
+                if not is_string_field and field_info.type_idx > 0 {
+                    let ft: *Type = self.type_pool.get(field_info.type_idx);
+                    if ft != null {
+                        if ft.kind == TypeKind.Slice or ft.kind == TypeKind.String {
+                            is_string_field = true;
+                        }
+                    }
+                }
+                if is_string_field {
+                    // String/slice field: store ptr at offset, len at offset+8
+                    let ptr_ir: i64 = fb.emitSlicePtr(value_idx, TYPE_I64);
+                    let len_ir: i64 = fb.emitSliceLen(value_idx);
+                    fb.emitStoreFieldLocal(local_idx, field_info.offset, ptr_ir);
+                    fb.emitStoreFieldLocal(local_idx, field_info.offset + 8, len_ir);
+                    return value_idx;
+                }
                 return fb.emitStoreFieldLocal(local_idx, field_info.offset, value_idx);
             }
     
@@ -4758,6 +4953,21 @@ impl Lowerer {
                     let local_field_info: *FieldInfo = self.type_pool.lookupField(local_struct_type,
                                                                                  self.source + field_name_start, field_name_len);
                     if local_field_info != null {
+                        // BUG-063 FIX: Check if field is string/slice
+                        var is_str: bool = local_field_info.type_idx == TYPE_STRING or local_field_info.type_idx == TYPE_SLICE;
+                        if not is_str and local_field_info.type_idx > 0 {
+                            let ft2: *Type = self.type_pool.get(local_field_info.type_idx);
+                            if ft2 != null and (ft2.kind == TypeKind.Slice or ft2.kind == TypeKind.String) {
+                                is_str = true;
+                            }
+                        }
+                        if is_str {
+                            let ptr_ir: i64 = fb.emitSlicePtr(value_idx, TYPE_I64);
+                            let len_ir: i64 = fb.emitSliceLen(value_idx);
+                            fb.emitStoreFieldLocal(local_idx, local_field_info.offset, ptr_ir);
+                            fb.emitStoreFieldLocal(local_idx, local_field_info.offset + 8, len_ir);
+                            return value_idx;
+                        }
                         return fb.emitStoreFieldLocal(local_idx, local_field_info.offset, value_idx);
                     }
                 }

@@ -1586,21 +1586,28 @@ impl SSABuilder {
         off_val.addArg(addr_val);
         off_val.aux_int = offset;
     
-        // Check if result is a struct or array - if so, return address (no load)
-        // Both structs and arrays are inline data, not pointers, so we return
+        // Check if result is a struct, array, slice, or string - if so, return address (no load)
+        // These are inline data types, not pointers, so we return
         // the address for further field access or indexing.
         // Following Zig ssa_builder.zig:1042-1051
+        // BUG-063 FIX: Also check for slice/string types which are 16-byte values
         if self.type_registry != null and ir_node.type_idx > 0 {
             let field_type: *Type = self.type_registry.get(ir_node.type_idx);
             if field_type != null {
-                if field_type.kind == TypeKind.Struct or field_type.kind == TypeKind.Array {
-                    // Nested struct or array - return address for further access
+                if field_type.kind == TypeKind.Struct or field_type.kind == TypeKind.Array or
+                   field_type.kind == TypeKind.Slice or field_type.kind == TypeKind.String {
+                    // Compound type - return address for further access
                     self.assignReg(off_val);
                     return off_val.id;
                 }
             }
         }
-    
+        // Also check for built-in TYPE_STRING and TYPE_SLICE constants
+        if ir_node.type_idx == TYPE_STRING or ir_node.type_idx == TYPE_SLICE {
+            self.assignReg(off_val);
+            return off_val.id;
+        }
+
         // 3. Primitive type - load the field value
         let load_val: *Value = self.func.newValue(Op.Load, ir_node.type_idx);
         load_val.addArg(off_val);
@@ -1619,21 +1626,28 @@ impl SSABuilder {
         off_val.addArg(base_val);
         off_val.aux_int = offset;
     
-        // Check if result is a struct or array - if so, return address (no load)
-        // Both structs and arrays are inline data, not pointers, so we return
+        // Check if result is a struct, array, slice, or string - if so, return address (no load)
+        // These are inline data types, not pointers, so we return
         // the address for further field access or indexing.
         // Following Zig ssa_builder.zig:1118-1126
+        // BUG-063 FIX: Also check for slice/string types which are 16-byte values
         if self.type_registry != null and ir_node.type_idx > 0 {
             let field_type: *Type = self.type_registry.get(ir_node.type_idx);
             if field_type != null {
-                if field_type.kind == TypeKind.Struct or field_type.kind == TypeKind.Array {
-                    // Nested struct or array - return address for further access
+                if field_type.kind == TypeKind.Struct or field_type.kind == TypeKind.Array or
+                   field_type.kind == TypeKind.Slice or field_type.kind == TypeKind.String {
+                    // Compound type - return address for further access
                     self.assignReg(off_val);
                     return off_val.id;
                 }
             }
         }
-    
+        // Also check for built-in TYPE_STRING and TYPE_SLICE constants
+        if ir_node.type_idx == TYPE_STRING or ir_node.type_idx == TYPE_SLICE {
+            self.assignReg(off_val);
+            return off_val.id;
+        }
+
         // 2. Primitive type - load the field value
         let load_val: *Value = self.func.newValue(Op.Load, ir_node.type_idx);
         load_val.addArg(off_val);

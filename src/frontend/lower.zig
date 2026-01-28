@@ -874,8 +874,22 @@ pub const Lowerer = struct {
                     // Lower the field value
                     const value_node_ir = try self.lowerExprNode(field_init.value);
 
-                    // Store to the field
-                    _ = try fb.emitStoreLocalField(local_idx, field_idx, field_offset, value_node_ir, span);
+                    // BUG-063 FIX: Check if field is string/slice - need to store ptr and len separately
+                    const field_type = self.type_reg.get(struct_field.type_idx);
+                    const is_string_field = struct_field.type_idx == TypeRegistry.STRING or
+                        (field_type == .slice);
+
+                    if (is_string_field) {
+                        // Extract ptr and len from value and store separately
+                        const ptr_type = try self.type_reg.makePointer(TypeRegistry.U8);
+                        const ptr_ir = try fb.emitSlicePtr(value_node_ir, ptr_type, span);
+                        const len_ir = try fb.emitSliceLen(value_node_ir, span);
+                        _ = try fb.emitStoreLocalField(local_idx, field_idx, field_offset, ptr_ir, span);
+                        _ = try fb.emitStoreLocalField(local_idx, field_idx + 1, field_offset + 8, len_ir, span);
+                    } else {
+                        // Store to the field
+                        _ = try fb.emitStoreLocalField(local_idx, field_idx, field_offset, value_node_ir, span);
+                    }
 
                     debug.log(.lower, "  stored field '{s}' at offset {d}", .{ field_init.name, field_offset });
                     found = true;
@@ -1050,6 +1064,23 @@ pub const Lowerer = struct {
                         if (local_type == .pointer) {
                             // Load the pointer value from local
                             const ptr_val = try fb.emitLoadLocal(local_idx, local.type_idx, assign.span);
+
+                            // BUG-063 FIX: Check if field is string/slice - need to store ptr and len separately
+                            const struct_field = struct_type.fields[field_idx];
+                            const field_type = self.type_reg.get(struct_field.type_idx);
+                            const is_string_field = struct_field.type_idx == TypeRegistry.STRING or
+                                (field_type == .slice);
+
+                            if (is_string_field) {
+                                // Extract ptr and len from value and store separately
+                                const ptr_type = try self.type_reg.makePointer(TypeRegistry.U8);
+                                const str_ptr_ir = try fb.emitSlicePtr(value_node, ptr_type, assign.span);
+                                const str_len_ir = try fb.emitSliceLen(value_node, assign.span);
+                                _ = try fb.emitStoreField(ptr_val, field_idx, field_offset, str_ptr_ir, assign.span);
+                                _ = try fb.emitStoreField(ptr_val, field_idx + 1, field_offset + 8, str_len_ir, assign.span);
+                                return;
+                            }
+
                             // Store value at ptr + field_offset using store_field
                             _ = try fb.emitStoreField(ptr_val, field_idx, field_offset, value_node, assign.span);
                             return;
@@ -1818,8 +1849,22 @@ pub const Lowerer = struct {
                     // Lower the value expression
                     const value_node = try self.lowerExprNode(field_init.value);
 
-                    // Store to field offset (same as lowerStructInit)
-                    _ = try fb.emitStoreLocalField(temp_idx, field_idx, field_offset, value_node, si.span);
+                    // BUG-063 FIX: Check if field is string/slice - need to store ptr and len separately
+                    const field_type = self.type_reg.get(struct_field.type_idx);
+                    const is_string_field = struct_field.type_idx == TypeRegistry.STRING or
+                        (field_type == .slice);
+
+                    if (is_string_field) {
+                        // Extract ptr and len from value and store separately
+                        const ptr_type = try self.type_reg.makePointer(TypeRegistry.U8);
+                        const ptr_ir = try fb.emitSlicePtr(value_node, ptr_type, si.span);
+                        const len_ir = try fb.emitSliceLen(value_node, si.span);
+                        _ = try fb.emitStoreLocalField(temp_idx, field_idx, field_offset, ptr_ir, si.span);
+                        _ = try fb.emitStoreLocalField(temp_idx, field_idx + 1, field_offset + 8, len_ir, si.span);
+                    } else {
+                        // Store to field offset (same as lowerStructInit)
+                        _ = try fb.emitStoreLocalField(temp_idx, field_idx, field_offset, value_node, si.span);
+                    }
                     debug.log(.lower, "  field '{s}' at offset {d}", .{ field_init.name, field_offset });
                     found = true;
                     break;

@@ -294,6 +294,11 @@ pub fn main() !void {
 
     std.debug.print("Wrote object file: {s}\n", .{obj_path});
 
+    // If output name ends with .o, user wants just the object file - skip linking
+    if (std.mem.endsWith(u8, output_name, ".o")) {
+        return;
+    }
+
     // Link with zig cc
     std.debug.print("Linking...\n", .{});
 
