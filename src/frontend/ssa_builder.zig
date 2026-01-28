@@ -862,8 +862,57 @@ pub const SSABuilder = struct {
                     break :blk try self.convertStringCompare(b, node.type_idx);
                 }
 
-                const left = try self.convertNode(b.left) orelse return error.MissingValue;
-                const right = try self.convertNode(b.right) orelse return error.MissingValue;
+                var left = try self.convertNode(b.left) orelse return error.MissingValue;
+                var right = try self.convertNode(b.right) orelse return error.MissingValue;
+
+                // Sign-extend narrower integers for comparisons (BUG-064 fix)
+                // When comparing i32 to i64, sign-extend the i32 to i64
+                if (b.op.isComparison()) {
+                    const left_size = self.type_registry.sizeOf(left.type_idx);
+                    const right_size = self.type_registry.sizeOf(right.type_idx);
+                    const left_type = self.type_registry.get(left.type_idx);
+                    const right_type = self.type_registry.get(right.type_idx);
+
+                    // Check if both are integers (signed or unsigned)
+                    const left_is_int = left_type == .basic and left_type.basic.isInteger();
+                    const right_is_int = right_type == .basic and right_type.basic.isInteger();
+
+                    if (left_is_int and right_is_int and left_size != right_size) {
+                        // Extend the smaller one to the larger size
+                        // Use sign-extend for signed types, zero-extend for unsigned
+                        if (left_size < right_size) {
+                            const is_signed = left_type.basic.isSigned();
+                            const ext_op: Op = switch (left_size) {
+                                1 => if (right_size == 2) (if (is_signed) .sign_ext8to16 else .zero_ext8to16) else if (right_size == 4) (if (is_signed) .sign_ext8to32 else .zero_ext8to32) else (if (is_signed) .sign_ext8to64 else .zero_ext8to64),
+                                2 => if (right_size == 4) (if (is_signed) .sign_ext16to32 else .zero_ext16to32) else (if (is_signed) .sign_ext16to64 else .zero_ext16to64),
+                                4 => if (is_signed) .sign_ext32to64 else .zero_ext32to64,
+                                else => .copy,
+                            };
+                            if (ext_op != .copy) {
+                                const ext_val = try self.func.newValue(ext_op, right.type_idx, cur, self.cur_pos);
+                                ext_val.addArg(left);
+                                try cur.addValue(self.allocator, ext_val);
+                                debug.log(.ssa, "    extend left v{} from {}B to {}B -> v{} (signed={})", .{ left.id, left_size, right_size, ext_val.id, is_signed });
+                                left = ext_val;
+                            }
+                        } else {
+                            const is_signed = right_type.basic.isSigned();
+                            const ext_op: Op = switch (right_size) {
+                                1 => if (left_size == 2) (if (is_signed) .sign_ext8to16 else .zero_ext8to16) else if (left_size == 4) (if (is_signed) .sign_ext8to32 else .zero_ext8to32) else (if (is_signed) .sign_ext8to64 else .zero_ext8to64),
+                                2 => if (left_size == 4) (if (is_signed) .sign_ext16to32 else .zero_ext16to32) else (if (is_signed) .sign_ext16to64 else .zero_ext16to64),
+                                4 => if (is_signed) .sign_ext32to64 else .zero_ext32to64,
+                                else => .copy,
+                            };
+                            if (ext_op != .copy) {
+                                const ext_val = try self.func.newValue(ext_op, left.type_idx, cur, self.cur_pos);
+                                ext_val.addArg(right);
+                                try cur.addValue(self.allocator, ext_val);
+                                debug.log(.ssa, "    extend right v{} from {}B to {}B -> v{} (signed={})", .{ right.id, right_size, left_size, ext_val.id, is_signed });
+                                right = ext_val;
+                            }
+                        }
+                    }
+                }
 
                 // Check for pointer arithmetic (Zig: ptr_add/ptr_sub with scaling)
                 // If result type is pointer and op is add/sub, scale offset by element size
