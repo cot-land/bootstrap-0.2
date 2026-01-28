@@ -1392,8 +1392,8 @@ test "character operations" {
 
 test "integer type operations" {
     // u8 type
-    let byte: u8 = 255
-    @assert(byte == 255)
+    let u8_val: u8 = 255
+    @assert(u8_val == 255)
 
     // i32 type
     let small: i32 = 1000
@@ -1420,4 +1420,186 @@ test "integer type operations" {
     // i64 extremes
     let max: i64 = 9223372036854775807
     @assert(max > 0)
+}
+
+// ============================================================================
+// INLINE TESTS - Nested Struct Types (consolidated)
+// ============================================================================
+
+struct TestInnerStruct {
+    x: i64,
+    y: i64,
+}
+
+struct TestOuterStruct {
+    inner: TestInnerStruct,
+    z: i64,
+}
+
+struct TestDeepNested {
+    outer: TestOuterStruct,
+    w: i64,
+}
+
+test "nested struct operations" {
+    // Basic nested struct
+    var outer: TestOuterStruct
+    outer.inner.x = 10
+    outer.inner.y = 20
+    outer.z = 30
+    @assert(outer.inner.x == 10)
+    @assert(outer.inner.y == 20)
+    @assert(outer.z == 30)
+
+    // Nested struct literal
+    let outer2: TestOuterStruct = TestOuterStruct{
+        .inner = TestInnerStruct{ .x = 1, .y = 2 },
+        .z = 3
+    }
+    @assert(outer2.inner.x + outer2.inner.y + outer2.z == 6)
+
+    // Deep nested struct
+    var deep: TestDeepNested
+    deep.outer.inner.x = 5
+    deep.outer.inner.y = 6
+    deep.outer.z = 7
+    deep.w = 8
+    @assert(deep.outer.inner.x + deep.outer.inner.y + deep.outer.z + deep.w == 26)
+
+    // Copy inner struct
+    let inner_copy: TestInnerStruct = outer.inner
+    @assert(inner_copy.x == 10)
+    @assert(inner_copy.y == 20)
+}
+
+// ============================================================================
+// INLINE TESTS - Struct with Array Members (consolidated)
+// ============================================================================
+
+struct TestArrayStruct {
+    values: [5]i64,
+    count: i64,
+}
+
+test "struct with array member" {
+    var s: TestArrayStruct
+    s.count = 0
+
+    // Fill array
+    var i: i64 = 0
+    while i < 5 {
+        s.values[i] = i * 10
+        s.count = s.count + 1
+        i = i + 1
+    }
+    @assert(s.count == 5)
+    @assert(s.values[0] == 0)
+    @assert(s.values[2] == 20)
+    @assert(s.values[4] == 40)
+
+    // Sum values
+    var sum: i64 = 0
+    var j: i64 = 0
+    while j < s.count {
+        sum = sum + s.values[j]
+        j = j + 1
+    }
+    @assert(sum == 100)  // 0+10+20+30+40
+}
+
+// ============================================================================
+// INLINE TESTS - Pointer to Struct Operations (consolidated)
+// ============================================================================
+
+fn test_modify_inner(inner: *TestInnerStruct) void {
+    inner.x = 100
+    inner.y = 200
+}
+
+fn test_sum_inner(inner: *TestInnerStruct) i64 {
+    return inner.x + inner.y
+}
+
+test "pointer to struct operations" {
+    // Modify struct through pointer
+    var inner: TestInnerStruct = TestInnerStruct{ .x = 1, .y = 2 }
+    test_modify_inner(&inner)
+    @assert(inner.x == 100)
+    @assert(inner.y == 200)
+
+    // Read struct through pointer in function
+    var inner2: TestInnerStruct = TestInnerStruct{ .x = 30, .y = 12 }
+    @assert(test_sum_inner(&inner2) == 42)
+
+    // Pointer to nested struct member
+    var outer: TestOuterStruct
+    outer.inner.x = 5
+    outer.inner.y = 10
+    outer.z = 15
+    let p: *TestInnerStruct = &outer.inner
+    @assert(p.x == 5)
+    @assert(p.y == 10)
+
+    // Modify nested through pointer
+    p.x = 50
+    @assert(outer.inner.x == 50)
+}
+
+// ============================================================================
+// INLINE TESTS - Array of Structs (consolidated)
+// ============================================================================
+
+test "array of structs" {
+    var arr: [3]TestInnerStruct = undefined
+    arr[0] = TestInnerStruct{ .x = 1, .y = 2 }
+    arr[1] = TestInnerStruct{ .x = 3, .y = 4 }
+    arr[2] = TestInnerStruct{ .x = 5, .y = 6 }
+
+    // Access elements
+    @assert(arr[0].x == 1)
+    @assert(arr[1].y == 4)
+    @assert(arr[2].x + arr[2].y == 11)
+
+    // Sum all values
+    var sum: i64 = 0
+    var i: i64 = 0
+    while i < 3 {
+        sum = sum + arr[i].x + arr[i].y
+        i = i + 1
+    }
+    @assert(sum == 21)  // (1+2)+(3+4)+(5+6)
+
+    // Modify element
+    arr[1].x = 30
+    arr[1].y = 40
+    @assert(arr[1].x + arr[1].y == 70)
+}
+
+// ============================================================================
+// INLINE TESTS - Slice of Structs (consolidated)
+// ============================================================================
+
+test "slice of structs" {
+    var arr: [5]TestInnerStruct = undefined
+    var i: i64 = 0
+    while i < 5 {
+        arr[i] = TestInnerStruct{ .x = i, .y = i * 2 }
+        i = i + 1
+    }
+
+    // Create slice
+    let s: []TestInnerStruct = arr[1:4]
+    @assert(len(s) == 3)
+
+    // Access slice elements
+    @assert(s[0].x == 1)  // arr[1]
+    @assert(s[1].x == 2)  // arr[2]
+    @assert(s[2].x == 3)  // arr[3]
+
+    // Sum x values in slice
+    var sum: i64 = 0
+    for item in s {
+        sum = sum + item.x
+    }
+    @assert(sum == 6)  // 1+2+3
 }

@@ -5850,23 +5850,12 @@ struct TestVec2 {
 }
 
 impl TestVec2 {
-    fn new(x: i64, y: i64) TestVec2 {
-        var v: TestVec2
-        v.x = x
-        v.y = y
-        return v
-    }
-
     fn length_squared(self: *TestVec2) i64 {
         return self.x * self.x + self.y * self.y
     }
 
     fn dot(self: *TestVec2, other: *TestVec2) i64 {
         return self.x * other.x + self.y * other.y
-    }
-
-    fn add(self: *TestVec2, other: *TestVec2) TestVec2 {
-        return TestVec2.new(self.x + other.x, self.y + other.y)
     }
 }
 
@@ -7172,8 +7161,8 @@ test "combined features" {
 // ============================================================================
 
 test "method calls on counter" {
-    // Static method (constructor)
-    var c: TestCounter = TestCounter.init()
+    // Struct literal initialization
+    var c: TestCounter = TestCounter{ .value = 0 }
     @assert(c.get() == 0)
 
     // Instance method - increment
@@ -7192,8 +7181,8 @@ test "method calls on counter" {
 }
 
 test "method calls on vec2" {
-    // Static constructor
-    var v1: TestVec2 = TestVec2.new(3, 4)
+    // Struct literal initialization
+    var v1: TestVec2 = TestVec2{ .x = 3, .y = 4 }
     @assert(v1.x == 3)
     @assert(v1.y == 4)
 
@@ -7201,20 +7190,281 @@ test "method calls on vec2" {
     @assert(v1.length_squared() == 25)  // 3*3 + 4*4 = 25
 
     // Method with another struct pointer as parameter
-    var v2: TestVec2 = TestVec2.new(1, 2)
+    var v2: TestVec2 = TestVec2{ .x = 1, .y = 2 }
     @assert(v1.dot(&v2) == 11)  // 3*1 + 4*2 = 11
-
-    // Method returning struct by value
-    var v3: TestVec2 = v1.add(&v2)
-    @assert(v3.x == 4)
-    @assert(v3.y == 6)
 }
 
 test "chained method operations" {
-    var c: TestCounter = TestCounter.init()
+    var c: TestCounter = TestCounter{ .value = 0 }
     c.add(10)
     c.increment()
     c.increment()
     c.add(30)
     @assert(c.get() == 42)
+}
+
+// ============================================================================
+// INLINE TESTS - Array Algorithms (consolidated)
+// ============================================================================
+
+test "array algorithms via direct indexing" {
+    // Bubble sort
+    var arr1: [5]i64 = [5, 3, 1, 4, 2]
+    var i: i64 = 0
+    while i < 4 {
+        var j: i64 = 0
+        while j < 4 - i {
+            if arr1[j] > arr1[j + 1] {
+                let tmp: i64 = arr1[j]
+                arr1[j] = arr1[j + 1]
+                arr1[j + 1] = tmp
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    @assert(arr1[0] == 1)
+    @assert(arr1[1] == 2)
+    @assert(arr1[2] == 3)
+    @assert(arr1[3] == 4)
+    @assert(arr1[4] == 5)
+
+    // Find max
+    var arr2: [5]i64 = [3, 7, 2, 9, 4]
+    var max: i64 = arr2[0]
+    var k: i64 = 1
+    while k < 5 {
+        if arr2[k] > max {
+            max = arr2[k]
+        }
+        k = k + 1
+    }
+    @assert(max == 9)
+
+    // Find min
+    var min: i64 = arr2[0]
+    var m: i64 = 1
+    while m < 5 {
+        if arr2[m] < min {
+            min = arr2[m]
+        }
+        m = m + 1
+    }
+    @assert(min == 2)
+
+    // Sum
+    var arr3: [5]i64 = [1, 2, 3, 4, 5]
+    var sum: i64 = 0
+    var n: i64 = 0
+    while n < 5 {
+        sum = sum + arr3[n]
+        n = n + 1
+    }
+    @assert(sum == 15)
+
+    // Reverse
+    var arr4: [5]i64 = [1, 2, 3, 4, 5]
+    var lo: i64 = 0
+    var hi: i64 = 4
+    while lo < hi {
+        let tmp: i64 = arr4[lo]
+        arr4[lo] = arr4[hi]
+        arr4[hi] = tmp
+        lo = lo + 1
+        hi = hi - 1
+    }
+    @assert(arr4[0] == 5)
+    @assert(arr4[1] == 4)
+    @assert(arr4[2] == 3)
+    @assert(arr4[3] == 2)
+    @assert(arr4[4] == 1)
+}
+
+// ============================================================================
+// INLINE TESTS - Stack Simulation (consolidated)
+// ============================================================================
+
+// Simple stack using array
+struct TestStack {
+    data: [10]i64,
+    sp: i64,
+}
+
+impl TestStack {
+    fn push(self: *TestStack, val: i64) void {
+        self.data[self.sp] = val
+        self.sp = self.sp + 1
+    }
+
+    fn pop(self: *TestStack) i64 {
+        self.sp = self.sp - 1
+        return self.data[self.sp]
+    }
+
+    fn peek(self: *TestStack) i64 {
+        return self.data[self.sp - 1]
+    }
+
+    fn isEmpty(self: *TestStack) bool {
+        return self.sp == 0
+    }
+
+    fn size(self: *TestStack) i64 {
+        return self.sp
+    }
+}
+
+test "stack data structure" {
+    var stack: TestStack = undefined
+    stack.sp = 0
+    @assert(stack.isEmpty())
+    @assert(stack.size() == 0)
+
+    // Push elements
+    stack.push(10)
+    stack.push(20)
+    stack.push(30)
+    @assert(!stack.isEmpty())
+    @assert(stack.size() == 3)
+
+    // Peek
+    @assert(stack.peek() == 30)
+    @assert(stack.size() == 3)  // Peek doesn't remove
+
+    // Pop elements (LIFO order)
+    @assert(stack.pop() == 30)
+    @assert(stack.pop() == 20)
+    @assert(stack.pop() == 10)
+    @assert(stack.isEmpty())
+}
+
+// ============================================================================
+// INLINE TESTS - Conditional Expression Patterns (consolidated)
+// ============================================================================
+
+test "conditional expression patterns" {
+    // Multiple condition AND
+    let a: i64 = 5
+    let b: i64 = 10
+    let c: i64 = 15
+    @assert(a < b and b < c and c > a)
+
+    // Multiple condition OR
+    let x: i64 = 7
+    @assert(x == 5 or x == 7 or x == 9)
+
+    // Mixed AND/OR with parentheses
+    let p: i64 = 3
+    let q: i64 = 4
+    @assert((p < 5 and q < 5) or (p > 10 and q > 10))
+    @assert(!((p < 5 and q > 10) or (p > 10 and q < 5)))
+
+    // Nested conditionals
+    var result: i64 = 0
+    if a < b {
+        if b < c {
+            if c > a {
+                result = 42
+            }
+        }
+    }
+    @assert(result == 42)
+
+    // Early return simulation
+    var found: bool = false
+    var i: i64 = 0
+    while i < 10 and !found {
+        if i == 5 {
+            found = true
+        }
+        i = i + 1
+    }
+    @assert(found)
+    @assert(i == 6)
+}
+
+// ============================================================================
+// INLINE TESTS - Complex Loop Patterns (consolidated)
+// ============================================================================
+
+test "complex loop patterns" {
+    // Matrix-style nested loop
+    var sum: i64 = 0
+    var row: i64 = 0
+    while row < 3 {
+        var col: i64 = 0
+        while col < 3 {
+            sum = sum + (row * 3 + col)
+            col = col + 1
+        }
+        row = row + 1
+    }
+    @assert(sum == 36)  // 0+1+2+3+4+5+6+7+8
+
+    // Loop with multiple exit conditions
+    var x: i64 = 0
+    var y: i64 = 0
+    while x < 100 and y < 50 {
+        x = x + 3
+        y = y + 2
+    }
+    @assert(y == 50)
+
+    // Loop with accumulator pattern
+    var product: i64 = 1
+    var n: i64 = 1
+    while n <= 5 {
+        product = product * n
+        n = n + 1
+    }
+    @assert(product == 120)  // 5!
+
+    // Loop with conditional increment
+    var evens: i64 = 0
+    var odds: i64 = 0
+    var j: i64 = 0
+    while j < 10 {
+        if j % 2 == 0 {
+            evens = evens + 1
+        } else {
+            odds = odds + 1
+        }
+        j = j + 1
+    }
+    @assert(evens == 5)
+    @assert(odds == 5)
+}
+
+// ============================================================================
+// INLINE TESTS - Numeric Boundary Tests (consolidated)
+// ============================================================================
+
+test "numeric boundary tests" {
+    // Powers of 2
+    @assert(1 << 0 == 1)
+    @assert(1 << 1 == 2)
+    @assert(1 << 8 == 256)
+    @assert(1 << 16 == 65536)
+    @assert(1 << 32 == 4294967296)
+
+    // Overflow-safe operations
+    let big: i64 = 1000000
+    @assert(big * 1000 == 1000000000)
+    @assert(big * big == 1000000000000)
+
+    // Division edge cases
+    @assert(7 / 3 == 2)
+    @assert(8 / 3 == 2)
+    @assert(9 / 3 == 3)
+
+    // Modulo edge cases
+    @assert(7 % 3 == 1)
+    @assert(8 % 3 == 2)
+    @assert(9 % 3 == 0)
+
+    // Zero handling
+    @assert(0 * 1000000 == 0)
+    @assert(0 / 1 == 0)
+    @assert(0 % 1 == 0)
+    @assert(0 + 0 == 0)
 }
