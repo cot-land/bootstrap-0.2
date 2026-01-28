@@ -533,106 +533,167 @@ pub const AMD64CodeGen = struct {
                     try self.emitBytes(lea.data[0..lea.len]);
                 }
             },
+            .sub_ptr => {
+                // Rematerialize pointer subtraction: hint_reg = base - offset
+                // CRITICAL: Don't trust getRegForValue - always rematerialize both operands.
+                // Use R8 for base, R9 for offset to avoid conflicts.
+                if (value.args.len >= 2) {
+                    const base = value.args[0];
+                    const off_val = value.args[1];
+
+                    // Rematerialize base FIRST into R8
+                    var base_reg: Reg = undefined;
+                    if (base.op == .local_addr) {
+                        const local_idx: usize = @intCast(base.aux_int);
+                        if (local_idx < self.func.local_offsets.len and local_idx < self.func.local_sizes.len) {
+                            const local_offset = self.func.local_offsets[local_idx];
+                            const local_size: i32 = @intCast(self.func.local_sizes[local_idx]);
+                            const disp: i32 = -(local_offset + local_size);
+                            const lea = asm_mod.encodeLeaDisp32(.r8, .rbp, disp);
+                            try self.emitBytes(lea.data[0..lea.len]);
+                            base_reg = .r8;
+                        } else {
+                            const lea = asm_mod.encodeLeaDisp32(.r8, .rbp, 0);
+                            try self.emitBytes(lea.data[0..lea.len]);
+                            base_reg = .r8;
+                        }
+                    } else {
+                        try self.rematerializeValue(base, .r8);
+                        base_reg = .r8;
+                    }
+
+                    // Rematerialize offset AFTER base into R9
+                    try self.rematerializeValue(off_val, .r9);
+                    const off_reg = Reg.r9;
+
+                    // SUB: hint_reg = base - offset
+                    // First move base to hint_reg, then subtract offset
+                    if (hint_reg != base_reg) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, base_reg));
+                    }
+                    try self.emit(3, asm_mod.encodeSubRegReg(hint_reg, off_reg));
+                }
+            },
             .mul => {
                 // Rematerialize multiplication
-                // CRITICAL: Don't use getRegForValue - always rematerialize operands.
-                // When called from add_ptr, registers may have been clobbered by loading
-                // the base pointer. Using stale register assignments causes wrong values.
+                // CRITICAL: Must use callee-saved registers (r14/r15) with push/pop.
+                // ANY caller-saved register can be in use by the main codegen.
+                //
+                // Strategy depends on hint_reg:
+                // - If hint_reg is NOT r14/r15: move result to hint_reg before restore
+                // - If hint_reg IS r14: leave result in r14, only restore r15
+                // - If hint_reg IS r15: use stack to transfer result
                 if (value.args.len >= 2) {
                     const op1 = value.args[0];
                     const op2 = value.args[1];
 
-                    // Use r10/r11 as scratch, but avoid conflicts with hint_reg
-                    var op1_scratch: Reg = .r10;
-                    var op2_scratch: Reg = .r11;
-                    if (hint_reg == .r10) {
-                        op1_scratch = .r11;
-                        op2_scratch = .rcx;
-                    } else if (hint_reg == .r11) {
-                        op1_scratch = .r10;
-                        op2_scratch = .rcx;
+                    // Save r14 and r15 (callee-saved)
+                    const push_r14 = asm_mod.encodePush(.r14);
+                    try self.emitBytes(push_r14.data[0..push_r14.len]);
+                    const push_r15 = asm_mod.encodePush(.r15);
+                    try self.emitBytes(push_r15.data[0..push_r15.len]);
+
+                    // Load op1 into r14, op2 into r15
+                    try self.rematerializeValue(op1, .r14);
+                    try self.rematerializeValue(op2, .r15);
+
+                    // r14 = r14 * r15 (result in r14)
+                    try self.emit(4, asm_mod.encodeImulRegReg(.r14, .r15));
+
+                    if (hint_reg == .r14) {
+                        // Result already in r14, restore r15, skip old_r14
+                        const pop_r15 = asm_mod.encodePop(.r15);
+                        try self.emitBytes(pop_r15.data[0..pop_r15.len]);
+                        // Skip saved old_r14 without clobbering any register
+                        // ADD RSP, 8 = 48 83 C4 08
+                        try self.emitBytes(&[_]u8{ 0x48, 0x83, 0xC4, 0x08 });
+                    } else if (hint_reg == .r15) {
+                        // Need result in r15. r14 has result, stack has [old_r14] [old_r15]
+                        // mov r15, r14 (move result)
+                        try self.emit(3, asm_mod.encodeMovRegReg(.r15, .r14));
+                        // pop r14 (r14 = old_r15, we'll overwrite it next)
+                        const pop_temp = asm_mod.encodePop(.r14);
+                        try self.emitBytes(pop_temp.data[0..pop_temp.len]);
+                        // pop r14 (r14 = old_r14, restored)
+                        const pop_r14 = asm_mod.encodePop(.r14);
+                        try self.emitBytes(pop_r14.data[0..pop_r14.len]);
+                    } else {
+                        // hint_reg is not r14 or r15, safe to move before restore
+                        try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, .r14));
+                        // Restore r15 and r14
+                        const pop_r15 = asm_mod.encodePop(.r15);
+                        try self.emitBytes(pop_r15.data[0..pop_r15.len]);
+                        const pop_r14 = asm_mod.encodePop(.r14);
+                        try self.emitBytes(pop_r14.data[0..pop_r14.len]);
                     }
-
-                    // Always rematerialize both operands - don't trust getRegForValue
-                    try self.rematerializeValue(op1, op1_scratch);
-                    const op1_reg = op1_scratch;
-
-                    try self.rematerializeValue(op2, op2_scratch);
-                    const op2_reg = op2_scratch;
-
-                    // MOV hint_reg, op1
-                    if (hint_reg != op1_reg) {
-                        try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, op1_reg));
-                    }
-                    // IMUL hint_reg, op2
-                    try self.emit(4, asm_mod.encodeImulRegReg(hint_reg, op2_reg));
                 }
             },
             .add => {
-                // Rematerialize addition - ARM64 style with fixed scratch registers
+                // Rematerialize addition - same strategy as mul
                 if (value.args.len >= 2) {
                     const op1 = value.args[0];
                     const op2 = value.args[1];
 
-                    // Choose scratch registers that don't conflict with each other or hint_reg
-                    // We need 2 distinct scratch registers, neither equal to hint_reg
-                    var op1_scratch: Reg = .r10;
-                    var op2_scratch: Reg = .r11;
-                    if (hint_reg == .r10) {
-                        op1_scratch = .r11;
-                        op2_scratch = .rax;
-                    } else if (hint_reg == .r11) {
-                        op1_scratch = .r10;
-                        op2_scratch = .rax;
+                    const push_r14 = asm_mod.encodePush(.r14);
+                    try self.emitBytes(push_r14.data[0..push_r14.len]);
+                    const push_r15 = asm_mod.encodePush(.r15);
+                    try self.emitBytes(push_r15.data[0..push_r15.len]);
+
+                    try self.rematerializeValue(op1, .r14);
+                    try self.rematerializeValue(op2, .r15);
+                    try self.emit(3, asm_mod.encodeAddRegReg(.r14, .r15));
+
+                    if (hint_reg == .r14) {
+                        const pop_r15 = asm_mod.encodePop(.r15);
+                        try self.emitBytes(pop_r15.data[0..pop_r15.len]);
+                        try self.emitBytes(&[_]u8{ 0x48, 0x83, 0xC4, 0x08 }); // add rsp, 8
+                    } else if (hint_reg == .r15) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(.r15, .r14));
+                        const pop_temp = asm_mod.encodePop(.r14);
+                        try self.emitBytes(pop_temp.data[0..pop_temp.len]);
+                        const pop_r14 = asm_mod.encodePop(.r14);
+                        try self.emitBytes(pop_r14.data[0..pop_r14.len]);
+                    } else {
+                        try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, .r14));
+                        const pop_r15 = asm_mod.encodePop(.r15);
+                        try self.emitBytes(pop_r15.data[0..pop_r15.len]);
+                        const pop_r14 = asm_mod.encodePop(.r14);
+                        try self.emitBytes(pop_r14.data[0..pop_r14.len]);
                     }
-
-                    const op1_reg = self.getRegForValue(op1) orelse blk: {
-                        try self.rematerializeValue(op1, op1_scratch);
-                        break :blk op1_scratch;
-                    };
-
-                    const op2_reg = self.getRegForValue(op2) orelse blk: {
-                        try self.rematerializeValue(op2, op2_scratch);
-                        break :blk op2_scratch;
-                    };
-
-                    if (hint_reg != op1_reg) {
-                        try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, op1_reg));
-                    }
-                    try self.emit(3, asm_mod.encodeAddRegReg(hint_reg, op2_reg));
                 }
             },
             .sub => {
-                // Rematerialize subtraction - ARM64 style
-                // For SUB (non-commutative), order matters: result = op1 - op2
+                // Rematerialize subtraction - same strategy as mul
                 if (value.args.len >= 2) {
                     const op1 = value.args[0];
                     const op2 = value.args[1];
 
-                    var op1_scratch: Reg = .r10;
-                    var op2_scratch: Reg = .r11;
-                    if (hint_reg == .r10) {
-                        op1_scratch = .r11;
-                        op2_scratch = .rax;
-                    } else if (hint_reg == .r11) {
-                        op1_scratch = .r10;
-                        op2_scratch = .rax;
+                    const push_r14 = asm_mod.encodePush(.r14);
+                    try self.emitBytes(push_r14.data[0..push_r14.len]);
+                    const push_r15 = asm_mod.encodePush(.r15);
+                    try self.emitBytes(push_r15.data[0..push_r15.len]);
+
+                    try self.rematerializeValue(op1, .r14);
+                    try self.rematerializeValue(op2, .r15);
+                    try self.emit(3, asm_mod.encodeSubRegReg(.r14, .r15));
+
+                    if (hint_reg == .r14) {
+                        const pop_r15 = asm_mod.encodePop(.r15);
+                        try self.emitBytes(pop_r15.data[0..pop_r15.len]);
+                        try self.emitBytes(&[_]u8{ 0x48, 0x83, 0xC4, 0x08 }); // add rsp, 8
+                    } else if (hint_reg == .r15) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(.r15, .r14));
+                        const pop_temp = asm_mod.encodePop(.r14);
+                        try self.emitBytes(pop_temp.data[0..pop_temp.len]);
+                        const pop_r14 = asm_mod.encodePop(.r14);
+                        try self.emitBytes(pop_r14.data[0..pop_r14.len]);
+                    } else {
+                        try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, .r14));
+                        const pop_r15 = asm_mod.encodePop(.r15);
+                        try self.emitBytes(pop_r15.data[0..pop_r15.len]);
+                        const pop_r14 = asm_mod.encodePop(.r14);
+                        try self.emitBytes(pop_r14.data[0..pop_r14.len]);
                     }
-
-                    const op1_reg = self.getRegForValue(op1) orelse blk: {
-                        try self.rematerializeValue(op1, op1_scratch);
-                        break :blk op1_scratch;
-                    };
-
-                    const op2_reg = self.getRegForValue(op2) orelse blk: {
-                        try self.rematerializeValue(op2, op2_scratch);
-                        break :blk op2_scratch;
-                    };
-
-                    if (hint_reg != op1_reg) {
-                        try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, op1_reg));
-                    }
-                    try self.emit(3, asm_mod.encodeSubRegReg(hint_reg, op2_reg));
                 }
             },
             .copy => {
@@ -677,18 +738,14 @@ pub const AMD64CodeGen = struct {
             },
             .eq, .ne, .lt, .le, .gt, .ge => {
                 // Comparison operations need to be rematerialized by re-doing the comparison
-                // This happens when regalloc hasn't assigned a persistent register to the result
+                // CRITICAL: Don't use getRegForValue - always rematerialize operands.
                 if (value.args.len >= 2) {
-                    // Get operands - be careful not to clobber each other
-                    const op2_reg = self.getRegForValue(value.args[1]) orelse blk: {
-                        try self.rematerializeValue(value.args[1], .rcx);
-                        break :blk Reg.rcx;
-                    };
-                    const op1_reg = self.getRegForValue(value.args[0]) orelse blk: {
-                        const scratch: Reg = if (op2_reg == .rax) .rdx else .rax;
-                        try self.rematerializeValue(value.args[0], scratch);
-                        break :blk scratch;
-                    };
+                    // Always rematerialize both operands into fixed scratch registers
+                    try self.rematerializeValue(value.args[1], .rcx);
+                    const op2_reg = Reg.rcx;
+
+                    try self.rematerializeValue(value.args[0], .r10);
+                    const op1_reg = Reg.r10;
 
                     // CMP op1, op2
                     try self.emit(3, asm_mod.encodeCmpRegReg(op1_reg, op2_reg));
@@ -710,14 +767,12 @@ pub const AMD64CodeGen = struct {
             },
             .neg => {
                 // Rematerialize negation
+                // CRITICAL: Don't use getRegForValue - always rematerialize operand.
                 if (value.args.len >= 1) {
-                    const op_reg = self.getRegForValue(value.args[0]) orelse blk: {
-                        const scratch: Reg = if (hint_reg == .rax) .rcx else .rax;
-                        try self.rematerializeValue(value.args[0], scratch);
-                        break :blk scratch;
-                    };
-                    if (hint_reg != op_reg) {
-                        try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, op_reg));
+                    const scratch: Reg = if (hint_reg == .r10) .r11 else .r10;
+                    try self.rematerializeValue(value.args[0], scratch);
+                    if (hint_reg != scratch) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, scratch));
                     }
                     try self.emit(3, asm_mod.encodeNegReg(hint_reg));
                     debug.log(.codegen, "      rematerialize neg to {s}", .{hint_reg.name()});
@@ -725,14 +780,12 @@ pub const AMD64CodeGen = struct {
             },
             .not => {
                 // Rematerialize NOT - distinguish between boolean and integer
+                // CRITICAL: Don't use getRegForValue - always rematerialize operand.
                 if (value.args.len >= 1) {
-                    const op_reg = self.getRegForValue(value.args[0]) orelse blk: {
-                        const scratch: Reg = if (hint_reg == .rax) .rcx else .rax;
-                        try self.rematerializeValue(value.args[0], scratch);
-                        break :blk scratch;
-                    };
-                    if (hint_reg != op_reg) {
-                        try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, op_reg));
+                    const scratch: Reg = if (hint_reg == .r10) .r11 else .r10;
+                    try self.rematerializeValue(value.args[0], scratch);
+                    if (hint_reg != scratch) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, scratch));
                     }
                     // Check if this is a boolean (1-byte type)
                     const type_size = self.getTypeSize(value.type_idx);
@@ -2026,30 +2079,23 @@ pub const AMD64CodeGen = struct {
             .mul => {
                 const args = value.args;
                 if (args.len >= 2) {
-                    const op1_reg = self.getRegForValue(args[0]) orelse blk: {
-                        try self.ensureInReg(args[0], .rax);
-                        break :blk Reg.rax;
-                    };
-                    // CRITICAL: op2 must not clobber op1's register
-                    const op2_scratch: Reg = if (op1_reg == .rcx) .rdx else .rcx;
-                    const op2_reg = self.getRegForValue(args[1]) orelse blk: {
-                        try self.ensureInReg(args[1], op2_scratch);
-                        break :blk op2_scratch;
-                    };
                     const dest_reg = self.getDestRegForValue(value);
 
-                    // Handle all cases for MUL (commutative operation)
-                    if (dest_reg == op1_reg) {
-                        // dest already has op1, just mul by op2
-                        try self.emit(4, asm_mod.encodeImulRegReg(dest_reg, op2_reg));
-                    } else if (dest_reg == op2_reg) {
-                        // dest has op2, and MUL is commutative, so mul by op1
-                        try self.emit(4, asm_mod.encodeImulRegReg(dest_reg, op1_reg));
-                    } else {
-                        // dest is different from both operands
-                        try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, op1_reg));
-                        try self.emit(4, asm_mod.encodeImulRegReg(dest_reg, op2_reg));
-                    }
+                    // CRITICAL: Always load into dest_reg first, then use a safe scratch for op2.
+                    // The register allocator may have assigned common registers (rcx, rdx) to
+                    // values that are still live. Using those as scratch would clobber them.
+                    //
+                    // Strategy: Load op1 into dest_reg, load op2 into a scratch that:
+                    // 1. Is not dest_reg
+                    // 2. Is r10 or r11 (rarely used by register allocator for values)
+                    try self.forceInReg(args[0], dest_reg);
+
+                    // Pick a safe scratch for op2 that won't conflict
+                    const op2_scratch: Reg = if (dest_reg == .r10) .r11 else .r10;
+                    try self.forceInReg(args[1], op2_scratch);
+
+                    // IMUL dest_reg, op2_scratch
+                    try self.emit(4, asm_mod.encodeImulRegReg(dest_reg, op2_scratch));
                 }
             },
 
@@ -2195,17 +2241,36 @@ pub const AMD64CodeGen = struct {
             .eq, .ne, .lt, .le, .gt, .ge => {
                 const args = value.args;
                 if (args.len >= 2) {
-                    // CRITICAL: Get op2 FIRST to avoid clobbering op1
-                    // ensureInReg for op2 might use RAX as scratch, which would clobber op1
-                    const op2_reg = self.getRegForValue(args[1]) orelse blk: {
-                        try self.ensureInReg(args[1], .rcx);
-                        break :blk Reg.rcx;
-                    };
-                    // Now get op1 - since op2 is in RCX, we're safe to use RAX
-                    const op1_reg = self.getRegForValue(args[0]) orelse blk: {
-                        try self.ensureInReg(args[0], .rax);
-                        break :blk Reg.rax;
-                    };
+                    // CRITICAL: Use callee-saved registers (r12, r13) for comparison operands.
+                    //
+                    // We cannot use caller-saved registers (rax, rcx, rdx, rdi, rsi, r8-r11)
+                    // because:
+                    // 1. The register allocator may have assigned these to live values
+                    //    (e.g., previous cond_select results)
+                    // 2. Rematerialization uses r8-r11 as scratch registers
+                    // 3. forceInReg would clobber these live values
+                    //
+                    // Callee-saved registers (r12, r13) are safe because:
+                    // - The register allocator doesn't use them for intermediate results
+                    // - They're preserved across function calls
+                    // - We save/restore them in the prologue/epilogue if needed
+                    //
+                    // We must save r12/r13 before using them and restore after,
+                    // since they're callee-saved. Push/pop is the safest approach.
+
+                    // Save r12 and r13
+                    const push_r12 = asm_mod.encodePush(.r12);
+                    try self.emitBytes(push_r12.data[0..push_r12.len]);
+                    const push_r13 = asm_mod.encodePush(.r13);
+                    try self.emitBytes(push_r13.data[0..push_r13.len]);
+
+                    // Load operands into callee-saved registers
+                    try self.forceInReg(args[1], .r13);
+                    const op2_reg = Reg.r13;
+
+                    try self.forceInReg(args[0], .r12);
+                    const op1_reg = Reg.r12;
+
                     const dest_reg = self.getDestRegForValue(value);
 
                     // CMP op1, op2
@@ -2226,6 +2291,12 @@ pub const AMD64CodeGen = struct {
                     // Note: XOR before CMP would clobber flags, so we use MOVZX after SETcc
                     try self.emit(4, asm_mod.encodeSetcc(cond, dest_reg));
                     try self.emit(4, asm_mod.encodeMovzxRegReg8(dest_reg, dest_reg));
+
+                    // Restore r13 and r12 (reverse order)
+                    const pop_r13 = asm_mod.encodePop(.r13);
+                    try self.emitBytes(pop_r13.data[0..pop_r13.len]);
+                    const pop_r12 = asm_mod.encodePop(.r12);
+                    try self.emitBytes(pop_r12.data[0..pop_r12.len]);
                 }
             },
 
