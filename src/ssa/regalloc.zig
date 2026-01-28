@@ -1082,6 +1082,10 @@ pub const RegAllocState = struct {
         for (src_regs) |er| {
             contents[er.reg] = er.v;
         }
+        debug.log(.regalloc, "  contents from pred b{d}: {d} regs", .{ pred.id, src_regs.len });
+        for (src_regs) |er| {
+            debug.log(.regalloc, "    x{d} = v{d}", .{ er.reg, er.v.id });
+        }
 
         // Collect destination requirements (what each phi needs)
         const Dest = struct {
@@ -1096,11 +1100,40 @@ pub const RegAllocState = struct {
         for (succ.values.items) |v| {
             if (v.op != .phi) break;
 
-            const phi_reg = self.values[v.id].firstReg() orelse continue;
+            // Get phi's destination register
+            // If phi was spilled, its regs mask is 0, so try to get the register
+            // from the first arg (since phi reuses arg[0]'s register)
+            const phi_reg = self.values[v.id].firstReg() orelse blk: {
+                // Phi was spilled - get register from first arg in first predecessor
+                if (v.args.len > 0 and succ.preds.len > 0) {
+                    const first_pred_block = succ.preds[0].b;
+                    if (self.end_regs.get(first_pred_block.id)) |first_pred_regs| {
+                        const first_arg = v.args[0];
+                        for (first_pred_regs) |er| {
+                            if (er.v.id == first_arg.id) {
+                                break :blk er.reg;
+                            }
+                        }
+                    }
+                }
+                continue;
+            };
             if (pred_idx >= v.args.len) continue;
 
             const arg = v.args[pred_idx];
-            const arg_reg = self.values[arg.id].firstReg();
+            // Find which register (if any) contains arg at end of predecessor
+            // This is the source of truth - NOT the value's home or regalloc state,
+            // because the register might have been reused after the value was "dead".
+            // Go reference: edgeState.setup() uses srcReg (from endRegs) to find sources.
+            var arg_reg: ?RegNum = null;
+            for (contents, 0..) |maybe_val, reg_idx| {
+                if (maybe_val) |val| {
+                    if (val.id == arg.id) {
+                        arg_reg = @intCast(reg_idx);
+                        break;
+                    }
+                }
+            }
 
             // Only need move if src != dst
             if (arg_reg != phi_reg) {
@@ -1149,9 +1182,17 @@ pub const RegAllocState = struct {
                     // Safe to emit this move
                     if (d.src_reg) |src| {
                         try self.emitCopy(pred, d.value, src, d.dst_reg);
+                    } else {
+                        // Source has no register - need to rematerialize
+                        // This happens for const_bool, const_int, etc. that were never allocated
+                        // We emit a copy of the value that will be rematerialized by codegen
+                        debug.log(.regalloc, "  about to remat: v{d} ({s}) -> x{d}", .{ d.value.id, @tagName(d.value.op), d.dst_reg });
+                        try self.emitRematerialize(pred, d.value, d.dst_reg);
                     }
                     d.satisfied = true;
                     progress = true;
+                } else {
+                    debug.log(.regalloc, "  BLOCKED: v{d} -> x{d}", .{ d.value.id, d.dst_reg });
                 }
             }
 
@@ -1160,14 +1201,14 @@ pub const RegAllocState = struct {
                 // Find first unsatisfied destination
                 for (dests.items) |*d| {
                     if (!d.satisfied) {
-                        // Break cycle: copy src to temp, then temp to dst
-                        // Find temp register not used by any destination
-                        const temp_reg = self.findTempReg(used_regs) orelse {
-                            debug.log(.regalloc, "  ERROR: no temp register for cycle break", .{});
-                            return error.NoTempRegister;
-                        };
-
                         if (d.src_reg) |src| {
+                            // Break cycle: copy src to temp, then temp to dst
+                            // Find temp register not used by any destination
+                            const temp_reg = self.findTempReg(used_regs) orelse {
+                                debug.log(.regalloc, "  ERROR: no temp register for cycle break", .{});
+                                return error.NoTempRegister;
+                            };
+
                             debug.log(.regalloc, "  breaking cycle: x{d} -> x{d} -> x{d}", .{ src, temp_reg, d.dst_reg });
 
                             // Copy src to temp
@@ -1182,6 +1223,11 @@ pub const RegAllocState = struct {
                             contents[temp_reg] = d.value;
                             // Update this dest to read from temp
                             d.src_reg = temp_reg;
+                        } else {
+                            // No source register - this is a constant that needs rematerialization
+                            // No cycle here, just emit the rematerialization directly
+                            try self.emitRematerialize(pred, d.value, d.dst_reg);
+                            d.satisfied = true;
                         }
 
                         progress = true;
@@ -1210,6 +1256,38 @@ pub const RegAllocState = struct {
         try self.f.setHome(copy, .{ .register = @intCast(dst_reg) });
         try block.values.append(self.allocator, copy);
         debug.log(.regalloc, "  emit copy v{d} -> v{d} (x{d} -> x{d})", .{ value.id, copy.id, src_reg, dst_reg });
+    }
+
+    /// Emit a rematerialization for a value that has no register assigned.
+    /// This is used for phi arguments that are constants (const_bool, const_int, etc.)
+    /// which may have been evicted or never allocated to a register.
+    fn emitRematerialize(self: *Self, block: *Block, value: *Value, dst_reg: RegNum) !void {
+        // For rematerializeable values, we emit the value itself with the destination register
+        // The codegen will materialize the constant directly into the register
+        switch (value.op) {
+            .const_bool, .const_int, .const_64, .const_nil => {
+                // Create a copy of the constant value and assign it to dst_reg
+                const remat = try self.f.newValue(value.op, value.type_idx, block, value.pos);
+                remat.aux_int = value.aux_int;
+                remat.aux = value.aux;
+                try self.ensureValState(remat);
+                self.values[remat.id].regs = types.regMaskSet(0, dst_reg);
+                try self.f.setHome(remat, .{ .register = @intCast(dst_reg) });
+                try block.values.append(self.allocator, remat);
+                debug.log(.regalloc, "  emit remat v{d} -> v{d} ({s} -> x{d})", .{ value.id, remat.id, @tagName(value.op), dst_reg });
+            },
+            else => {
+                // For non-rematerializeable values, this shouldn't happen
+                // Fall back to creating a copy that references the original (will need a load)
+                const copy = try self.f.newValue(.copy, value.type_idx, block, value.pos);
+                copy.addArg(value);
+                try self.ensureValState(copy);
+                self.values[copy.id].regs = types.regMaskSet(0, dst_reg);
+                try self.f.setHome(copy, .{ .register = @intCast(dst_reg) });
+                try block.values.append(self.allocator, copy);
+                debug.log(.regalloc, "  emit fallback copy v{d} -> v{d} (no src -> x{d})", .{ value.id, copy.id, dst_reg });
+            },
+        }
     }
 
     fn ensureValState(self: *Self, v: *Value) !void {
