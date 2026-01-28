@@ -475,12 +475,11 @@ pub const AMD64CodeGen = struct {
                             base_reg = hint_reg;
                         }
                     } else {
-                        base_reg = self.getRegForValue(base) orelse blk: {
-                            // Use different scratch register for base
-                            const scratch: Reg = if (hint_reg == .r11) .r10 else .r11;
-                            try self.rematerializeValue(base, scratch);
-                            break :blk scratch;
-                        };
+                        // ALWAYS rematerialize the base - never trust getRegForValue.
+                        // During call arg setup, registers can be clobbered by stack arg pushes.
+                        const scratch: Reg = if (hint_reg == .r11) .r10 else .r11;
+                        try self.rematerializeValue(base, scratch);
+                        base_reg = scratch;
                     }
 
                     // Now add the offset
@@ -745,6 +744,24 @@ pub const AMD64CodeGen = struct {
                         // Integer: bitwise NOT
                         try self.emit(3, asm_mod.encodeNotReg(hint_reg));
                         debug.log(.codegen, "      rematerialize not (int) to {s}", .{hint_reg.name()});
+                    }
+                }
+            },
+            .load_reg => {
+                // load_reg was loaded from a spill slot - always reload from the ORIGINAL spill slot.
+                // The value's args[0] contains the spilled value whose home is the stack location.
+                // We CANNOT trust the register home because it may have been clobbered.
+                if (value.args.len > 0) {
+                    const spill_value = value.args[0];
+                    if (spill_value.getHome()) |loc| {
+                        const byte_off = loc.stackOffset();
+                        // Match store_reg offset: -(byte_off + 8)
+                        const disp: i32 = -@as(i32, @intCast(byte_off + 8));
+                        const load = asm_mod.encodeLoadDisp32(hint_reg, .rbp, disp);
+                        try self.emitBytes(load.data[0..load.len]);
+                        debug.log(.codegen, "      reload load_reg from spill [RBP{d}] to {s}", .{ disp, hint_reg.name() });
+                    } else {
+                        debug.log(.codegen, "WARNING: load_reg source has no spill slot", .{});
                     }
                 }
             },
@@ -1019,7 +1036,11 @@ pub const AMD64CodeGen = struct {
                 } else {
                     // Single register arg
                     const dest = regs.AMD64.arg_regs[abi_reg_idx];
-                    const src = self.getRegForValue(arg);
+                    // CRITICAL FIX: When we have stack args, don't trust getRegForValue.
+                    // The stack arg pushes use RAX as scratch, which can clobber any value
+                    // that was in RAX. By setting src=null, we force rematerialization
+                    // via forceInReg, which correctly regenerates the value.
+                    const src = if (stack_cleanup > 0) null else self.getRegForValue(arg);
                     moves[num_moves] = .{
                         .src = src,
                         .dest = dest,
@@ -1128,7 +1149,9 @@ pub const AMD64CodeGen = struct {
                         debug.log(.codegen, "      arg move: {s} -> {s}", .{ src.name(), moves[mi].dest.name() });
                     } else {
                         // Rematerialize value directly to dest
-                        try self.ensureInReg(moves[mi].value, moves[mi].dest);
+                        // Use forceInReg (not ensureInReg) because the value might be in
+                        // a stale register that was clobbered by stack arg pushes.
+                        try self.forceInReg(moves[mi].value, moves[mi].dest);
                     }
                     moves[mi].done = true;
                     progress = true;
