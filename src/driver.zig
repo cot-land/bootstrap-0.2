@@ -239,9 +239,11 @@ pub const Driver = struct {
         var shared_builder = ir_mod.Builder.init(self.allocator, &type_reg);
         defer shared_builder.deinit();
 
-        // Collect test names across all files (for test runner generation)
+        // Collect test names and display names across all files (for test runner generation)
         var all_test_names = std.ArrayListUnmanaged([]const u8){};
         defer all_test_names.deinit(self.allocator);
+        var all_test_display_names = std.ArrayListUnmanaged([]const u8){};
+        defer all_test_display_names.deinit(self.allocator);
 
         for (parsed_files.items, 0..) |*pf, i| {
             debug.log(.lower, "Lowering: {s}", .{pf.path});
@@ -276,10 +278,13 @@ pub const Driver = struct {
                 return error.LowerError;
             }
 
-            // Collect test names from this file (if test mode)
+            // Collect test names and display names from this file (if test mode)
             if (self.test_mode) {
                 for (lowerer.getTestNames()) |test_name| {
                     try all_test_names.append(self.allocator, test_name);
+                }
+                for (lowerer.getTestDisplayNames()) |display_name| {
+                    try all_test_display_names.append(self.allocator, display_name);
                 }
             }
 
@@ -311,9 +316,12 @@ pub const Driver = struct {
                 shared_builder,
             );
 
-            // Add all collected test names
+            // Add all collected test names and display names
             for (all_test_names.items) |test_name| {
                 try runner_lowerer.addTestName(test_name);
+            }
+            for (all_test_display_names.items) |display_name| {
+                try runner_lowerer.addTestDisplayName(display_name);
             }
 
             // Generate test runner

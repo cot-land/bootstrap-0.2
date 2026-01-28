@@ -66,6 +66,10 @@ pub const Lowerer = struct {
 
     // Collected test names (for test runner generation)
     test_names: std.ArrayListUnmanaged([]const u8),
+    // Display names (the string inside test "name")
+    test_display_names: std.ArrayListUnmanaged([]const u8),
+    // Current test display name (for @assert failure messages in test mode)
+    current_test_name: ?[]const u8 = null,
 
     /// Error type for lowering operations
     pub const Error = error{OutOfMemory};
@@ -108,6 +112,7 @@ pub const Lowerer = struct {
             .defer_stack = .{},
             .const_values = std.StringHashMap(i64).init(allocator),
             .test_names = .{},
+            .test_display_names = .{},
         };
     }
 
@@ -121,11 +126,17 @@ pub const Lowerer = struct {
         try self.test_names.append(self.allocator, name);
     }
 
+    /// Add a test display name to the collection (for aggregating across files)
+    pub fn addTestDisplayName(self: *Lowerer, name: []const u8) !void {
+        try self.test_display_names.append(self.allocator, name);
+    }
+
     pub fn deinit(self: *Lowerer) void {
         self.loop_stack.deinit(self.allocator);
         self.defer_stack.deinit(self.allocator);
         self.const_values.deinit();
         self.test_names.deinit(self.allocator);
+        self.test_display_names.deinit(self.allocator);
         self.builder.deinit();
     }
 
@@ -135,6 +146,7 @@ pub const Lowerer = struct {
         self.defer_stack.deinit(self.allocator);
         self.const_values.deinit();
         self.test_names.deinit(self.allocator);
+        self.test_display_names.deinit(self.allocator);
         // Don't deinit builder - it's shared
     }
 
@@ -170,12 +182,30 @@ pub const Lowerer = struct {
         if (self.builder.func()) |fb| {
             self.current_func = fb;
 
+            // Create pointer type for extracting string ptr
+            const ptr_type = self.type_reg.makePointer(TypeRegistry.U8) catch TypeRegistry.VOID;
+
             // Call each test function in sequence
-            // If a test fails (via @assert -> exit(1)), execution stops there
-            for (self.test_names.items) |test_name| {
+            // Print test name before, "PASS" after
+            for (self.test_names.items, self.test_display_names.items) |test_name, display_name| {
+                // Create string constant for display name
+                const name_copy = try self.allocator.dupe(u8, display_name);
+                const str_idx = try fb.addStringLiteral(name_copy);
+                const str_slice = try fb.emitConstSlice(str_idx, span);
+                // Extract raw pointer and length from slice (like @print does)
+                const name_ptr = try fb.emitSlicePtr(str_slice, ptr_type, span);
+                const name_len = try fb.emitSliceLen(str_slice, span);
+
+                // Call __test_print_name(ptr, len)
+                var print_args = [_]ir.NodeIndex{ name_ptr, name_len };
+                _ = try fb.emitCall("__test_print_name", &print_args, false, TypeRegistry.VOID, span);
+
                 // Call the test function (no args, void return)
                 var no_args = [_]ir.NodeIndex{};
                 _ = try fb.emitCall(test_name, &no_args, false, TypeRegistry.VOID, span);
+
+                // Call __test_pass() after successful test
+                _ = try fb.emitCall("__test_pass", &no_args, false, TypeRegistry.VOID, span);
             }
 
             // Return 0 (all tests passed)
@@ -193,6 +223,11 @@ pub const Lowerer = struct {
     /// Get the list of test names (for external use, e.g., printing test output)
     pub fn getTestNames(self: *const Lowerer) []const []const u8 {
         return self.test_names.items;
+    }
+
+    /// Get the list of test display names (for test framework output)
+    pub fn getTestDisplayNames(self: *const Lowerer) []const []const u8 {
+        return self.test_display_names.items;
     }
 
     // ========================================================================
@@ -391,12 +426,16 @@ pub const Lowerer = struct {
 
         // Store for test runner generation
         try self.test_names.append(self.allocator, test_name);
+        // Store display name (the original string from test "name")
+        try self.test_display_names.append(self.allocator, test_decl.name);
 
         // Start building the test function
         self.builder.startFunc(test_name, TypeRegistry.VOID, TypeRegistry.VOID, test_decl.span);
 
         if (self.builder.func()) |fb| {
             self.current_func = fb;
+            // Track test name for @assert failure messages
+            self.current_test_name = test_decl.name;
 
             // Clear defer stack for new function scope
             self.defer_stack.clearRetainingCapacity();
@@ -413,6 +452,7 @@ pub const Lowerer = struct {
                 }
             }
 
+            self.current_test_name = null;
             self.current_func = null;
         }
 
@@ -2772,8 +2812,8 @@ pub const Lowerer = struct {
             debug.log(.lower, "@intToPtr({d}, expr) from_type={d} to_type={d}", .{ target_type, from_type, target_type });
             return try fb.emitConvert(operand, from_type, target_type, bc.span);
         } else if (std.mem.eql(u8, bc.name, "assert")) {
-            // @assert(condition) - if condition is false, exit(1)
-            // Generates: if (!condition) { exit(1); }
+            // @assert(condition) - if condition is false, exit(1) or call __test_fail
+            // Generates: if (!condition) { __test_fail(ptr, len); } or { exit(1); }
             const condition = try self.lowerExprNode(bc.args[0]);
             if (condition == ir.null_node) {
                 debug.log(.lower, "@assert: condition lowered to null_node", .{});
@@ -2787,13 +2827,26 @@ pub const Lowerer = struct {
             // Branch: if condition is true, continue; if false, fail
             _ = try fb.emitBranch(condition, continue_block, fail_block, bc.span);
 
-            // Fail block: call exit(1)
+            // Fail block: call __test_fail(ptr, len) if in test, else exit(1)
             fb.setBlock(fail_block);
-            const exit_code = try fb.emitConstInt(1, TypeRegistry.I64, bc.span);
-            var args = [_]ir.NodeIndex{exit_code};
-            _ = try fb.emitCall("exit", &args, false, TypeRegistry.VOID, bc.span);
-            // exit doesn't return, but we need to terminate the block for valid IR
-            // Use a jump that will never execute (exit never returns)
+            if (self.current_test_name) |test_name| {
+                // In test mode: call __test_fail with test name
+                const ptr_type = self.type_reg.makePointer(TypeRegistry.U8) catch TypeRegistry.VOID;
+                const name_copy = try self.allocator.dupe(u8, test_name);
+                const str_idx = try fb.addStringLiteral(name_copy);
+                const str_slice = try fb.emitConstSlice(str_idx, bc.span);
+                const name_ptr = try fb.emitSlicePtr(str_slice, ptr_type, bc.span);
+                const name_len = try fb.emitSliceLen(str_slice, bc.span);
+                var args = [_]ir.NodeIndex{ name_ptr, name_len };
+                _ = try fb.emitCall("__test_fail", &args, false, TypeRegistry.VOID, bc.span);
+            } else {
+                // Normal mode: call exit(1)
+                const exit_code = try fb.emitConstInt(1, TypeRegistry.I64, bc.span);
+                var args = [_]ir.NodeIndex{exit_code};
+                _ = try fb.emitCall("exit", &args, false, TypeRegistry.VOID, bc.span);
+            }
+            // exit/__test_fail don't return, but we need to terminate the block for valid IR
+            // Use a jump that will never execute (they never return)
             _ = try fb.emitJump(continue_block, bc.span);
 
             // Continue block is where we resume after successful assert

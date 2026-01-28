@@ -985,6 +985,31 @@ export fn __eprint_int(n: i64) void {
     printIntToFd(n, std.posix.STDERR_FILENO);
 }
 
+/// Print test name before running - for test framework
+export fn __test_print_name(ptr: [*]const u8, len: i64) void {
+    const msg = "test \"";
+    _ = std.posix.write(std.posix.STDERR_FILENO, msg) catch {};
+    _ = std.posix.write(std.posix.STDERR_FILENO, ptr[0..@intCast(len)]) catch {};
+    const suffix = "\"... ";
+    _ = std.posix.write(std.posix.STDERR_FILENO, suffix) catch {};
+}
+
+/// Print PASS after successful test
+export fn __test_pass() void {
+    const msg = "PASS\n";
+    _ = std.posix.write(std.posix.STDERR_FILENO, msg) catch {};
+}
+
+/// Print FAIL and exit - called when assertion fails
+export fn __test_fail(ptr: [*]const u8, len: i64) void {
+    const prefix = "FAIL\n  in test \"";
+    _ = std.posix.write(std.posix.STDERR_FILENO, prefix) catch {};
+    _ = std.posix.write(std.posix.STDERR_FILENO, ptr[0..@intCast(len)]) catch {};
+    const suffix = "\"\n";
+    _ = std.posix.write(std.posix.STDERR_FILENO, suffix) catch {};
+    std.process.exit(1);
+}
+
 /// Common implementation for printing integer to file descriptor
 fn printIntToFd(n: i64, fd: std.posix.fd_t) void {
     var buf: [20]u8 = undefined;
