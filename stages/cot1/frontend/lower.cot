@@ -5813,6 +5813,64 @@ fn test_array_sum(arr: [4]i64) i64 {
 }
 
 // ============================================================================
+// TEST HELPER - Method Call Testing
+// ============================================================================
+
+struct TestCounter {
+    value: i64,
+}
+
+impl TestCounter {
+    fn init() TestCounter {
+        var c: TestCounter
+        c.value = 0
+        return c
+    }
+
+    fn increment(self: *TestCounter) void {
+        self.value = self.value + 1
+    }
+
+    fn add(self: *TestCounter, n: i64) void {
+        self.value = self.value + n
+    }
+
+    fn get(self: *TestCounter) i64 {
+        return self.value
+    }
+
+    fn reset(self: *TestCounter) void {
+        self.value = 0
+    }
+}
+
+struct TestVec2 {
+    x: i64,
+    y: i64,
+}
+
+impl TestVec2 {
+    fn new(x: i64, y: i64) TestVec2 {
+        var v: TestVec2
+        v.x = x
+        v.y = y
+        return v
+    }
+
+    fn length_squared(self: *TestVec2) i64 {
+        return self.x * self.x + self.y * self.y
+    }
+
+    fn dot(self: *TestVec2, other: *TestVec2) i64 {
+        return self.x * other.x + self.y * other.y
+    }
+
+    fn add(self: *TestVec2, other: *TestVec2) TestVec2 {
+        return TestVec2.new(self.x + other.x, self.y + other.y)
+    }
+}
+
+// ============================================================================
 // INLINE TESTS - Arithmetic and Comparisons
 // ============================================================================
 
@@ -7107,4 +7165,56 @@ test "combined features" {
     @assert(test_binary_search(&arr[0], 5, 10) == 0)
     @assert(test_binary_search(&arr[0], 5, 50) == 4)
     @assert(test_binary_search(&arr[0], 5, 25) == -1)
+}
+
+// ============================================================================
+// INLINE TESTS - Method Calls (consolidated)
+// ============================================================================
+
+test "method calls on counter" {
+    // Static method (constructor)
+    var c: TestCounter = TestCounter.init()
+    @assert(c.get() == 0)
+
+    // Instance method - increment
+    c.increment()
+    c.increment()
+    c.increment()
+    @assert(c.get() == 3)
+
+    // Instance method with parameter
+    c.add(39)
+    @assert(c.get() == 42)
+
+    // Reset method
+    c.reset()
+    @assert(c.get() == 0)
+}
+
+test "method calls on vec2" {
+    // Static constructor
+    var v1: TestVec2 = TestVec2.new(3, 4)
+    @assert(v1.x == 3)
+    @assert(v1.y == 4)
+
+    // Method returning computed value
+    @assert(v1.length_squared() == 25)  // 3*3 + 4*4 = 25
+
+    // Method with another struct pointer as parameter
+    var v2: TestVec2 = TestVec2.new(1, 2)
+    @assert(v1.dot(&v2) == 11)  // 3*1 + 4*2 = 11
+
+    // Method returning struct by value
+    var v3: TestVec2 = v1.add(&v2)
+    @assert(v3.x == 4)
+    @assert(v3.y == 6)
+}
+
+test "chained method operations" {
+    var c: TestCounter = TestCounter.init()
+    c.add(10)
+    c.increment()
+    c.increment()
+    c.add(30)
+    @assert(c.get() == 42)
 }

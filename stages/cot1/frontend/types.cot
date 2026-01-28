@@ -1059,6 +1059,23 @@ struct TestBigArg {
     g: i64,
 }
 
+// BUG-003: Struct with enum field - tests correct enum sizing
+enum TestTokenKind { Ident, Number, String }
+struct TestTokenWithEnum {
+    kind: TestTokenKind,
+    x: i64,
+    y: i64,
+}
+
+// BUG-012: Pointer dereference to struct field
+struct TestNodeForDeref {
+    kind: i64,
+    value: i64,
+}
+
+// BUG-016: Const on right side of comparison
+const TEST_BUG016_CONST: i64 = 42
+
 // ============================================================================
 // TEST INFRASTRUCTURE - Helper Functions
 // ============================================================================
@@ -1091,6 +1108,34 @@ fn test_make_big_return(x: i64, y: i64, z: i64) TestBigReturn {
     r.b = y
     r.c = z
     return r
+}
+
+fn test_get_deref_value(p: *TestNodeForDeref) i64 {
+    return p.value
+}
+
+// ============================================================================
+// INLINE TESTS - Bug Regression Tests (consolidated)
+// ============================================================================
+
+test "bug regressions" {
+    // BUG-003: Struct with enum field - verifies correct enum sizing
+    // If enum size is wrong, subsequent fields get corrupted
+    var t: TestTokenWithEnum
+    t.kind = TestTokenKind.Ident
+    t.x = 10
+    t.y = 20
+    @assert(t.x + t.y == 30)
+
+    // BUG-012: Pointer dereference to struct field
+    var node: TestNodeForDeref
+    node.kind = 5
+    node.value = 42
+    @assert(test_get_deref_value(&node) == 42)
+
+    // BUG-016: Const on right side of comparison
+    let a: i64 = 42
+    @assert(a == TEST_BUG016_CONST)
 }
 
 // ============================================================================
