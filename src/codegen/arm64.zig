@@ -860,9 +860,15 @@ pub const ARM64CodeGen = struct {
         // Second pass: generate code, skipping dead values
         for (block.values.items) |value| {
             // Skip dead values (uses == 0) unless they have side effects
+            // BUG-071 FIX: Don't skip const_int values - regalloc creates rematerialized
+            // const_ints (with uses=0) that MUST be generated. These values have their
+            // register home cleared after creation, so we can't check regOrNull().
+            // Generating an extra MOV is cheap; skipping it causes register clobbering.
             if (value.uses == 0) {
                 const has_side_effects = switch (value.op) {
                     .store, .move, .static_call, .closure_call, .load_reg => true,
+                    // Don't skip const_int - may be a rematerialized value
+                    .const_int, .const_64, .const_bool, .const_nil => true,
                     else => false,
                 };
                 if (!has_side_effects) {
@@ -1134,14 +1140,15 @@ pub const ARM64CodeGen = struct {
             self.last_source_offset = source_offset;
         }
 
-        // BUG-021 FIX: Skip const values that were evicted (no home assignment).
-        // For const_int, const_bool, etc. that were evicted and later needed,
-        // the regalloc should have created rematerialized copies. Skip the original.
-        // NOTE: local_addr must NOT be skipped - it needs to be emitted to compute the address.
+        // BUG-071 FIX: Skip constants that have no register (were evicted).
+        // Rematerializeable values (const_int, const_64, const_bool) can be evicted
+        // because they can be regenerated on-demand. When they're needed by another
+        // instruction, ensureInReg will emit the constant loading code at that point.
+        // If we try to generate them here without a register, getDestRegForValue panics.
         switch (value.op) {
             .const_int, .const_64, .const_bool => {
                 if (value.regOrNull() == null) {
-                    debug.log(.codegen, "      (skipped - evicted constant)", .{});
+                    debug.log(.codegen, "      (skipped - evicted constant, will be rematerialized on demand)", .{});
                     return;
                 }
             },
@@ -1249,14 +1256,18 @@ pub const ARM64CodeGen = struct {
             .add => {
                 const args = value.args;
                 if (args.len >= 2) {
-                    // Get registers from regalloc (or fallback)
+                    // BUG-071 FIX: Avoid clobbering when regenerating evicted args
+                    const op2_assigned = self.getRegForValue(args[1]);
+
                     const op1_reg = self.getRegForValue(args[0]) orelse blk: {
-                        try self.ensureInReg(args[0], 0);
-                        break :blk @as(u5, 0);
+                        const scratch: u5 = if (op2_assigned == 0) 16 else 0;
+                        try self.ensureInReg(args[0], scratch);
+                        break :blk scratch;
                     };
                     const op2_reg = self.getRegForValue(args[1]) orelse blk: {
-                        try self.ensureInReg(args[1], 1);
-                        break :blk @as(u5, 1);
+                        const scratch: u5 = if (op1_reg == 1) 16 else 1;
+                        try self.ensureInReg(args[1], scratch);
+                        break :blk scratch;
                     };
                     const dest_reg = self.getDestRegForValue(value);
                     try self.emit(asm_mod.encodeADDReg(dest_reg, op1_reg, op2_reg));
@@ -1266,13 +1277,18 @@ pub const ARM64CodeGen = struct {
             .sub => {
                 const args = value.args;
                 if (args.len >= 2) {
+                    // BUG-071 FIX: Avoid clobbering when regenerating evicted args
+                    const op2_assigned = self.getRegForValue(args[1]);
+
                     const op1_reg = self.getRegForValue(args[0]) orelse blk: {
-                        try self.ensureInReg(args[0], 0);
-                        break :blk @as(u5, 0);
+                        const scratch: u5 = if (op2_assigned == 0) 16 else 0;
+                        try self.ensureInReg(args[0], scratch);
+                        break :blk scratch;
                     };
                     const op2_reg = self.getRegForValue(args[1]) orelse blk: {
-                        try self.ensureInReg(args[1], 1);
-                        break :blk @as(u5, 1);
+                        const scratch: u5 = if (op1_reg == 1) 16 else 1;
+                        try self.ensureInReg(args[1], scratch);
+                        break :blk scratch;
                     };
                     const dest_reg = self.getDestRegForValue(value);
                     try self.emit(asm_mod.encodeSUBReg(dest_reg, op1_reg, op2_reg));
@@ -1282,13 +1298,21 @@ pub const ARM64CodeGen = struct {
             .mul => {
                 const args = value.args;
                 if (args.len >= 2) {
+                    // BUG-071 FIX: When regenerating evicted args, avoid clobbering the other arg.
+                    // First, check what registers the args have (if any)
+                    const op2_assigned = self.getRegForValue(args[1]);
+
                     const op1_reg = self.getRegForValue(args[0]) orelse blk: {
-                        try self.ensureInReg(args[0], 0);
-                        break :blk @as(u5, 0);
+                        // Choose scratch reg that doesn't conflict with op2
+                        const scratch: u5 = if (op2_assigned == 0) 16 else 0;
+                        try self.ensureInReg(args[0], scratch);
+                        break :blk scratch;
                     };
                     const op2_reg = self.getRegForValue(args[1]) orelse blk: {
-                        try self.ensureInReg(args[1], 1);
-                        break :blk @as(u5, 1);
+                        // Choose scratch reg that doesn't conflict with op1
+                        const scratch: u5 = if (op1_reg == 1) 16 else 1;
+                        try self.ensureInReg(args[1], scratch);
+                        break :blk scratch;
                     };
                     const dest_reg = self.getDestRegForValue(value);
                     try self.emit(asm_mod.encodeMUL(dest_reg, op1_reg, op2_reg));
@@ -1298,13 +1322,18 @@ pub const ARM64CodeGen = struct {
             .div => {
                 const args = value.args;
                 if (args.len >= 2) {
+                    // BUG-071 FIX: Avoid clobbering when regenerating evicted args
+                    const op2_assigned = self.getRegForValue(args[1]);
+
                     const op1_reg = self.getRegForValue(args[0]) orelse blk: {
-                        try self.ensureInReg(args[0], 0);
-                        break :blk @as(u5, 0);
+                        const scratch: u5 = if (op2_assigned == 0) 16 else 0;
+                        try self.ensureInReg(args[0], scratch);
+                        break :blk scratch;
                     };
                     const op2_reg = self.getRegForValue(args[1]) orelse blk: {
-                        try self.ensureInReg(args[1], 1);
-                        break :blk @as(u5, 1);
+                        const scratch: u5 = if (op1_reg == 1) 16 else 1;
+                        try self.ensureInReg(args[1], scratch);
+                        break :blk scratch;
                     };
                     const dest_reg = self.getDestRegForValue(value);
                     try self.emit(asm_mod.encodeSDIV(dest_reg, op1_reg, op2_reg));

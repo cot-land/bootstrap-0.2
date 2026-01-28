@@ -496,6 +496,12 @@ pub const Lowerer = struct {
         } else if (node.asExpr()) |expr| {
             switch (expr) {
                 .block_expr => |block| {
+                    const fb = self.current_func orelse return false;
+
+                    // Track variable scope for shadowing (same as block_stmt)
+                    const scope_depth = fb.markScopeEntry();
+                    debug.log(.lower, "BLOCK_EXPR enter: scope_depth={d}, {d} stmts", .{ scope_depth, block.stmts.len });
+
                     var terminated = false;
                     for (block.stmts) |stmt_idx| {
                         const stmt_node = self.tree.getNode(stmt_idx) orelse continue;
@@ -510,6 +516,9 @@ pub const Lowerer = struct {
                     if (!terminated and block.expr != null_node) {
                         _ = try self.lowerExprNode(block.expr);
                     }
+
+                    // Restore shadowed variable mappings
+                    fb.restoreScope(scope_depth);
                     return terminated;
                 },
                 else => {
@@ -523,6 +532,7 @@ pub const Lowerer = struct {
     }
 
     fn lowerStmt(self: *Lowerer, stmt: ast.Stmt) Error!bool {
+        debug.log(.lower, "lowerStmt: {s}", .{@tagName(stmt)});
         switch (stmt) {
             .return_stmt => |ret| {
                 try self.lowerReturn(ret);
@@ -549,14 +559,22 @@ pub const Lowerer = struct {
                 return false;
             },
             .block_stmt => |block| {
+                const fb = self.current_func orelse return false;
+
                 // Track defer depth for block scope
                 const defer_depth = self.defer_stack.items.len;
+
+                // Track variable scope entry point for shadowed variable restoration
+                const scope_depth = fb.markScopeEntry();
+                debug.log(.lower, "BLOCK_STMT enter: scope_depth={d}, {d} stmts", .{ scope_depth, block.stmts.len });
 
                 for (block.stmts) |stmt_idx| {
                     const stmt_node = self.tree.getNode(stmt_idx) orelse continue;
                     if (stmt_node.asStmt()) |s| {
                         if (try self.lowerStmt(s)) {
                             // Terminated by return/break/continue - they handle defers
+                            // Restore variable scope before returning
+                            fb.restoreScope(scope_depth);
                             return true;
                         }
                     }
@@ -564,6 +582,9 @@ pub const Lowerer = struct {
 
                 // Normal block exit: emit block-scoped defers
                 try self.emitDeferredExprs(defer_depth);
+
+                // Restore shadowed variable mappings
+                fb.restoreScope(scope_depth);
                 return false;
             },
             .break_stmt => |bs| {
@@ -1538,8 +1559,15 @@ pub const Lowerer = struct {
                             return try fb.emitAddrIndex(base_addr, index_node, elem_size, ptr_type, addr.span);
                         }
                     }
-                    // For computed base (e.g., slice), lower it and compute element address
+                    // For computed base (e.g., slice from function call), lower it and compute element address
+                    // BUG-071 FIX: If base is a slice, we need to extract the .ptr field first
                     const base_val = try self.lowerExprNode(idx.base);
+                    if (base_type == .slice) {
+                        // Slice returned by expression: extract ptr, then index
+                        const slice_ptr_type = self.type_reg.makePointer(elem_type) catch TypeRegistry.VOID;
+                        const ptr_val = try fb.emitSlicePtr(base_val, slice_ptr_type, addr.span);
+                        return try fb.emitAddrIndex(ptr_val, index_node, elem_size, ptr_type, addr.span);
+                    }
                     return try fb.emitAddrIndex(base_val, index_node, elem_size, ptr_type, addr.span);
                 }
 
@@ -1665,6 +1693,10 @@ pub const Lowerer = struct {
                 // Lower all statements in the block
                 const defer_depth = self.defer_stack.items.len;
 
+                // Track variable scope for shadowing
+                const scope_depth = fb.markScopeEntry();
+                debug.log(.lower, "BLOCK_EXPR (in lowerExpr) enter: scope_depth={d}, {d} stmts", .{ scope_depth, block.stmts.len });
+
                 for (block.stmts) |stmt_idx| {
                     const stmt_node = self.tree.getNode(stmt_idx) orelse continue;
                     if (stmt_node.asStmt()) |s| {
@@ -1679,10 +1711,14 @@ pub const Lowerer = struct {
                 try self.emitDeferredExprs(defer_depth);
 
                 // If there's a final expression, return its value
+                var result: ir.NodeIndex = ir.null_node;
                 if (block.expr != null_node) {
-                    return try self.lowerExprNode(block.expr);
+                    result = try self.lowerExprNode(block.expr);
                 }
-                return ir.null_node;
+
+                // Restore shadowed variable mappings
+                fb.restoreScope(scope_depth);
+                return result;
             },
             else => return ir.null_node,
         }

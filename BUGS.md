@@ -15,6 +15,9 @@
 ## Open Bugs
 
 
+
+---
+
 ### BUG-065: Nested struct field copy fails
 
 **Status:** Open
@@ -93,6 +96,8 @@ Architectural flaw: offsets computed in THREE places with different logic. Check
 
 | Bug | Description | Fixed |
 |-----|-------------|-------|
+| BUG-071 | Assignment through computed slice fails | 2026-01-28 |
+| BUG-070 | Variable shadowing in nested blocks fails | 2026-01-28 |
 | BUG-067 | Array of structs with computed index crashes | 2026-01-28 |
 | BUG-064 | Signed comparison for narrower integer types fails | 2026-01-28 |
 | BUG-062 | Self-hosted compiler generates wrong constants for large array sizes | 2026-01-27 |

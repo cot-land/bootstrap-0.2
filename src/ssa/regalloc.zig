@@ -861,6 +861,9 @@ pub const RegAllocState = struct {
                         try new_values.append(self.allocator, loaded);
                         // Update the arg to point to the reload value
                         v.args[i] = loaded;
+                        // BUG-071 FIX: Increment uses count for rematerialized value
+                        // This marks it as non-dead so codegen won't skip it
+                        loaded.uses += 1;
                         debug.log(.regalloc, "    updated arg {d} to v{d}", .{ i, loaded.id });
                     }
                 }
