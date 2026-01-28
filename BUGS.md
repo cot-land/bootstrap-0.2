@@ -16,25 +16,24 @@
 
 ### BUG-063: cot1 stage2 compilation crashes during SSA building
 
-**Status:** Open (crash during self-compilation)
+**Status:** Partially fixed (parser loops fixed, crash remains)
 **Priority:** HIGH
 **Discovered:** 2026-01-25
 
-When stage1 compiles the full cot1 codebase to produce stage2, it crashes during SSA building/codegen phase. Earlier investigation identified this as potentially symbol name corruption during multi-file import processing.
+When stage1 compiles the full cot1 codebase to produce stage2, it crashes during SSA building/codegen phase.
+
+**Fixed (2026-01-28):**
+- Parser infinite loops on incomplete structs/blocks - added position tracking and safety breaks
 
 **Current symptoms:**
-- Crash with SIGSEGV during Phase 4/5 (SSA building)
-- Multiple "Warning: Parse error in import" during import processing
-- Simple struct tests pass; crash only on large multi-file compilation
+- Parser completes (with some warnings for incomplete imports)
+- Type checking completes
+- IR lowering completes (78122 nodes, 1552 functions, 176 globals)
+- Crash with NULL pointer dereference during Phase 4/5 (SSA building)
 
-**Previous theories:**
-1. Struct field offset computation (tested and appears to work for simple cases)
-2. Symbol name corruption during imports (identified in commit ca4852d)
-
-**To investigate:**
-- Parse errors during imports may be leaving corrupted data
-- SSA builder may have issues with large function counts
-- Memory allocation/capacity issues with large codebases
+**Remaining issues:**
+- "Warning: Parse error in import" for some files (incomplete code at EOF?)
+- NULL pointer crash during SSA building - needs investigation
 
 ---
 
