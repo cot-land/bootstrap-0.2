@@ -386,3 +386,60 @@ fn isHexDigit(c: u8) bool {
     return isDigit(c) or (c >= 65 and c <= 70) or (c >= 97 and c <= 102);
 }
 
+// ============================================================================
+// INLINE TESTS - Character Classification
+// ============================================================================
+
+test "character classification" {
+    // isDigit
+    @assert(isDigit('0'))
+    @assert(isDigit('5'))
+    @assert(isDigit('9'))
+    @assert(!isDigit('a'))
+    @assert(!isDigit(' '))
+
+    // isAlpha
+    @assert(isAlpha('a'))
+    @assert(isAlpha('z'))
+    @assert(isAlpha('A'))
+    @assert(isAlpha('Z'))
+    @assert(isAlpha('_'))
+    @assert(!isAlpha('0'))
+    @assert(!isAlpha(' '))
+
+    // isAlphaNumeric
+    @assert(isAlphaNumeric('a'))
+    @assert(isAlphaNumeric('5'))
+    @assert(isAlphaNumeric('_'))
+    @assert(!isAlphaNumeric(' '))
+    @assert(!isAlphaNumeric('+'))
+
+    // isHexDigit
+    @assert(isHexDigit('0'))
+    @assert(isHexDigit('9'))
+    @assert(isHexDigit('a'))
+    @assert(isHexDigit('f'))
+    @assert(isHexDigit('A'))
+    @assert(isHexDigit('F'))
+    @assert(!isHexDigit('g'))
+    @assert(!isHexDigit('G'))
+}
+
+test "scanner init and basic ops" {
+    var s: Scanner = Scanner_init("abc")
+    @assert(!s.isAtEnd())
+    @assert(s.peek() == 'a')
+    @assert(s.peekNext() == 'b')
+    @assert(s.getPosition() == 0)
+
+    // Advance through characters
+    @assert(s.advance() == 'a')
+    @assert(s.peek() == 'b')
+    @assert(s.getPosition() == 1)
+
+    s.advance()  // 'b'
+    s.advance()  // 'c'
+    @assert(s.isAtEnd())
+    @assert(s.peek() == 0)  // End of string returns 0
+}
+
