@@ -746,6 +746,115 @@ pub const AMD64CodeGen = struct {
         }
     }
 
+    /// Emit phi moves for an edge from current block to target block.
+    /// For each phi in the target block, find this block's corresponding argument
+    /// and move it to the phi's register.
+    fn emitPhiMoves(self: *AMD64CodeGen, current_block: *const Block, target_block: *const Block) !void {
+        // Find which predecessor index we are in target's predecessor list
+        var pred_idx: ?usize = null;
+        for (target_block.preds, 0..) |pred_edge, i| {
+            if (pred_edge.b.id == current_block.id) {
+                pred_idx = i;
+                break;
+            }
+        }
+        const idx = pred_idx orelse return; // Not a predecessor (shouldn't happen)
+
+        // Parallel copy algorithm:
+        // When multiple phis need to be resolved, we can't emit moves sequentially
+        // because a move's destination might be another move's source.
+        // Example: phi1: rax = rcx, phi2: r8 = rax - if we emit phi1 first, rax is clobbered!
+        //
+        // Solution: Two-phase approach
+        // Phase 1: Save all source values that might be clobbered to temp registers
+        // Phase 2: Copy from temps/sources to final destinations
+
+        const PhiMove = struct {
+            src_val: *const Value,
+            src_reg: ?Reg,
+            dest_reg: Reg,
+            needs_temp: bool,
+            temp_reg: Reg,
+        };
+
+        // Collect all phi moves
+        var moves = std.ArrayListUnmanaged(PhiMove){};
+        defer moves.deinit(self.allocator);
+
+        for (target_block.values.items) |value| {
+            if (value.op != .phi) continue;
+
+            const args = value.args;
+            if (idx >= args.len) continue;
+            const src_val = args[idx];
+
+            const phi_reg = self.getRegForValue(value) orelse continue;
+            const src_reg = self.getRegForValue(src_val);
+
+            try moves.append(self.allocator, .{
+                .src_val = src_val,
+                .src_reg = src_reg,
+                .dest_reg = phi_reg,
+                .needs_temp = false,
+                .temp_reg = .rax, // Placeholder
+            });
+        }
+
+        if (moves.items.len == 0) return;
+
+        // Detect conflicts: a source reg that will be overwritten before it's read
+        // A move needs a temp if its source_reg equals any other move's dest_reg
+        const temp_regs = [_]Reg{ .r10, .r11 }; // Scratch registers for cycle breaking
+        var temp_idx: usize = 0;
+        for (moves.items, 0..) |*move, i| {
+            if (move.src_reg) |src| {
+                // Check if this source will be clobbered by an earlier move
+                for (moves.items[0..i]) |other| {
+                    if (other.dest_reg == src) {
+                        // This source will be clobbered before we read it
+                        move.needs_temp = true;
+                        move.temp_reg = temp_regs[temp_idx % temp_regs.len];
+                        temp_idx += 1;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Phase 1: Save conflicting sources to temp registers
+        for (moves.items) |move| {
+            if (move.needs_temp) {
+                if (move.src_reg) |src| {
+                    // MOV temp, src
+                    try self.emit(3, asm_mod.encodeMovRegReg(move.temp_reg, src));
+                }
+            }
+        }
+
+        // Phase 2: Emit actual moves
+        for (moves.items) |move| {
+            if (move.needs_temp) {
+                // Source was saved to temp
+                if (move.src_reg != null) {
+                    // MOV dest, temp
+                    try self.emit(3, asm_mod.encodeMovRegReg(move.dest_reg, move.temp_reg));
+                } else {
+                    // Source wasn't in a register, regenerate to dest
+                    try self.ensureInReg(move.src_val, move.dest_reg);
+                }
+            } else {
+                // No conflict, emit directly
+                if (move.src_reg) |s| {
+                    if (s != move.dest_reg) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(move.dest_reg, s));
+                    }
+                } else {
+                    try self.ensureInReg(move.src_val, move.dest_reg);
+                }
+            }
+        }
+    }
+
     /// Setup call arguments with parallel copy to avoid clobbering.
     /// Returns the stack cleanup amount in bytes.
     fn setupCallArgs(self: *AMD64CodeGen, args: []*Value) !usize {
@@ -1707,6 +1816,9 @@ pub const AMD64CodeGen = struct {
                     const then_block = block.succs[0].b;
                     const else_block = block.succs[1].b;
 
+                    // Emit phi moves for the else branch (taken when JE succeeds)
+                    try self.emitPhiMoves(block, else_block);
+
                     // CMP cond_reg, 0
                     try self.emit(4, asm_mod.encodeCmpRegImm8(cond_reg, 0));
 
@@ -1718,6 +1830,9 @@ pub const AMD64CodeGen = struct {
                         .target_block_id = else_block.id,
                         .is_jcc = true,
                     });
+
+                    // Emit phi moves for the then branch
+                    try self.emitPhiMoves(block, then_block);
 
                     // Fall through or jump to then_block
                     // If then_block is not the next block, emit JMP
@@ -1734,6 +1849,10 @@ pub const AMD64CodeGen = struct {
                 // Unconditional branch to successor
                 if (block.succs.len > 0) {
                     const succ = block.succs[0].b;
+
+                    // Emit phi moves before branching
+                    try self.emitPhiMoves(block, succ);
+
                     const jmp_offset = self.offset();
                     try self.emit(5, asm_mod.encodeJmpRel32(0)); // Placeholder
                     try self.branch_fixups.append(self.allocator, .{
