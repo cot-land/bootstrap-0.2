@@ -14,15 +14,27 @@
 
 ## Open Bugs
 
-### BUG-063: cot1 struct field offset architecture broken
+### BUG-063: cot1 stage2 compilation crashes during SSA building
 
-**Status:** Requires Rewrite
+**Status:** Open (crash during self-compilation)
 **Priority:** HIGH
 **Discovered:** 2026-01-25
 
-Architectural flaw: offsets computed in THREE places with different logic. Checker computes correctly, Lowerer ignores TypeRegistry and recomputes with broken logic.
+When stage1 compiles the full cot1 codebase to produce stage2, it crashes during SSA building/codegen phase. Earlier investigation identified this as potentially symbol name corruption during multi-file import processing.
 
-**Fix:** Delete all AST-based offset computation from lower.cot, use ONLY TypeRegistry's pre-computed offsets.
+**Current symptoms:**
+- Crash with SIGSEGV during Phase 4/5 (SSA building)
+- Multiple "Warning: Parse error in import" during import processing
+- Simple struct tests pass; crash only on large multi-file compilation
+
+**Previous theories:**
+1. Struct field offset computation (tested and appears to work for simple cases)
+2. Symbol name corruption during imports (identified in commit ca4852d)
+
+**To investigate:**
+- Parse errors during imports may be leaving corrupted data
+- SSA builder may have issues with large function counts
+- Memory allocation/capacity issues with large codebases
 
 ---
 
