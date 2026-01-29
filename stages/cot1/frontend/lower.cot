@@ -15,6 +15,7 @@ import "ir.cot"
 import "types.cot"
 import "parser.cot"  // For parse_* functions
 import "../lib/strmap.cot"  // For O(1) function lookup
+import "../lib/pipeline_debug.cot"  // COT_DEBUG matching Zig compiler
 
 // ============================================================================
 // Lowerer Context
@@ -3754,6 +3755,18 @@ impl Lowerer {
             }
         }
 
+        // Debug: log method call with return type info (matches Zig's lowerMethodCall debug)
+        if dbg_lower_enabled() {
+            print("[lower] lowerMethodCall: ");
+            dbg_print_str(@intToPtr(*u8, method_entry.synth_name_ptr), method_entry.synth_name_len);
+            print(" return_type=");
+            print(call_ret_type);
+            let ret_size: i64 = self.type_pool.sizeof(call_ret_type);
+            print(" (");
+            print(ret_size);
+            print("B)\n");
+        }
+
         // Create the call node with synthesized name and proper return type
         var ir_node: IRNode = IRNode_new(IRNodeKind.Call, call_ret_type);
         ir_node.func_name_start = method_entry.synth_name_ptr;
@@ -3971,7 +3984,19 @@ impl Lowerer {
                 call_ret_type = TYPE_I64;  // Fallback if resolution fails
             }
         }
-    
+
+        // Debug: log direct call with return type info (matches Zig's lowerCall debug)
+        if dbg_lower_enabled() {
+            print("[lower] lowerCall: ");
+            dbg_print_str(self.source + func_name_start, func_name_len);
+            print(" return_type=");
+            print(call_ret_type);
+            let ret_size: i64 = self.type_pool.sizeof(call_ret_type);
+            print(" (");
+            print(ret_size);
+            print("B)\n");
+        }
+
         var call_node: IRNode = IRNode_new(IRNodeKind.Call, call_ret_type);
         call_node.func_name_start = copy_func_name(self.source, func_name_start, func_name_len);
         call_node.func_name_len = func_name_len;
