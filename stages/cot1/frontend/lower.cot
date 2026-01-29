@@ -2998,7 +2998,6 @@ impl Lowerer {
     fn lowerIntLit(self: *Lowerer, node: *Node) i64 {
         // IntLit fields:
         // field0 = value (the integer value)
-    
         let fb: *FuncBuilder = self.current_func;
         return fb.emitConstInt(node.field0);
     }
@@ -3007,7 +3006,6 @@ impl Lowerer {
         // StringLit fields:
         // field0 = string_start (offset in source, after opening quote)
         // field1 = string_len (length of string content, excluding quotes)
-    
         let fb: *FuncBuilder = self.current_func;
         return fb.emitConstString(node.field0, node.field1);
     }
@@ -3316,7 +3314,6 @@ impl Lowerer {
         // field0 = left operand (node index)
         // field1 = right operand (node index)
         // field2 = op (BinaryOp as integer)
-    
         let fb: *FuncBuilder = self.current_func;
     
         // Lower left and right operands
@@ -4210,7 +4207,6 @@ impl Lowerer {
     fn lowerAddressOf(self: *Lowerer, node: *Node) i64 {
         // AddressOf fields:
         // field0 = operand (the expression to take address of)
-    
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
     

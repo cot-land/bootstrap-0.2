@@ -1036,9 +1036,13 @@ impl SSABuilder {
     }
 
     fn build(self: *SSABuilder) i64 {
-        // Get function name from source + offset
-        let fn_name: *u8 = self.source + self.func.name_start;
-        debug.log_s(DebugPhase.ssa, "=== Building SSA for '{s}' ===", fn_name, self.func.name_len);
+        // Get function name from source + offset (with null check)
+        if self.source != null and self.func.name_len > 0 {
+            let fn_name: *u8 = self.source + self.func.name_start;
+            debug.log_s(DebugPhase.ssa, "=== Building SSA for '{s}' ===", fn_name, self.func.name_len);
+        } else {
+            debug.log(DebugPhase.ssa, "=== Building SSA ===");
+        }
         let ir_node_count: i64 = self.ir_nodes_end - self.ir_nodes_start;
         debug.log_d(DebugPhase.ssa, "  IR has {d} nodes", ir_node_count);
 
