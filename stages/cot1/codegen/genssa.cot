@@ -1195,6 +1195,7 @@ fn constBool(self: *GenState, v: *Value) {
 fn constNil(self: *GenState, v: *Value) {
     let rd: i64 = v.reg;
     if rd < 0 { return; }
+    debug.log_d(DebugPhase.codegen, "      -> x{d} = nil (0)", rd);
     if self.target == TARGET_AMD64 {
         // AMD64: XOR r, r is shortest way to zero a register
         self.emitInstPacked(AMD64_xor(rd, rd, rd));
@@ -2510,6 +2511,8 @@ fn globalLoad(self: *GenState, v: *Value) {
     let rd: i64 = v.reg;
     if rd < 0 { return; }
 
+    debug.log_d(DebugPhase.codegen, "      global_load -> x{d}", rd);
+
     let global_idx: i64 = v.aux_int;
     if self.globals == null or global_idx >= self.globals_count {
         if self.target == TARGET_AMD64 {
@@ -2550,6 +2553,8 @@ fn globalLoad(self: *GenState, v: *Value) {
 
 fn globalStore(self: *GenState, v: *Value) {
     // Store to global variable
+    debug.log(DebugPhase.codegen, "      global_store");
+
     let global_idx: i64 = v.aux_int;
     if self.globals == null or global_idx >= self.globals_count {
         return;
@@ -2598,6 +2603,8 @@ fn offPtr(self: *GenState, v: *Value) {
     // aux_int contains the offset, arg[0] is the base pointer
     let rd: i64 = v.reg;
     if rd < 0 { return; }
+
+    debug.log_dd(DebugPhase.codegen, "      -> ADD x{d}, base, #{d} (off_ptr)", rd, v.aux_int);
 
     let f: *Func = self.func;
     let offset: i64 = v.aux_int;

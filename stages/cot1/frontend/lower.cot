@@ -2371,10 +2371,12 @@ impl Lowerer {
         // field1 = type_name_len
         // field2 = fields_start (index in children array)
         // field3 = fields_count
-    
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return; }
-    
+
+        debug.log_d(DebugPhase.lower, "lowerStructInit local_idx={d}", local_idx);
+
         let struct_name_start: i64 = node.field0;
         let struct_name_len: i64 = node.field1;
         let fields_start: i64 = node.field2;
