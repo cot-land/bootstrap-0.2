@@ -13,6 +13,7 @@
 import "token.cot"
 import "../lib/list.cot"  // For realloc_i64
 import "../lib/strmap.cot"  // For type name lookup
+import "../lib/pipeline_debug.cot"
 
 // ============================================================================
 // Type Aliases (cot1 feature: dogfooding our own language features)
@@ -136,6 +137,7 @@ var tr_storage_initialized: bool = false;
 
 // Allocate module storage (called once on first use)
 fn TypeRegistry_allocateStorage() {
+    debug.log(DebugPhase.check, "TypeRegistry_allocateStorage");
     if tr_storage_initialized {
         return;
     }
@@ -244,6 +246,7 @@ impl TypeRegistry {
         if new_cap < needed {
             new_cap = needed;
         }
+        debug.log_dd(DebugPhase.check, "TypeRegistry.ensureTypesCapacity: old={d} new={d}", self.types_cap, new_cap);
         self.types = realloc_Type(self.types, self.types_cap, new_cap);
         self.types_cap = new_cap;
         // Update module storage if using self-allocation
@@ -262,6 +265,7 @@ impl TypeRegistry {
         if new_cap < needed {
             new_cap = needed;
         }
+        debug.log_dd(DebugPhase.check, "TypeRegistry.ensureParamsCapacity: old={d} new={d}", self.params_cap, new_cap);
         self.params = realloc_i64(self.params, self.params_cap, new_cap);
         self.params_cap = new_cap;
         // Update module storage if using self-allocation
@@ -280,6 +284,7 @@ impl TypeRegistry {
         if new_cap < needed {
             new_cap = needed;
         }
+        debug.log_dd(DebugPhase.check, "TypeRegistry.ensureFieldsCapacity: old={d} new={d}", self.fields_cap, new_cap);
         self.fields = realloc_FieldInfo(self.fields, self.fields_cap, new_cap);
         self.fields_cap = new_cap;
         // Update module storage if using self-allocation
@@ -292,6 +297,7 @@ impl TypeRegistry {
     fn initWithStorage(self: *TypeRegistry, types: *Type, types_cap: i64,
                                      params: *i64, params_cap: i64,
                                      fields: *FieldInfo, fields_cap: i64) {
+        debug.log_ddd(DebugPhase.check, "TypeRegistry.initWithStorage: types_cap={d} params_cap={d} fields_cap={d}", types_cap, params_cap, fields_cap);
         self.types = types;
         self.types_cap = types_cap;
         self.params = params;
@@ -325,6 +331,7 @@ impl TypeRegistry {
     }
 
     fn init(self: *TypeRegistry) {
+        debug.log(DebugPhase.check, "TypeRegistry.init");
         // Allocate module storage if not already done
         TypeRegistry_allocateStorage();
     
@@ -365,7 +372,7 @@ impl TypeRegistry {
         self.ensureTypesCapacity(1);
         let idx: i64 = self.count;
         self.count = self.count + 1;
-    
+
         let t: *Type = self.types + idx;
         t.kind = kind;
         t.elem = INVALID_TYPE;
@@ -377,30 +384,36 @@ impl TypeRegistry {
         t.name_len = 0;
         t.size = size;
         t.align = align;
-    
+
+        debug.log_ddd(DebugPhase.check, "TypeRegistry.registerBasic: idx={d} size={d} align={d}", idx, size, align);
         return idx;
     }
 
     fn get(self: *TypeRegistry, idx: i64) *Type {
         if idx < 0 or idx >= self.count {
+            debug.log_d(DebugPhase.check, "TypeRegistry.get: invalid idx={d}", idx);
             return self.types + 0;  // Return invalid type
         }
         return self.types + idx;
     }
 
     fn findByName(self: *TypeRegistry, name_ptr: *u8, name_len: i64) i64 {
-        return self.name_map.get(name_ptr, name_len);
+        let result: i64 = self.name_map.get(name_ptr, name_len);
+        debug.log_dd(DebugPhase.check, "TypeRegistry.findByName: len={d} -> {d}", name_len, result);
+        return result;
     }
 
     fn lookupByName(self: *TypeRegistry, source: *u8, name_start: i64, name_len: i64) i64 {
-        return self.name_map.get(source + name_start, name_len);
+        let result: i64 = self.name_map.get(source + name_start, name_len);
+        debug.log_ddd(DebugPhase.check, "TypeRegistry.lookupByName: start={d} len={d} -> {d}", name_start, name_len, result);
+        return result;
     }
 
     fn makePointer(self: *TypeRegistry, elem: i64) i64 {
         self.ensureTypesCapacity(1);
         let idx: i64 = self.count;
         self.count = self.count + 1;
-    
+
         let t: *Type = self.types + idx;
         t.kind = TypeKind.Pointer;
         t.elem = elem;
@@ -412,7 +425,8 @@ impl TypeRegistry {
         t.name_len = 0;
         t.size = 8;  // Pointers are 8 bytes on 64-bit
         t.align = 8;
-    
+
+        debug.log_dd(DebugPhase.check, "TypeRegistry.makePointer: idx={d} elem={d}", idx, elem);
         return idx;
     }
 
@@ -420,7 +434,7 @@ impl TypeRegistry {
         self.ensureTypesCapacity(1);
         let idx: i64 = self.count;
         self.count = self.count + 1;
-    
+
         let t: *Type = self.types + idx;
         t.kind = TypeKind.Slice;
         t.elem = elem;
@@ -432,7 +446,8 @@ impl TypeRegistry {
         t.name_len = 0;
         t.size = 16;  // ptr + len
         t.align = 8;
-    
+
+        debug.log_dd(DebugPhase.check, "TypeRegistry.makeSlice: idx={d} elem={d}", idx, elem);
         return idx;
     }
 
@@ -440,10 +455,10 @@ impl TypeRegistry {
         self.ensureTypesCapacity(1);
         let idx: i64 = self.count;
         self.count = self.count + 1;
-    
+
         let elem_type: *Type = self.get(elem);
         let elem_size: i64 = elem_type.size;
-    
+
         let t: *Type = self.types + idx;
         t.kind = TypeKind.Array;
         t.elem = elem;
@@ -455,7 +470,8 @@ impl TypeRegistry {
         t.name_len = 0;
         t.size = elem_size * array_len;
         t.align = elem_type.align;
-    
+
+        debug.log_ddd(DebugPhase.check, "TypeRegistry.makeArray: idx={d} elem={d} len={d}", idx, elem, array_len);
         return idx;
     }
 
@@ -463,7 +479,7 @@ impl TypeRegistry {
         self.ensureTypesCapacity(1);
         let idx: i64 = self.count;
         self.count = self.count + 1;
-    
+
         let t: *Type = self.types + idx;
         t.kind = TypeKind.Func;
         t.elem = INVALID_TYPE;
@@ -475,7 +491,8 @@ impl TypeRegistry {
         t.name_len = 0;
         t.size = 8;  // Function pointer
         t.align = 8;
-    
+
+        debug.log_ddd(DebugPhase.check, "TypeRegistry.makeFunc: idx={d} params={d} ret={d}", idx, params_count, ret_type);
         return idx;
     }
 
@@ -485,6 +502,7 @@ impl TypeRegistry {
         let ptr: *i64 = self.params + idx;
         ptr.* = param_type;
         self.params_count = self.params_count + 1;
+        debug.log_dd(DebugPhase.check, "TypeRegistry.addParam: idx={d} type={d}", idx, param_type);
         return idx;
     }
 
@@ -493,7 +511,7 @@ impl TypeRegistry {
         self.ensureTypesCapacity(1);
         let idx: i64 = self.count;
         self.count = self.count + 1;
-    
+
         let t: *Type = self.types + idx;
         t.kind = TypeKind.Struct;
         t.elem = INVALID_TYPE;
@@ -505,12 +523,13 @@ impl TypeRegistry {
         t.name_len = name_len;
         t.size = size;
         t.align = align;
-    
+
         // Register in name map for fast lookup
         if name_len > 0 and self.source != null {
             self.name_map.put(self.source + name_start, name_len, idx);
         }
-    
+
+        debug.log_ddd(DebugPhase.check, "TypeRegistry.makeStruct: idx={d} fields={d} size={d}", idx, fields_count, size);
         return idx;
     }
 
@@ -519,7 +538,7 @@ impl TypeRegistry {
         self.ensureTypesCapacity(1);
         let idx: i64 = self.count;
         self.count = self.count + 1;
-    
+
         let t: *Type = self.types + idx;
         t.kind = TypeKind.Enum;
         t.elem = INVALID_TYPE;
@@ -531,52 +550,60 @@ impl TypeRegistry {
         t.name_len = name_len;
         t.size = 4;   // Enums are 4 bytes (i32)
         t.align = 4;
-    
+
         // Register in name map for fast lookup
         if name_len > 0 and self.source != null {
             self.name_map.put(self.source + name_start, name_len, idx);
         }
-    
+
+        debug.log_dd(DebugPhase.check, "TypeRegistry.makeEnum: idx={d} variants={d}", idx, variants_count);
         return idx;
     }
 
     fn getParam(self: *TypeRegistry, params_start: i64, offset: i64) i64 {
         let ptr: *i64 = self.params + params_start + offset;
+        debug.log_ddd(DebugPhase.check, "TypeRegistry.getParam: start={d} offset={d} -> {d}", params_start, offset, ptr.*);
         return ptr.*;
     }
 
     fn sizeof(self: *TypeRegistry, idx: i64) i64 {
         if idx < 0 { return 0; }
-    
+
         let t: *Type = self.get(idx);
         if t == null { return 0; }
-    
+
         // For types with explicit size field, use it
-        if t.size > 0 { return t.size; }
-    
+        if t.size > 0 {
+            debug.log_dd(DebugPhase.check, "TypeRegistry.sizeof: idx={d} size={d}", idx, t.size);
+            return t.size;
+        }
+
         // Handle by kind
         if t.kind == TypeKind.Pointer { return 8; }  // 64-bit pointer
         if t.kind == TypeKind.Slice { return 16; }   // ptr + len
         if t.kind == TypeKind.Func { return 8; }     // function pointer
         if t.kind == TypeKind.String { return 16; }  // ptr + len
-    
+
         // Array: element size * length
         if t.kind == TypeKind.Array {
             let elem_size: i64 = self.sizeof(t.elem);
-            return elem_size * t.len;
+            let total: i64 = elem_size * t.len;
+            debug.log_dd(DebugPhase.check, "TypeRegistry.sizeof: array idx={d} size={d}", idx, total);
+            return total;
         }
-    
+
         // Struct: use stored size
         if t.kind == TypeKind.Struct { return t.size; }
-    
+
         // Enum: use stored size (usually i64)
         if t.kind == TypeKind.Enum { return t.size; }
-    
+
         // Default to 8 for unknown types
         return 8;
     }
 
     fn setSource(self: *TypeRegistry, source: *u8, source_len: i64) {
+        debug.log_d(DebugPhase.check, "TypeRegistry.setSource: len={d}", source_len);
         self.source = source;
         self.source_len = source_len;
     }
@@ -586,43 +613,47 @@ impl TypeRegistry {
         self.ensureFieldsCapacity(1);
         let idx: i64 = self.fields_count;
         self.fields_count = self.fields_count + 1;
-    
+
         let f: *FieldInfo = self.fields + idx;
         f.name_start = name_start;
         f.name_len = name_len;
         f.type_idx = type_idx;
         f.offset = offset;
-    
+
+        debug.log_ddd(DebugPhase.check, "TypeRegistry.addField: idx={d} type={d} offset={d}", idx, type_idx, offset);
         return idx;
     }
 
     fn getField(self: *TypeRegistry, idx: i64) *FieldInfo {
+        debug.log_d(DebugPhase.check, "TypeRegistry.getField: idx={d}", idx);
         return self.fields + idx;
     }
 
     fn lookupField(self: *TypeRegistry, type_idx: i64,
                          field_name_ptr: *u8, field_name_len: i64) *FieldInfo {
+        debug.log_d(DebugPhase.check, "TypeRegistry.lookupField: type_idx={d}", type_idx);
         let t: *Type = self.get(type_idx);
-    
+
         if t.kind != TypeKind.Struct {
             return null;
         }
-    
+
         // fields_start in params_start, fields_count in params_count
         let fields_start: i64 = t.params_start;
         let fields_count: i64 = t.params_count;
-    
+
         var i: i64 = 0;
         while i < fields_count {
             let f: *FieldInfo = self.fields + fields_start + i;
-    
+
             if names_equal_ptr(self.source, f.name_start, f.name_len,
                               field_name_ptr, field_name_len) {
+                debug.log_d(DebugPhase.check, "TypeRegistry.lookupField: found at offset={d}", f.offset);
                 return f;
             }
             i = i + 1;
         }
-    
+
         return null;
     }
 
@@ -630,7 +661,9 @@ impl TypeRegistry {
 
 fn PType_registerArray(elem_ptype: i64, size: i64) i64 {
     // Encode: size * 100 + elem_type (elem_type < 100)
-    return PTYPE_ARRAY_BASE + size * 100 + elem_ptype;
+    let result: i64 = PTYPE_ARRAY_BASE + size * 100 + elem_ptype;
+    debug.log_ddd(DebugPhase.check, "PType_registerArray: elem={d} size={d} -> {d}", elem_ptype, size, result);
+    return result;
 }
 
 fn PType_arrayElem(ptype: i64) i64 {
@@ -650,7 +683,9 @@ fn PType_arraySize(ptype: i64) i64 {
 }
 
 fn PType_registerSlice(elem_ptype: i64) i64 {
-    return PTYPE_SLICE_BASE + elem_ptype;
+    let result: i64 = PTYPE_SLICE_BASE + elem_ptype;
+    debug.log_dd(DebugPhase.check, "PType_registerSlice: elem={d} -> {d}", elem_ptype, result);
+    return result;
 }
 
 fn PType_sliceElem(ptype: i64) i64 {
@@ -678,10 +713,12 @@ fn TypeInfo_isInvalid(pool: *TypeRegistry, idx: i64) bool {
 
 fn TypeInfo_isInteger(pool: *TypeRegistry, idx: i64) bool {
     let t: *Type = pool.get(idx);
-    return t.kind == TypeKind.I8 or t.kind == TypeKind.I16 or
+    let result: bool = t.kind == TypeKind.I8 or t.kind == TypeKind.I16 or
            t.kind == TypeKind.I32 or t.kind == TypeKind.I64 or
            t.kind == TypeKind.U8 or t.kind == TypeKind.U16 or
            t.kind == TypeKind.U32 or t.kind == TypeKind.U64;
+    debug.log_d(DebugPhase.check, "TypeInfo_isInteger: idx={d}", idx);
+    return result;
 }
 
 fn TypeInfo_isSigned(pool: *TypeRegistry, idx: i64) bool {
@@ -717,70 +754,84 @@ fn TypeInfo_isVoid(pool: *TypeRegistry, idx: i64) bool {
 
 fn TypeInfo_isPointer(pool: *TypeRegistry, idx: i64) bool {
     let t: *Type = pool.get(idx);
+    debug.log_d(DebugPhase.check, "TypeInfo_isPointer: idx={d}", idx);
     return t.kind == TypeKind.Pointer;
 }
 
 fn TypeInfo_isSlice(pool: *TypeRegistry, idx: i64) bool {
     let t: *Type = pool.get(idx);
+    debug.log_d(DebugPhase.check, "TypeInfo_isSlice: idx={d}", idx);
     return t.kind == TypeKind.Slice;
 }
 
 fn TypeInfo_isArray(pool: *TypeRegistry, idx: i64) bool {
     let t: *Type = pool.get(idx);
+    debug.log_d(DebugPhase.check, "TypeInfo_isArray: idx={d}", idx);
     return t.kind == TypeKind.Array;
 }
 
 fn TypeInfo_isFunc(pool: *TypeRegistry, idx: i64) bool {
     let t: *Type = pool.get(idx);
+    debug.log_d(DebugPhase.check, "TypeInfo_isFunc: idx={d}", idx);
     return t.kind == TypeKind.Func;
 }
 
 fn TypeInfo_isString(pool: *TypeRegistry, idx: i64) bool {
     let t: *Type = pool.get(idx);
+    debug.log_d(DebugPhase.check, "TypeInfo_isString: idx={d}", idx);
     return t.kind == TypeKind.String;
 }
 
 fn TypeInfo_isStruct(pool: *TypeRegistry, idx: i64) bool {
     let t: *Type = pool.get(idx);
+    debug.log_d(DebugPhase.check, "TypeInfo_isStruct: idx={d}", idx);
     return t.kind == TypeKind.Struct;
 }
 
 fn TypeInfo_isEnum(pool: *TypeRegistry, idx: i64) bool {
     let t: *Type = pool.get(idx);
+    debug.log_d(DebugPhase.check, "TypeInfo_isEnum: idx={d}", idx);
     return t.kind == TypeKind.Enum;
 }
 
 fn TypeInfo_elem(pool: *TypeRegistry, idx: i64) i64 {
     let t: *Type = pool.get(idx);
+    debug.log_dd(DebugPhase.check, "TypeInfo_elem: idx={d} elem={d}", idx, t.elem);
     return t.elem;
 }
 
 fn TypeInfo_arrayLen(pool: *TypeRegistry, idx: i64) i64 {
     let t: *Type = pool.get(idx);
+    debug.log_dd(DebugPhase.check, "TypeInfo_arrayLen: idx={d} len={d}", idx, t.len);
     return t.len;
 }
 
 fn TypeInfo_ret(pool: *TypeRegistry, idx: i64) i64 {
     let t: *Type = pool.get(idx);
+    debug.log_dd(DebugPhase.check, "TypeInfo_ret: idx={d} ret={d}", idx, t.ret_type);
     return t.ret_type;
 }
 
 fn TypeInfo_paramCount(pool: *TypeRegistry, idx: i64) i64 {
     let t: *Type = pool.get(idx);
+    debug.log_dd(DebugPhase.check, "TypeInfo_paramCount: idx={d} count={d}", idx, t.params_count);
     return t.params_count;
 }
 
 fn TypeInfo_size(pool: *TypeRegistry, idx: i64) i64 {
     let t: *Type = pool.get(idx);
+    debug.log_dd(DebugPhase.check, "TypeInfo_size: idx={d} size={d}", idx, t.size);
     return t.size;
 }
 
 fn TypeInfo_alignment(pool: *TypeRegistry, idx: i64) i64 {
     let t: *Type = pool.get(idx);
+    debug.log_dd(DebugPhase.check, "TypeInfo_alignment: idx={d} align={d}", idx, t.align);
     return t.align;
 }
 
 fn TypeInfo_equal(pool: *TypeRegistry, a: i64, b: i64) bool {
+    debug.log_dd(DebugPhase.check, "TypeInfo_equal: a={d} b={d}", a, b);
     if a == b { return true; }
     if a < 0 or b < 0 { return false; }
 
@@ -830,6 +881,7 @@ fn TypeInfo_equal(pool: *TypeRegistry, a: i64, b: i64) bool {
 }
 
 fn TypeInfo_lookupBasic(source: *u8, name_start: i64, name_len: i64) i64 {
+    debug.log_dd(DebugPhase.check, "TypeInfo_lookupBasic: start={d} len={d}", name_start, name_len);
     // Single character type names
     if name_len == 2 {
         let c0: u8 = (source + name_start).*;
@@ -894,6 +946,7 @@ fn TypeInfo_lookupBasic(source: *u8, name_start: i64, name_len: i64) i64 {
 }
 
 fn TypeInfo_isAssignable(pool: *TypeRegistry, from: i64, to: i64) bool {
+    debug.log_dd(DebugPhase.check, "TypeInfo_isAssignable: from={d} to={d}", from, to);
     // Same type is always assignable
     if from == to { return true; }
 
@@ -954,6 +1007,7 @@ fn names_equal_ptr(source: *u8, start: i64, len1: i64, ptr: *u8, len2: i64) bool
 fn TypeInfo_getPointee(pool: *TypeRegistry, ptr_type_idx: i64) i64 {
     let t: *Type = pool.get(ptr_type_idx);
     if t.kind == TypeKind.Pointer {
+        debug.log_dd(DebugPhase.check, "TypeInfo_getPointee: ptr={d} elem={d}", ptr_type_idx, t.elem);
         return t.elem;
     }
     return TYPE_INVALID;
@@ -978,7 +1032,9 @@ fn TypeInfo_isPrimitive(pool: *TypeRegistry, idx: i64) bool {
 
 fn TypeInfo_fitsInRegs(pool: *TypeRegistry, idx: i64) bool {
     let t: *Type = pool.get(idx);
-    return t.size <= 16;
+    let fits: bool = t.size <= 16;
+    debug.log_dd(DebugPhase.check, "TypeInfo_fitsInRegs: idx={d} size={d}", idx, t.size);
+    return fits;
 }
 
 fn TypeInfo_needsReg(pool: *TypeRegistry, idx: i64) bool {
@@ -993,13 +1049,26 @@ fn TypeInfo_registerCount(pool: *TypeRegistry, idx: i64) i64 {
     if t.kind == TypeKind.Void { return 0; }
     if t.kind == TypeKind.Invalid { return 0; }
     // String/Slice need 2 registers (ptr + len)
-    if t.kind == TypeKind.String { return 2; }
-    if t.kind == TypeKind.Slice { return 2; }
+    if t.kind == TypeKind.String {
+        debug.log_d(DebugPhase.check, "TypeInfo_registerCount: idx={d} -> 2 (string)", idx);
+        return 2;
+    }
+    if t.kind == TypeKind.Slice {
+        debug.log_d(DebugPhase.check, "TypeInfo_registerCount: idx={d} -> 2 (slice)", idx);
+        return 2;
+    }
     // Everything else fits in 1 register (for now)
-    if t.size <= 8 { return 1; }
+    if t.size <= 8 {
+        debug.log_d(DebugPhase.check, "TypeInfo_registerCount: idx={d} -> 1", idx);
+        return 1;
+    }
     // Larger types need 2 registers
-    if t.size <= 16 { return 2; }
+    if t.size <= 16 {
+        debug.log_d(DebugPhase.check, "TypeInfo_registerCount: idx={d} -> 2", idx);
+        return 2;
+    }
     // Even larger types would need memory
+    debug.log_d(DebugPhase.check, "TypeInfo_registerCount: idx={d} -> 0 (too large)", idx);
     return 0;
 }
 

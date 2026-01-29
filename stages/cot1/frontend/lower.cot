@@ -297,6 +297,7 @@ impl Lowerer {
                     ir_locals: *IRLocal, ir_locals_cap: i64,
                     ir_funcs: *IRFunc, ir_funcs_cap: i64,
                     constants: *ConstEntry, constants_cap: i64) {
+        debug.log_d(DebugPhase.lower, "Lowerer_init: {d} nodes", nodes_count);
         self.nodes = nodes;
         self.nodes_count = nodes_count;
         self.children = children;
@@ -380,9 +381,10 @@ impl Lowerer {
     }
 
     fn registerTypeAlias(self: *Lowerer, name_start: i64, name_len: i64, target_type: i64) {
+        debug.log_d(DebugPhase.lower, "  registerTypeAlias: type={d}", target_type);
         if self.type_aliases == null { return; }
         if self.type_aliases_count >= self.type_aliases_cap { return; }
-    
+
         let entry: *TypeAliasEntry = self.type_aliases + self.type_aliases_count;
         entry.name_start = name_start;
         entry.name_len = name_len;
@@ -462,9 +464,10 @@ impl Lowerer {
     fn registerMethod(self: *Lowerer, type_name_start: i64, type_name_len: i64,
                                method_name_start: i64, method_name_len: i64,
                                synth_name_ptr: i64, synth_name_len: i64) {
+        debug.log_d(DebugPhase.lower, "  registerMethod: synth_len={d}", synth_name_len);
         if self.method_registry == null { return; }
         if self.method_registry_count >= self.method_registry_cap { return; }
-    
+
         let entry: *MethodEntry = self.method_registry + self.method_registry_count;
         entry.type_name_start = type_name_start;
         entry.type_name_len = type_name_len;
@@ -477,6 +480,7 @@ impl Lowerer {
 
     fn lookupMethod(self: *Lowerer, type_name_start: i64, type_name_len: i64,
                              method_name_start: i64, method_name_len: i64) *MethodEntry {
+        debug.log(DebugPhase.lower, "lookupMethod");
         if self.method_registry == null { return null; }
     
         var i: i64 = 0;
@@ -524,6 +528,7 @@ impl Lowerer {
     }
 
     fn markImplMethods(self: *Lowerer) {
+        debug.log_d(DebugPhase.lower, "markImplMethods: {d} nodes", self.nodes_count);
         // Allocate flags array sized to nodes_count
         self.impl_method_flags_count = self.nodes_count;
         self.impl_method_flags = malloc_u8(self.impl_method_flags_count);
@@ -769,6 +774,7 @@ impl Lowerer {
     }
 
     fn registerGlobal(self: *Lowerer, name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) i64 {
+        debug.log_s(DebugPhase.lower, "registerGlobal: '{s}'", self.source + name_start, name_len);
         if self.ir_globals == null {
             return -1;  // Not initialized
         }
@@ -824,6 +830,7 @@ impl Lowerer {
     }
 
     fn lookupGlobal(self: *Lowerer, name_start: i64, name_len: i64) i64 {
+        debug.log_s(DebugPhase.lower, "lookupGlobal: '{s}'", self.source + name_start, name_len);
         if self.ir_globals == null { return -1; }
         var i: i64 = 0;
         while i < self.ir_globals_count {
@@ -837,11 +844,13 @@ impl Lowerer {
     }
 
     fn lookupFunc(self: *Lowerer, name_start: i64, name_len: i64) i64 {
+        debug.log_s(DebugPhase.lower, "lookupFunc: '{s}'", self.source + name_start, name_len);
         return self.func_map.get(self.source + name_start, name_len);
     }
 
     fn lookupEnumVariant(self: *Lowerer, enum_name_start: i64, enum_name_len: i64,
                                   variant_name_start: i64, variant_name_len: i64) i64 {
+        debug.log(DebugPhase.lower, "lookupEnumVariant");
         // Search all AST nodes for EnumDecl nodes
         var i: i64 = 0;
         while i < self.nodes_count {
@@ -1004,6 +1013,7 @@ impl Lowerer {
     }
 
     fn lowerConstDecl(self: *Lowerer, node: *Node) {
+        debug.log(DebugPhase.lower, "lowerConstDecl: processing const declaration");
         // ConstDecl fields:
         // field0 = name_start
         // field1 = name_len
@@ -1038,6 +1048,7 @@ impl Lowerer {
     }
 
     fn registerGlobalVar(self: *Lowerer, node: *Node) {
+        debug.log(DebugPhase.lower, "registerGlobalVar");
         // VarDecl fields (from ast.cot Node_varDecl):
         // field0 = is_let (1 = let, 0 = var)
         // field1 = name_start
@@ -1080,6 +1091,7 @@ impl Lowerer {
     }
 
     fn registerStructType(self: *Lowerer, node: *Node, node_idx: i64) {
+        debug.log_d(DebugPhase.lower, "registerStructType: {d} fields", node.field3);
         if node.kind != NodeKind.StructDecl { return; }
     
         let name_start: i64 = node.field0;
@@ -1167,9 +1179,10 @@ impl Lowerer {
     }
 
     fn lowerAll(self: *Lowerer) i64 {
+        debug.log_d(DebugPhase.lower, "lowerAll: starting with {d} nodes", self.nodes_count);
         var t0: i64 = get_time_ns();
         var t1: i64 = 0;
-    
+
         // Pass 0: Register struct types in TypeRegistry
         // This must happen before any type references are resolved
         var i: i64 = 0;
@@ -1514,6 +1527,7 @@ impl Lowerer {
     // Lower a test declaration as a void function with synthesized name.
     // test "basic addition" { ... } becomes fn test_basic_addition() void { ... }
     fn lowerTestDecl(self: *Lowerer, node: *Node) {
+        debug.log(DebugPhase.lower, "lowerTestDecl: processing test declaration");
         // TestDecl fields:
         // field0 = name_start (offset after opening quote in source)
         // field1 = name_len (length of test name, excluding quotes)
@@ -1632,6 +1646,7 @@ impl Lowerer {
 
     // Generate test runner main() function that calls each test
     fn generateTestRunner(self: *Lowerer) {
+        debug.log_d(DebugPhase.lower, "generateTestRunner: generating main for {d} tests", self.test_names_count);
         // Ensure capacity
         self.ensureLocalsCapacity(16);
         self.ensureNodesCapacity(self.test_names_count * 10 + 20);
@@ -1714,6 +1729,7 @@ impl Lowerer {
     // Negative name_start values are markers: -offset-1 means offset into synth_names buffer.
     // This must be called AFTER all lowering and BEFORE SSA building.
     fn fixupSynthNames(self: *Lowerer) {
+        debug.log_d(DebugPhase.lower, "fixupSynthNames: {d} funcs", self.ir_funcs_count);
         var i: i64 = 0;
         while i < self.ir_funcs_count {
             let func_ptr: *IRFunc = self.ir_funcs + i;
@@ -1728,6 +1744,7 @@ impl Lowerer {
     }
 
     fn lowerMethodWithName(self: *Lowerer, node: *Node, synth_name_ptr: i64, synth_name_len: i64) {
+        debug.log_d(DebugPhase.lower, "lowerMethodWithName: name len {d}", synth_name_len);
         // Ensure capacity for this function's locals and nodes
         let estimated_locals: i64 = node.field3 + 100;
         self.ensureLocalsCapacity(estimated_locals);
@@ -1829,6 +1846,7 @@ impl Lowerer {
     }
 
     fn lowerImplBlock(self: *Lowerer, node: *Node) {
+        debug.log_d(DebugPhase.lower, "lowerImplBlock: {d} methods", node.field3);
         // ImplBlock: field0=type_name_start, field1=type_name_len, field2=methods_start, field3=methods_count
         let type_name_start: i64 = node.field0;
         let type_name_len: i64 = node.field1;
@@ -1921,6 +1939,7 @@ impl Lowerer {
     }
 
     fn lowerStmt(self: *Lowerer, node: *Node) {
+        debug.log_d(DebugPhase.lower, "lowerStmt: at pos {d}", node.start);
         // Set source position for debug info
         let fb: *FuncBuilder = self.current_func;
         if fb != null {
@@ -1984,6 +2003,7 @@ impl Lowerer {
     }
 
     fn lowerExprStmt(self: *Lowerer, node: *Node) {
+        debug.log(DebugPhase.lower, "lowerExprStmt");
         // ExprStmt fields:
         // field0 = expression node index
         if node.field0 >= 0 {
@@ -2037,6 +2057,7 @@ impl Lowerer {
     }
 
     fn lowerVarDecl(self: *Lowerer, node: *Node) {
+        debug.log(DebugPhase.lower, "lowerVarDecl");
         // VarDecl fields:
         // field0 = is_let (1 = let/immutable, 0 = var/mutable)
         // field1 = name_start
@@ -2366,6 +2387,7 @@ impl Lowerer {
     }
 
     fn lowerStructLitToLocal(self: *Lowerer, node: *Node, local_idx: i64) {
+        debug.log_d(DebugPhase.lower, "lowerStructLitToLocal: {d} fields", node.field3);
         // StructLit fields:
         // field0 = type_name_start
         // field1 = type_name_len
@@ -2478,11 +2500,12 @@ impl Lowerer {
     }
 
     fn lowerSliceExprToLocal(self: *Lowerer, node: *Node, local_idx: i64) {
+        debug.log_d(DebugPhase.lower, "lowerSliceExprToLocal: local_idx {d}", local_idx);
         // SliceExpr fields:
         // field0 = base expression (node index)
         // field1 = start index (-1 if omitted)
         // field2 = end index (-1 if omitted)
-    
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return; }
     
@@ -2930,11 +2953,12 @@ impl Lowerer {
     }
 
     fn lowerExpr(self: *Lowerer, node: *Node) i64 {
+        debug.log_d(DebugPhase.lower, "lowerExpr: at pos {d}", node.start);
         let fb: *FuncBuilder = self.current_func;
         if fb == null {
             return NULL_NODE;
         }
-    
+
         // Set source position for debug info (DWARF line tables)
         fb.setPos(node.start);
     
@@ -2996,6 +3020,7 @@ impl Lowerer {
     // Note: printNodeKind moved outside impl block (static function)
 
     fn lowerIntLit(self: *Lowerer, node: *Node) i64 {
+        debug.log_d(DebugPhase.lower, "lowerIntLit: {d}", node.field0);
         // IntLit fields:
         // field0 = value (the integer value)
         let fb: *FuncBuilder = self.current_func;
@@ -3003,6 +3028,7 @@ impl Lowerer {
     }
 
     fn lowerStringLit(self: *Lowerer, node: *Node) i64 {
+        debug.log_d(DebugPhase.lower, "lowerStringLit: len {d}", node.field1);
         // StringLit fields:
         // field0 = string_start (offset in source, after opening quote)
         // field1 = string_len (length of string content, excluding quotes)
@@ -3091,10 +3117,11 @@ impl Lowerer {
     }
 
     fn lowerIdent(self: *Lowerer, node: *Node) i64 {
+        debug.log_s(DebugPhase.lower, "lowerIdent: '{s}'", self.source + node.field0, node.field1);
         // Ident fields:
         // field0 = name_start
         // field1 = name_len
-    
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
     
@@ -3166,8 +3193,9 @@ impl Lowerer {
     }
 
     fn inferExprType(self: *Lowerer, node: *Node) i64 {
+        debug.log_d(DebugPhase.lower, "inferExprType: at pos {d}", node.start);
         let fb: *FuncBuilder = self.current_func;
-    
+
         // Literals
         if node.kind == NodeKind.IntLit {
             return TYPE_I64;
@@ -3295,6 +3323,7 @@ impl Lowerer {
     }
 
     fn getPtrElemSize(self: *Lowerer, type_idx: i64) i64 {
+        debug.log_d(DebugPhase.lower, "getPtrElemSize: type_idx {d}", type_idx);
         // Get the pointee type and return its size
         let pointee_idx: i64 = TypeInfo_getPointee(self.type_pool, type_idx);
         if pointee_idx <= 0 {
@@ -3310,6 +3339,7 @@ impl Lowerer {
     }
 
     fn lowerBinary(self: *Lowerer, node: *Node) i64 {
+        debug.log_d(DebugPhase.lower, "lowerBinary: op {d}", node.field2);
         // BinaryExpr fields:
         // field0 = left operand (node index)
         // field1 = right operand (node index)
@@ -3399,6 +3429,7 @@ impl Lowerer {
     }
 
     fn lowerLogicalBinary(self: *Lowerer, left_node: *Node, right_node: *Node, ast_op: i64) i64 {
+        debug.log_d(DebugPhase.lower, "lowerLogicalBinary: op {d}", ast_op);
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
     
@@ -3449,6 +3480,7 @@ impl Lowerer {
     }
 
     fn lowerStrConcat(self: *Lowerer, left_node: *Node, right_node: *Node) i64 {
+        debug.log(DebugPhase.lower, "lowerStrConcat");
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
     
@@ -3478,8 +3510,9 @@ impl Lowerer {
     }
 
     fn extractStringPtrLen(self: *Lowerer, node: *Node, out_ptr: *i64, out_len: *i64) {
+        debug.log(DebugPhase.lower, "extractStringPtrLen");
         let fb: *FuncBuilder = self.current_func;
-    
+
         // Case 1: Local variable - load ptr and len from fields
         if node.kind == NodeKind.Ident {
             let local_idx: i64 = self.findLocal(node.field0, node.field1);
@@ -3508,6 +3541,7 @@ impl Lowerer {
     }
 
     fn findLocal(self: *Lowerer, name_start: i64, name_len: i64) i64 {
+        debug.log_s(DebugPhase.lower, "findLocal: '{s}'", self.source + name_start, name_len);
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return -1; }
     
@@ -3523,6 +3557,7 @@ impl Lowerer {
     }
 
     fn lowerUnary(self: *Lowerer, node: *Node) i64 {
+        debug.log_d(DebugPhase.lower, "lowerUnary: op {d}", node.field1);
         // UnaryExpr fields:
         // field0 = operand (node index)
         // field1 = op (UnaryOp as integer)
@@ -3543,9 +3578,10 @@ impl Lowerer {
     }
 
     fn lowerBuiltinLen(self: *Lowerer, node: *Node) i64 {
+        debug.log(DebugPhase.lower, "lowerBuiltinLen");
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
-    
+
         // CallExpr: field1 = args_start, field2 = args_count
         let args_start: i64 = node.field1;
         let args_count: i64 = node.field2;
@@ -3599,6 +3635,7 @@ impl Lowerer {
     }
 
     fn lowerBuiltinPrint(self: *Lowerer, node: *Node, is_println: bool) i64 {
+        debug.log(DebugPhase.lower, "lowerBuiltinPrint");
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
 
@@ -3673,6 +3710,7 @@ impl Lowerer {
     }
 
     fn lowerMethodCall(self: *Lowerer, call_node: *Node, field_access: *Node) i64 {
+        debug.log(DebugPhase.lower, "lowerMethodCall");
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
 
@@ -3870,6 +3908,7 @@ impl Lowerer {
     }
 
     fn lowerAddressOfExpr(self: *Lowerer, node: *Node) i64 {
+        debug.log(DebugPhase.lower, "lowerAddressOfExpr");
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
 
@@ -3903,11 +3942,12 @@ impl Lowerer {
     }
 
     fn lowerCall(self: *Lowerer, node: *Node) i64 {
+        debug.log_d(DebugPhase.lower, "lowerCall: {d} args", node.field2);
         // CallExpr fields:
         // field0 = callee (node index)
         // field1 = args_start (index in children array)
         // field2 = args_count
-    
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
     
@@ -4205,6 +4245,7 @@ impl Lowerer {
     }
 
     fn lowerAddressOf(self: *Lowerer, node: *Node) i64 {
+        debug.log(DebugPhase.lower, "lowerAddressOf");
         // AddressOf fields:
         // field0 = operand (the expression to take address of)
         let fb: *FuncBuilder = self.current_func;
@@ -5027,11 +5068,12 @@ impl Lowerer {
     }
 
     fn lowerFieldAssign(self: *Lowerer, target: *Node, value_idx: i64) i64 {
+        debug.log(DebugPhase.lower, "lowerFieldAssign");
         // FieldAccess fields:
         // field0 = base expression (node index)
         // field1 = field_name_start
         // field2 = field_name_len
-    
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
     
@@ -5428,10 +5470,11 @@ impl Lowerer {
     }
 
     fn lowerIndexAssign(self: *Lowerer, target: *Node, value_idx: i64) i64 {
+        debug.log(DebugPhase.lower, "lowerIndexAssign");
         // IndexExpr fields:
         // field0 = base expression (array/pointer)
         // field1 = index expression
-    
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
     
@@ -5500,13 +5543,14 @@ impl Lowerer {
     }
 
     fn lowerBuiltinCall(self: *Lowerer, node: *Node) i64 {
+        debug.log_s(DebugPhase.lower, "lowerBuiltinCall: @{s}", self.source + node.field0, node.field1);
         // BuiltinCall fields:
         // field0 = name_start (offset in source after @)
         // field1 = name_len
         // field2 = type_arg (for @intCast, @sizeOf, @alignOf; -1 if none)
         // field3 = arg1 (first value argument node index)
         // field4 = arg2 (second value argument node index; -1 if none)
-    
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
     

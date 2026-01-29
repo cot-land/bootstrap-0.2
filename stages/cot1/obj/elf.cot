@@ -61,6 +61,7 @@ var ew_output_cap: i64 = 0;
 var ew_storage_initialized: bool = false;
 
 fn ElfWriter_allocateStorage() {
+    debug.log(DebugPhase.codegen, "ElfWriter_allocateStorage");
     if ew_storage_initialized { return; }
 
     ew_sym_name_offsets = malloc_i64(EW_SYMBOLS_CAP);
@@ -212,6 +213,7 @@ struct ElfWriter {
 impl ElfWriter {
 
     fn init(self: *ElfWriter, code: *u8, code_count: i64, data: *u8, data_cap: i64) {
+        debug.log_dd(DebugPhase.codegen, "ElfWriter.init: code={d} data_cap={d}", code_count, data_cap);
         ElfWriter_allocateStorage();
 
         self.code = code;
@@ -266,6 +268,7 @@ impl ElfWriter {
 
     // Add a string to strtab, return offset
     fn addString(self: *ElfWriter, ptr: *u8, len: i64) i64 {
+        debug.log_d(DebugPhase.codegen, "ElfWriter.addString: len={d}", len);
         if self.strings_count + len + 1 > self.strings_cap {
             return 0;  // Error
         }
@@ -288,6 +291,7 @@ impl ElfWriter {
 
     // Add a symbol, returns symbol index
     fn addSymbol(self: *ElfWriter, name_ptr: *u8, name_len: i64, value: i64, section: i64, is_external: bool) i64 {
+        debug.log_dd(DebugPhase.codegen, "ElfWriter.addSymbol: val={d} sec={d}", value, section);
         if self.symbols_count >= self.symbols_cap { return 0 - 1; }
 
         let name_off: i64 = self.addString(name_ptr, name_len);
@@ -322,6 +326,7 @@ impl ElfWriter {
 
     // Add a relocation (for CALL instructions)
     fn addReloc(self: *ElfWriter, offset: i64, target_ptr: *u8, target_len: i64, reloc_type: i64, addend: i64) {
+        debug.log_dd(DebugPhase.codegen, "ElfWriter.addReloc: offset={d} type={d}", offset, reloc_type);
         if self.relocs_count >= self.relocs_cap { return; }
 
         // Store target name for later lookup
@@ -345,6 +350,7 @@ impl ElfWriter {
 
     // Add bytes to data section (zeros)
     fn addDataZeros(self: *ElfWriter, size: i64) {
+        debug.log_d(DebugPhase.codegen, "ElfWriter.addDataZeros: size={d}", size);
         var i: i64 = 0;
         while i < size {
             if self.data_count >= self.data_cap { return; }
@@ -357,6 +363,7 @@ impl ElfWriter {
 
     // Add 8-byte value to data section (little-endian)
     fn addDataI64(self: *ElfWriter, value: i64) {
+        debug.log_d(DebugPhase.codegen, "ElfWriter.addDataI64: val={d}", value);
         if self.data_count + 8 > self.data_cap { return; }
         var i: i64 = 0;
         while i < 8 {
@@ -398,6 +405,7 @@ impl ElfWriter {
 
     // Finalize and return output size
     fn finalize(self: *ElfWriter) i64 {
+        debug.log(DebugPhase.codegen, "ElfWriter.finalize");
         // Build the ELF file in output buffer
         self.output_count = 0;
 
@@ -562,6 +570,7 @@ impl ElfWriter {
 
     // Helper: write bytes from buffer
     fn writeBytes(self: *ElfWriter, buf: *u8, len: i64) {
+        debug.log_d(DebugPhase.codegen, "ElfWriter.writeBytes: len={d}", len);
         var i: i64 = 0;
         while i < len {
             if self.output_count >= self.output_cap { return; }
@@ -591,6 +600,7 @@ impl ElfWriter {
 
     // Build section header string table
     fn buildShstrtab(self: *ElfWriter) i64 {
+        debug.log(DebugPhase.codegen, "ElfWriter.buildShstrtab");
         // Fixed layout: \0.text\0.data\0.symtab\0.strtab\0.shstrtab\0.rela.text\0
         let start: i64 = self.output_count;
 
@@ -630,6 +640,7 @@ impl ElfWriter {
 
     // Write ELF header
     fn writeElfHeader(self: *ElfWriter, shoff: i64, shnum: i64, shstrndx: i64) {
+        debug.log_dd(DebugPhase.codegen, "ElfWriter.writeElfHeader: shoff={d} shnum={d}", shoff, shnum);
         // e_ident (16 bytes)
         self.writeByte(ELF_MAG0);
         self.writeByte(ELF_MAG1);
@@ -678,6 +689,7 @@ impl ElfWriter {
     // Write section header
     fn writeSectionHeader(self: *ElfWriter, name: i64, shtype: i64, flags: i64,
                           offset: i64, size: i64, link: i64, info: i64, align: i64, entsize: i64) {
+        debug.log_dd(DebugPhase.codegen, "ElfWriter.writeSectionHeader: offset={d} size={d}", offset, size);
         self.writeU32(name);    // sh_name
         self.writeU32(shtype);  // sh_type
         self.writeU64(flags);   // sh_flags
@@ -692,6 +704,7 @@ impl ElfWriter {
 
     // Write symbol table entry
     fn writeSymbol(self: *ElfWriter, name: i64, info: i64, shndx: i64, value: i64, size: i64) {
+        debug.log_dd(DebugPhase.codegen, "ElfWriter.writeSymbol: name={d} val={d}", name, value);
         self.writeU32(name);   // st_name
         self.writeByte(info);  // st_info
         self.writeByte(0);     // st_other
@@ -702,6 +715,7 @@ impl ElfWriter {
 
     // Write relocation entry
     fn writeRela(self: *ElfWriter, offset: i64, sym: i64, rtype: i64, addend: i64) {
+        debug.log_dd(DebugPhase.codegen, "ElfWriter.writeRela: offset={d} sym={d}", offset, sym);
         self.writeU64(offset);
         // r_info = (sym << 32) | type
         let info: i64 = (sym << 32) | (rtype & 0xFFFFFFFF);
@@ -711,6 +725,7 @@ impl ElfWriter {
 
     // Find symbol index by name (string offset)
     fn findSymbolIndex(self: *ElfWriter, name_str_off: i64, num_local: i64) i64 {
+        debug.log_d(DebugPhase.codegen, "ElfWriter.findSymbolIndex: name_off={d}", name_str_off);
         // Check defined symbols
         var i: i64 = 0;
         while i < self.symbols_count {
@@ -727,6 +742,7 @@ impl ElfWriter {
 
     // Write complete ELF object file
     fn write(self: *ElfWriter, fd: i32) i64 {
+        debug.log(DebugPhase.codegen, "ElfWriter.write");
         // Calculate section layout
         // Sections: 0=NULL, 1=.text, 2=.data, 3=.symtab, 4=.strtab, 5=.shstrtab, 6=.rela.text
         let num_sections: i64 = 7;

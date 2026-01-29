@@ -20,6 +20,7 @@
 //   Mod: 00 = [reg], 01 = [reg+disp8], 10 = [reg+disp32], 11 = reg
 
 import "regs.cot"
+import "../lib/pipeline_debug.cot"
 
 // ============================================================================
 // REX Prefix Encoding
@@ -35,6 +36,7 @@ fn rex_w() i64 {
 // r: 1 if reg field uses R8-R15
 // b: 1 if r/m or base field uses R8-R15
 fn amd64_encode_rex(w: bool, r: bool, b: bool) i64 {
+    debug.log(DebugPhase.codegen, "amd64_encode_rex");
     var rex: i64 = 0x40;
     if w { rex = rex | 0x08; }
     if r { rex = rex | 0x04; }
@@ -58,6 +60,7 @@ fn amd64_encode_rex_rm(rm: i64) i64 {
 
 // Encode ModR/M for register-direct addressing (mod=11)
 fn amd64_encode_modrm_rr(reg: i64, rm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_modrm_rr: reg={d} rm={d}", reg, rm);
     return 0xC0 | ((AMD64_reg_enc3(reg) & 7) << 3) | (AMD64_reg_enc3(rm) & 7);
 }
 
@@ -136,11 +139,13 @@ fn enc_byte(enc: i64, n: i64) i64 {
 
 // MOV r64, r64 (3 bytes: REX.W 89 /r)
 fn amd64_encode_mov_rr(dst: i64, src: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_mov_rr: dst={d} src={d}", dst, src);
     return pack3(amd64_encode_rex_rr(src, dst), 0x89, amd64_encode_modrm_rr(src, dst));
 }
 
 // MOV r64, imm32 (sign-extended) - 7 bytes: REX.W C7 /0 id
 fn amd64_encode_mov_ri32(dst: i64, imm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_mov_ri32: dst={d} imm={d}", dst, imm);
     var rex: i64 = amd64_encode_rex_rm(dst);
     var modrm: i64 = amd64_encode_modrm_ext(0, dst);
     return pack7(rex, 0xC7, modrm, imm & 0xFF, (imm >> 8) & 0xFF, (imm >> 16) & 0xFF, (imm >> 24) & 0xFF);
@@ -148,6 +153,7 @@ fn amd64_encode_mov_ri32(dst: i64, imm: i64) i64 {
 
 // MOV r32, imm32 (5 bytes: B8+rd id) - clears upper 32 bits
 fn amd64_encode_mov_r32_i32(dst: i64, imm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_mov_r32_i32: dst={d} imm={d}", dst, imm);
     var opcode: i64 = 0xB8 + AMD64_reg_enc3(dst);
     if AMD64_needs_rex(dst) {
         return pack7(0x41, opcode, imm & 0xFF, (imm >> 8) & 0xFF, (imm >> 16) & 0xFF, (imm >> 24) & 0xFF, 0);
@@ -161,11 +167,13 @@ fn amd64_encode_mov_r32_i32(dst: i64, imm: i64) i64 {
 
 // ADD r64, r64 (3 bytes: REX.W 01 /r)
 fn amd64_encode_add_rr(dst: i64, src: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_add_rr: dst={d} src={d}", dst, src);
     return pack3(amd64_encode_rex_rr(src, dst), 0x01, amd64_encode_modrm_rr(src, dst));
 }
 
 // ADD r64, imm32 (7 bytes: REX.W 81 /0 id)
 fn amd64_encode_add_ri32(dst: i64, imm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_add_ri32: dst={d} imm={d}", dst, imm);
     var rex: i64 = amd64_encode_rex_rm(dst);
     var modrm: i64 = amd64_encode_modrm_ext(0, dst);
     return pack7(rex, 0x81, modrm, imm & 0xFF, (imm >> 8) & 0xFF, (imm >> 16) & 0xFF, (imm >> 24) & 0xFF);
@@ -173,16 +181,19 @@ fn amd64_encode_add_ri32(dst: i64, imm: i64) i64 {
 
 // ADD r64, imm8 (4 bytes: REX.W 83 /0 ib)
 fn amd64_encode_add_ri8(dst: i64, imm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_add_ri8: dst={d} imm={d}", dst, imm);
     return pack4(amd64_encode_rex_rm(dst), 0x83, amd64_encode_modrm_ext(0, dst), imm & 0xFF);
 }
 
 // SUB r64, r64 (3 bytes: REX.W 29 /r)
 fn amd64_encode_sub_rr(dst: i64, src: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_sub_rr: dst={d} src={d}", dst, src);
     return pack3(amd64_encode_rex_rr(src, dst), 0x29, amd64_encode_modrm_rr(src, dst));
 }
 
 // SUB r64, imm32 (7 bytes: REX.W 81 /5 id)
 fn amd64_encode_sub_ri32(dst: i64, imm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_sub_ri32: dst={d} imm={d}", dst, imm);
     var rex: i64 = amd64_encode_rex_rm(dst);
     var modrm: i64 = amd64_encode_modrm_ext(5, dst);
     return pack7(rex, 0x81, modrm, imm & 0xFF, (imm >> 8) & 0xFF, (imm >> 16) & 0xFF, (imm >> 24) & 0xFF);
@@ -190,16 +201,19 @@ fn amd64_encode_sub_ri32(dst: i64, imm: i64) i64 {
 
 // SUB r64, imm8 (4 bytes: REX.W 83 /5 ib)
 fn amd64_encode_sub_ri8(dst: i64, imm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_sub_ri8: dst={d} imm={d}", dst, imm);
     return pack4(amd64_encode_rex_rm(dst), 0x83, amd64_encode_modrm_ext(5, dst), imm & 0xFF);
 }
 
 // IMUL r64, r64 (4 bytes: REX.W 0F AF /r)
 fn amd64_encode_imul_rr(dst: i64, src: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_imul_rr: dst={d} src={d}", dst, src);
     return pack4(amd64_encode_rex_rr(dst, src), 0x0F, 0xAF, amd64_encode_modrm_rr(dst, src));
 }
 
 // NEG r64 (3 bytes: REX.W F7 /3)
 fn amd64_encode_neg(dst: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "amd64_encode_neg: dst={d}", dst);
     return pack3(amd64_encode_rex_rm(dst), 0xF7, amd64_encode_modrm_ext(3, dst));
 }
 
@@ -209,12 +223,14 @@ fn amd64_encode_neg(dst: i64) i64 {
 
 // CQO - sign extend RAX into RDX:RAX (2 bytes: REX.W 99)
 fn amd64_encode_cqo() i64 {
+    debug.log(DebugPhase.codegen, "amd64_encode_cqo");
     return pack2(0x48, 0x99);
 }
 
 // IDIV r64 - signed divide RDX:RAX by r64, quotient in RAX, remainder in RDX
 // 3 bytes: REX.W F7 /7
 fn amd64_encode_idiv(src: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "amd64_encode_idiv: src={d}", src);
     return pack3(amd64_encode_rex_rm(src), 0xF7, amd64_encode_modrm_ext(7, src));
 }
 
@@ -224,21 +240,25 @@ fn amd64_encode_idiv(src: i64) i64 {
 
 // AND r64, r64 (3 bytes: REX.W 21 /r)
 fn amd64_encode_and_rr(dst: i64, src: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_and_rr: dst={d} src={d}", dst, src);
     return pack3(amd64_encode_rex_rr(src, dst), 0x21, amd64_encode_modrm_rr(src, dst));
 }
 
 // OR r64, r64 (3 bytes: REX.W 09 /r)
 fn amd64_encode_or_rr(dst: i64, src: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_or_rr: dst={d} src={d}", dst, src);
     return pack3(amd64_encode_rex_rr(src, dst), 0x09, amd64_encode_modrm_rr(src, dst));
 }
 
 // XOR r64, r64 (3 bytes: REX.W 31 /r)
 fn amd64_encode_xor_rr(dst: i64, src: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_xor_rr: dst={d} src={d}", dst, src);
     return pack3(amd64_encode_rex_rr(src, dst), 0x31, amd64_encode_modrm_rr(src, dst));
 }
 
 // NOT r64 (3 bytes: REX.W F7 /2)
 fn amd64_encode_not(dst: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "amd64_encode_not: dst={d}", dst);
     return pack3(amd64_encode_rex_rm(dst), 0xF7, amd64_encode_modrm_ext(2, dst));
 }
 
@@ -248,31 +268,37 @@ fn amd64_encode_not(dst: i64) i64 {
 
 // SHL r64, CL (3 bytes: REX.W D3 /4)
 fn amd64_encode_shl_cl(dst: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "amd64_encode_shl_cl: dst={d}", dst);
     return pack3(amd64_encode_rex_rm(dst), 0xD3, amd64_encode_modrm_ext(4, dst));
 }
 
 // SHL r64, imm8 (4 bytes: REX.W C1 /4 ib)
 fn amd64_encode_shl_i8(dst: i64, imm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_shl_i8: dst={d} imm={d}", dst, imm);
     return pack4(amd64_encode_rex_rm(dst), 0xC1, amd64_encode_modrm_ext(4, dst), imm & 0x3F);
 }
 
 // SHR r64, CL (3 bytes: REX.W D3 /5) - logical right shift
 fn amd64_encode_shr_cl(dst: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "amd64_encode_shr_cl: dst={d}", dst);
     return pack3(amd64_encode_rex_rm(dst), 0xD3, amd64_encode_modrm_ext(5, dst));
 }
 
 // SHR r64, imm8 (4 bytes: REX.W C1 /5 ib)
 fn amd64_encode_shr_i8(dst: i64, imm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_shr_i8: dst={d} imm={d}", dst, imm);
     return pack4(amd64_encode_rex_rm(dst), 0xC1, amd64_encode_modrm_ext(5, dst), imm & 0x3F);
 }
 
 // SAR r64, CL (3 bytes: REX.W D3 /7) - arithmetic right shift
 fn amd64_encode_sar_cl(dst: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "amd64_encode_sar_cl: dst={d}", dst);
     return pack3(amd64_encode_rex_rm(dst), 0xD3, amd64_encode_modrm_ext(7, dst));
 }
 
 // SAR r64, imm8 (4 bytes: REX.W C1 /7 ib)
 fn amd64_encode_sar_i8(dst: i64, imm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_sar_i8: dst={d} imm={d}", dst, imm);
     return pack4(amd64_encode_rex_rm(dst), 0xC1, amd64_encode_modrm_ext(7, dst), imm & 0x3F);
 }
 
@@ -282,11 +308,13 @@ fn amd64_encode_sar_i8(dst: i64, imm: i64) i64 {
 
 // CMP r64, r64 (3 bytes: REX.W 39 /r)
 fn amd64_encode_cmp_rr(op1: i64, op2: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_cmp_rr: op1={d} op2={d}", op1, op2);
     return pack3(amd64_encode_rex_rr(op2, op1), 0x39, amd64_encode_modrm_rr(op2, op1));
 }
 
 // CMP r64, imm32 (7 bytes: REX.W 81 /7 id)
 fn amd64_encode_cmp_ri32(op1: i64, imm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_cmp_ri32: op1={d} imm={d}", op1, imm);
     var rex: i64 = amd64_encode_rex_rm(op1);
     var modrm: i64 = amd64_encode_modrm_ext(7, op1);
     return pack7(rex, 0x81, modrm, imm & 0xFF, (imm >> 8) & 0xFF, (imm >> 16) & 0xFF, (imm >> 24) & 0xFF);
@@ -294,11 +322,13 @@ fn amd64_encode_cmp_ri32(op1: i64, imm: i64) i64 {
 
 // CMP r64, imm8 (4 bytes: REX.W 83 /7 ib)
 fn amd64_encode_cmp_ri8(op1: i64, imm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_cmp_ri8: op1={d} imm={d}", op1, imm);
     return pack4(amd64_encode_rex_rm(op1), 0x83, amd64_encode_modrm_ext(7, op1), imm & 0xFF);
 }
 
 // TEST r64, r64 (3 bytes: REX.W 85 /r)
 fn amd64_encode_test_rr(op1: i64, op2: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_test_rr: op1={d} op2={d}", op1, op2);
     return pack3(amd64_encode_rex_rr(op2, op1), 0x85, amd64_encode_modrm_rr(op2, op1));
 }
 
@@ -325,6 +355,7 @@ const AMD64_COND_G: i64 = 15;  // Greater (signed >)
 // SETcc r8 (3-4 bytes: [REX] 0F 9x /0)
 // Sets byte register to 1 if condition true, 0 otherwise
 fn amd64_encode_setcc(cond: i64, dst: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_setcc: cond={d} dst={d}", cond, dst);
     var opcode: i64 = 0x90 + (cond & 0x0F);
     if AMD64_needs_rex(dst) {
         return pack4(0x41, 0x0F, opcode, amd64_encode_modrm_ext(0, dst));
@@ -334,11 +365,13 @@ fn amd64_encode_setcc(cond: i64, dst: i64) i64 {
 
 // MOVZX r64, r8 - zero extend byte to 64-bit (4 bytes: REX.W 0F B6 /r)
 fn amd64_encode_movzx_r64_r8(dst: i64, src: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_movzx_r64_r8: dst={d} src={d}", dst, src);
     return pack4(amd64_encode_rex_rr(dst, src), 0x0F, 0xB6, amd64_encode_modrm_rr(dst, src));
 }
 
 // MOVZX r64, r16 - zero extend word to 64-bit (4 bytes: REX.W 0F B7 /r)
 fn amd64_encode_movzx_r64_r16(dst: i64, src: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_movzx_r64_r16: dst={d} src={d}", dst, src);
     return pack4(amd64_encode_rex_rr(dst, src), 0x0F, 0xB7, amd64_encode_modrm_rr(dst, src));
 }
 
@@ -357,21 +390,25 @@ fn amd64_encode_mov_r32_r32(dst: i64, src: i64) i64 {
 
 // MOVSX r64, r8 - sign extend byte to 64-bit (4 bytes: REX.W 0F BE /r)
 fn amd64_encode_movsx_r64_r8(dst: i64, src: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_movsx_r64_r8: dst={d} src={d}", dst, src);
     return pack4(amd64_encode_rex_rr(dst, src), 0x0F, 0xBE, amd64_encode_modrm_rr(dst, src));
 }
 
 // MOVSX r64, r16 - sign extend word to 64-bit (4 bytes: REX.W 0F BF /r)
 fn amd64_encode_movsx_r64_r16(dst: i64, src: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_movsx_r64_r16: dst={d} src={d}", dst, src);
     return pack4(amd64_encode_rex_rr(dst, src), 0x0F, 0xBF, amd64_encode_modrm_rr(dst, src));
 }
 
 // MOVSXD r64, r32 - sign extend dword to 64-bit (3 bytes: REX.W 63 /r)
 fn amd64_encode_movsxd(dst: i64, src: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_movsxd: dst={d} src={d}", dst, src);
     return pack3(amd64_encode_rex_rr(dst, src), 0x63, amd64_encode_modrm_rr(dst, src));
 }
 
 // CMOVcc r64, r64 - conditional move (4 bytes: REX.W 0F 4x /r)
 fn amd64_encode_cmov(cond: i64, dst: i64, src: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "amd64_encode_cmov: cond={d} dst={d} src={d}", cond, dst, src);
     let opcode: i64 = 0x40 + (cond & 0x0F);
     return pack4(amd64_encode_rex_rr(dst, src), 0x0F, opcode, amd64_encode_modrm_rr(dst, src));
 }
@@ -382,16 +419,19 @@ fn amd64_encode_cmov(cond: i64, dst: i64, src: i64) i64 {
 
 // JMP rel32 (5 bytes: E9 cd)
 fn amd64_encode_jmp_rel32(offset: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "amd64_encode_jmp_rel32: offset={d}", offset);
     return pack5(0xE9, offset & 0xFF, (offset >> 8) & 0xFF, (offset >> 16) & 0xFF, (offset >> 24) & 0xFF);
 }
 
 // JMP rel8 (2 bytes: EB cb)
 fn amd64_encode_jmp_rel8(offset: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "amd64_encode_jmp_rel8: offset={d}", offset);
     return pack2(0xEB, offset & 0xFF);
 }
 
 // Jcc rel32 (6 bytes: 0F 8x cd) - conditional jump
 fn amd64_encode_jcc_rel32(cond: i64, offset: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_jcc_rel32: cond={d} offset={d}", cond, offset);
     var opcode: i64 = 0x80 + (cond & 0x0F);
     // Pack as 6 bytes - we'll need special handling
     return (6 << 56) | (0x0F) | (opcode << 8) | ((offset & 0xFF) << 16) | (((offset >> 8) & 0xFF) << 24) | (((offset >> 16) & 0xFF) << 32) | (((offset >> 24) & 0xFF) << 40);
@@ -399,6 +439,7 @@ fn amd64_encode_jcc_rel32(cond: i64, offset: i64) i64 {
 
 // Jcc rel8 (2 bytes: 7x cb) - short conditional jump
 fn amd64_encode_jcc_rel8(cond: i64, offset: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_jcc_rel8: cond={d} offset={d}", cond, offset);
     var opcode: i64 = 0x70 + (cond & 0x0F);
     return pack2(opcode, offset & 0xFF);
 }
@@ -409,12 +450,14 @@ fn amd64_encode_jcc_rel8(cond: i64, offset: i64) i64 {
 
 // CALL rel32 (5 bytes: E8 cd)
 fn amd64_encode_call_rel32(offset: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "amd64_encode_call_rel32: offset={d}", offset);
     return pack5(0xE8, offset & 0xFF, (offset >> 8) & 0xFF, (offset >> 16) & 0xFF, (offset >> 24) & 0xFF);
 }
 
 // CALL r64 - indirect call through register (2-3 bytes: [REX.B] FF /2)
 // Opcode FF with ModR/M reg field = 2 (opcode extension for CALL)
 fn amd64_encode_call_reg(reg: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "amd64_encode_call_reg: reg={d}", reg);
     // ModR/M: mod=11 (register), reg=2 (opcode ext), r/m=register
     let modrm: i64 = 0xD0 | AMD64_reg_enc3(reg);  // 11 010 rrr
     if AMD64_needs_rex(reg) {
@@ -426,6 +469,7 @@ fn amd64_encode_call_reg(reg: i64) i64 {
 
 // RET (1 byte: C3)
 fn amd64_encode_ret() i64 {
+    debug.log(DebugPhase.codegen, "amd64_encode_ret");
     return (1 << 56) | 0xC3;
 }
 
@@ -435,6 +479,7 @@ fn amd64_encode_ret() i64 {
 
 // PUSH r64 (1-2 bytes: [REX.B] 50+rd)
 fn amd64_encode_push(reg: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "amd64_encode_push: reg={d}", reg);
     if AMD64_needs_rex(reg) {
         return pack2(0x41, 0x50 + AMD64_reg_enc3(reg));
     }
@@ -443,6 +488,7 @@ fn amd64_encode_push(reg: i64) i64 {
 
 // POP r64 (1-2 bytes: [REX.B] 58+rd)
 fn amd64_encode_pop(reg: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "amd64_encode_pop: reg={d}", reg);
     if AMD64_needs_rex(reg) {
         return pack2(0x41, 0x58 + AMD64_reg_enc3(reg));
     }
@@ -457,6 +503,7 @@ fn amd64_encode_pop(reg: i64) i64 {
 // This is complex due to SIB/displacement handling
 // For simplicity, assume base is not RSP/R12 (would need SIB)
 fn amd64_encode_load_disp32(dst: i64, base: i64, disp: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "amd64_encode_load_disp32: dst={d} base={d} disp={d}", dst, base, disp);
     var rex: i64 = amd64_encode_rex_rr(dst, base);
     var modrm: i64 = amd64_encode_modrm_disp32(dst, base);
     return pack7(rex, 0x8B, modrm, disp & 0xFF, (disp >> 8) & 0xFF, (disp >> 16) & 0xFF, (disp >> 24) & 0xFF);
@@ -464,6 +511,7 @@ fn amd64_encode_load_disp32(dst: i64, base: i64, disp: i64) i64 {
 
 // MOV [base+disp32], r64 (7+ bytes)
 fn amd64_encode_store_disp32(base: i64, disp: i64, src: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "amd64_encode_store_disp32: base={d} disp={d} src={d}", base, disp, src);
     var rex: i64 = amd64_encode_rex_rr(src, base);
     var modrm: i64 = amd64_encode_modrm_disp32(src, base);
     return pack7(rex, 0x89, modrm, disp & 0xFF, (disp >> 8) & 0xFF, (disp >> 16) & 0xFF, (disp >> 24) & 0xFF);
@@ -472,6 +520,7 @@ fn amd64_encode_store_disp32(base: i64, disp: i64, src: i64) i64 {
 // MOVZX r64, byte [base+disp32] - zero-extend byte load
 // REX.W 0F B6 /r with disp32
 fn amd64_encode_load_byte_disp32(dst: i64, base: i64, disp: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "amd64_encode_load_byte_disp32: dst={d} base={d} disp={d}", dst, base, disp);
     var rex: i64 = amd64_encode_rex_rr(dst, base);
     var modrm: i64 = amd64_encode_modrm_disp32(dst, base);
     // 8 bytes: rex 0f b6 modrm disp32
@@ -481,6 +530,7 @@ fn amd64_encode_load_byte_disp32(dst: i64, base: i64, disp: i64) i64 {
 // MOV byte [base+disp32], r8 - byte store
 // [REX] 88 /r with disp32
 fn amd64_encode_store_byte_disp32(base: i64, disp: i64, src: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "amd64_encode_store_byte_disp32: base={d} disp={d} src={d}", base, disp, src);
     // For byte operations, we need to handle low-byte registers
     // REX prefix is needed for R8-R15 and to access SIL/DIL/BPL/SPL
     var rex: i64 = 0x40;  // Base REX for byte access to low regs
@@ -492,6 +542,7 @@ fn amd64_encode_store_byte_disp32(base: i64, disp: i64, src: i64) i64 {
 
 // LEA r64, [base+disp32] (7 bytes: REX.W 8D /r)
 fn amd64_encode_lea_disp32(dst: i64, base: i64, disp: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "amd64_encode_lea_disp32: dst={d} base={d} disp={d}", dst, base, disp);
     var rex: i64 = amd64_encode_rex_rr(dst, base);
     var modrm: i64 = amd64_encode_modrm_disp32(dst, base);
     return pack7(rex, 0x8D, modrm, disp & 0xFF, (disp >> 8) & 0xFF, (disp >> 16) & 0xFF, (disp >> 24) & 0xFF);
@@ -501,6 +552,7 @@ fn amd64_encode_lea_disp32(dst: i64, base: i64, disp: i64) i64 {
 // Used for loading addresses of globals, string literals, etc.
 // ModR/M: mod=00, reg=dst, rm=5 (RIP-relative mode)
 fn amd64_encode_lea_rip(dst: i64, disp: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "amd64_encode_lea_rip: dst={d} disp={d}", dst, disp);
     // REX.W prefix: 0x48 if dst < 8, 0x4C if dst >= 8
     var rex: i64 = 0x48;
     if dst >= 8 {

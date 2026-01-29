@@ -83,16 +83,19 @@ const NUM_CALLER_SAVED: i64 = 16;
 
 // Check if register is an argument register (X0-X7)
 fn is_arg_reg(reg: i64) bool {
+    debug.log_d(DebugPhase.regalloc, "is_arg_reg: {d}", reg);
     return reg >= 0 and reg <= 7;
 }
 
 // Check if register is callee-saved (X19-X28)
 fn is_callee_saved(reg: i64) bool {
+    debug.log_d(DebugPhase.regalloc, "is_callee_saved: {d}", reg);
     return reg >= 19 and reg <= 28;
 }
 
 // Check if register is caller-saved (X0-X15)
 fn is_caller_saved(reg: i64) bool {
+    debug.log_d(DebugPhase.regalloc, "is_caller_saved: {d}", reg);
     return reg >= 0 and reg <= 15;
 }
 
@@ -103,6 +106,7 @@ fn is_scratch_reg(reg: i64) bool {
 
 // Check if register is allocatable (X0-X28, excluding X16-X18)
 fn is_allocatable(reg: i64) bool {
+    debug.log_d(DebugPhase.regalloc, "is_allocatable: {d}", reg);
     if reg < 0 or reg > 28 { return false; }
     if reg == 16 or reg == 17 or reg == 18 { return false; }
     return true;

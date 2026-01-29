@@ -13,6 +13,7 @@ extern fn memcpy(dest: *u8, src: *u8, n: i64) *u8;
 // djb2 hash function (simpler, fits in i64)
 // Reference: http://www.cse.yorku.ca/~oz/hash.html
 fn djb2_hash(ptr: *u8, len: i64) i64 {
+    debug.log_d(DebugPhase.check, "djb2_hash: len={d}", len);
     var hash: i64 = 5381;
     var i: i64 = 0;
     while i < len {
@@ -46,6 +47,7 @@ struct StrMap {
 impl StrMap {
 
     fn get(self: *StrMap, key_ptr: *u8, key_len: i64) i64 {
+        debug.log_d(DebugPhase.check, "StrMap.get: key_len={d}", key_len);
         if self.cap == 0 { return -1; }
     
         let hash: i64 = djb2_hash(key_ptr, key_len);
@@ -124,6 +126,7 @@ impl StrMap {
     }
 
     fn put(self: *StrMap, key_ptr: *u8, key_len: i64, value: i64) {
+        debug.log_dd(DebugPhase.check, "StrMap.put: key_len={d} value={d}", key_len, value);
         // Check load factor - grow if > 70%
         let threshold: i64 = (self.cap * 70) / 100;
         if self.count >= threshold {
@@ -177,6 +180,7 @@ extern fn malloc_StrMapEntry(count: i64) *StrMapEntry;
 
 // Initialize an empty map with given capacity
 fn StrMap_init(initial_cap: i64) StrMap {
+    debug.log_d(DebugPhase.check, "StrMap_init: cap={d}", initial_cap);
     var m: StrMap = undefined;
 
     // Round up to power of 2
@@ -206,6 +210,7 @@ fn StrMap_init(initial_cap: i64) StrMap {
 
 // Compare two strings for equality
 fn str_equal(a_ptr: *u8, a_len: i64, b_ptr: *u8, b_len: i64) bool {
+    debug.log_dd(DebugPhase.check, "str_equal: a_len={d} b_len={d}", a_len, b_len);
     if a_len != b_len { return false; }
     var i: i64 = 0;
     while i < a_len {

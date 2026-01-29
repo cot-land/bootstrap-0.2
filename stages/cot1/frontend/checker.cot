@@ -46,6 +46,7 @@ struct CheckerSymbol {
 }
 
 fn CheckerSymbol_new(name_start: i64, name_len: i64, kind: CheckerSymbolKind, type_idx: i64, node_idx: i64, mutable: bool) CheckerSymbol {
+    debug.log_dd(DebugPhase.check, "CheckerSymbol_new: start={d} type={d}", name_start, type_idx);
     return CheckerSymbol{
         .name_start = name_start,
         .name_len = name_len,
@@ -59,6 +60,7 @@ fn CheckerSymbol_new(name_start: i64, name_len: i64, kind: CheckerSymbolKind, ty
 }
 
 fn CheckerSymbol_newConst(name_start: i64, name_len: i64, type_idx: i64, node_idx: i64, value: i64) CheckerSymbol {
+    debug.log_dd(DebugPhase.check, "CheckerSymbol_newConst: type={d} value={d}", type_idx, value);
     return CheckerSymbol{
         .name_start = name_start,
         .name_len = name_len,
@@ -72,6 +74,7 @@ fn CheckerSymbol_newConst(name_start: i64, name_len: i64, type_idx: i64, node_id
 }
 
 fn CheckerSymbol_newExtern(name_start: i64, name_len: i64, kind: CheckerSymbolKind, type_idx: i64, node_idx: i64) CheckerSymbol {
+    debug.log_dd(DebugPhase.check, "CheckerSymbol_newExtern: start={d} type={d}", name_start, type_idx);
     return CheckerSymbol{
         .name_start = name_start,
         .name_len = name_len,
@@ -112,11 +115,13 @@ struct ScopePool {
 impl ScopePool {
 
     fn init(self: *ScopePool) {
+        debug.log(DebugPhase.check, "ScopePool.init");
         self.count = 0;
         self.symbols_count = 0;
     }
 
     fn createScope(self: *ScopePool, parent_idx: i64) i64 {
+        debug.log_d(DebugPhase.check, "ScopePool.createScope: parent={d}", parent_idx);
         let idx: i64 = self.count;
         self.count = self.count + 1;
     
@@ -129,6 +134,7 @@ impl ScopePool {
     }
 
     fn define(self: *ScopePool, scope_idx: i64, sym: CheckerSymbol) {
+        debug.log_d(DebugPhase.check, "ScopePool.define: scope={d}", scope_idx);
         let s: *Scope = self.scopes + scope_idx;
         let sym_ptr: *CheckerSymbol = s.symbols + s.count;
         sym_ptr.* = sym;
@@ -228,7 +234,7 @@ impl Checker {
 
     fn checkExpr(self: *Checker, node_idx: i64) i64 {
         if node_idx < 0 { return TYPE_INVALID; }
-    
+        debug.log_d(DebugPhase.check, "checkExpr: node {d}", node_idx);
         let node: *Node = Node_get(self.ast_pool, node_idx);
     
         // IntLit -> i64
@@ -433,7 +439,7 @@ impl Checker {
 
     fn checkStmt(self: *Checker, node_idx: i64) bool {
         if node_idx < 0 { return false; }
-    
+        debug.log_d(DebugPhase.check, "checkStmt: node {d}", node_idx);
         let node: *Node = Node_get(self.ast_pool, node_idx);
     
         // ReturnStmt -> check value matches return type
@@ -466,7 +472,7 @@ impl Checker {
         if node.kind == NodeKind.BlockStmt {
             let stmts_start: i64 = node.field0;
             let stmts_count: i64 = node.field1;
-    
+            debug.log_d(DebugPhase.check, "checkBlockStmt: {d} statements", stmts_count);
             var i: i64 = 0;
             var has_return: bool = false;
             while i < stmts_count {
@@ -482,10 +488,11 @@ impl Checker {
     
         // IfStmt -> check condition is bool, check both branches
         if node.kind == NodeKind.IfStmt {
+            debug.log(DebugPhase.check, "checkIfStmt");
             let cond: i64 = node.field0;
             let then_body: i64 = node.field1;
             let else_body: i64 = node.field2;
-    
+
             // Check condition is boolean
             let cond_type: i64 = self.checkExpr(cond);
             if not TypeInfo_isBool(self.type_pool, cond_type) {
@@ -535,13 +542,14 @@ impl Checker {
 
     fn checkVarDecl(self: *Checker, node_idx: i64) {
         if node_idx < 0 { return; }
-    
+
         let node: *Node = Node_get(self.ast_pool, node_idx);
         if node.kind != NodeKind.VarDecl { return; }
-    
+
         let is_let: i64 = node.field0;      // 1 = let (immutable), 0 = var (mutable)
         let name_start: i64 = node.field1;
         let name_len: i64 = node.field2;
+        debug.log_s(DebugPhase.check, "checkVarDecl: '{s}'", self.source + name_start, name_len);
         let init_expr: i64 = node.field3;
     
         // Determine type from initializer expression
@@ -690,12 +698,13 @@ impl Checker {
 
     fn checkStructDecl(self: *Checker, node_idx: i64) {
         if node_idx < 0 { return; }
-    
+
         let node: *Node = Node_get(self.ast_pool, node_idx);
         if node.kind != NodeKind.StructDecl { return; }
-    
+
         let name_start: i64 = node.field0;
         let name_len: i64 = node.field1;
+        debug.log_s(DebugPhase.check, "checkStructDecl: '{s}'", self.source + name_start, name_len);
         let ast_fields_start: i64 = node.field2;  // Index into AST children array
         let fields_count: i64 = node.field3;
     
@@ -757,12 +766,13 @@ impl Checker {
 
     fn checkEnumDecl(self: *Checker, node_idx: i64) {
         if node_idx < 0 { return; }
-    
+
         let node: *Node = Node_get(self.ast_pool, node_idx);
         if node.kind != NodeKind.EnumDecl { return; }
-    
+
         let name_start: i64 = node.field0;
         let name_len: i64 = node.field1;
+        debug.log_s(DebugPhase.check, "checkEnumDecl: '{s}'", self.source + name_start, name_len);
         let variants_start: i64 = node.field2;
         let variants_count: i64 = node.field3;
     
@@ -778,9 +788,10 @@ impl Checker {
     fn checkFnDecl(self: *Checker, node_idx: i64) {
         let node: *Node = Node_get(self.ast_pool, node_idx);
         if node.kind != NodeKind.FnDecl { return; }
-    
+
         let name_start: i64 = node.field0;
         let name_len: i64 = node.field1;
+        debug.log_s(DebugPhase.check, "checkFnDecl: '{s}'", self.source + name_start, name_len);
         let params_start: i64 = node.field2;
         let params_count: i64 = node.field3;
     
@@ -812,12 +823,13 @@ impl Checker {
 
     fn checkTypeAliasDecl(self: *Checker, node_idx: i64) {
         if node_idx < 0 { return; }
-    
+
         let node: *Node = Node_get(self.ast_pool, node_idx);
         if node.kind != NodeKind.TypeAliasDecl { return; }
-    
+
         let name_start: i64 = node.field0;
         let name_len: i64 = node.field1;
+        debug.log_s(DebugPhase.check, "checkTypeAliasDecl: '{s}'", self.source + name_start, name_len);
         let type_node_idx: i64 = node.field2;  // AST node index (NOT PTYPE_*)
     
         // Resolve the target type from AST node
@@ -830,6 +842,7 @@ impl Checker {
     }
 
     fn checkFile(self: *Checker) {
+        debug.log_d(DebugPhase.check, "checkFile: {d} nodes", self.ast_pool.count);
         // Phase 1: Process all struct, enum, and type alias declarations first
         // This registers types with correct field offsets in the type pool
         var i: i64 = 0;

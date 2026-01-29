@@ -26,6 +26,7 @@ struct StackAllocResult {
 }
 
 fn StackAllocResult_init() StackAllocResult {
+    debug.log(DebugPhase.ssa, "StackAllocResult_init");
     return StackAllocResult{
         .frame_size = FRAME_HEADER_SIZE,
         .num_locals = 0,
@@ -60,6 +61,7 @@ struct StackAllocState {
 impl StackAllocState {
 
     fn markValues(self: *StackAllocState, f: *Func) {
+        debug.log_d(DebugPhase.ssa, "StackAllocState.markValues: blocks={d}", f.blocks_count);
         var b: i64 = 0;
         while b < f.blocks_count {
             let block: *Block = f.getBlock(b);
@@ -84,6 +86,7 @@ impl StackAllocState {
     }
 
     fn computeLiveness(self: *StackAllocState, f: *Func) {
+        debug.log(DebugPhase.ssa, "StackAllocState.computeLiveness");
         // For each value needing a slot, find uses and propagate liveness
 
         var vid: i64 = 0;
@@ -126,6 +129,7 @@ impl StackAllocState {
     }
 
     fn propagateLiveness(self: *StackAllocState, f: *Func, vid: i64, use_block: i64, def_block: i64) {
+        debug.log_dd(DebugPhase.ssa, "StackAllocState.propagateLiveness: vid={d} use_block={d}", vid, use_block);
         // BFS backward through predecessors
         var worklist: I64List = undefined;
         var visited: I64List = undefined;
@@ -176,6 +180,7 @@ impl StackAllocState {
     }
 
     fn buildInterference(self: *StackAllocState, f: *Func) {
+        debug.log(DebugPhase.ssa, "StackAllocState.buildInterference");
         var b: i64 = 0;
         while b < f.blocks_count {
             let block: *Block = f.getBlock(b);
@@ -256,6 +261,7 @@ impl StackAllocState {
     }
 
     fn allocateLocals(self: *StackAllocState, f: *Func, result: *StackAllocResult) {
+        debug.log_d(DebugPhase.ssa, "StackAllocState.allocateLocals: count={d}", f.locals_count);
         var local_idx: i64 = 0;
         while local_idx < f.locals_count {
             let local: *Local = f.getLocal(local_idx);
@@ -274,6 +280,7 @@ impl StackAllocState {
     }
 
     fn allocateSpillSlots(self: *StackAllocState, f: *Func, result: *StackAllocResult) {
+        debug.log(DebugPhase.ssa, "StackAllocState.allocateSpillSlots");
         var vid: i64 = 0;
         while vid < f.values_count {
             if not self.needsSlot(vid) {
@@ -342,6 +349,7 @@ impl StackAllocState {
     }
 
     fn init(self: *StackAllocState) {
+        debug.log(DebugPhase.ssa, "StackAllocState.init");
         i64list_init(&self.val_state);
         i64list_init(&self.live_out);
         i64list_init(&self.interferes);
@@ -357,6 +365,7 @@ impl StackAllocState {
     }
 
     fn ensureValue(self: *StackAllocState, vid: i64) {
+        debug.log_d(DebugPhase.ssa, "StackAllocState.ensureValue: vid={d}", vid);
         let needed: i64 = (vid + 1) * 3;
         while self.val_state.count < needed {
             i64list_append(&self.val_state, 0);   // needs_slot = false
@@ -366,6 +375,7 @@ impl StackAllocState {
     }
 
     fn setNeedsSlot(self: *StackAllocState, vid: i64, needs: bool) {
+        debug.log_d(DebugPhase.ssa, "StackAllocState.setNeedsSlot: vid={d}", vid);
         self.ensureValue(vid);
         if needs {
             i64list_set(&self.val_state, vid * 3, 1);
@@ -406,6 +416,7 @@ impl StackAllocState {
     }
 
     fn addLiveOut(self: *StackAllocState, bid: i64, vid: i64) {
+        debug.log_dd(DebugPhase.ssa, "StackAllocState.addLiveOut: bid={d} vid={d}", bid, vid);
         i64list_append(&self.live_out, bid);
         i64list_append(&self.live_out, vid);
     }
@@ -424,6 +435,7 @@ impl StackAllocState {
     }
 
     fn addInterference(self: *StackAllocState, a: i64, b: i64) {
+        debug.log_dd(DebugPhase.ssa, "StackAllocState.addInterference: a={d} b={d}", a, b);
         // Check if already present
         var i: i64 = 0;
         while i < self.interferes.count {
@@ -439,6 +451,7 @@ impl StackAllocState {
     }
 
     fn checkInterferes(self: *StackAllocState, a: i64, b: i64) bool {
+        debug.log_dd(DebugPhase.ssa, "StackAllocState.checkInterferes: a={d} b={d}", a, b);
         var i: i64 = 0;
         while i < self.interferes.count {
             let va: i64 = i64list_get(&self.interferes, i);
@@ -453,6 +466,7 @@ impl StackAllocState {
 }
 
 fn StackAlloc_run(f: *Func) StackAllocResult {
+    debug.log(DebugPhase.ssa, "StackAlloc_run");
     var state: StackAllocState = undefined;
     state.init();
 

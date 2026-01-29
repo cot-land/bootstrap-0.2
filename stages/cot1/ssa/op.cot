@@ -146,6 +146,7 @@ enum Op {
 
 // Check if operation is a constant (rematerializable)
 fn Op_isConstant(op: Op) bool {
+    debug.log(DebugPhase.ssa, "Op_isConstant");
     if op == Op.ConstBool { return true; }
     if op == Op.ConstInt { return true; }
     if op == Op.ConstNil { return true; }
@@ -156,6 +157,7 @@ fn Op_isConstant(op: Op) bool {
 
 // Check if operation is a comparison (returns bool)
 fn Op_isComparison(op: Op) bool {
+    debug.log(DebugPhase.ssa, "Op_isComparison");
     if op == Op.Eq64 { return true; }
     if op == Op.Ne64 { return true; }
     if op == Op.Lt64 { return true; }
@@ -169,6 +171,7 @@ fn Op_isComparison(op: Op) bool {
 
 // Check if operation is commutative
 fn Op_isCommutative(op: Op) bool {
+    debug.log(DebugPhase.ssa, "Op_isCommutative");
     if op == Op.Add64 { return true; }
     if op == Op.Mul64 { return true; }
     if op == Op.And64 { return true; }
@@ -181,6 +184,7 @@ fn Op_isCommutative(op: Op) bool {
 
 // Check if operation has side effects (can't be eliminated)
 fn Op_hasSideEffects(op: Op) bool {
+    debug.log(DebugPhase.ssa, "Op_hasSideEffects");
     if op == Op.Store { return true; }
     if op == Op.GlobalStore { return true; }
     if op == Op.Move { return true; }
@@ -197,6 +201,7 @@ fn Op_hasSideEffects(op: Op) bool {
 // Check if operation reads memory
 // Reference: Zig's OpInfo.reads_memory
 fn Op_readsMemory(op: Op) bool {
+    debug.log(DebugPhase.ssa, "Op_readsMemory");
     if op == Op.Load { return true; }
     if op == Op.GlobalLoad { return true; }
     if op == Op.LoadReg { return true; }
@@ -210,6 +215,7 @@ fn Op_readsMemory(op: Op) bool {
 // Check if operation writes memory
 // Reference: Zig's OpInfo.writes_memory
 fn Op_writesMemory(op: Op) bool {
+    debug.log(DebugPhase.ssa, "Op_writesMemory");
     if op == Op.Store { return true; }
     if op == Op.GlobalStore { return true; }
     if op == Op.Move { return true; }
@@ -224,6 +230,7 @@ fn Op_writesMemory(op: Op) bool {
 
 // Check if operation is a control flow terminator
 fn Op_isTerminator(op: Op) bool {
+    debug.log(DebugPhase.ssa, "Op_isTerminator");
     if op == Op.Return { return true; }
     if op == Op.TailCall { return true; }
     return false;
@@ -258,6 +265,7 @@ fn Op_isArm64(op: Op) bool {
 
 // Get number of arguments for an operation
 fn Op_numArgs(op: Op) i64 {
+    debug.log(DebugPhase.ssa, "Op_numArgs");
     // Constants take 0 args
     if Op_isConstant(op) { return 0; }
     if op == Op.InitMem { return 0; }
@@ -323,6 +331,7 @@ fn Op_numArgs(op: Op) i64 {
 // Check if operation is a branch (affects control flow)
 // Reference: Zig's Op.isBranch()
 fn Op_isBranch(op: Op) bool {
+    debug.log(DebugPhase.ssa, "Op_isBranch");
     if op == Op.Return { return true; }
     if op == Op.TailCall { return true; }
     // Note: actual branch instructions are in block control, not values
@@ -332,6 +341,7 @@ fn Op_isBranch(op: Op) bool {
 // Check if operation is a call
 // Reference: Zig's Op.isCall()
 fn Op_isCall(op: Op) bool {
+    debug.log(DebugPhase.ssa, "Op_isCall");
     if op == Op.Call { return true; }
     if op == Op.TailCall { return true; }
     if op == Op.ClosureCall { return true; }

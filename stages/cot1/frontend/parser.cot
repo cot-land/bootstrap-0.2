@@ -34,6 +34,7 @@ const LIMIT_NEST_LEV: i64 = 10000;
 
 // Static constructor (outside impl block for proper export)
 fn Parser_init(source: string, pool: *NodePool, type_registry: *TypeRegistry) Parser {
+    debug.log(DebugPhase.parse, "Parser_init");
     var p: Parser;
     p.source = source;
     p.scanner = Scanner_init(source);
@@ -205,6 +206,7 @@ impl Parser {
     // Reference: src/frontend/parser.zig parseType()
     // Returns AST node index (TypeExpr node), NOT a TypeRegistry index
     fn parseType(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseType: pos={d}", self.current.start);
         let kind: TokenType = self.current.kind;
         let type_start: i64 = self.current.start;
 
@@ -389,6 +391,7 @@ fn Type_pointee(type_handle: i64) i64 {
     // Parse integer literal: 42, 0xFF, 0b1010, 0o777
     // Following Zig: src/frontend/parser.zig number parsing
     fn parseIntLit(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseIntLit: pos={d}", self.current.start);
         let start: i64 = self.current.start;
         let len: i64 = self.current.end;
 
@@ -466,6 +469,7 @@ fn Type_pointee(type_handle: i64) i64 {
 
     // Parse atom: int_lit | bool_lit | ident (without call or parens)
     fn parseAtom(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseAtom: pos={d}", self.current.start);
         let kind: TokenType = self.current.kind;
 
         // Integer literal
@@ -676,6 +680,7 @@ fn Type_pointee(type_handle: i64) i64 {
 
     // Parse unary/primary expression including calls, parens, and unary ops
     fn parseUnary(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseUnary: pos={d}", self.current.start);
         let kind: TokenType = self.current.kind;
 
         // Unary negation: -expr
@@ -1057,6 +1062,7 @@ fn Type_pointee(type_handle: i64) i64 {
     // Following Go's binaryExpr pattern from parser.go:865-882
     // Nesting check follows Zig parser.zig:661-663
     fn parseBinaryExpr(self: *Parser, left: i64, min_prec: i64) i64 {
+        debug.log_dd(DebugPhase.parse, "Parser.parseBinaryExpr: left={d} prec={d}", left, min_prec);
         // Nesting depth protection (follows Zig parser.zig:662-663)
         if not self.incNest() {
             return left;  // Exceeded max depth, return what we have
@@ -1089,6 +1095,7 @@ fn Type_pointee(type_handle: i64) i64 {
 
     // Parse any expression
     fn parseExpr(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseExpr: pos={d}", self.current.start);
         let start: i64 = self.current.start;
         let left: i64 = self.parseUnary();
         let expr: i64 = self.parseBinaryExpr(left, 0);
@@ -1143,6 +1150,7 @@ fn Type_pointee(type_handle: i64) i64 {
 
     // Parse return statement: return expr;
     fn parseReturnStmt(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseReturnStmt: pos={d}", self.current.start);
         let start: i64 = self.current.start;
         self.want(TokenType.Return);
 
@@ -1167,6 +1175,7 @@ fn Type_pointee(type_handle: i64) i64 {
 
     // Parse variable declaration: let name: type = expr; OR var name: type = expr;
     fn parseVarDecl(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseVarDecl: pos={d}", self.current.start);
         let start: i64 = self.current.start;
 
         // Check if 'let', 'const', or 'var'
@@ -1334,6 +1343,7 @@ fn Type_pointee(type_handle: i64) i64 {
 
     // Parse if statement: if expr { body } [else { body }]
     fn parseIfStmt(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseIfStmt: pos={d}", self.current.start);
         let start: i64 = self.current.start;
         self.want(TokenType.If);
 
@@ -1364,6 +1374,7 @@ fn Type_pointee(type_handle: i64) i64 {
     // cot1: Supports labeled while loops: label: while expr { body }
     // label_start/label_len passed from caller (0,0 if no label)
     fn parseWhileStmt(self: *Parser, label_start: i64, label_len: i64) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseWhileStmt: pos={d}", self.current.start);
         let start: i64 = self.current.start;
         self.want(TokenType.While);
 
@@ -1380,6 +1391,7 @@ fn Type_pointee(type_handle: i64) i64 {
     // Parse for-in statement: for item in array { body }
     // Following Zig compiler pattern from src/frontend/parser.zig:parseForStmt
     fn parseForStmt(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseForStmt: pos={d}", self.current.start);
         let start: i64 = self.current.start;
         self.want(TokenType.For);
 
@@ -1412,6 +1424,7 @@ fn Type_pointee(type_handle: i64) i64 {
 
     // Parse a statement (dispatch based on token)
     fn parseStmt(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseStmt: pos={d}", self.current.start);
         let kind: TokenType = self.current.kind;
 
         // Return statement
@@ -1532,6 +1545,7 @@ fn Type_pointee(type_handle: i64) i64 {
     // This is because nested blocks (e.g., if body) add their children during parsing,
     // which would interleave with our children if we add them as we go.
     fn parseBlock(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseBlock: pos={d}", self.current.start);
         let start: i64 = self.current.start;
         self.want(TokenType.LBrace);
 
@@ -1598,6 +1612,7 @@ fn Type_pointee(type_handle: i64) i64 {
 
     // Parse extern function declaration: extern fn name(params) ret_type;
     fn parseExternFnDecl(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseExternFnDecl: pos={d}", self.current.start);
         let start: i64 = self.current.start;
         self.want(TokenType.Extern);
         self.want(TokenType.Fn);
@@ -1646,6 +1661,7 @@ fn Type_pointee(type_handle: i64) i64 {
 
     // Parse function declaration: fn name(params) ret_type { body }
     fn parseFnDecl(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseFnDecl: pos={d}", self.current.start);
         let start: i64 = self.current.start;
         self.want(TokenType.Fn);
 
@@ -1750,6 +1766,7 @@ fn Type_pointee(type_handle: i64) i64 {
     // Following Rust's impl block pattern
     // Methods are collected and stored in children array
     fn parseImplBlock(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseImplBlock: pos={d}", self.current.start);
         let start: i64 = self.current.start;
         self.want(TokenType.Impl);
 
@@ -1800,6 +1817,7 @@ fn Type_pointee(type_handle: i64) i64 {
 
     // Parse test declaration: test "name" { body }
     fn parseTestDecl(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseTestDecl: pos={d}", self.current.start);
         let start: i64 = self.current.start;
         self.want(TokenType.Test);
 
@@ -1822,6 +1840,7 @@ fn Type_pointee(type_handle: i64) i64 {
     }
 
     fn parseStructDecl(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseStructDecl: pos={d}", self.current.start);
         let start: i64 = self.current.start;
         self.want(TokenType.Struct);
 
@@ -1879,6 +1898,7 @@ fn Type_pointee(type_handle: i64) i64 {
 
     // Parse enum declaration: enum Name { variants }
     fn parseEnumDecl(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseEnumDecl: pos={d}", self.current.start);
         let start: i64 = self.current.start;
         self.want(TokenType.Enum);
 
@@ -1915,6 +1935,7 @@ fn Type_pointee(type_handle: i64) i64 {
 
     // Parse import declaration: import "path";
     fn parseImport(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseImport: pos={d}", self.current.start);
         let start: i64 = self.current.start;
         self.want(TokenType.Import);
 
@@ -1941,6 +1962,7 @@ fn Type_pointee(type_handle: i64) i64 {
 
     // Parse const declaration: const NAME = expr; or const NAME: type = expr;
     fn parseConstDecl(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseConstDecl: pos={d}", self.current.start);
         let start: i64 = self.current.start;
         self.want(TokenType.Const);
 
@@ -2003,6 +2025,7 @@ fn Type_pointee(type_handle: i64) i64 {
 
     // Parse a single top-level declaration
     fn parseDecl(self: *Parser) i64 {
+        debug.log_d(DebugPhase.parse, "Parser.parseDecl: pos={d}", self.current.start);
         // Import must come first
         if self.check(TokenType.Import) {
             return self.parseImport();
@@ -2058,6 +2081,7 @@ fn Type_pointee(type_handle: i64) i64 {
 
     // Parse entire file (list of declarations)
     fn parseFile(self: *Parser) i64 {
+        debug.log(DebugPhase.parse, "Parser.parseFile");
         // Store declarations in children array
         let decls_start: i64 = NodePool_childrenCount(self.pool);
         var decls_count: i64 = 0;

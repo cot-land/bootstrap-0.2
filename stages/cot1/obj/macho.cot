@@ -222,6 +222,7 @@ const RELOCATION_SIZE: i64 = 8;
 // Create relocation info word
 // Format: symbolnum (24 bits) | pcrel (1) | length (2) | extern (1) | type (4)
 fn RelocInfo_make(symbolnum: i64, pcrel: bool, length: i64, external: bool, reloc_type: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "RelocInfo_make: sym={d} type={d}", symbolnum, reloc_type);
     var result: i64 = symbolnum & 0xFFFFFF;
     if pcrel { result = result | (1 << 24); }
     result = result | ((length & 3) << 25);
@@ -410,6 +411,7 @@ struct MachOWriter {
 impl MachOWriter {
 
     fn init(self: *MachOWriter, code: *u8, code_count: i64, data: *u8, data_cap: i64) {
+        debug.log_dd(DebugPhase.codegen, "MachOWriter.init: code={d} data_cap={d}", code_count, data_cap);
         // Allocate module storage on first use
         MachOWriter_allocateStorage();
     
@@ -489,6 +491,7 @@ impl MachOWriter {
     }
 
     fn setDebugLine(self: *MachOWriter, debug_line: *u8, debug_line_cap: i64) {
+        debug.log_d(DebugPhase.codegen, "MachOWriter.setDebugLine: cap={d}", debug_line_cap);
         self.debug_line = debug_line;
         self.debug_line_count = 0;
         self.debug_line_cap = debug_line_cap;
@@ -509,6 +512,7 @@ impl MachOWriter {
     }
 
     fn addDebugLineReloc(self: *MachOWriter, offset: i64, symbol_idx: i64) {
+        debug.log_dd(DebugPhase.codegen, "MachOWriter.addDebugLineReloc: off={d} sym={d}", offset, symbol_idx);
         if self.dbg_line_reloc_offsets == null or self.debug_line_relocs_count >= self.debug_line_relocs_cap {
             return;
         }
@@ -566,6 +570,7 @@ impl MachOWriter {
     }
 
     fn addDebugInfoReloc(self: *MachOWriter, offset: i64, symbol_idx: i64) {
+        debug.log_dd(DebugPhase.codegen, "MachOWriter.addDebugInfoReloc: off={d} sym={d}", offset, symbol_idx);
         if self.dbg_info_reloc_offsets == null or self.debug_info_relocs_count >= self.debug_info_relocs_cap {
             return;
         }
@@ -597,6 +602,7 @@ impl MachOWriter {
     }
 
     fn addCode(self: *MachOWriter, bytes: *u8, len: i64) {
+        debug.log_d(DebugPhase.codegen, "MachOWriter.addCode: len={d}", len);
         var i: i64 = 0;
         while i < len and self.code_count < self.code_cap {
             let src: *u8 = bytes + i;
@@ -608,6 +614,7 @@ impl MachOWriter {
     }
 
     fn addData(self: *MachOWriter, bytes: *u8, len: i64) i64 {
+        debug.log_d(DebugPhase.codegen, "MachOWriter.addData: len={d}", len);
         let offset: i64 = self.data_count;
         var i: i64 = 0;
         while i < len and self.data_count < self.data_cap {
@@ -653,6 +660,7 @@ impl MachOWriter {
     }
 
     fn addStringLiteral(self: *MachOWriter, s: *u8, len: i64) i64 {
+        debug.log_d(DebugPhase.codegen, "MachOWriter.addStringLiteral: len={d}", len);
         let offset: i64 = self.data_count;
         var i: i64 = 0;
         while i < len and self.data_count < self.data_cap {
@@ -672,6 +680,7 @@ impl MachOWriter {
     }
 
     fn addString(self: *MachOWriter, s: *u8, len: i64) i64 {
+        debug.log_dd(DebugPhase.codegen, "MachOWriter.addString: len={d} count={d}", len, self.strings_count);
         let offset: i64 = self.strings_count;
     
         var i: i64 = 0;
@@ -695,6 +704,7 @@ impl MachOWriter {
 
     fn addSymbol(self: *MachOWriter, name: *u8, name_len: i64,
                         value: i64, section: i64, is_external: bool) i64 {
+        debug.log_dd(DebugPhase.codegen, "MachOWriter.addSymbol: val={d} sect={d}", value, section);
         if self.symbols_count >= self.symbols_cap {
             return 0 - 1;  // Error
         }
@@ -721,6 +731,7 @@ impl MachOWriter {
     }
 
     fn findSymbol(self: *MachOWriter, name: *u8, name_len: i64) i64 {
+        debug.log_d(DebugPhase.codegen, "MachOWriter.findSymbol: len={d}", name_len);
         var i: i64 = 0;
         while i < self.symbols_count {
             // Get name_offset from parallel array
@@ -749,6 +760,7 @@ impl MachOWriter {
 
     fn addReloc(self: *MachOWriter, offset: i64, target_ptr: *u8, target_len: i64,
                        reloc_type: i64, is_pcrel: i64) {
+        debug.log_dd(DebugPhase.codegen, "MachOWriter.addReloc: off={d} type={d}", offset, reloc_type);
         if self.reloc_offsets == null or self.relocs_count >= self.relocs_cap {
             return;
         }
@@ -820,6 +832,7 @@ impl MachOWriter {
     }
 
     fn writeMachHeader(self: *MachOWriter, ncmds: i64, sizeofcmds: i64) {
+        debug.log_dd(DebugPhase.codegen, "MachOWriter.writeMachHeader: cmds={d} size={d}", ncmds, sizeofcmds);
         self.outU32(MH_MAGIC_64);           // magic
         self.outU32(CPU_TYPE_ARM64);        // cputype
         self.outU32(CPU_SUBTYPE_ARM64_ALL); // cpusubtype
@@ -832,6 +845,7 @@ impl MachOWriter {
 
     fn writeSegmentCmd(self: *MachOWriter, vmsize: i64, fileoff: i64,
                          filesize: i64, nsects: i64) {
+        debug.log_dd(DebugPhase.codegen, "MachOWriter.writeSegmentCmd: size={d} sects={d}", filesize, nsects);
         let cmdsize: i64 = SEGMENT_COMMAND_64_SIZE + nsects * SECTION_64_SIZE;
     
         self.outU32(LC_SEGMENT_64);  // cmd
@@ -852,6 +866,7 @@ impl MachOWriter {
                      size: i64, offset: i64,
                      sect_align: i64, flags: i64,
                      reloff: i64, nreloc: i64) {
+        debug.log_dd(DebugPhase.codegen, "MachOWriter.writeSection: size={d} off={d}", size, offset);
         // Write 16-byte section name (pad with zeros)
         // Names are null-terminated, so copy until null or 16 bytes
         var i: i64 = 0;
@@ -891,6 +906,7 @@ impl MachOWriter {
 
     fn writeSymtabCmd(self: *MachOWriter, symoff: i64, nsyms: i64,
                         stroff: i64, strsize: i64) {
+        debug.log_dd(DebugPhase.codegen, "MachOWriter.writeSymtabCmd: syms={d} str={d}", nsyms, strsize);
         self.outU32(LC_SYMTAB);       // cmd
         self.outU32(SYMTAB_COMMAND_SIZE);  // cmdsize
         self.outU32(symoff);          // symoff
@@ -900,6 +916,7 @@ impl MachOWriter {
     }
 
     fn writeTextReloc(self: *MachOWriter, idx: i64) {
+        debug.log_d(DebugPhase.codegen, "MachOWriter.writeTextReloc: idx={d}", idx);
         let offset_ptr: *i64 = self.reloc_offsets + idx;
         let target_str_off_ptr: *i64 = self.reloc_target_str_offs + idx;  // String offset in strings table
         let target_len_ptr: *i64 = self.reloc_target_lens + idx;
@@ -929,6 +946,7 @@ impl MachOWriter {
     }
 
     fn writeDbgLineReloc(self: *MachOWriter, idx: i64) {
+        debug.log_d(DebugPhase.codegen, "MachOWriter.writeDbgLineReloc: idx={d}", idx);
         let offset_ptr: *i64 = self.dbg_line_reloc_offsets + idx;
         let target_str_off_ptr: *i64 = self.dbg_line_reloc_target_str_offs + idx;
         let target_len_ptr: *i64 = self.dbg_line_reloc_target_lens + idx;
@@ -954,6 +972,7 @@ impl MachOWriter {
     }
 
     fn writeDbgInfoReloc(self: *MachOWriter, idx: i64) {
+        debug.log_d(DebugPhase.codegen, "MachOWriter.writeDbgInfoReloc: idx={d}", idx);
         let offset_ptr: *i64 = self.dbg_info_reloc_offsets + idx;
         let target_str_off_ptr: *i64 = self.dbg_info_reloc_target_str_offs + idx;
         let target_len_ptr: *i64 = self.dbg_info_reloc_target_lens + idx;
@@ -979,6 +998,7 @@ impl MachOWriter {
     }
 
     fn writeNlist64(self: *MachOWriter, sym_idx: i64) {
+        debug.log_d(DebugPhase.codegen, "MachOWriter.writeNlist64: idx={d}", sym_idx);
         // Read from parallel arrays
         let no_ptr: *i64 = self.sym_name_offsets + sym_idx;
         let v_ptr: *i64 = self.sym_values + sym_idx;
@@ -1016,6 +1036,7 @@ impl MachOWriter {
                                       filename: *u8, filename_len: i64,
                                       line_entries: *u8, line_count: i64,
                                       code_size: i64, main_sym_idx: i64) i64 {
+        debug.log_dd(DebugPhase.codegen, "MachOWriter.generateDebugLine: lines={d} code={d}", line_count, code_size);
         if self.debug_line == null or self.debug_line_cap == 0 {
             return 0;
         }
@@ -1210,6 +1231,7 @@ impl MachOWriter {
     }
 
     fn write(self: *MachOWriter) i64 {
+        debug.log_dd(DebugPhase.codegen, "MachOWriter.write: code={d} syms={d}", self.code_count, self.symbols_count);
         // ========================================================================
         // Add missing external symbols from relocations (using linear search)
         // ========================================================================
@@ -1347,6 +1369,7 @@ impl MachOWriter {
     }
 
     fn writeWithDebug(self: *MachOWriter) i64 {
+        debug.log_d(DebugPhase.codegen, "MachOWriter.writeWithDebug: debug_line={d}", self.debug_line_count);
         // Check if we have debug info
         let has_debug: bool = self.debug_line != null and self.debug_line_count > 0;
     
@@ -1609,6 +1632,7 @@ impl MachOWriter {
 }
 
 fn MachOWriter_allocateStorage() {
+    debug.log(DebugPhase.codegen, "MachOWriter_allocateStorage");
     if mw_storage_initialized {
         return;
     }

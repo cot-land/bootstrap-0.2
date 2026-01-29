@@ -52,6 +52,7 @@ struct Value {
 // ============================================================================
 
 fn Value_create(id: i64, op: Op, type_idx: i64, block_id: i64) Value {
+    debug.log_dd(DebugPhase.ssa, "Value_create: id={d} block={d}", id, block_id);
     var v: Value = undefined;
     v.id = id;
     v.op = op;
@@ -69,12 +70,14 @@ fn Value_create(id: i64, op: Op, type_idx: i64, block_id: i64) Value {
 }
 
 fn Value_newConstInt(id: i64, value: i64, type_idx: i64, block_id: i64) Value {
+    debug.log_dd(DebugPhase.ssa, "Value_newConstInt: id={d} val={d}", id, value);
     var v: Value = Value_create(id, Op.ConstInt, type_idx, block_id);
     v.aux_int = value;
     return v;
 }
 
 fn Value_newConstBool(id: i64, value: bool, block_id: i64) Value {
+    debug.log_d(DebugPhase.ssa, "Value_newConstBool: id={d}", id);
     var v: Value = Value_create(id, Op.ConstBool, 1, block_id);  // TYPE_BOOL = 1
     if value {
         v.aux_int = 1;
@@ -99,18 +102,21 @@ impl Value {
     // IMPORTANT: Always use this instead of modifying args directly!
     // This maintains use count invariants.
     fn addArg(self: *Value, arg: *Value)  {
+        debug.log_dd(DebugPhase.ssa, "Value.addArg: self={d} arg={d}", self.id, arg.id);
         i64list_append(&self.args, arg.id);
         arg.uses = arg.uses + 1;
     }
 
     // Add two arguments (common case for binary ops)
     fn addArg2(self: *Value, arg0: *Value, arg1: *Value)  {
+        debug.log_d(DebugPhase.ssa, "Value.addArg2: self={d}", self.id);
         self.addArg(arg0);
         self.addArg(arg1);
     }
 
     // Add three arguments (e.g., store: ptr, val, mem)
     fn addArg3(self: *Value, arg0: *Value, arg1: *Value, arg2: *Value)  {
+        debug.log_d(DebugPhase.ssa, "Value.addArg3: self={d}", self.id);
         self.addArg(arg0);
         self.addArg(arg1);
         self.addArg(arg2);
@@ -118,6 +124,7 @@ impl Value {
 
     // Set argument at specific index (for phi nodes and similar)
     fn setArg(self: *Value, idx: i64, arg: *Value)  {
+        debug.log_dd(DebugPhase.ssa, "Value.setArg: idx={d} arg={d}", idx, arg.id);
         if idx < 0 { return; }
 
         // Ensure capacity for this index
@@ -139,6 +146,7 @@ impl Value {
 
     // Reset all arguments (for value replacement)
     fn resetArgs(self: *Value)  {
+        debug.log_d(DebugPhase.ssa, "Value.resetArgs: self={d}", self.id);
         i64list_clear(&self.args);
     }
 
@@ -161,6 +169,7 @@ impl Value {
 
     // Check if value is a constant (rematerializable)
     fn isConstant(self: *Value) bool {
+        debug.log_d(DebugPhase.ssa, "Value.isConstant: id={d}", self.id);
         return Op_isConstant(self.op);
     }
 
@@ -172,6 +181,7 @@ impl Value {
 
     // Check if value has side effects
     fn hasSideEffects(self: *Value) bool {
+        debug.log_d(DebugPhase.ssa, "Value.hasSideEffects: id={d}", self.id);
         return Op_hasSideEffects(self.op);
     }
 
@@ -189,6 +199,7 @@ impl Value {
 
     // Check if value is dead (no uses and no side effects)
     fn isDead(self: *Value) bool {
+        debug.log_d(DebugPhase.ssa, "Value.isDead: id={d}", self.id);
         return self.uses == 0 and not self.hasSideEffects();
     }
 
@@ -199,12 +210,14 @@ impl Value {
 
     // Get argument at index (or INVALID_ID if out of bounds)
     fn getArg(self: *Value, idx: i64) i64 {
+        debug.log_dd(DebugPhase.ssa, "Value.getArg: id={d} idx={d}", self.id, idx);
         if idx < 0 or idx >= self.args.count { return INVALID_ID; }
         return i64list_get(&self.args, idx);
     }
 
     // Set argument at index by value id directly (for SSA passes)
     fn setArgById(self: *Value, idx: i64, arg_id: i64)  {
+        debug.log_dd(DebugPhase.ssa, "Value.setArgById: idx={d} arg={d}", idx, arg_id);
         if idx < 0 { return; }
         i64list_ensure_capacity(&self.args, idx + 1);
         while self.args.count <= idx {
@@ -215,16 +228,19 @@ impl Value {
 
     // Get first argument (or INVALID_ID if none)
     fn arg0(self: *Value) i64 {
+        debug.log_d(DebugPhase.ssa, "Value.arg0: id={d}", self.id);
         return self.getArg(0);
     }
 
     // Get second argument (or INVALID_ID if none)
     fn arg1(self: *Value) i64 {
+        debug.log_d(DebugPhase.ssa, "Value.arg1: id={d}", self.id);
         return self.getArg(1);
     }
 
     // Get third argument (or INVALID_ID if none)
     fn arg2(self: *Value) i64 {
+        debug.log_d(DebugPhase.ssa, "Value.arg2: id={d}", self.id);
         return self.getArg(2);
     }
 
@@ -249,12 +265,14 @@ impl Value {
     // Get assigned register (or -1 if none)
     // Reference: Zig's Value.getReg()
     fn getReg(self: *Value) i64 {
+        debug.log_d(DebugPhase.ssa, "Value.getReg: id={d}", self.id);
         return self.reg;
     }
 
     // Check if value has an assigned register
     // Reference: Zig's Value.hasReg()
     fn hasReg(self: *Value) bool {
+        debug.log_d(DebugPhase.ssa, "Value.hasReg: id={d}", self.id);
         return self.reg >= 0;
     }
 
@@ -265,6 +283,7 @@ impl Value {
 
     // Check if value is spilled
     fn isSpilled(self: *Value) bool {
+        debug.log_d(DebugPhase.ssa, "Value.isSpilled: id={d}", self.id);
         return self.spill_slot >= 0;
     }
 
@@ -274,11 +293,13 @@ impl Value {
 
     // Increment use count (call when value becomes an argument)
     fn incUses(self: *Value) void {
+        debug.log_d(DebugPhase.ssa, "Value.incUses: id={d}", self.id);
         self.uses = self.uses + 1;
     }
 
     // Decrement use count (call when value is no longer referenced)
     fn decUses(self: *Value) void {
+        debug.log_d(DebugPhase.ssa, "Value.decUses: id={d}", self.id);
         if self.uses > 0 {
             self.uses = self.uses - 1;
         }
@@ -301,12 +322,14 @@ struct ValuePool {
 impl ValuePool {
 
     fn init(self: *ValuePool, values: *Value, cap: i64)  {
+        debug.log_d(DebugPhase.ssa, "ValuePool.init: cap={d}", cap);
         self.values = values;
         self.count = 0;
         self.cap = cap;
     }
 
     fn alloc(self: *ValuePool, op: Op, type_idx: i64, block_id: i64) *Value {
+        debug.log_dd(DebugPhase.ssa, "ValuePool.alloc: count={d} block={d}", self.count, block_id);
         if self.count >= self.cap {
             return self.values;  // Return first value as error placeholder
         }
@@ -320,6 +343,7 @@ impl ValuePool {
     }
 
     fn get(self: *ValuePool, id: i64) *Value {
+        debug.log_d(DebugPhase.ssa, "ValuePool.get: id={d}", id);
         if id < 0 or id >= self.count {
             return self.values;  // Return first value as error placeholder
         }

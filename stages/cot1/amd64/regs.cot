@@ -59,21 +59,25 @@ const AMD64_REG_SIZE: i64 = 8;
 
 // Check if register needs REX prefix extension (R8-R15)
 fn AMD64_needs_rex(reg: i64) bool {
+    debug.log_d(DebugPhase.regalloc, "AMD64_needs_rex: {d}", reg);
     return reg >= 8;
 }
 
 // Get 3-bit encoding for register (low 3 bits)
 fn AMD64_reg_enc3(reg: i64) i64 {
+    debug.log_d(DebugPhase.regalloc, "AMD64_reg_enc3: {d}", reg);
     return reg & 7;
 }
 
 // Check if register is an argument register (RDI, RSI, RDX, RCX, R8, R9)
 fn AMD64_is_arg_reg(reg: i64) bool {
+    debug.log_d(DebugPhase.regalloc, "AMD64_is_arg_reg: {d}", reg);
     return reg == RDI or reg == RSI or reg == RDX or reg == RCX or reg == R8 or reg == R9;
 }
 
 // Check if register is callee-saved (RBX, RBP, R12-R15)
 fn AMD64_is_callee_saved(reg: i64) bool {
+    debug.log_d(DebugPhase.regalloc, "AMD64_is_callee_saved: {d}", reg);
     if reg == RBX { return true; }
     if reg == RBP { return true; }
     if reg >= R12 and reg <= R15 { return true; }
@@ -82,6 +86,7 @@ fn AMD64_is_callee_saved(reg: i64) bool {
 
 // Check if register is caller-saved (RAX, RCX, RDX, RSI, RDI, R8-R11)
 fn AMD64_is_caller_saved(reg: i64) bool {
+    debug.log_d(DebugPhase.regalloc, "AMD64_is_caller_saved: {d}", reg);
     if reg == RAX or reg == RCX or reg == RDX { return true; }
     if reg == RSI or reg == RDI { return true; }
     if reg >= R8 and reg <= R11 { return true; }
@@ -90,12 +95,14 @@ fn AMD64_is_caller_saved(reg: i64) bool {
 
 // Check if register is allocatable (all except RSP)
 fn AMD64_is_allocatable(reg: i64) bool {
+    debug.log_d(DebugPhase.regalloc, "AMD64_is_allocatable: {d}", reg);
     return reg != RSP;
 }
 
 // Get argument register by index (0-5)
 // Order: RDI, RSI, RDX, RCX, R8, R9
 fn AMD64_arg_reg(idx: i64) i64 {
+    debug.log_d(DebugPhase.regalloc, "AMD64_arg_reg: {d}", idx);
     if idx == 0 { return RDI; }
     if idx == 1 { return RSI; }
     if idx == 2 { return RDX; }

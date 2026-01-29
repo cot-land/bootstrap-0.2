@@ -70,6 +70,7 @@ struct ValState {
 }
 
 fn ValState_new() ValState {
+    debug.log(DebugPhase.regalloc, "ValState_new");
     return ValState{
         .regs = 0,
         .spill = -1,
@@ -80,10 +81,12 @@ fn ValState_new() ValState {
 }
 
 fn ValState_inReg(vs: *ValState) bool {
+    debug.log(DebugPhase.regalloc, "ValState_inReg");
     return vs.regs != 0;
 }
 
 fn ValState_firstReg(vs: *ValState) i64 {
+    debug.log(DebugPhase.regalloc, "ValState_firstReg");
     if vs.regs == 0 { return -1; }
     // Count trailing zeros to find first set bit
     var mask: i64 = vs.regs;
@@ -106,6 +109,7 @@ struct RegState {
 }
 
 fn RegState_new() RegState {
+    debug.log(DebugPhase.regalloc, "RegState_new");
     return RegState{
         .value_id = INVALID_ID,
         .dirty = false,
@@ -155,6 +159,7 @@ struct RegAllocState {
 impl RegAllocState {
 
     fn init(self: *RegAllocState, f: *Func, lr: *LivenessResult) {
+        debug.log(DebugPhase.regalloc, "RegAllocState.init");
         self.func = f;
         self.liveness = lr;
         self.used = 0;
@@ -178,6 +183,7 @@ impl RegAllocState {
     }
 
     fn findFreeReg(self: *RegAllocState, mask: i64) i64 {
+        debug.log_d(DebugPhase.regalloc, "RegAllocState.findFreeReg: mask={d}", mask);
         var m: i64 = mask;
         var reg: i64 = 0;
         while m != 0 {
@@ -194,6 +200,7 @@ impl RegAllocState {
     }
 
     fn allocReg(self: *RegAllocState, mask: i64, block_id: i64) i64 {
+        debug.log_dd(DebugPhase.regalloc, "RegAllocState.allocReg: mask={d} block={d}", mask, block_id);
         // Exclude 'used' registers (holding current instruction's args)
         let available: i64 = mask & (~self.used);
     
@@ -239,6 +246,7 @@ impl RegAllocState {
     }
 
     fn spillReg(self: *RegAllocState, reg: i64) {
+        debug.log_d(DebugPhase.regalloc, "RegAllocState.spillReg: reg={d}", reg);
         if reg < 0 or reg >= NUM_REGS { return; }
     
         let rs: *RegState = self.reg_states + reg;
@@ -274,6 +282,7 @@ impl RegAllocState {
     }
 
     fn assignReg(self: *RegAllocState, value_id: i64, reg: i64) {
+        debug.log_dd(DebugPhase.regalloc, "RegAllocState.assignReg: val={d} reg={d}", value_id, reg);
         if reg < 0 or reg >= NUM_REGS { return; }
         if value_id < 0 or value_id >= self.val_states_count { return; }
     
@@ -293,6 +302,7 @@ impl RegAllocState {
     }
 
     fn freeReg(self: *RegAllocState, reg: i64) {
+        debug.log_d(DebugPhase.regalloc, "RegAllocState.freeReg: reg={d}", reg);
         if reg < 0 or reg >= NUM_REGS { return; }
     
         let rs: *RegState = self.reg_states + reg;
@@ -308,6 +318,7 @@ impl RegAllocState {
     }
 
     fn freeRegs(self: *RegAllocState, mask: i64) {
+        debug.log_d(DebugPhase.regalloc, "RegAllocState.freeRegs: mask={d}", mask);
         var m: i64 = mask;
         var reg: i64 = 0;
         while m != 0 {
@@ -320,6 +331,7 @@ impl RegAllocState {
     }
 
     fn ensureValState(self: *RegAllocState, value_id: i64) {
+        debug.log_d(DebugPhase.regalloc, "RegAllocState.ensureValState: val={d}", value_id);
         if value_id < 0 { return; }
     
         // Extend if needed
@@ -332,6 +344,7 @@ impl RegAllocState {
     }
 
     fn allocatePhis(self: *RegAllocState, f: *Func, block: *Block, primary_pred_idx: i64) {
+        debug.log_d(DebugPhase.regalloc, "RegAllocState.allocatePhis: pred_idx={d}", primary_pred_idx);
         // Collect phi nodes (they should be first in the block)
         var phi_ids: I64List = undefined;
         i64list_init(&phi_ids);
@@ -440,6 +453,7 @@ impl RegAllocState {
     }
 
     fn processValue(self: *RegAllocState, f: *Func, v: *Value, block_id: i64) {
+        debug.log_dd(DebugPhase.regalloc, "RegAllocState.processValue: val={d} block={d}", v.id, block_id);
         self.ensureValState(v.id);
     
         let vs: *ValState = self.val_states + v.id;
@@ -496,6 +510,7 @@ impl RegAllocState {
     }
 
     fn processBlock(self: *RegAllocState, f: *Func, block: *Block) {
+        debug.log_d(DebugPhase.regalloc, "RegAllocState.processBlock: id={d}", block.id);
         // Determine primary predecessor (first one with smallest ID)
         var primary_pred_idx: i64 = -1;
         if block.preds.count > 0 {
@@ -521,6 +536,7 @@ impl RegAllocState {
     }
 
     fn run(self: *RegAllocState, f: *Func) i64 {
+        debug.log_d(DebugPhase.regalloc, "RegAllocState.run: blocks={d}", f.blocks_count);
         // Process blocks in order
         var b: i64 = 0;
         while b < f.blocks_count {
@@ -536,6 +552,7 @@ impl RegAllocState {
     }
 
     fn getReg(self: *RegAllocState, value_id: i64) i64 {
+        debug.log_d(DebugPhase.regalloc, "RegAllocState.getReg: val={d}", value_id);
         if value_id < 0 or value_id >= self.val_states_count {
             return -1;
         }
@@ -544,6 +561,7 @@ impl RegAllocState {
     }
 
     fn getSpill(self: *RegAllocState, value_id: i64) i64 {
+        debug.log_d(DebugPhase.regalloc, "RegAllocState.getSpill: val={d}", value_id);
         if value_id < 0 or value_id >= self.val_states_count {
             return -1;
         }
@@ -588,6 +606,7 @@ impl RegAllocState {
     }
 
     fn loadValue(self: *RegAllocState, value_id: i64, block_id: i64) i64 {
+        debug.log_dd(DebugPhase.regalloc, "RegAllocState.loadValue: val={d} block={d}", value_id, block_id);
         if value_id < 0 or value_id >= self.val_states_count {
             return -1;
         }
@@ -642,6 +661,7 @@ impl RegAllocState {
     }
 
     fn clearRegs(self: *RegAllocState) {
+        debug.log(DebugPhase.regalloc, "RegAllocState.clearRegs");
         var reg: i64 = 0;
         while reg < NUM_REGS {
             let rs: *RegState = self.reg_states + reg;
@@ -672,6 +692,7 @@ impl RegAllocState {
 }
 
 fn Op_isRematerializable(op: Op) bool {
+    debug.log(DebugPhase.regalloc, "Op_isRematerializable");
     if op == Op.ConstInt { return true; }
     if op == Op.ConstBool { return true; }
     if op == Op.ConstNil { return true; }
@@ -680,6 +701,7 @@ fn Op_isRematerializable(op: Op) bool {
 }
 
 fn Value_needsReg(op: Op) bool {
+    debug.log(DebugPhase.regalloc, "Value_needsReg");
     // Memory/control operations don't need registers
     if op == Op.Store { return false; }
     if op == Op.Return { return false; }
@@ -693,6 +715,7 @@ fn Value_needsReg(op: Op) bool {
 }
 
 fn ValState_firstReg_mask(mask: i64) i64 {
+    debug.log_d(DebugPhase.regalloc, "ValState_firstReg_mask: mask={d}", mask);
     if mask == 0 { return -1; }
     var m: i64 = mask;
     var reg: i64 = 0;

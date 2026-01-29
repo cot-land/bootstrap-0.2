@@ -44,6 +44,7 @@ struct DomTree {
 impl DomTree {
 
     fn init(self: *DomTree) {
+        debug.log(DebugPhase.ssa, "DomTree.init");
         i64list_init(&self.rpo);
         i64list_init(&self.rpo_num);
         i64list_init(&self.visited);
@@ -60,6 +61,7 @@ impl DomTree {
     }
 
     fn ensureSize(self: *DomTree, block_count: i64) {
+        debug.log_d(DebugPhase.ssa, "DomTree.ensureSize: count={d}", block_count);
         // Ensure rpo_num and visited are sized for all blocks
         i64list_ensure_capacity(&self.rpo_num, block_count);
         i64list_ensure_capacity(&self.visited, block_count);
@@ -111,6 +113,7 @@ impl DomTree {
     }
 
     fn postorderDFS(self: *DomTree, f: *Func, block_id: i64) {
+        debug.log_d(DebugPhase.ssa, "DomTree.postorderDFS: block={d}", block_id);
         if block_id < 0 or block_id >= f.blocks_count {
             return;
         }
@@ -136,6 +139,7 @@ impl DomTree {
     }
 
     fn computeRPO(self: *DomTree, f: *Func) {
+        debug.log(DebugPhase.ssa, "DomTree.computeRPO");
         if f.entry_block < 0 {
             return;
         }
@@ -172,6 +176,7 @@ impl DomTree {
     }
 
     fn intersect(self: *DomTree, f: *Func, b1: i64, b2: i64, entry: i64) i64 {
+        debug.log_dd(DebugPhase.ssa, "DomTree.intersect: b1={d} b2={d}", b1, b2);
         var finger1: i64 = b1;
         var finger2: i64 = b2;
     
@@ -198,6 +203,7 @@ impl DomTree {
     }
 
     fn compute(self: *DomTree, f: *Func) {
+        debug.log_d(DebugPhase.ssa, "DomTree.compute: blocks={d}", f.blocks_count);
         if f.entry_block < 0 or f.blocks_count == 0 {
             return;
         }
@@ -280,6 +286,7 @@ impl DomTree {
     }
 
     fn buildChildren(self: *DomTree, f: *Func) {
+        debug.log(DebugPhase.ssa, "DomTree.buildChildren");
         i64list_clear(&self.children);
     
         var i: i64 = 0;
@@ -295,6 +302,7 @@ impl DomTree {
     }
 
     fn computeDepths(self: *DomTree, f: *Func) {
+        debug.log(DebugPhase.ssa, "DomTree.computeDepths");
         if f.entry_block < 0 {
             return;
         }
@@ -335,6 +343,7 @@ impl DomTree {
     }
 
     fn computeFrontier(self: *DomTree, f: *Func) {
+        debug.log(DebugPhase.ssa, "DomTree.computeFrontier");
         i64list_clear(&self.frontier);
     
         var i: i64 = 0;
@@ -372,6 +381,7 @@ impl DomTree {
     }
 
     fn getFrontierFor(self: *DomTree, block_id: i64, out: *I64List) {
+        debug.log_d(DebugPhase.ssa, "DomTree.getFrontierFor: block={d}", block_id);
         var i: i64 = 0;
         while i < self.frontier.count {
             let bid: i64 = i64list_get(&self.frontier, i);
@@ -388,6 +398,7 @@ impl DomTree {
 }
 
 fn DomTree_getIdom(f: *Func, block_id: i64) i64 {
+    debug.log_d(DebugPhase.ssa, "DomTree_getIdom: block={d}", block_id);
     if block_id < 0 or block_id >= f.blocks_count {
         return INVALID_BLOCK;
     }
@@ -396,6 +407,7 @@ fn DomTree_getIdom(f: *Func, block_id: i64) i64 {
 }
 
 fn DomTree_getDepth(f: *Func, block_id: i64) i64 {
+    debug.log_d(DebugPhase.ssa, "DomTree_getDepth: block={d}", block_id);
     if block_id < 0 or block_id >= f.blocks_count {
         return 0;
     }
@@ -404,6 +416,7 @@ fn DomTree_getDepth(f: *Func, block_id: i64) i64 {
 }
 
 fn DomTree_dominates(f: *Func, a_id: i64, b_id: i64) bool {
+    debug.log_dd(DebugPhase.ssa, "DomTree_dominates: a={d} b={d}", a_id, b_id);
     if a_id == b_id {
         return true;
     }
@@ -420,6 +433,7 @@ fn DomTree_dominates(f: *Func, a_id: i64, b_id: i64) bool {
 }
 
 fn DomTree_strictlyDominates(f: *Func, a_id: i64, b_id: i64) bool {
+    debug.log_dd(DebugPhase.ssa, "DomTree_strictlyDominates: a={d} b={d}", a_id, b_id);
     return a_id != b_id and DomTree_dominates(f, a_id, b_id);
 }
 

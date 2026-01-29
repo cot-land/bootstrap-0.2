@@ -66,6 +66,7 @@ var sb_storage_initialized: bool = false;
 
 // Allocate module storage if not already allocated
 fn SSABuilder_allocateStorage() {
+    debug.log(DebugPhase.ssa, "SSABuilder_allocateStorage");
     if sb_storage_initialized {
         return;
     }
@@ -137,6 +138,7 @@ const IR_NULL_NODE: i64 = -1;
 
 // Map IR binary operation to SSA Op
 fn Op_fromIRBinaryOp(ir_op: i64) Op {
+    debug.log_d(DebugPhase.ssa, "Op_fromIRBinaryOp: {d}", ir_op);
     // IRBinaryOp enum values (from ir.cot)
     if ir_op == 0 { return Op.Add64; }     // IRBinaryOp.Add
     if ir_op == 1 { return Op.Sub64; }     // IRBinaryOp.Sub
@@ -160,6 +162,7 @@ fn Op_fromIRBinaryOp(ir_op: i64) Op {
 }
 
 fn Op_fromIRUnaryOp(ir_op: i64) Op {
+    debug.log_d(DebugPhase.ssa, "Op_fromIRUnaryOp: {d}", ir_op);
     // IR unary op constants from lower.cot: NEG=18, NOT=19, BIT_NOT=20
     if ir_op == 18 { return Op.Neg64; }        // IR_OP_NEG
     if ir_op == 19 { return Op.LogicalNot64; } // IR_OP_NOT (logical: !x)
@@ -189,6 +192,7 @@ struct BlockDefs {
 }
 
 fn BlockDefs_init(bd: *BlockDefs, block_id: i64, values: *i64, cap: i64) {
+    debug.log_d(DebugPhase.ssa, "BlockDefs_init: block={d}", block_id);
     bd.block_id = block_id;
     bd.values = values;
     bd.values_cap = cap;
@@ -204,6 +208,7 @@ fn BlockDefs_init(bd: *BlockDefs, block_id: i64, values: *i64, cap: i64) {
 
 // Mark BlockDefs as uninitialized (used when pre-allocating the array)
 fn BlockDefs_clear(bd: *BlockDefs) {
+    debug.log(DebugPhase.ssa, "BlockDefs_clear");
     bd.block_id = -1;
     bd.values = null;
     bd.values_cap = 0;
@@ -213,6 +218,7 @@ fn BlockDefs_clear(bd: *BlockDefs) {
 
 // Set variable value - O(1) direct array access
 fn BlockDefs_set(bd: *BlockDefs, var_idx: i64, value_id: i64) {
+    debug.log_dd(DebugPhase.ssa, "BlockDefs_set: var={d} val={d}", var_idx, value_id);
     if var_idx < 0 or var_idx >= bd.values_cap { return; }
     let old_val: i64 = (bd.values + var_idx).*;
     (bd.values + var_idx).* = value_id;
@@ -224,6 +230,7 @@ fn BlockDefs_set(bd: *BlockDefs, var_idx: i64, value_id: i64) {
 
 // Get variable value - O(1) direct array access
 fn BlockDefs_get(bd: *BlockDefs, var_idx: i64) i64 {
+    debug.log_d(DebugPhase.ssa, "BlockDefs_get: var={d}", var_idx);
     if var_idx < 0 or var_idx >= bd.values_cap { return INVALID_ID; }
     return (bd.values + var_idx).*;
 }
@@ -317,6 +324,7 @@ struct SSABuilder {
 impl SSABuilder {
 
     fn init(self: *SSABuilder, f: *Func) {
+        debug.log(DebugPhase.ssa, "SSABuilder.init");
         // Allocate module storage on first use
         SSABuilder_allocateStorage();
     
@@ -404,6 +412,7 @@ impl SSABuilder {
     }
 
     fn setTypeRegistry(self: *SSABuilder, reg: *TypeRegistry) {
+        debug.log(DebugPhase.ssa, "SSABuilder.setTypeRegistry");
         self.type_registry = reg;
     }
 
@@ -464,6 +473,7 @@ impl SSABuilder {
     }
 
     fn newBlock(self: *SSABuilder, kind: BlockKind) i64 {
+        debug.log(DebugPhase.ssa, "SSABuilder.newBlock");
         let block_id: i64 = self.func.newBlock(kind);
         self.setBlock(block_id);
         return block_id;
@@ -732,6 +742,7 @@ impl SSABuilder {
     }
 
     fn reorderPhis(self: *SSABuilder) {
+        debug.log(DebugPhase.ssa, "SSABuilder.reorderPhis");
         var block_idx: i64 = 0;
         while block_idx < self.func.blocks_count {
             let blk: *Block = self.func.getBlock(block_idx);

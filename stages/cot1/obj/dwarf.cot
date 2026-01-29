@@ -106,6 +106,7 @@ const MAX_OPS_PER_INST: i64 = 1;
 // Write unsigned LEB128 to buffer
 // Returns number of bytes written
 fn DWARF_writeULEB128(buf: *u8, value: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "DWARF_writeULEB128: val={d}", value);
     var val: i64 = value;
     var count: i64 = 0;
     var more: bool = true;
@@ -131,6 +132,7 @@ fn DWARF_writeULEB128(buf: *u8, value: i64) i64 {
 // Write signed LEB128 to buffer
 // Returns number of bytes written
 fn DWARF_writeSLEB128(buf: *u8, value: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "DWARF_writeSLEB128: val={d}", value);
     var val: i64 = value;
     var count: i64 = 0;
     var more: bool = true;
@@ -157,6 +159,7 @@ fn DWARF_writeSLEB128(buf: *u8, value: i64) i64 {
 
 // Calculate bytes needed for unsigned LEB128
 fn DWARF_uleb128Size(value: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "DWARF_uleb128Size: val={d}", value);
     var val: i64 = value;
     var size: i64 = 0;
     if val == 0 {
@@ -171,6 +174,7 @@ fn DWARF_uleb128Size(value: i64) i64 {
 
 // Calculate bytes needed for signed LEB128
 fn DWARF_sleb128Size(value: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "DWARF_sleb128Size: val={d}", value);
     var val: i64 = value;
     var size: i64 = 0;
     var more: bool = true;
@@ -195,6 +199,7 @@ fn DWARF_sleb128Size(value: i64) i64 {
 
 // Check if line/address advance can use special opcode
 fn DWARF_canUseSpecialOpcode(line_delta: i64, addr_delta: i64) bool {
+    debug.log_dd(DebugPhase.codegen, "DWARF_canUseSpecialOpcode: line={d} addr={d}", line_delta, addr_delta);
     // Line must be in range [LINE_BASE, LINE_BASE + LINE_RANGE)
     if line_delta < LINE_BASE or line_delta >= LINE_BASE + LINE_RANGE {
         return false;
@@ -212,6 +217,7 @@ fn DWARF_canUseSpecialOpcode(line_delta: i64, addr_delta: i64) bool {
 
 // Encode special opcode for line/address advance
 fn DWARF_specialOpcode(line_delta: i64, addr_delta: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "DWARF_specialOpcode: line={d} addr={d}", line_delta, addr_delta);
     let addr_advance: i64 = addr_delta / MIN_INST_LENGTH;
     return (line_delta - LINE_BASE) + (LINE_RANGE * addr_advance) + OPCODE_BASE;
 }
@@ -229,6 +235,7 @@ struct DebugLineWriter {
 impl DebugLineWriter {
 
     fn init(self: *DebugLineWriter, buf: *u8, cap: i64) {
+        debug.log_d(DebugPhase.codegen, "DebugLineWriter.init: cap={d}", cap);
         self.buf = buf;
         self.count = 0;
         self.cap = cap;
@@ -248,6 +255,7 @@ impl DebugLineWriter {
     }
 
     fn writeU32(self: *DebugLineWriter, val: i64) {
+        debug.log_d(DebugPhase.codegen, "DebugLineWriter.writeU32: val={d}", val);
         self.writeByte(val & 255);
         self.writeByte((val >> 8) & 255);
         self.writeByte((val >> 16) & 255);
@@ -255,11 +263,13 @@ impl DebugLineWriter {
     }
 
     fn writeU64(self: *DebugLineWriter, val: i64) {
+        debug.log_d(DebugPhase.codegen, "DebugLineWriter.writeU64: val={d}", val);
         self.writeU32(val & 0xFFFFFFFF);
         self.writeU32((val >> 32) & 0xFFFFFFFF);
     }
 
     fn writeULEB128(self: *DebugLineWriter, val: i64) {
+        debug.log_d(DebugPhase.codegen, "DebugLineWriter.writeULEB128: val={d}", val);
         if self.count + 10 > self.cap {
             return;
         }
@@ -268,6 +278,7 @@ impl DebugLineWriter {
     }
 
     fn writeSLEB128(self: *DebugLineWriter, val: i64) {
+        debug.log_d(DebugPhase.codegen, "DebugLineWriter.writeSLEB128: val={d}", val);
         if self.count + 10 > self.cap {
             return;
         }
@@ -276,6 +287,7 @@ impl DebugLineWriter {
     }
 
     fn writeString(self: *DebugLineWriter, s: *u8, len: i64) {
+        debug.log_d(DebugPhase.codegen, "DebugLineWriter.writeString: len={d}", len);
         var i: i64 = 0;
         while i < len and self.count < self.cap {
             let src: *u8 = s + i;
@@ -301,6 +313,7 @@ impl DebugLineWriter {
     }
 
     fn writeSetAddress(self: *DebugLineWriter, addr: i64) {
+        debug.log_d(DebugPhase.codegen, "DebugLineWriter.writeSetAddress: addr={d}", addr);
         // Extended opcode format: 0, length (ULEB128), opcode, operand
         self.writeByte(0);           // Extended opcode marker
         self.writeULEB128(9);        // Length: 1 (opcode) + 8 (address)
@@ -309,6 +322,7 @@ impl DebugLineWriter {
     }
 
     fn writeEndSequence(self: *DebugLineWriter) {
+        debug.log(DebugPhase.codegen, "DebugLineWriter.writeEndSequence");
         self.writeByte(0);           // Extended opcode marker
         self.writeULEB128(1);        // Length: 1 (opcode only)
         self.writeByte(DW_LNE_end_sequence);
@@ -342,6 +356,7 @@ impl DebugLineWriter {
 // We only need one abbreviation: compile_unit
 // Returns bytes written
 fn DWARF_generateAbbrev(buf: *u8, cap: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "DWARF_generateAbbrev: cap={d}", cap);
     if cap < 32 {
         return 0;
     }
@@ -427,6 +442,7 @@ fn DWARF_generateAbbrev(buf: *u8, cap: i64) i64 {
 
 // Helper to write a null-terminated string
 fn DWARF_writeString(buf: *u8, offset: i64, s: *u8, len: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "DWARF_writeString: offset={d} len={d}", offset, len);
     var i: i64 = 0;
     while i < len {
         let src: *u8 = s + i;
@@ -480,6 +496,7 @@ fn DWARF_generateInfo(buf: *u8, cap: i64,
                       comp_dir: *u8, comp_dir_len: i64,
                       low_pc: i64, code_size: i64,
                       stmt_list_offset: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "DWARF_generateInfo: cap={d} code_size={d}", cap, code_size);
     // Calculate total size needed
     // Header: 4 (unit_length) + 2 (version) + 4 (abbrev_offset) + 1 (address_size) = 11 bytes
     // DIE: 1 (abbrev code) + filename + comp_dir + 4 (stmt_list) + 8 (low_pc) + 8 (high_pc)

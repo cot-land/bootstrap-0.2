@@ -127,6 +127,7 @@ struct Token {
 
 // Create a token (matches Token struct initialization in Zig)
 fn Token_new(k: TokenType, s: i64, e: i64) Token {
+    debug.log_dd(DebugPhase.parse, "Token_new: start={d} end={d}", s, e);
     var t: Token;
     t.kind = k;
     t.start = s;
@@ -137,6 +138,7 @@ fn Token_new(k: TokenType, s: i64, e: i64) Token {
 // Returns operator precedence (0 = non-operator)
 // Higher values bind tighter (matches Token.precedence() in Zig)
 fn Token_precedence(t: TokenType) i64 {
+    debug.log(DebugPhase.parse, "Token_precedence");
     // Lowest: ?? coalesce (not in cot0 yet)
     if t == TokenType.Or or t == TokenType.PipePipe { return 2; }
     if t == TokenType.And or t == TokenType.AmpAmp { return 3; }
@@ -150,11 +152,13 @@ fn Token_precedence(t: TokenType) i64 {
 
 // Returns true for literal tokens (matches Token.isLiteral() in Zig)
 fn Token_isLiteral(t: TokenType) bool {
+    debug.log(DebugPhase.parse, "Token_isLiteral");
     return t == TokenType.Int or t == TokenType.StringLit or t == TokenType.CharLit or t == TokenType.Ident;
 }
 
 // Returns true for operator/delimiter tokens (matches Token.isOperator() in Zig)
 fn Token_isOperator(t: TokenType) bool {
+    debug.log(DebugPhase.parse, "Token_isOperator");
     // Arithmetic
     if t == TokenType.Plus or t == TokenType.Minus or t == TokenType.Star or
        t == TokenType.Slash or t == TokenType.Percent { return true; }
@@ -180,6 +184,7 @@ fn Token_isOperator(t: TokenType) bool {
 
 // Returns true for keyword tokens (matches Token.isKeyword() in Zig)
 fn Token_isKeyword(t: TokenType) bool {
+    debug.log(DebugPhase.parse, "Token_isKeyword");
     // Declaration keywords
     if t == TokenType.Fn or t == TokenType.Let or t == TokenType.Var or
        t == TokenType.Const or t == TokenType.Struct or t == TokenType.Enum or
@@ -215,6 +220,7 @@ fn Token_isAssignment(t: TokenType) bool {
 // Lookup maps an identifier to its keyword token or Ident (matches lookup() in Zig)
 // Following Go's pattern from syntax/scanner.go keyword lookup
 fn Token_lookup(text: string) TokenType {
+    debug.log(DebugPhase.parse, "Token_lookup");
     let n: i64 = len(text);
 
     // Length 2 keywords
@@ -284,6 +290,7 @@ fn Token_lookup(text: string) TokenType {
 // Get string representation of token type
 // Reference: Zig's Token.string()
 fn Token_string(t: TokenType) string {
+    debug.log(DebugPhase.parse, "Token_string");
     if t == TokenType.Eof { return "EOF"; }
     if t == TokenType.Error { return "ERROR"; }
     if t == TokenType.Ident { return "IDENT"; }

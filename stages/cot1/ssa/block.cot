@@ -29,12 +29,14 @@ enum BlockKind {
 // Check if block kind is a conditional branch
 // Reference: Zig's BlockKind.isConditional()
 fn BlockKind_isConditional(kind: BlockKind) bool {
+    debug.log(DebugPhase.ssa, "BlockKind_isConditional");
     return kind == BlockKind.If;
 }
 
 // Get number of successors for a block kind
 // Reference: Zig's BlockKind.numSuccs()
 fn BlockKind_numSuccs(kind: BlockKind) i64 {
+    debug.log(DebugPhase.ssa, "BlockKind_numSuccs");
     if kind == BlockKind.Plain { return 1; }
     if kind == BlockKind.If { return 2; }
     if kind == BlockKind.Return { return 0; }
@@ -92,6 +94,7 @@ impl Block {
 
     // Get predecessor at index
     fn getPred(self: *Block, idx: i64) i64 {
+        debug.log_d(DebugPhase.ssa, "Block.getPred: idx={d}", idx);
         if idx < 0 or idx >= self.preds.count { return INVALID_BLOCK; }
         return i64list_get(&self.preds, idx);
     }
@@ -106,6 +109,7 @@ impl Block {
 
     // Add a successor to this block
     fn addSucc(self: *Block, succ_id: i64) {
+        debug.log_d(DebugPhase.ssa, "Block.addSucc: succ={d}", succ_id);
         if self.succs_count >= MAX_SUCCS { return; }
         self.succs[self.succs_count] = succ_id;
         self.succs_count = self.succs_count + 1;
@@ -114,6 +118,7 @@ impl Block {
 
     // Set successor at index (for branch: 0=then, 1=else)
     fn setSucc(self: *Block, idx: i64, succ_id: i64) {
+        debug.log_dd(DebugPhase.ssa, "Block.setSucc: idx={d} succ={d}", idx, succ_id);
         if idx < 0 or idx >= MAX_SUCCS { return; }
         self.succs[idx] = succ_id;
         if idx >= self.succs_count {
@@ -124,6 +129,7 @@ impl Block {
 
     // Get first successor (or INVALID_BLOCK)
     fn succ0(self: *Block) i64 {
+        debug.log(DebugPhase.ssa, "Block.succ0");
         if self.succs_count < 1 { return INVALID_BLOCK; }
         return self.succs[0];
     }
@@ -131,6 +137,7 @@ impl Block {
 
     // Get second successor (or INVALID_BLOCK)
     fn succ1(self: *Block) i64 {
+        debug.log(DebugPhase.ssa, "Block.succ1");
         if self.succs_count < 2 { return INVALID_BLOCK; }
         return self.succs[1];
     }
@@ -142,12 +149,14 @@ impl Block {
 
     // Add a predecessor to this block
     fn addPred(self: *Block, pred_id: i64) {
+        debug.log_d(DebugPhase.ssa, "Block.addPred: pred={d}", pred_id);
         i64list_append(&self.preds, pred_id);
     }
 
 
     // Check if block has predecessor
     fn hasPred(self: *Block, pred_id: i64) bool {
+        debug.log_d(DebugPhase.ssa, "Block.hasPred: pred={d}", pred_id);
         var i: i64 = 0;
         while i < self.preds.count {
             if i64list_get(&self.preds, i) == pred_id { return true; }
@@ -163,18 +172,21 @@ impl Block {
 
     // Check if block is entry block (no predecessors)
     fn isEntry(self: *Block) bool {
+        debug.log(DebugPhase.ssa, "Block.isEntry");
         return self.preds.count == 0;
     }
 
 
     // Check if block is exit block (no successors)
     fn isExit(self: *Block) bool {
+        debug.log(DebugPhase.ssa, "Block.isExit");
         return self.succs_count == 0;
     }
 
 
     // Check if block ends with conditional branch
     fn isIf(self: *Block) bool {
+        debug.log(DebugPhase.ssa, "Block.isIf");
         return self.kind == BlockKind.If;
     }
 
@@ -225,6 +237,7 @@ impl Block {
     // Set the control value (for If blocks)
     // Reference: Zig's Block.setControl()
     fn setControl(self: *Block, v_id: i64) {
+        debug.log_d(DebugPhase.ssa, "Block.setControl: v={d}", v_id);
         self.control = v_id;
     }
 
@@ -232,6 +245,7 @@ impl Block {
     // Get the control value (for If blocks)
     // Reference: Zig's Block.getControl()
     fn getControl(self: *Block) i64 {
+        debug.log(DebugPhase.ssa, "Block.getControl");
         return self.control;
     }
 
@@ -239,6 +253,7 @@ impl Block {
     // Reset all control values
     // Reference: Zig's Block.resetControls()
     fn resetControls(self: *Block) {
+        debug.log(DebugPhase.ssa, "Block.resetControls");
         self.control = INVALID_ID;
     }
 
@@ -246,6 +261,7 @@ impl Block {
 }
 
 fn Block_new(id: i64, kind: BlockKind) Block {
+    debug.log_d(DebugPhase.ssa, "Block_new: id={d}", id);
     var b: Block = undefined;
     b.id = id;
     b.kind = kind;
@@ -264,14 +280,17 @@ fn Block_new(id: i64, kind: BlockKind) Block {
 }
 
 fn Block_newPlain(id: i64) Block {
+    debug.log_d(DebugPhase.ssa, "Block_newPlain: id={d}", id);
     return Block_new(id, BlockKind.Plain);
 }
 
 fn Block_newIf(id: i64) Block {
+    debug.log_d(DebugPhase.ssa, "Block_newIf: id={d}", id);
     return Block_new(id, BlockKind.If);
 }
 
 fn Block_newReturn(id: i64) Block {
+    debug.log_d(DebugPhase.ssa, "Block_newReturn: id={d}", id);
     return Block_new(id, BlockKind.Return);
 }
 
@@ -288,12 +307,14 @@ struct BlockPool {
 }
 
 fn BlockPool_init(pool: *BlockPool, blocks: *Block, cap: i64) {
+    debug.log_d(DebugPhase.ssa, "BlockPool_init: cap={d}", cap);
     pool.blocks = blocks;
     pool.count = 0;
     pool.cap = cap;
 }
 
 fn BlockPool_alloc(pool: *BlockPool, kind: BlockKind) *Block {
+    debug.log_d(DebugPhase.ssa, "BlockPool_alloc: count={d}", pool.count);
     if pool.count >= pool.cap {
         return pool.blocks;  // Return first block as error placeholder
     }
@@ -307,6 +328,7 @@ fn BlockPool_alloc(pool: *BlockPool, kind: BlockKind) *Block {
 }
 
 fn BlockPool_get(pool: *BlockPool, id: i64) *Block {
+    debug.log_d(DebugPhase.ssa, "BlockPool_get: id={d}", id);
     if id < 0 or id >= pool.count {
         return pool.blocks;  // Return first block as error placeholder
     }
@@ -319,6 +341,7 @@ fn BlockPool_get(pool: *BlockPool, id: i64) *Block {
 
 // Connect two blocks: from -> to (adds successor and predecessor)
 fn BlockPool_connect(pool: *BlockPool, from_id: i64, to_id: i64) {
+    debug.log_dd(DebugPhase.ssa, "BlockPool_connect: from={d} to={d}", from_id, to_id);
     let from: *Block = BlockPool_get(pool, from_id);
     let to: *Block = BlockPool_get(pool, to_id);
 

@@ -12,12 +12,14 @@
 
 // Check if value is a power of 2
 fn isPowerOf2(n: i64) bool {
+    debug.log_d(DebugPhase.ssa, "isPowerOf2: {d}", n);
     if n <= 0 { return false; }
     return (n & (n - 1)) == 0;
 }
 
 // Get log2 of a power of 2
 fn log2(n: i64) i64 {
+    debug.log_d(DebugPhase.ssa, "log2: {d}", n);
     var result: i64 = 0;
     var val: i64 = n;
     while val > 1 {
@@ -35,6 +37,7 @@ fn fitsImm12(n: i64) bool {
 // Run the lower pass on a function
 // Reference: lower.zig:238 lower
 fn lower(f: *Func) {
+    debug.log_d(DebugPhase.ssa, "lower: {d} blocks", f.blocks_count);
     var b: i64 = 0;
     while b < f.blocks_count {
         let block: *Block = f.getBlock(b);
@@ -45,6 +48,7 @@ fn lower(f: *Func) {
 
 // Lower values in a single block
 fn lowerBlock(f: *Func, block: *Block) {
+    debug.log_d(DebugPhase.ssa, "lowerBlock: {d} values", block.values_count);
     var vi: i64 = 0;
     while vi < block.values_count {
         let v: *Value = f.getValue(block.values_start + vi);

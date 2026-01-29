@@ -30,6 +30,7 @@ struct LiveInfo {
 }
 
 fn LiveInfo_new(id: i64, dist: i64, pos: i64) LiveInfo {
+    debug.log_dd(DebugPhase.ssa, "LiveInfo_new: id={d} dist={d}", id, dist);
     return LiveInfo{
         .id = id,
         .dist = dist,
@@ -60,6 +61,7 @@ struct LiveMap {
 impl LiveMap {
 
     fn init(self: *LiveMap) {
+        debug.log(DebugPhase.ssa, "LiveMap.init");
         self.entries = null;
         self.count = 0;
         self.cap = 0;
@@ -68,6 +70,7 @@ impl LiveMap {
     }
 
     fn ensureIndexCapacity(self: *LiveMap, value_id: i64) {
+        debug.log_d(DebugPhase.ssa, "LiveMap.ensureIndexCapacity: id={d}", value_id);
         let needed: i64 = value_id + 1;
         if self.index_cap >= needed { return; }
     
@@ -100,6 +103,7 @@ impl LiveMap {
     }
 
     fn ensureCapacity(self: *LiveMap, needed: i64) {
+        debug.log_d(DebugPhase.ssa, "LiveMap.ensureCapacity: needed={d}", needed);
         if self.cap >= needed { return; }
     
         // Calculate new capacity (at least double, or needed)
@@ -117,6 +121,7 @@ impl LiveMap {
     }
 
     fn clear(self: *LiveMap) {
+        debug.log_d(DebugPhase.ssa, "LiveMap.clear: count={d}", self.count);
         // Reset index entries for items being removed
         if self.index != null {
             var i: i64 = 0;
@@ -140,6 +145,7 @@ impl LiveMap {
     }
 
     fn set(self: *LiveMap, id: i64, dist: i64, pos: i64) {
+        debug.log_dd(DebugPhase.ssa, "LiveMap.set: id={d} dist={d}", id, dist);
         let idx: i64 = self.find(id);
         if idx >= 0 {
             // Already present - update if closer use
@@ -198,6 +204,7 @@ impl LiveMap {
     }
 
     fn remove(self: *LiveMap, id: i64) {
+        debug.log_d(DebugPhase.ssa, "LiveMap.remove: id={d}", id);
         let idx: i64 = self.find(id);
         if idx < 0 { return; }
     
@@ -236,6 +243,7 @@ impl LiveMap {
     }
 
     fn addDistanceAll(self: *LiveMap, delta: i64) {
+        debug.log_dd(DebugPhase.ssa, "LiveMap.addDistanceAll: delta={d} count={d}", delta, self.count);
         var i: i64 = 0;
         while i < self.count {
             let entry: *LiveInfo = self.entries + i;
@@ -267,6 +275,7 @@ struct BlockLiveness {
 impl BlockLiveness {
 
     fn init(self: *BlockLiveness, block_id: i64) {
+        debug.log_d(DebugPhase.ssa, "BlockLiveness.init: block={d}", block_id);
         self.block_id = block_id;
         self.live_out = null;
         self.live_out_count = 0;
@@ -337,6 +346,7 @@ impl BlockLiveness {
     }
 
     fn update(self: *BlockLiveness, lm: *LiveMap) {
+        debug.log_dd(DebugPhase.ssa, "BlockLiveness.update: block={d} count={d}", self.block_id, lm.count);
         // Ensure we have enough space
         self.ensureLiveOutCapacity(lm.count);
         // Copy entries
@@ -377,6 +387,7 @@ impl BlockLiveness {
     }
 
     fn computeNextCall(self: *BlockLiveness, f: *Func, block: *Block) {
+        debug.log_dd(DebugPhase.ssa, "BlockLiveness.computeNextCall: block={d} count={d}", block.id, block.values_count);
         let start: i64 = block.values_start;
         let count: i64 = block.values_count;
     
@@ -414,6 +425,7 @@ struct LivenessResult {
 impl LivenessResult {
 
     fn init(self: *LivenessResult) {
+        debug.log(DebugPhase.ssa, "LivenessResult.init");
         self.blocks = null;
         self.blocks_count = 0;
         self.blocks_cap = 0;
@@ -433,6 +445,7 @@ impl LivenessResult {
     }
 
     fn addBlock(self: *LivenessResult, block_id: i64) *BlockLiveness {
+        debug.log_d(DebugPhase.ssa, "LivenessResult.addBlock: id={d}", block_id);
         self.ensureCapacity(self.blocks_count + 1);
         let bl: *BlockLiveness = self.blocks + self.blocks_count;
         bl.init(block_id);
@@ -441,6 +454,7 @@ impl LivenessResult {
     }
 
     fn getBlock(self: *LivenessResult, block_id: i64) *BlockLiveness {
+        debug.log_d(DebugPhase.ssa, "LivenessResult.getBlock: id={d}", block_id);
         var i: i64 = 0;
         while i < self.blocks_count {
             let bl: *BlockLiveness = self.blocks + i;
@@ -458,16 +472,19 @@ impl LivenessResult {
     }
 
     fn getDistance(self: *LivenessResult, block_id: i64, value_id: i64) i64 {
+        debug.log_dd(DebugPhase.ssa, "LivenessResult.getDistance: block={d} val={d}", block_id, value_id);
         let bl: *BlockLiveness = self.getBlock(block_id);
         return bl.get(value_id);
     }
 
     fn isLiveOut(self: *LivenessResult, block_id: i64, value_id: i64) bool {
+        debug.log_dd(DebugPhase.ssa, "LivenessResult.isLiveOut: block={d} val={d}", block_id, value_id);
         let bl: *BlockLiveness = self.getBlock(block_id);
         return bl.contains(value_id);
     }
 
     fn getNextCall(self: *LivenessResult, block_id: i64, inst_idx: i64) i64 {
+        debug.log_dd(DebugPhase.ssa, "LivenessResult.getNextCall: block={d} idx={d}", block_id, inst_idx);
         let bl: *BlockLiveness = self.getBlock(block_id);
         if inst_idx < 0 or inst_idx >= bl.next_call_count {
             return -1;
@@ -483,6 +500,7 @@ impl LivenessResult {
 }
 
 fn Value_needsRegister(v: *Value) bool {
+    debug.log_d(DebugPhase.ssa, "Value_needsRegister: id={d}", v.id);
     // Memory, control flow, and void operations don't need registers
     if v.op == Op.Store { return false; }
     if v.op == Op.Return { return false; }
@@ -495,6 +513,7 @@ fn Value_needsRegister(v: *Value) bool {
 }
 
 fn Op_isCallOp(op: Op) bool {
+    debug.log(DebugPhase.ssa, "Op_isCallOp");
     if op == Op.Call { return true; }
     if op == Op.TailCall { return true; }
     if op == Op.ClosureCall { return true; }
@@ -502,6 +521,7 @@ fn Op_isCallOp(op: Op) bool {
 }
 
 fn Block_branchDistance(from: *Block, to_id: i64) i64 {
+    debug.log_dd(DebugPhase.ssa, "Block_branchDistance: from={d} to={d}", from.id, to_id);
     // Two-way branch
     if from.succs_count == 2 {
         // First successor (then branch) - usually likely
@@ -517,6 +537,7 @@ fn Block_branchDistance(from: *Block, to_id: i64) i64 {
 }
 
 fn Liveness_processSuccessorPhis(lm: *LiveMap, f: *Func, block: *Block) {
+    debug.log_d(DebugPhase.ssa, "Liveness_processSuccessorPhis: block={d}", block.id);
     // For each successor
     var s: i64 = 0;
     while s < block.succs_count {
@@ -552,6 +573,7 @@ fn Liveness_processSuccessorPhis(lm: *LiveMap, f: *Func, block: *Block) {
 
 fn Liveness_processBlockLiveness(lr: *LivenessResult, f: *Func, block: *Block,
                            lm: *LiveMap) i64 {
+    debug.log_d(DebugPhase.ssa, "Liveness_processBlockLiveness: block={d}", block.id);
     let bl: *BlockLiveness = lr.getBlock(block.id);
 
     // Initialize live set from known live_out
@@ -673,6 +695,7 @@ fn Liveness_processBlockLiveness(lr: *LivenessResult, f: *Func, block: *Block,
 }
 
 fn Liveness_compute(lr: *LivenessResult, f: *Func, lm: *LiveMap) i64 {
+    debug.log_d(DebugPhase.ssa, "Liveness_compute: blocks={d}", f.blocks_count);
     // Initialize block liveness structures - each block gets its own dynamic arrays
     var b: i64 = 0;
     while b < f.blocks_count {

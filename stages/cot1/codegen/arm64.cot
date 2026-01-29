@@ -30,6 +30,7 @@ struct Emitter {
 }
 
 fn Emitter_init() Emitter {
+    debug.log(DebugPhase.codegen, "Emitter_init");
     return Emitter{
         .code_offset = 0,
         .inst_count = 0,
@@ -43,6 +44,7 @@ fn Emitter_init() Emitter {
 
 // Select load instruction based on type size
 fn Instruction_selectLoad(size: i64, is_signed: bool) i64 {
+    debug.log_d(DebugPhase.codegen, "Instruction_selectLoad: size={d}", size);
     // Returns an instruction selector code
     // 1 = LDRB, 2 = LDRSB, 3 = LDRH, 4 = LDRSH, 5 = LDR (32), 6 = LDRSW, 7 = LDR (64)
     if size == 1 {
@@ -62,6 +64,7 @@ fn Instruction_selectLoad(size: i64, is_signed: bool) i64 {
 
 // Select store instruction based on type size
 fn Instruction_selectStore(size: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "Instruction_selectStore: size={d}", size);
     // Returns an instruction selector code
     // 1 = STRB, 2 = STRH, 3 = STR (32), 4 = STR (64)
     if size == 1 { return 1; }  // STRB
@@ -76,6 +79,7 @@ fn Instruction_selectStore(size: i64) i64 {
 
 // Encode a load instruction based on selector and operands
 fn Instruction_encodeLoad(selector: i64, rd: i64, rn: i64, offset: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "Instruction_encodeLoad: sel={d} rd={d}", selector, rd);
     if selector == 1 { return encode_ldrb(rd, rn, offset); }
     // TODO: Add LDRSB, LDRH, LDRSH, etc. as needed
     if selector == 7 { return encode_ldr(rd, rn, offset); }
@@ -85,6 +89,7 @@ fn Instruction_encodeLoad(selector: i64, rd: i64, rn: i64, offset: i64) i64 {
 
 // Encode a store instruction based on selector and operands
 fn Instruction_encodeStore(selector: i64, rt: i64, rn: i64, offset: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "Instruction_encodeStore: sel={d} rt={d}", selector, rt);
     if selector == 1 { return encode_strb(rt, rn, offset); }
     // TODO: Add STRH, STR W as needed
     if selector == 4 { return encode_str(rt, rn, offset); }
@@ -120,6 +125,7 @@ fn Instruction_encodeStore(selector: i64, rt: i64, rn: i64, offset: i64) i64 {
 // Encode function prologue
 // Returns array of instruction words (simplified - returns first instruction)
 fn ARM64_encodePrologue(frame_size: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "ARM64_encodePrologue: frame={d}", frame_size);
     // STP X29, X30, [SP, #-frame_size]!
     // For now, use simple SUB SP, SP, #frame_size approach
     // then separate stores
@@ -133,6 +139,7 @@ fn ARM64_encodePrologue(frame_size: i64) i64 {
 
 // Encode function epilogue (return instruction)
 fn ARM64_encodeEpilogue(frame_size: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "ARM64_encodeEpilogue: frame={d}", frame_size);
     // For now, just encode RET
     // Full implementation would restore SP first
     return encode_ret(LR);
@@ -149,6 +156,7 @@ fn ARM64_encodeEpilogue(frame_size: i64) i64 {
 
 // Generate a move from one register to another
 fn ARM64_encodeMovReg(rd: i64, rm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "ARM64_encodeMovReg: rd={d} rm={d}", rd, rm);
     // MOV Xd, Xm is actually ORR Xd, XZR, Xm
     return encode_orr_reg(rd, XZR, rm);
 }
@@ -157,6 +165,7 @@ fn ARM64_encodeMovReg(rd: i64, rm: i64) i64 {
 // For values that fit in 16 bits, use MOVZ
 // For larger values, need MOVZ + MOVK sequence
 fn ARM64_encodeMovImm(rd: i64, imm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "ARM64_encodeMovImm: rd={d} imm={d}", rd, imm);
     // Simple case: 16-bit immediate
     if imm >= 0 and imm <= 65535 {
         return encode_movz(rd, imm, 0);
@@ -194,11 +203,13 @@ fn Cond_forNe() i64 { return COND_NE; }
 
 // Handle SSA add operation
 fn ARM64_add(rd: i64, rn: i64, rm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "ARM64_add: rd={d} rn={d} rm={d}", rd, rn, rm);
     return encode_add_reg(rd, rn, rm);
 }
 
 // Handle SSA add immediate operation
 fn ARM64_addConst(rd: i64, rn: i64, imm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "ARM64_addConst: rd={d} rn={d} imm={d}", rd, rn, imm);
     if imm >= 0 and imm <= 4095 {
         return encode_add_imm(rd, rn, imm);
     }
@@ -209,11 +220,13 @@ fn ARM64_addConst(rd: i64, rn: i64, imm: i64) i64 {
 
 // Handle SSA sub operation
 fn ARM64_sub(rd: i64, rn: i64, rm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "ARM64_sub: rd={d} rn={d} rm={d}", rd, rn, rm);
     return encode_sub_reg(rd, rn, rm);
 }
 
 // Handle SSA sub immediate operation
 fn ARM64_subConst(rd: i64, rn: i64, imm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "ARM64_subConst: rd={d} rn={d} imm={d}", rd, rn, imm);
     if imm >= 0 and imm <= 4095 {
         return encode_sub_imm(rd, rn, imm);
     }
@@ -222,31 +235,37 @@ fn ARM64_subConst(rd: i64, rn: i64, imm: i64) i64 {
 
 // Handle SSA and operation
 fn ARM64_and(rd: i64, rn: i64, rm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "ARM64_and: rd={d} rn={d} rm={d}", rd, rn, rm);
     return encode_and_reg(rd, rn, rm);
 }
 
 // Handle SSA or operation
 fn ARM64_or(rd: i64, rn: i64, rm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "ARM64_or: rd={d} rn={d} rm={d}", rd, rn, rm);
     return encode_orr_reg(rd, rn, rm);
 }
 
 // Handle SSA xor operation
 fn ARM64_xor(rd: i64, rn: i64, rm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "ARM64_xor: rd={d} rn={d} rm={d}", rd, rn, rm);
     return encode_eor_reg(rd, rn, rm);
 }
 
 // Handle SSA comparison (sets flags)
 fn ARM64_cmp(rn: i64, rm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "ARM64_cmp: rn={d} rm={d}", rn, rm);
     return encode_cmp_reg(rn, rm);
 }
 
 // Handle SSA comparison with immediate (sets flags)
 fn ARM64_cmp_imm(rn: i64, imm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "ARM64_cmp_imm: rn={d} imm={d}", rn, imm);
     return encode_cmp_imm(rn, imm);
 }
 
 // Handle conditional set (result = cond ? 1 : 0)
 fn ARM64_setcc(rd: i64, cond: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "ARM64_setcc: rd={d} cond={d}", rd, cond);
     return encode_cset(rd, cond);
 }
 
@@ -261,21 +280,25 @@ fn ARM64_select(rd: i64, rn: i64, rm: i64, cond: i64) i64 {
 
 // Generate unconditional branch
 fn ARM64_branch(offset_words: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "ARM64_branch: offset={d}", offset_words);
     return encode_b(offset_words);
 }
 
 // Generate conditional branch (branch if condition is true)
 fn ARM64_branchCond(offset_words: i64, cond: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "ARM64_branchCond: offset={d} cond={d}", offset_words, cond);
     return encode_b_cond(offset_words, cond);
 }
 
 // Generate function call
 fn ARM64_call(offset_words: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "ARM64_call: offset={d}", offset_words);
     return encode_bl(offset_words);
 }
 
 // Generate return
 fn ARM64_return() i64 {
+    debug.log(DebugPhase.codegen, "ARM64_return");
     return encode_ret(LR);
 }
 

@@ -224,6 +224,7 @@ struct Driver {
 }
 
 fn Driver_init() Driver {
+    debug.log(DebugPhase.parse, "Driver_init");
     var d: Driver = undefined;
     d.source_ptr = g_source;
     d.source_len = 0;
@@ -235,6 +236,7 @@ fn Driver_init() Driver {
 // Compile source text directly (matches src/driver.zig compileSource)
 // Note: In cot0, this is a thin wrapper since we use global state
 fn Driver_compileSource(source: string, out_path: *u8, out_path_len: i64) i64 {
+    debug.log(DebugPhase.parse, "Driver_compileSource");
     return Driver_compileFile(source, out_path, out_path_len);
 }
 
@@ -258,6 +260,7 @@ fn Driver_setDebugPhases(phases: *u8, phases_len: i64) {
 // ============================================================================
 
 fn read_file(path: *u8) i64 {
+    debug.log(DebugPhase.parse, "read_file");
     // Use safe_io wrappers - validates parameters and provides clear errors
     let fd: i32 = safe_open_read(path, "read_file".ptr);
     g_source_len = safe_read_all(fd, g_source, g_source_cap - 1, "read_file".ptr);
@@ -269,6 +272,7 @@ fn read_file(path: *u8) i64 {
 }
 
 fn write_file(path: *u8, data: *u8, data_len: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "write_file: {d} bytes", data_len);
     // Use safe_io wrappers - validates parameters and provides clear errors
     let fd: i32 = safe_open_write(path, "write_file".ptr);
     safe_write_all(fd, data, data_len, "write_file".ptr);
@@ -281,6 +285,7 @@ fn write_file(path: *u8, data: *u8, data_len: i64) i64 {
 // ============================================================================
 
 fn init_node_pool() *NodePool {
+    debug.log(DebugPhase.parse, "init_node_pool");
     g_pool.nodes = g_nodes;
     g_pool.count = 0;
     g_pool.capacity = g_nodes_cap;  // Set capacity from allocated size
@@ -297,6 +302,7 @@ fn init_node_pool() *NodePool {
 // Returns number of new nodes (including from recursive imports)
 fn parse_import_file_with_dir(import_path: *u8, import_path_len: i64, pool: *NodePool,
                                base_dir: *u8, base_dir_len: i64) i64 {
+    debug.log_d(DebugPhase.parse, "parse_import_file_with_dir: path_len={d}", import_path_len);
     // Resolve the import path relative to base_dir, handling ".."
     let full_path_len: i64 = Import_resolvePath(base_dir, base_dir_len, import_path, import_path_len);
     let path_buf: *u8 = Import_getPathBuf();
@@ -393,12 +399,14 @@ fn parse_import_file_with_dir(import_path: *u8, import_path_len: i64, pool: *Nod
 
 // Legacy wrapper for backward compatibility (uses Import module's base_dir)
 fn parse_import_file(import_path: *u8, import_path_len: i64, pool: *NodePool) i64 {
+    debug.log_d(DebugPhase.parse, "parse_import_file: path_len={d}", import_path_len);
     return parse_import_file_with_dir(import_path, import_path_len, pool,
                                        Import_getBaseDir(), Import_getBaseDirLen());
 }
 
 // Process all imports in the parsed AST (matches src/driver.zig parseFileRecursive)
 fn Driver_parseFileRecursive(pool: *NodePool, main_file_nodes: i64) {
+    debug.log_d(DebugPhase.parse, "Driver_parseFileRecursive: {d} nodes", main_file_nodes);
     var i: i64 = 0;
     while i < main_file_nodes {
         let node: *Node = pool.nodes + i;
@@ -425,6 +433,7 @@ fn Driver_parseFileRecursive(pool: *NodePool, main_file_nodes: i64) {
 // ============================================================================
 
 fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
+    debug.log_d(DebugPhase.parse, "Driver_compileFile: source_len={d}", source.len);
     let t_start: i64 = get_time_ns();
     var t_phase: i64 = t_start;
     var t_now: i64 = 0;
@@ -834,6 +843,7 @@ fn strcpy(dest: *u8, src: *u8, max_len: i64) i64 {
 }
 
 fn print_usage() {
+    debug.log(DebugPhase.parse, "print_usage");
     print("Usage: cot0 [-test] <source.cot> -o <output>\n");
     print("\n");
     print("  -test         Compile and run inline tests\n");
@@ -846,6 +856,7 @@ fn print_usage() {
 // ============================================================================
 
 fn main(argc: i64, argv: **u8) i64 {
+    debug.log_d(DebugPhase.parse, "main: argc={d}", argc);
     // Install crash handler FIRST - before anything else
     install_crash_handler();
 

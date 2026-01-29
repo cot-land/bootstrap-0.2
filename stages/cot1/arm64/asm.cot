@@ -11,6 +11,8 @@
 //
 // ARM64 instructions are always 32 bits (4 bytes), little-endian.
 
+import "../lib/pipeline_debug.cot"
+
 // ============================================================================
 // Register Encoding
 // ============================================================================
@@ -42,6 +44,7 @@ const MOVK_OP: i64 = 3;  // 0b11 - Move wide with keep
 // Encode move wide instruction (MOVZ, MOVK, MOVN).
 // Single function - opcode parameter makes the instruction type explicit.
 fn encode_move_wide(op: i64, rd: i64, imm16: i64, shift: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_move_wide: op={d} rd={d} imm16={d}", op, rd, imm16);
     let sf: i64 = 1;  // 64-bit
     // Encoding: sf opc 100101 hw imm16 Rd
     return (sf << 31) |
@@ -53,14 +56,17 @@ fn encode_move_wide(op: i64, rd: i64, imm16: i64, shift: i64) i64 {
 }
 
 fn encode_movz(rd: i64, imm16: i64, shift: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_movz: rd={d} imm16={d} shift={d}", rd, imm16, shift);
     return encode_move_wide(MOVZ_OP, rd, imm16, shift);
 }
 
 fn encode_movk(rd: i64, imm16: i64, shift: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_movk: rd={d} imm16={d} shift={d}", rd, imm16, shift);
     return encode_move_wide(MOVK_OP, rd, imm16, shift);
 }
 
 fn encode_movn(rd: i64, imm16: i64, shift: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_movn: rd={d} imm16={d} shift={d}", rd, imm16, shift);
     return encode_move_wide(MOVN_OP, rd, imm16, shift);
 }
 
@@ -71,6 +77,7 @@ fn encode_movn(rd: i64, imm16: i64, shift: i64) i64 {
 // Encode ADD/SUB immediate.
 // Single function - is_sub parameter makes it explicit.
 fn encode_add_sub_imm(rd: i64, rn: i64, imm12: i64, shift: i64, is_sub: bool, set_flags: bool) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_add_sub_imm: rd={d} rn={d} imm12={d}", rd, rn, imm12);
     let sf: i64 = 1;  // 64-bit
     var op: i64 = 0;
     if is_sub { op = 1; }
@@ -88,10 +95,12 @@ fn encode_add_sub_imm(rd: i64, rn: i64, imm12: i64, shift: i64, is_sub: bool, se
 }
 
 fn encode_add_imm(rd: i64, rn: i64, imm12: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_add_imm: rd={d} rn={d} imm12={d}", rd, rn, imm12);
     return encode_add_sub_imm(rd, rn, imm12, 0, false, false);
 }
 
 fn encode_sub_imm(rd: i64, rn: i64, imm12: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_sub_imm: rd={d} rn={d} imm12={d}", rd, rn, imm12);
     return encode_add_sub_imm(rd, rn, imm12, 0, true, false);
 }
 
@@ -102,6 +111,7 @@ fn encode_sub_imm(rd: i64, rn: i64, imm12: i64) i64 {
 // Encode ADD/SUB register (shifted).
 // Single function - is_sub parameter makes it explicit.
 fn encode_add_sub_reg(rd: i64, rn: i64, rm: i64, is_sub: bool, set_flags: bool) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_add_sub_reg: rd={d} rn={d} rm={d}", rd, rn, rm);
     let sf: i64 = 1;  // 64-bit
     var op: i64 = 0;
     if is_sub { op = 1; }
@@ -121,10 +131,12 @@ fn encode_add_sub_reg(rd: i64, rn: i64, rm: i64, is_sub: bool, set_flags: bool) 
 }
 
 fn encode_add_reg(rd: i64, rn: i64, rm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_add_reg: rd={d} rn={d} rm={d}", rd, rn, rm);
     return encode_add_sub_reg(rd, rn, rm, false, false);
 }
 
 fn encode_sub_reg(rd: i64, rn: i64, rm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_sub_reg: rd={d} rn={d} rm={d}", rd, rn, rm);
     return encode_add_sub_reg(rd, rn, rm, true, false);
 }
 
@@ -132,6 +144,7 @@ fn encode_sub_reg(rd: i64, rn: i64, rm: i64) i64 {
 // Required when rd or rn is SP (31), since shifted register form
 // treats reg 31 as XZR not SP.
 fn encode_add_sub_ext_reg(rd: i64, rn: i64, rm: i64, is_sub: bool) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_add_sub_ext_reg: rd={d} rn={d} rm={d}", rd, rn, rm);
     let sf: i64 = 1;  // 64-bit
     var op: i64 = 0;
     if is_sub { op = 1; }
@@ -161,11 +174,13 @@ fn encode_sub_ext_reg(rd: i64, rn: i64, rm: i64) i64 {
 
 // CMP is SUBS with Rd=XZR (register 31)
 fn encode_cmp_reg(rn: i64, rm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "encode_cmp_reg: rn={d} rm={d}", rn, rm);
     return encode_add_sub_reg(31, rn, rm, true, true);
 }
 
 // CMP immediate is SUBS with Rd=XZR
 fn encode_cmp_imm(rn: i64, imm12: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "encode_cmp_imm: rn={d} imm12={d}", rn, imm12);
     return encode_add_sub_imm(31, rn, imm12, 0, true, true);
 }
 
@@ -177,6 +192,7 @@ fn encode_cmp_imm(rn: i64, imm12: i64) i64 {
 // ADR:  Forms PC-relative address (adds imm to PC)
 // ADRP: Forms page address (adds imm*4096 to PC page)
 fn encode_adr(rd: i64, imm21: i64, is_page: bool) i64 {
+    debug.log_dd(DebugPhase.codegen, "encode_adr: rd={d} imm21={d}", rd, imm21);
     let imm: i64 = imm21 & 2097151;  // 21 bits: 0x1FFFFF
     let immlo: i64 = imm & 3;
     let immhi: i64 = imm >> 2;
@@ -200,6 +216,7 @@ fn encode_adrp(rd: i64, imm21: i64) i64 {
 
 // Encode MUL (alias for MADD with Ra=XZR).
 fn encode_mul(rd: i64, rn: i64, rm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_mul: rd={d} rn={d} rm={d}", rd, rn, rm);
     let sf: i64 = 1;
     // MADD: sf 00 11011 000 Rm 0 Ra Rn Rd
     return (sf << 31) |
@@ -216,6 +233,7 @@ fn encode_mul(rd: i64, rn: i64, rm: i64) i64 {
 // Encode SDIV/UDIV.
 // Single function - is_signed parameter makes it explicit.
 fn encode_div(rd: i64, rn: i64, rm: i64, is_signed: bool) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_div: rd={d} rn={d} rm={d}", rd, rn, rm);
     let sf: i64 = 1;
     var o1: i64 = 0;
     if is_signed { o1 = 1; }
@@ -262,6 +280,7 @@ fn ldst_size_from_bytes(bytes: i64) i64 {
 // offset is in BYTES - this function scales it internally for ARM64 encoding.
 // ARM64 unsigned offset LDR/STR uses scaled immediates (offset / access_size).
 fn encode_ldr_str_sized(rt: i64, rn: i64, offset: i64, size: i64, is_load: bool) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_ldr_str_sized: rt={d} rn={d} offset={d}", rt, rn, offset);
     let v: i64 = 0;  // Not SIMD
     var opc: i64 = 0;
     if is_load { opc = 1; }
@@ -287,34 +306,42 @@ fn encode_ldr_str(rt: i64, rn: i64, offset: i64, is_load: bool) i64 {
 }
 
 fn encode_ldr(rt: i64, rn: i64, offset: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_ldr: rt={d} rn={d} offset={d}", rt, rn, offset);
     return encode_ldr_str(rt, rn, offset, true);
 }
 
 fn encode_str(rt: i64, rn: i64, offset: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_str: rt={d} rn={d} offset={d}", rt, rn, offset);
     return encode_ldr_str(rt, rn, offset, false);
 }
 
 fn encode_ldrb(rt: i64, rn: i64, offset: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_ldrb: rt={d} rn={d} offset={d}", rt, rn, offset);
     return encode_ldr_str_sized(rt, rn, offset, LDST_BYTE, true);
 }
 
 fn encode_strb(rt: i64, rn: i64, offset: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_strb: rt={d} rn={d} offset={d}", rt, rn, offset);
     return encode_ldr_str_sized(rt, rn, offset, LDST_BYTE, false);
 }
 
 fn encode_ldrh(rt: i64, rn: i64, offset: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_ldrh: rt={d} rn={d} offset={d}", rt, rn, offset);
     return encode_ldr_str_sized(rt, rn, offset, LDST_HALF, true);
 }
 
 fn encode_strh(rt: i64, rn: i64, offset: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_strh: rt={d} rn={d} offset={d}", rt, rn, offset);
     return encode_ldr_str_sized(rt, rn, offset, LDST_HALF, false);
 }
 
 fn encode_ldrw(rt: i64, rn: i64, offset: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_ldrw: rt={d} rn={d} offset={d}", rt, rn, offset);
     return encode_ldr_str_sized(rt, rn, offset, LDST_WORD, true);
 }
 
 fn encode_strw(rt: i64, rn: i64, offset: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_strw: rt={d} rn={d} offset={d}", rt, rn, offset);
     return encode_ldr_str_sized(rt, rn, offset, LDST_WORD, false);
 }
 
@@ -325,6 +352,7 @@ fn encode_strw(rt: i64, rn: i64, offset: i64) i64 {
 // Encode LDP/STP with signed offset.
 // Single function - is_load parameter makes it explicit.
 fn encode_ldp_stp(rt1: i64, rt2: i64, rn: i64, imm7: i64, is_load: bool) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_ldp_stp: rt1={d} rt2={d} rn={d}", rt1, rt2, rn);
     var l: i64 = 0;
     if is_load { l = 1; }
     // Encoding: 10 101 0 010 L imm7 Rt2 Rn Rt
@@ -340,15 +368,18 @@ fn encode_ldp_stp(rt1: i64, rt2: i64, rn: i64, imm7: i64, is_load: bool) i64 {
 }
 
 fn encode_ldp(rt1: i64, rt2: i64, rn: i64, imm7: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_ldp: rt1={d} rt2={d} imm7={d}", rt1, rt2, imm7);
     return encode_ldp_stp(rt1, rt2, rn, imm7, true);
 }
 
 fn encode_stp(rt1: i64, rt2: i64, rn: i64, imm7: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_stp: rt1={d} rt2={d} imm7={d}", rt1, rt2, imm7);
     return encode_ldp_stp(rt1, rt2, rn, imm7, false);
 }
 
 // LDP/STP with pre-index (adjust base before access)
 fn encode_ldp_stp_pre(rt1: i64, rt2: i64, rn: i64, imm7: i64, is_load: bool) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_ldp_stp_pre: rt1={d} rt2={d} imm7={d}", rt1, rt2, imm7);
     var l: i64 = 0;
     if is_load { l = 1; }
     // Encoding: 10 101 0 011 L imm7 Rt2 Rn Rt (011 = pre-index)
@@ -373,6 +404,7 @@ fn encode_stp_pre(rt1: i64, rt2: i64, rn: i64, imm7: i64) i64 {
 
 // LDP/STP with post-index (adjust base after access)
 fn encode_ldp_stp_post(rt1: i64, rt2: i64, rn: i64, imm7: i64, is_load: bool) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_ldp_stp_post: rt1={d} rt2={d} imm7={d}", rt1, rt2, imm7);
     var l: i64 = 0;
     if is_load { l = 1; }
     // Encoding: 10 101 0 001 L imm7 Rt2 Rn Rt (001 = post-index)
@@ -401,6 +433,7 @@ fn encode_stp_post(rt1: i64, rt2: i64, rn: i64, imm7: i64) i64 {
 
 // Encode unconditional branch (B/BL).
 fn encode_branch(imm26: i64, is_link: bool) i64 {
+    debug.log_d(DebugPhase.codegen, "encode_branch: imm26={d}", imm26);
     var op: i64 = 0;
     if is_link { op = 1; }
     // Encoding: op 00101 imm26
@@ -410,15 +443,18 @@ fn encode_branch(imm26: i64, is_link: bool) i64 {
 }
 
 fn encode_b(imm26: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "encode_b: imm26={d}", imm26);
     return encode_branch(imm26, false);
 }
 
 fn encode_bl(imm26: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "encode_bl: imm26={d}", imm26);
     return encode_branch(imm26, true);
 }
 
 // Encode branch to register (BR/BLR/RET).
 fn encode_branch_reg(rn: i64, is_link: bool, is_ret: bool) i64 {
+    debug.log_d(DebugPhase.codegen, "encode_branch_reg: rn={d}", rn);
     var op: i64 = 0;
     if is_link { op = 1; }
     if is_ret { op = 2; }
@@ -434,14 +470,17 @@ fn encode_branch_reg(rn: i64, is_link: bool, is_ret: bool) i64 {
 }
 
 fn encode_br(rn: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "encode_br: rn={d}", rn);
     return encode_branch_reg(rn, false, false);
 }
 
 fn encode_blr(rn: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "encode_blr: rn={d}", rn);
     return encode_branch_reg(rn, true, false);
 }
 
 fn encode_ret(rn: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "encode_ret: rn={d}", rn);
     return encode_branch_reg(rn, false, true);
 }
 
@@ -468,6 +507,7 @@ const COND_AL: i64 = 14;  // Always
 
 // Encode conditional branch (B.cond).
 fn encode_b_cond(imm19: i64, cond: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "encode_b_cond: imm19={d} cond={d}", imm19, cond);
     // Encoding: 0101010 0 imm19 0 cond
     return (84 << 24) |        // 0b01010100 = 84
            ((imm19 & 524287) << 5) |  // 19 bits
@@ -491,6 +531,7 @@ fn encode_bcc(imm19: i64) i64 { return encode_b_cond(imm19, COND_CC); }
 // ============================================================================
 
 fn encode_cbz_cbnz(rt: i64, imm19: i64, is_nonzero: bool) i64 {
+    debug.log_dd(DebugPhase.codegen, "encode_cbz_cbnz: rt={d} imm19={d}", rt, imm19);
     let sf: i64 = 1;  // 64-bit
     var op: i64 = 0;
     if is_nonzero { op = 1; }
@@ -521,6 +562,7 @@ const LOG_EOR: i64 = 2;   // 0b10
 
 // Encode logical register operation.
 fn encode_logical_reg(rd: i64, rn: i64, rm: i64, op: i64, set_flags: bool) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_logical_reg: rd={d} rn={d} rm={d}", rd, rn, rm);
     let sf: i64 = 1;  // 64-bit
     var n: i64 = 0;   // No NOT
     // Encoding: sf opc 01010 shift N Rm imm6 Rn Rd
@@ -550,6 +592,7 @@ fn encode_eor_reg(rd: i64, rn: i64, rm: i64) i64 {
 // ORN: Rd = Rn OR NOT(Rm) - used for MVN (bitwise NOT)
 // MVN Xd, Xm = ORN Xd, XZR, Xm
 fn encode_orn(rd: i64, rn: i64, rm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_orn: rd={d} rn={d} rm={d}", rd, rn, rm);
     let sf: i64 = 1;  // 64-bit
     // ORN encoding: sf opc=01 01010 shift=00 N=1 Rm imm6=000000 Rn Rd
     // bit 31: sf = 1 (64-bit)
@@ -577,6 +620,7 @@ fn encode_orn(rd: i64, rn: i64, rm: i64) i64 {
 
 // Encode variable shift (LSL/LSR/ASR).
 fn encode_shift_var(rd: i64, rn: i64, rm: i64, op: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_shift_var: rd={d} rn={d} rm={d}", rd, rn, rm);
     let sf: i64 = 1;  // 64-bit
     // Encoding: sf 0 0 11010110 Rm 0010 op Rn Rd
     return (sf << 31) |
@@ -608,6 +652,7 @@ fn encode_asr_reg(rd: i64, rn: i64, rm: i64) i64 {
 
 // Encode UBFM (Unsigned Bitfield Move) - basis for LSL/LSR immediate
 fn encode_ubfm(rd: i64, rn: i64, immr: i64, imms: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_ubfm: rd={d} rn={d} immr={d}", rd, rn, immr);
     let sf: i64 = 1;  // 64-bit
     let n: i64 = 1;   // N=1 for 64-bit
     // Encoding: sf 10 100110 N immr imms Rn Rd
@@ -635,6 +680,7 @@ fn encode_lsr_imm(rd: i64, rn: i64, shift: i64) i64 {
 
 // Encode SBFM (Signed Bitfield Move) - basis for ASR immediate
 fn encode_sbfm(rd: i64, rn: i64, immr: i64, imms: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_sbfm: rd={d} rn={d} immr={d}", rd, rn, immr);
     let sf: i64 = 1;  // 64-bit
     let n: i64 = 1;   // N=1 for 64-bit
     // Encoding: sf 00 100110 N immr imms Rn Rd
@@ -658,6 +704,7 @@ fn encode_asr_imm(rd: i64, rn: i64, shift: i64) i64 {
 // ============================================================================
 
 fn encode_csel(rd: i64, rn: i64, rm: i64, cond: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_csel: rd={d} rn={d} cond={d}", rd, rn, cond);
     let sf: i64 = 1;  // 64-bit
     // Encoding: sf 0 0 11010100 Rm cond 0 0 Rn Rd
     return (sf << 31) |
@@ -673,6 +720,7 @@ fn encode_csel(rd: i64, rn: i64, rm: i64, cond: i64) i64 {
 }
 
 fn encode_csinc(rd: i64, rn: i64, rm: i64, cond: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "encode_csinc: rd={d} rn={d} cond={d}", rd, rn, cond);
     let sf: i64 = 1;  // 64-bit
     // Encoding: sf 0 0 11010100 Rm cond 0 1 Rn Rd
     return (sf << 31) |
@@ -689,6 +737,7 @@ fn encode_csinc(rd: i64, rn: i64, rm: i64, cond: i64) i64 {
 
 // CSET is CSINC with Rn=Rm=XZR and inverted condition
 fn encode_cset(rd: i64, cond: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "encode_cset: rd={d} cond={d}", rd, cond);
     let inv_cond: i64 = cond ^ 1;  // Invert condition
     return encode_csinc(rd, 31, 31, inv_cond);
 }
@@ -699,11 +748,13 @@ fn encode_cset(rd: i64, cond: i64) i64 {
 
 // NEG is SUB with Rn=XZR
 fn encode_neg(rd: i64, rm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "encode_neg: rd={d} rm={d}", rd, rm);
     return encode_sub_reg(rd, 31, rm);
 }
 
 // MVN (bitwise NOT) is ORN with Rn=XZR
 fn encode_mvn(rd: i64, rm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "encode_mvn: rd={d} rm={d}", rd, rm);
     let sf: i64 = 1;  // 64-bit
     // ORN: sf 01 01010 shift 1 Rm imm6 Rn Rd
     return (sf << 31) |
@@ -732,26 +783,31 @@ fn encode_nop() i64 {
 
 // SXTB: Sign-extend byte to 64-bit (SBFM Xd, Xn, #0, #7)
 fn encode_sxtb(rd: i64, rn: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "encode_sxtb: rd={d} rn={d}", rd, rn);
     return encode_sbfm(rd, rn, 0, 7);
 }
 
 // SXTH: Sign-extend halfword to 64-bit (SBFM Xd, Xn, #0, #15)
 fn encode_sxth(rd: i64, rn: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "encode_sxth: rd={d} rn={d}", rd, rn);
     return encode_sbfm(rd, rn, 0, 15);
 }
 
 // SXTW: Sign-extend word to 64-bit (SBFM Xd, Xn, #0, #31)
 fn encode_sxtw(rd: i64, rn: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "encode_sxtw: rd={d} rn={d}", rd, rn);
     return encode_sbfm(rd, rn, 0, 31);
 }
 
 // UXTB: Zero-extend byte to 64-bit (UBFM Xd, Xn, #0, #7)
 fn encode_uxtb(rd: i64, rn: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "encode_uxtb: rd={d} rn={d}", rd, rn);
     return encode_ubfm(rd, rn, 0, 7);
 }
 
 // UXTH: Zero-extend halfword to 64-bit (UBFM Xd, Xn, #0, #15)
 fn encode_uxth(rd: i64, rn: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "encode_uxth: rd={d} rn={d}", rd, rn);
     return encode_ubfm(rd, rn, 0, 15);
 }
 
@@ -783,6 +839,7 @@ fn invert_cond(cond: i64) i64 {
 
 // MOV Xd, Xn: encoded as ORR Xd, XZR, Xn
 fn encode_mov(rd: i64, rn: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "encode_mov: rd={d} rn={d}", rd, rn);
     // ORR Xd, XZR, Xn  (XZR = 31)
     return encode_orr_reg(rd, 31, rn);
 }

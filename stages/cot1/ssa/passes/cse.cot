@@ -20,6 +20,7 @@
 // Run the CSE pass on a function
 // Reference: cse.go cse()
 fn cse(f: *Func) {
+    debug.log_d(DebugPhase.ssa, "cse: {d} blocks", f.blocks_count);
     var b: i64 = 0;
     while b < f.blocks_count {
         let block: *Block = f.getBlock(b);
@@ -30,6 +31,7 @@ fn cse(f: *Func) {
 
 // Process a single block for CSE
 fn cseBlock(f: *Func, block: *Block) {
+    debug.log_d(DebugPhase.ssa, "cseBlock: {d} values", block.values_count);
     // For each value, look for an earlier equivalent value
     var vi: i64 = 0;
     while vi < block.values_count {
@@ -70,6 +72,7 @@ fn cseBlock(f: *Func, block: *Block) {
 // Check if a value can be subject to CSE
 // Conservative: only pure arithmetic and bitwise operations
 fn canCSE(v: *Value) bool {
+    debug.log_d(DebugPhase.ssa, "canCSE: v.id={d}", v.id);
     // Can't CSE values with no uses or marked as processed
     if v.uses <= 0 { return false; }
 
@@ -133,6 +136,7 @@ fn valuesEquivalent(f: *Func, v: *Value, w: *Value) bool {
 // This is conservative but safe - cross-block CSE requires dominators
 // Returns the number of replacements made
 fn replaceUsesInBlock(f: *Func, block: *Block, old_id: i64, new_id: i64) i64 {
+    debug.log_dd(DebugPhase.ssa, "replaceUsesInBlock: {d} -> {d}", old_id, new_id);
     var count: i64 = 0;
 
     // Only scan values within this block

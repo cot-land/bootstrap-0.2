@@ -288,6 +288,7 @@ fn GenState_allocateStorage() {
     if gs_storage_initialized {
         return;
     }
+    debug.log(DebugPhase.codegen, "GenState_allocateStorage: allocating module storage");
 
     // Code buffer
     gs_code_cap = GS_CODE_CAP;
@@ -385,6 +386,7 @@ fn GenState_printTiming() {
 
 // Map ARM64 condition code to AMD64 condition code
 fn mapCondToAMD64(cond: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "      mapCondToAMD64: cond={d}", cond);
     // ARM64: EQ=0, NE=1, GE=10, LT=11, GT=12, LE=13
     // AMD64: E=4, NE=5, GE=13, L=12, G=15, LE=14
     if cond == COND_EQ { return AMD64_COND_E; }
@@ -401,6 +403,7 @@ impl GenState {
 // Initialize GenState with self-allocated module storage
 // Following Zig pattern: GenState owns its storage, no external arrays needed
 fn init(self: *GenState) {
+    debug.log(DebugPhase.codegen, "GenState_init: initializing codegen state");
     // Allocate module storage on first use
     GenState_allocateStorage();
 
@@ -469,17 +472,20 @@ fn init(self: *GenState) {
 
 // Set type registry for computing type sizes (BUG-054: hidden return at call sites)
 fn setTypeRegistry(self: *GenState, type_reg: *TypeRegistry) {
+    debug.log(DebugPhase.codegen, "setTypeRegistry: registry set");
     self.type_registry = type_reg;
 }
 
 // Set target architecture
 fn setTarget(self: *GenState, target: i64) {
+    debug.log_d(DebugPhase.codegen, "setTarget: {d}", target);
     self.target = target;
 }
 
 // Set up globals tracking for global variable access
 // Storage arrays are now module-owned, only need the IRGlobal reference
 fn setGlobals(self: *GenState, globals: *IRGlobal, globals_count: i64) {
+    debug.log_d(DebugPhase.codegen, "setGlobals: {d} globals", globals_count);
     self.globals = globals;
     self.globals_count = globals_count;
 }
@@ -488,6 +494,7 @@ fn setGlobals(self: *GenState, globals: *IRGlobal, globals_count: i64) {
 // OPTIMIZATION: Precompute line offset table for O(1) posToLine lookup
 // (Previously O(pos) per call = O(values × source_len) total = 3.6 billion ops)
 fn setSource(self: *GenState, source: *u8, source_len: i64) {
+    debug.log_d(DebugPhase.codegen, "setSource: {d} bytes", source_len);
     self.source = source;
     self.source_len = source_len;
 
@@ -575,6 +582,7 @@ fn recordLine(self: *GenState, source_pos: i64) {
     if line == self.last_line and self.line_entries_count > 0 {
         return;
     }
+    debug.log_dd(DebugPhase.codegen, "      recordLine: pos={d} line={d}", source_pos, line);
     self.last_line = line;
 
     // Calculate entry offset (each entry is 32 bytes)
@@ -642,6 +650,7 @@ fn addBranch(self: *GenState, target_block: i64, is_conditional: bool, cond: i64
     if self.branches_count >= self.branches_cap {
         return;
     }
+    debug.log_d(DebugPhase.codegen, "      addBranch: -> b{d}", target_block);
 
     let br: *Branch = self.branches + self.branches_count;
     br.code_offset = self.code_count - 4;  // Points to the branch instruction just emitted
@@ -663,6 +672,7 @@ fn addBranchCbz(self: *GenState, target_block: i64, reg: i64, is_nonzero: bool) 
     if self.branches_count >= self.branches_cap {
         return;
     }
+    debug.log_dd(DebugPhase.codegen, "      addBranchCbz: x{d} -> b{d}", reg, target_block);
 
     let br: *Branch = self.branches + self.branches_count;
     br.code_offset = self.code_count - 4;  // Points to the branch instruction just emitted
@@ -683,6 +693,7 @@ fn addBranchAMD64(self: *GenState, target_block: i64, kind: i64, cond: i64) {
     if self.branches_count >= self.branches_cap {
         return;
     }
+    debug.log_dd(DebugPhase.codegen, "      addBranchAMD64: kind={d} -> b{d}", kind, target_block);
 
     let br: *Branch = self.branches + self.branches_count;
     // AMD64: JMP rel32 is 5 bytes, Jcc rel32 is 6 bytes
@@ -709,6 +720,8 @@ fn addBranchAMD64(self: *GenState, target_block: i64, kind: i64, cond: i64) {
 fn emitReload(self: *GenState, v: *Value) {
     if v.spill_slot < 0 { return; }  // Not spilled
     if v.reg < 0 { return; }  // No register assigned
+
+    debug.log_ddd(DebugPhase.codegen, "      reload [sp+{d}] -> v{d} x{d}", v.spill_slot, v.id, v.reg);
 
     // Check if we need byte-sized load (TYPE_U8 = 6, TYPE_I8 = 2)
     let is_byte: bool = v.type_idx == 6 or v.type_idx == 2;
@@ -738,6 +751,8 @@ fn emitSpill(self: *GenState, v: *Value) {
     if v.spill_slot < 0 { return; }  // Not spilled
     if v.reg < 0 { return; }  // No register assigned
 
+    debug.log_dd(DebugPhase.codegen, "      spill v{d} -> [sp+{d}]", v.id, v.spill_slot);
+
     // Check if we need byte-sized store (TYPE_U8 = 6, TYPE_I8 = 2)
     let is_byte: bool = v.type_idx == 6 or v.type_idx == 2;
 
@@ -761,6 +776,7 @@ fn emitSpill(self: *GenState, v: *Value) {
 
 // Reload all spilled arguments of a value before processing it
 fn reloadSpilledArgs(self: *GenState, v: *Value) {
+    debug.log_d(DebugPhase.codegen, "      reloadSpilledArgs: v{d}", v.id);
     let f: *Func = self.func;
     var i: i64 = 0;
     while i < v.args.count {
@@ -792,6 +808,7 @@ fn generate(self: *GenState) i64 {
     let ret_size: i64 = f.getReturnTypeSize();
     if ret_size > 16 {
         self.has_hidden_return = true;
+        debug.log_d(DebugPhase.codegen, "  Function returns >16B ({d}B), using hidden return via x8", ret_size);
     } else {
         self.has_hidden_return = false;
     }
@@ -837,6 +854,7 @@ fn generate(self: *GenState) i64 {
         // BUG-054: Save hidden return pointer (x8) to stack
         // Following Zig: src/codegen/arm64.zig:677-683
         if self.has_hidden_return {
+            debug.log_d(DebugPhase.codegen, "  Saved x8 (hidden return ptr) to [sp+{d}]", self.hidden_ret_ptr_offset);
             // STR x8, [sp, #hidden_ret_ptr_offset]
             self.emitInst(encode_str(X8, SP, self.hidden_ret_ptr_offset));
         }
@@ -871,6 +889,7 @@ fn generate(self: *GenState) i64 {
     }
 
     // Process each block
+    debug.log_d(DebugPhase.codegen, "  Processing {d} blocks", f.blocks_count);
     var block_id: i64 = 0;
     var t_tmp: i64 = 0;
     while block_id < f.blocks_count {
@@ -901,6 +920,7 @@ fn generate(self: *GenState) i64 {
     }
 
     // Resolve branches
+    debug.log_d(DebugPhase.codegen, "  Resolving {d} branches", self.branches_count);
     t_tmp = get_time_ns();
     self.resolveBranches();
     gs_time_resolve = gs_time_resolve + (get_time_ns() - t_tmp);
@@ -991,6 +1011,7 @@ fn value(self: *GenState, v: *Value) {
                 let byte_offset: i64 = self.frame_size + 16 + (arg_idx - 6) * 8;
                 self.emitInstPacked(AMD64_load64(R10, RSP, byte_offset));
                 v.reg = R10;
+                debug.log_dd(DebugPhase.codegen, "      -> LDR r10, [rsp+{d}] (stack arg {d})", byte_offset, arg_idx);
             }
         } else {
             // ARM64 ABI: x0-x7 for first 8 args, stack for rest
@@ -999,6 +1020,7 @@ fn value(self: *GenState, v: *Value) {
                 let byte_offset: i64 = self.frame_size + 16 + (arg_idx - 8) * 8;
                 self.emitInst(encode_ldr(X16, SP, byte_offset));
                 v.reg = X16;
+                debug.log_dd(DebugPhase.codegen, "      -> LDR x16, [sp+{d}] (stack arg {d})", byte_offset, arg_idx);
             }
         }
         // For register arguments, regalloc already assigned the correct register
@@ -1087,6 +1109,7 @@ fn value(self: *GenState, v: *Value) {
         self.offPtr(v);
     } else if v.op == Op.AddPtr {
         // Pointer arithmetic is the same as 64-bit addition
+        debug.log(DebugPhase.codegen, "      add_ptr");
         self.add(v);
     } else if v.op == Op.Call {
         self.call(v);
@@ -1183,6 +1206,7 @@ fn constBool(self: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let imm: i64 = v.aux_int;
+    debug.log_dd(DebugPhase.codegen, "      -> x{d} = bool({d})", rd, imm);
     if self.target == TARGET_AMD64 {
         self.emitInstPacked(AMD64_encodeMovImm(rd, imm));
     } else {
@@ -1210,6 +1234,8 @@ fn zeroExt(self: *GenState, v: *Value, src_bits: i64) {
     let f: *Func = self.func;
     let rd: i64 = v.reg;
     if rd < 0 { return; }
+
+    debug.log_dd(DebugPhase.codegen, "      zeroExt {d}bit -> x{d}", src_bits, rd);
 
     // Get source value
     let arg_id: i64 = v.getArg(0);
@@ -1247,6 +1273,8 @@ fn signExt(self: *GenState, v: *Value, src_bits: i64) {
     let rd: i64 = v.reg;
     if rd < 0 { return; }
 
+    debug.log_dd(DebugPhase.codegen, "      signExt {d}bit -> x{d}", src_bits, rd);
+
     // Get source value
     let arg_id: i64 = v.getArg(0);
     let arg_val: *Value = f.getValue(arg_id);
@@ -1282,6 +1310,8 @@ fn trunc(self: *GenState, v: *Value, dst_bits: i64) {
     let f: *Func = self.func;
     let rd: i64 = v.reg;
     if rd < 0 { return; }
+
+    debug.log_dd(DebugPhase.codegen, "      trunc -> {d}bit x{d}", dst_bits, rd);
 
     // Get source value
     let arg_id: i64 = v.getArg(0);
@@ -2290,6 +2320,7 @@ fn store(self: *GenState, v: *Value) {
 // args[0] = dest addr, args[1] = src addr
 // aux_int = size in bytes
 fn move(self: *GenState, v: *Value) {
+    debug.log_d(DebugPhase.codegen, "      move: {d} bytes", v.aux_int);
     let f: *Func = self.func;
     if v.args.count < 2 { return; }
 
@@ -2433,6 +2464,8 @@ fn localAddr(self: *GenState, v: *Value) {
 fn funcAddr(self: *GenState, v: *Value) {
     let rd: i64 = v.reg;
     if rd < 0 { return; }
+
+    debug.log_d(DebugPhase.codegen, "      funcAddr -> x{d}", rd);
 
     // Record the code offset for relocation
     let reloc_offset: i64 = self.code_count;
@@ -2660,6 +2693,9 @@ fn call(self: *GenState, v: *Value) {
         call_ret_size = self.type_registry.sizeof(v.type_idx);
     }
     let needs_hidden_return: bool = call_ret_size > 16;
+    if needs_hidden_return {
+        debug.log_d(DebugPhase.codegen, "      call: >16B return ({d}B)", call_ret_size);
+    }
 
     // BUG-054: Allocate stack space for hidden return if needed
     // Round up to 16-byte alignment
@@ -2704,6 +2740,7 @@ fn call(self: *GenState, v: *Value) {
 
     // Step 1: Allocate stack space for stack arguments FIRST
     if abi_info.arg_stack_size > 0 {
+        debug.log_d(DebugPhase.codegen, "      call: stack args {d}B", abi_info.arg_stack_size);
         if self.target == TARGET_AMD64 {
             self.emitInstPacked(AMD64_subConst(RSP, RSP, abi_info.arg_stack_size));
         } else {
@@ -2768,6 +2805,7 @@ fn call(self: *GenState, v: *Value) {
     // Step 3: Collect register moves for args 0-7 (dynamic lists)
     // Following Zig: src/codegen/arm64.zig:2938-2959
     // Track src reg (-1 for consts), dest reg, value_id (for regeneration), and done flag
+    debug.log(DebugPhase.codegen, "      call: setup register args");
     var move_src: I64List = undefined;
     var move_dest: I64List = undefined;
     var move_val_id: I64List = undefined;  // Value ID for regenerating constants
@@ -2806,6 +2844,7 @@ fn call(self: *GenState, v: *Value) {
 
     // Second pass: do non-conflicting moves first
     // A move is safe if its dest is not a src for any pending move
+    debug.log_d(DebugPhase.codegen, "      call: parallel move {d} args", move_src.count);
     var progress: bool = true;
     while progress {
         progress = false;
@@ -3004,11 +3043,13 @@ fn call(self: *GenState, v: *Value) {
 
     // Third pass: handle remaining cycles using a temp register
     // ARM64: X16, AMD64: R10
+    debug.log(DebugPhase.codegen, "      call: break arg move cycles");
     i = 0;
     while i < move_src.count {
         let i_src: i64 = i64list_get(&move_src, i);
         if i64list_get(&move_done, i) == 0 and i_src >= 0 {
             // Part of a cycle - save starting value to temp register
+            debug.log_d(DebugPhase.codegen, "      call: cycle at x{d}", i_src);
             let start_src: i64 = i_src;
             if self.target == TARGET_AMD64 {
                 self.emitInstPacked(AMD64_encodeMovReg(R10, start_src));
@@ -3103,6 +3144,9 @@ fn call(self: *GenState, v: *Value) {
     //        We need dest_reg = SP (current) BEFORE restoring SP.
     // AMD64: RAX contains the address where result was stored (ABI-compliant).
     let dest_reg: i64 = v.reg;
+    if needs_hidden_return {
+        debug.log_d(DebugPhase.codegen, "      call: hidden return to x{d}", dest_reg);
+    }
     if self.target == TARGET_AMD64 {
         if needs_hidden_return {
             if dest_reg >= 0 and dest_reg != RAX {
@@ -3136,6 +3180,7 @@ fn call(self: *GenState, v: *Value) {
 // Indirect function call through function pointer (Go: ClosureCall)
 // Following Zig pattern: src/codegen/arm64.zig:2134-2178
 fn callIndirect(self: *GenState, v: *Value) {
+    debug.log_d(DebugPhase.codegen, "      closure_call: {d} args", v.args.count - 1);
     let f: *Func = self.func;
 
     // First argument is the function pointer, rest are actual call arguments
@@ -3204,6 +3249,7 @@ fn callIndirect(self: *GenState, v: *Value) {
     }
 
     // Emit indirect call instruction with function pointer register
+    debug.log_d(DebugPhase.codegen, "      -> BLR x{d} (indirect call)", fn_ptr_reg);
     if fn_ptr_reg >= 0 {
         if self.target == TARGET_AMD64 {
             self.emitInstPacked(AMD64_call_reg(fn_ptr_reg));
@@ -3288,6 +3334,7 @@ fn stringConcat(self: *GenState, v: *Value) {
     }
 
     // Step 3: Emit call to __cot_str_concat
+    debug.log(DebugPhase.codegen, "      -> BL __cot_str_concat");
     // Record call site for relocation
     let call_offset: i64 = self.code_count;
     if self.target == TARGET_AMD64 {
@@ -3324,6 +3371,7 @@ fn stringConcat(self: *GenState, v: *Value) {
 // Helper: Materialize an argument value into a target register
 // Handles ConstString (ADRP+ADD or LEA RIP), ConstInt (MOV), and register values
 fn materializeArgToReg(self: *GenState, arg_val: *Value, target_reg: i64) {
+    debug.log_d(DebugPhase.codegen, "        materialize v{d}", arg_val.id);
     if arg_val.op == Op.ConstString {
         // String literal: emit address computation and record relocation
         let str_start: i64 = arg_val.aux_int;
@@ -3385,6 +3433,9 @@ fn emitReturn(self: *GenState, v: *Value) {
     let f: *Func = self.func;
 
     debug.log_d(DebugPhase.codegen, "      return: {d} args", v.args.count);
+    if self.has_hidden_return and v.args.count > 0 {
+        debug.log(DebugPhase.codegen, "      return: hidden return copy");
+    }
 
     // BUG-054: Hidden return handling for structs >16B
     // Following Zig: src/codegen/arm64.zig:851-963
@@ -3487,6 +3538,7 @@ fn emitReturn(self: *GenState, v: *Value) {
         // ARM64: src_reg -> X17, temp = X19
         // AMD64: src_reg -> R11, temp = R12
         let ret_size: i64 = f.getReturnTypeSize();
+        debug.log_d(DebugPhase.codegen, "      return: copy {d} bytes", ret_size);
         var copy_off: i64 = 0;
         if self.target == TARGET_AMD64 {
             while copy_off + 8 <= ret_size {
@@ -3529,6 +3581,7 @@ fn emitReturn(self: *GenState, v: *Value) {
         }
     } else if v.args.count > 0 {
         // Regular return handling (not hidden)
+        debug.log(DebugPhase.codegen, "      return: regular value");
         let arg0_id: i64 = v.getArg(0);
         let ret_val: *Value = f.getValue(arg0_id);
 
@@ -3631,6 +3684,7 @@ fn copy(self: *GenState, v: *Value) {
 // and move it to the phi's register.
 // Uses parallel copy algorithm to handle conflicts.
 fn emitPhiMoves(self: *GenState, current_block: *Block, target_block_id: i64) {
+    debug.log_dd(DebugPhase.codegen, "      phiMoves: b{d} -> b{d}", current_block.id, target_block_id);
     let f: *Func = self.func;
     // Get target block directly from func's block array
     if target_block_id < 0 or target_block_id >= f.blocks_count { return; }
@@ -3771,6 +3825,7 @@ fn blockControl(self: *GenState, block: *Block, next_block: i64) {
 
     if block.kind == BlockKind.Return {
         // Return blocks don't need control flow - Return value handles it
+        debug.log(DebugPhase.codegen, "      (return block - no control)");
         return;
     }
 
@@ -3781,6 +3836,7 @@ fn blockControl(self: *GenState, block: *Block, next_block: i64) {
             // Emit phi moves before branch/fallthrough
             self.emitPhiMoves(block, target);
             if target != next_block {
+                debug.log_d(DebugPhase.codegen, "      -> B b{d} (jump)", target);
                 if self.target == TARGET_AMD64 {
                     self.emitInstPacked(AMD64_branch(0));  // JMP placeholder
                     self.addBranchAMD64(target, BRANCH_JMP, 0);
@@ -3802,6 +3858,8 @@ fn blockControl(self: *GenState, block: *Block, next_block: i64) {
 
         let then_block: i64 = block.succs[0];
         let else_block: i64 = block.succs[1];
+
+        debug.log_ddd(DebugPhase.codegen, "      if x{d} then b{d} else b{d}", cond_reg, then_block, else_block);
 
         if self.target == TARGET_AMD64 {
             // AMD64: TEST reg, reg + conditional jump
@@ -3866,6 +3924,7 @@ fn blockControl(self: *GenState, block: *Block, next_block: i64) {
 // ============================================================================
 
 fn resolveBranches(self: *GenState) {
+    debug.log_d(DebugPhase.codegen, "  resolveBranches: {d} branches", self.branches_count);
     var i: i64 = 0;
     while i < self.branches_count {
         let br: *Branch = self.branches + i;
@@ -3905,6 +3964,7 @@ fn resolveBranches(self: *GenState) {
 }
 
 fn patchB(self: *GenState, offset: i64, rel_offset: i64) {
+    debug.log_dd(DebugPhase.codegen, "      patchB: offset={d} rel={d}", offset, rel_offset);
     // Re-encode B instruction with correct offset
     let inst: i64 = encode_b(rel_offset);
     let p: *u8 = self.code + offset;
@@ -3918,6 +3978,7 @@ fn patchB(self: *GenState, offset: i64, rel_offset: i64) {
 }
 
 fn patchBCond(self: *GenState, offset: i64, rel_offset: i64, cond: i64) {
+    debug.log_ddd(DebugPhase.codegen, "      patchBCond: offset={d} rel={d} cond={d}", offset, rel_offset, cond);
     // Re-encode B.cond instruction with correct offset
     let inst: i64 = encode_b_cond(rel_offset, cond);
     let p: *u8 = self.code + offset;
@@ -3931,6 +3992,7 @@ fn patchBCond(self: *GenState, offset: i64, rel_offset: i64, cond: i64) {
 }
 
 fn patchCbz(self: *GenState, offset: i64, rel_offset: i64, reg: i64, is_nonzero: bool) {
+    debug.log_ddd(DebugPhase.codegen, "      patchCbz: offset={d} rel={d} reg={d}", offset, rel_offset, reg);
     // Re-encode CBZ/CBNZ instruction with correct offset
     let inst: i64 = encode_cbz_cbnz(reg, rel_offset, is_nonzero);
     let p: *u8 = self.code + offset;
@@ -3945,6 +4007,7 @@ fn patchCbz(self: *GenState, offset: i64, rel_offset: i64, reg: i64, is_nonzero:
 
 // AMD64: Patch JMP rel32 (5 bytes: E9 cd)
 fn patchJmp(self: *GenState, offset: i64, rel_offset: i64) {
+    debug.log_dd(DebugPhase.codegen, "      patchJmp: offset={d} rel={d}", offset, rel_offset);
     let p: *u8 = self.code + offset;
     p.* = 0xE9;  // JMP opcode
     let p1: *u8 = p + 1;
@@ -3959,6 +4022,7 @@ fn patchJmp(self: *GenState, offset: i64, rel_offset: i64) {
 
 // AMD64: Patch Jcc rel32 (6 bytes: 0F 8x cd)
 fn patchJcc(self: *GenState, offset: i64, rel_offset: i64, cond: i64) {
+    debug.log_ddd(DebugPhase.codegen, "      patchJcc: offset={d} rel={d} cond={d}", offset, rel_offset, cond);
     let opcode: i64 = 0x80 + (cond & 0x0F);
     let p: *u8 = self.code + offset;
     p.* = 0x0F;  // Two-byte opcode prefix
@@ -4003,7 +4067,9 @@ fn finalize(
     source_path_len: i64,
     writer: *MachOWriter
 ) i64 {
+    debug.log_dd(DebugPhase.codegen, "finalize: {d} funcs, {d} globals", ir_funcs_count, ir_globals_count);
     // Phase 1: Resolve internal call sites - patch BL instructions with correct offsets
+    debug.log_d(DebugPhase.codegen, "  finalize phase 1: resolving {d} call sites", self.call_sites_count);
     // OPTIMIZATION: Build a hashmap of function names -> code_offset for O(1) lookup
     // This was previously O(call_sites × functions × name_length) = O(n²)
     var func_offsets: StrMap = StrMap_init(512);  // Capacity for ~500 functions
@@ -4063,6 +4129,7 @@ fn finalize(
     var main_sym_idx: i64 = -1;
 
     // Phase 3: Add function symbols
+    debug.log_d(DebugPhase.codegen, "  finalize phase 3: adding {d} function symbols", ir_funcs_count);
     var sym_func_idx: i64 = 0;
     while sym_func_idx < ir_funcs_count {
         let ir_func: *IRFunc = ir_funcs + sym_func_idx;
@@ -4097,6 +4164,7 @@ fn finalize(
     }
 
     // Phase 4: Add external call relocations
+    debug.log_d(DebugPhase.codegen, "  finalize phase 4: processing {d} call sites", self.call_sites_count);
     call_idx = 0;
     while call_idx < self.call_sites_count {
         let cs2: *CallSite = self.call_sites + call_idx;
@@ -4170,6 +4238,7 @@ fn finalize(
     }
 
     // Phase 5: Add crash handler call relocation
+    debug.log_d(DebugPhase.codegen, "  finalize phase 5: crash handler offset={d}", self.crash_handler_offset);
     if self.crash_handler_offset >= 0 {
         let snc: *u8 = sym_name.items;
         // "_install_crash_handler"
@@ -4189,6 +4258,7 @@ fn finalize(
     }
 
     // Phase 6: Add global variable symbols and data
+    debug.log_d(DebugPhase.codegen, "  finalize phase 6: {d} global symbols", ir_globals_count);
     let globals_base_offset: i64 = writer.data_count;
     let globals_sym_start: i64 = writer.symbols_count;
 
@@ -4226,6 +4296,7 @@ fn finalize(
     }
 
     // Phase 7: Add global address relocations
+    debug.log_d(DebugPhase.codegen, "  finalize phase 7: {d} global relocs", self.global_relocs_count);
     var reloc_idx: i64 = 0;
     while reloc_idx < self.global_relocs_count {
         let off_ptr: *i64 = self.global_reloc_offsets + reloc_idx;
@@ -4254,6 +4325,7 @@ fn finalize(
     }
 
     // Phase 8: Add function address relocations
+    debug.log_d(DebugPhase.codegen, "  finalize phase 8: {d} func addr relocs", self.func_addr_relocs_count);
     var func_addr_idx: i64 = 0;
     while func_addr_idx < self.func_addr_relocs_count {
         let far_off_ptr: *i64 = self.func_addr_reloc_code_offsets + func_addr_idx;
@@ -4319,6 +4391,7 @@ fn finalize(
     }
 
     // Phase 9: Add string literal data and relocations
+    debug.log_d(DebugPhase.codegen, "  finalize phase 9: {d} string relocs", self.string_relocs_count);
     let strings_base_offset: i64 = writer.data_count;
     var str_idx: i64 = 0;
     while str_idx < self.string_relocs_count {
@@ -4415,6 +4488,7 @@ fn finalize(
     }
 
     // Phase 10: Generate DWARF debug info
+    debug.log_d(DebugPhase.codegen, "  finalize phase 10: DWARF with {d} line entries", self.line_entries_count);
     let debug_bytes: i64 = writer.generateDebugLine(
         source_path, source_path_len,
         self.line_entries, self.line_entries_count,
@@ -4451,6 +4525,7 @@ fn finalize(
     let low_pc_offset: i64 = 11 + 1 + (source_path_len + 1) + (comp_dir_len + 1) + 4;
     writer.addDebugInfoReloc(low_pc_offset, main_sym_idx);
 
+    debug.log_d(DebugPhase.codegen, "  finalize complete: code={d} bytes", self.code_count);
     u8list_deinit(&sym_name);
     return 0;
 }

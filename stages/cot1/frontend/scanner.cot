@@ -13,6 +13,7 @@ struct Scanner {
 impl Scanner {
 
     fn isAtEnd(self: *Scanner) bool {
+        debug.log_d(DebugPhase.parse, "Scanner.isAtEnd: pos={d}", self.pos);
         return self.pos >= len(self.source);
     }
 
@@ -33,6 +34,7 @@ impl Scanner {
     }
 
     fn advance(self: *Scanner) u8 {
+        debug.log_d(DebugPhase.parse, "Scanner.advance: pos={d}", self.pos);
         let c: u8 = self.peek();
         self.pos = self.pos + 1;
         return c;
@@ -45,6 +47,7 @@ impl Scanner {
     }
 
     fn skipWhitespace(self: *Scanner)  {
+        debug.log(DebugPhase.parse, "Scanner.skipWhitespace");
         while not self.isAtEnd() {
             let c: u8 = self.peek();
             if c == 32 or c == 9 or c == 10 or c == 13 {  // space, tab, newline, cr
@@ -66,6 +69,7 @@ impl Scanner {
     }
 
     fn scanNumber(self: *Scanner) Token {
+        debug.log_d(DebugPhase.parse, "Scanner.scanNumber: pos={d}", self.pos);
         let start: i64 = self.pos;
 
         // Handle hex, octal, binary prefixes
@@ -106,6 +110,7 @@ impl Scanner {
     }
 
     fn scanIdentifier(self: *Scanner) Token {
+        debug.log_d(DebugPhase.parse, "Scanner.scanIdentifier: pos={d}", self.pos);
         let start: i64 = self.pos;
         while isAlphaNumeric(self.peek()) {
             self.advance();
@@ -118,6 +123,7 @@ impl Scanner {
 
     // Scan character literal: '...'
     fn scanChar(self: *Scanner) Token {
+        debug.log_d(DebugPhase.parse, "Scanner.scanChar: pos={d}", self.pos);
         let start: i64 = self.pos;
         self.advance();  // Skip opening '
 
@@ -144,6 +150,7 @@ impl Scanner {
     // Scan string literal: "..."
     // Following Go's scanner.go stdString pattern
     fn scanString(self: *Scanner) Token {
+        debug.log_d(DebugPhase.parse, "Scanner.scanString: pos={d}", self.pos);
         let start: i64 = self.pos;
         self.advance();  // Skip opening "
 
@@ -170,6 +177,7 @@ impl Scanner {
     }
 
     fn next(self: *Scanner) Token {
+        debug.log(DebugPhase.parse, "Scanner.next");
         self.skipWhitespace();
 
         if self.isAtEnd() {

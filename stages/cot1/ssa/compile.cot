@@ -69,6 +69,7 @@ struct Pass {
 }
 
 fn Pass_new(id: PassId, name: string, required: bool) Pass {
+    debug.log(DebugPhase.ssa, "Pass_new");
     return Pass{
         .id = id,
         .name_ptr = name.ptr,
@@ -93,6 +94,7 @@ struct Config {
 }
 
 fn Config_default() Config {
+    debug.log(DebugPhase.ssa, "Config_default");
     return Config{
         .optimize = true,
         .debug_passes = false,
@@ -101,6 +103,7 @@ fn Config_default() Config {
 }
 
 fn Config_debug() Config {
+    debug.log(DebugPhase.ssa, "Config_debug");
     return Config{
         .optimize = true,
         .debug_passes = true,
@@ -124,6 +127,7 @@ struct PassStats {
 }
 
 fn PassStats_init(stats: *PassStats) {
+    debug.log(DebugPhase.ssa, "PassStats_init");
     stats.total_time_ns = 0;
     var i: i64 = 0;
     while i < MAX_PASSES {
@@ -137,6 +141,7 @@ fn PassStats_init(stats: *PassStats) {
 }
 
 fn PassStats_print(stats: *PassStats) {
+    debug.log(DebugPhase.ssa, "PassStats_print");
     print("Compilation Statistics:\n");
     print("  Values: ");
     print(stats.values_before);
@@ -162,6 +167,7 @@ const NUM_STANDARD_PASSES: i64 = 8;
 
 // Pass names as strings
 fn PassId_name(id: PassId) string {
+    debug.log(DebugPhase.ssa, "PassId_name");
     if id == PassId.EarlyDeadcode { return "early_deadcode"; }
     if id == PassId.CopyElim { return "copyelim"; }
     if id == PassId.CSE { return "cse"; }
@@ -178,6 +184,7 @@ fn PassId_name(id: PassId) string {
 
 // Check if pass is required (cannot be skipped even without optimization)
 fn PassId_isRequired(id: PassId) bool {
+    debug.log(DebugPhase.ssa, "PassId_isRequired");
     // These passes are always required for correct codegen
     if id == PassId.ExpandCalls { return true; }
     if id == PassId.Decompose { return true; }
@@ -245,6 +252,7 @@ struct PassResult {
 }
 
 fn PassResult_ok() PassResult {
+    debug.log(DebugPhase.ssa, "PassResult_ok");
     return PassResult{
         .success = true,
         .error_msg_ptr = null,
@@ -281,6 +289,7 @@ enum Phase {
 }
 
 fn Phase_name(phase: Phase) string {
+    debug.log(DebugPhase.ssa, "Phase_name");
     if phase == Phase.Parsing { return "parsing"; }
     if phase == Phase.TypeChecking { return "type checking"; }
     if phase == Phase.IRGeneration { return "IR generation"; }

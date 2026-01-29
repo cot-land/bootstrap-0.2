@@ -12,6 +12,7 @@
 
 import "../amd64/asm.cot"
 import "../amd64/regs.cot"
+import "../lib/pipeline_debug.cot"
 
 // ============================================================================
 // Code Emitter
@@ -30,6 +31,7 @@ struct AMD64_Emitter {
 }
 
 fn AMD64_Emitter_init() AMD64_Emitter {
+    debug.log(DebugPhase.codegen, "AMD64_Emitter_init");
     return AMD64_Emitter{
         .code_offset = 0,
         .inst_count = 0,
@@ -44,6 +46,7 @@ fn AMD64_Emitter_init() AMD64_Emitter {
 // Select load instruction based on type size
 // AMD64 uses MOVZX/MOVSX for smaller sizes
 fn AMD64_Instruction_selectLoad(size: i64, is_signed: bool) i64 {
+    debug.log_d(DebugPhase.codegen, "AMD64_Instruction_selectLoad: size={d}", size);
     // Returns an instruction selector code
     // 1 = MOVZX r64, byte [mem]
     // 2 = MOVSX r64, byte [mem]
@@ -69,6 +72,7 @@ fn AMD64_Instruction_selectLoad(size: i64, is_signed: bool) i64 {
 
 // Select store instruction based on type size
 fn AMD64_Instruction_selectStore(size: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "AMD64_Instruction_selectStore: size={d}", size);
     // Returns an instruction selector code
     // 1 = MOV byte [mem], r8
     // 2 = MOV word [mem], r16
@@ -107,16 +111,19 @@ fn AMD64_Instruction_selectStore(size: i64) i64 {
 
 // Get packed prologue instruction: PUSH RBP
 fn AMD64_encodePushRbp() i64 {
+    debug.log(DebugPhase.codegen, "AMD64_encodePushRbp");
     return amd64_encode_push(RBP);
 }
 
 // Get packed prologue instruction: MOV RBP, RSP
 fn AMD64_encodeMovRbpRsp() i64 {
+    debug.log(DebugPhase.codegen, "AMD64_encodeMovRbpRsp");
     return amd64_encode_mov_rr(RBP, RSP);
 }
 
 // Get packed prologue instruction: SUB RSP, imm
 fn AMD64_encodeSubRspImm(frame_size: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "AMD64_encodeSubRspImm: size={d}", frame_size);
     if frame_size == 0 {
         return amd64_encode_nop();
     }
@@ -147,6 +154,7 @@ fn AMD64_encodeReturn() i64 {
 
 // Generate a move from one register to another
 fn AMD64_encodeMovReg(rd: i64, rm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "AMD64_encodeMovReg: rd={d} rm={d}", rd, rm);
     return amd64_encode_mov_rr(rd, rm);
 }
 
@@ -154,6 +162,7 @@ fn AMD64_encodeMovReg(rd: i64, rm: i64) i64 {
 // For small values (fits in 32-bit signed), use MOV r32, imm32 (clears upper bits)
 // For larger values, use MOV r64, imm32 (sign-extended)
 fn AMD64_encodeMovImm(rd: i64, imm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "AMD64_encodeMovImm: rd={d} imm={d}", rd, imm);
     // If value fits in 32 bits unsigned and is positive, use MOV r32, imm32
     if imm >= 0 and imm <= 0x7FFFFFFF {
         return amd64_encode_mov_r32_i32(rd, imm);
@@ -190,6 +199,7 @@ fn AMD64_Cond_forNe() i64 { return AMD64_COND_NE; }
 
 // Handle SSA add operation
 fn AMD64_add(rd: i64, rn: i64, rm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "AMD64_add: rd={d} rn={d} rm={d}", rd, rn, rm);
     // AMD64 add is destructive: rd = rd + rm
     // If rd != rn, we need to MOV rd, rn first (handled by caller)
     // For simplicity, assume rd == rn (regalloc ensures this)
@@ -198,6 +208,7 @@ fn AMD64_add(rd: i64, rn: i64, rm: i64) i64 {
 
 // Handle SSA add immediate operation
 fn AMD64_addConst(rd: i64, rn: i64, imm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "AMD64_addConst: rd={d} rn={d} imm={d}", rd, rn, imm);
     // Assume rd == rn (2-operand form)
     if imm >= -128 and imm <= 127 {
         return amd64_encode_add_ri8(rd, imm);
@@ -207,11 +218,13 @@ fn AMD64_addConst(rd: i64, rn: i64, imm: i64) i64 {
 
 // Handle SSA sub operation
 fn AMD64_sub(rd: i64, rn: i64, rm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "AMD64_sub: rd={d} rn={d} rm={d}", rd, rn, rm);
     return amd64_encode_sub_rr(rd, rm);
 }
 
 // Handle SSA sub immediate operation
 fn AMD64_subConst(rd: i64, rn: i64, imm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "AMD64_subConst: rd={d} rn={d} imm={d}", rd, rn, imm);
     if imm >= -128 and imm <= 127 {
         return amd64_encode_sub_ri8(rd, imm);
     }
@@ -220,22 +233,26 @@ fn AMD64_subConst(rd: i64, rn: i64, imm: i64) i64 {
 
 // Handle SSA multiply operation
 fn AMD64_mul(rd: i64, rn: i64, rm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "AMD64_mul: rd={d} rn={d} rm={d}", rd, rn, rm);
     // IMUL r64, r64 is 2-operand: rd = rd * rm
     return amd64_encode_imul_rr(rd, rm);
 }
 
 // Handle SSA and operation
 fn AMD64_and(rd: i64, rn: i64, rm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "AMD64_and: rd={d} rn={d} rm={d}", rd, rn, rm);
     return amd64_encode_and_rr(rd, rm);
 }
 
 // Handle SSA or operation
 fn AMD64_or(rd: i64, rn: i64, rm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "AMD64_or: rd={d} rn={d} rm={d}", rd, rn, rm);
     return amd64_encode_or_rr(rd, rm);
 }
 
 // Handle SSA xor operation
 fn AMD64_xor(rd: i64, rn: i64, rm: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "AMD64_xor: rd={d} rn={d} rm={d}", rd, rn, rm);
     return amd64_encode_xor_rr(rd, rm);
 }
 
@@ -251,11 +268,13 @@ fn AMD64_neg(rd: i64) i64 {
 
 // Handle SSA comparison (sets flags)
 fn AMD64_cmp(rn: i64, rm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "AMD64_cmp: rn={d} rm={d}", rn, rm);
     return amd64_encode_cmp_rr(rn, rm);
 }
 
 // Handle SSA comparison with immediate (sets flags)
 fn AMD64_cmp_imm(rn: i64, imm: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "AMD64_cmp_imm: rn={d} imm={d}", rn, imm);
     if imm >= -128 and imm <= 127 {
         return amd64_encode_cmp_ri8(rn, imm);
     }
@@ -265,6 +284,7 @@ fn AMD64_cmp_imm(rn: i64, imm: i64) i64 {
 // Handle conditional set (result = cond ? 1 : 0)
 // Note: SETcc only sets low byte, need MOVZX to zero-extend
 fn AMD64_setcc(rd: i64, cond: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "AMD64_setcc: rd={d} cond={d}", rd, cond);
     return amd64_encode_setcc(cond, rd);
 }
 
@@ -360,6 +380,7 @@ fn AMD64_sar_imm(rd: i64, imm: i64) i64 {
 
 // Generate unconditional jump (rel32 offset)
 fn AMD64_branch(offset: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "AMD64_branch: offset={d}", offset);
     return amd64_encode_jmp_rel32(offset);
 }
 
@@ -370,6 +391,7 @@ fn AMD64_branch_short(offset: i64) i64 {
 
 // Generate conditional branch (branch if condition is true)
 fn AMD64_branchCond(offset: i64, cond: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "AMD64_branchCond: offset={d} cond={d}", offset, cond);
     return amd64_encode_jcc_rel32(cond, offset);
 }
 
@@ -380,16 +402,19 @@ fn AMD64_branchCond_short(offset: i64, cond: i64) i64 {
 
 // Generate function call (rel32 offset)
 fn AMD64_call(offset: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "AMD64_call: offset={d}", offset);
     return amd64_encode_call_rel32(offset);
 }
 
 // Generate indirect call through register
 fn AMD64_call_reg(reg: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "AMD64_call_reg: reg={d}", reg);
     return amd64_encode_call_reg(reg);
 }
 
 // Generate return
 fn AMD64_return() i64 {
+    debug.log(DebugPhase.codegen, "AMD64_return");
     return amd64_encode_ret();
 }
 
@@ -399,32 +424,38 @@ fn AMD64_return() i64 {
 
 // Load from memory [base+disp32] (64-bit)
 fn AMD64_load64(rd: i64, base: i64, disp: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "AMD64_load64: rd={d} base={d} disp={d}", rd, base, disp);
     return amd64_encode_load_disp32(rd, base, disp);
 }
 
 // Load byte from memory [base+disp32] - zero-extends to 64-bit
 fn AMD64_load8(rd: i64, base: i64, disp: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "AMD64_load8: rd={d} base={d} disp={d}", rd, base, disp);
     return amd64_encode_load_byte_disp32(rd, base, disp);
 }
 
 // Store to memory [base+disp32] (64-bit)
 fn AMD64_store64(rs: i64, base: i64, disp: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "AMD64_store64: rs={d} base={d} disp={d}", rs, base, disp);
     return amd64_encode_store_disp32(base, disp, rs);
 }
 
 // Store byte to memory [base+disp32]
 fn AMD64_store8(rs: i64, base: i64, disp: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "AMD64_store8: rs={d} base={d} disp={d}", rs, base, disp);
     return amd64_encode_store_byte_disp32(base, disp, rs);
 }
 
 // Load effective address: LEA rd, [base+disp32]
 fn AMD64_lea(rd: i64, base: i64, disp: i64) i64 {
+    debug.log_ddd(DebugPhase.codegen, "AMD64_lea: rd={d} base={d} disp={d}", rd, base, disp);
     return amd64_encode_lea_disp32(rd, base, disp);
 }
 
 // Load effective address with RIP-relative addressing: LEA rd, [RIP+disp32]
 // Used for loading addresses of globals and string literals
 fn AMD64_lea_rip(rd: i64, disp: i64) i64 {
+    debug.log_dd(DebugPhase.codegen, "AMD64_lea_rip: rd={d} disp={d}", rd, disp);
     return amd64_encode_lea_rip(rd, disp);
 }
 
@@ -434,11 +465,13 @@ fn AMD64_lea_rip(rd: i64, disp: i64) i64 {
 
 // Push register to stack
 fn AMD64_push(reg: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "AMD64_push: reg={d}", reg);
     return amd64_encode_push(reg);
 }
 
 // Pop register from stack
 fn AMD64_pop(reg: i64) i64 {
+    debug.log_d(DebugPhase.codegen, "AMD64_pop: reg={d}", reg);
     return amd64_encode_pop(reg);
 }
 

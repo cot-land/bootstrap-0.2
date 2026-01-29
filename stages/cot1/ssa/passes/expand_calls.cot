@@ -24,6 +24,7 @@ fn canSSA(pool: *TypeRegistry, type_idx: i64) bool {
 // Run the expand_calls pass on a function
 // Reference: expand_calls.zig:53 expandCalls
 fn expandCalls(f: *Func, type_pool: *TypeRegistry) {
+    debug.log_d(DebugPhase.ssa, "expandCalls: {d} blocks", f.blocks_count);
     if type_pool == null { return; }
 
     // Pass 0: Expand call arguments - handle >16B struct args by reference (BUG-019)
@@ -76,6 +77,7 @@ fn expandCalls(f: *Func, type_pool: *TypeRegistry) {
 // instead of the loaded value. ARM64 ABI requires pass-by-reference for these.
 // STRING FIX: Decompose string arguments into ptr/len for proper 2-register passing.
 fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
+    debug.log(DebugPhase.ssa, "expandCallArgs");
     var b: i64 = 0;
     while b < f.blocks_count {
         let block: *Block = f.getBlock(b);
@@ -223,6 +225,7 @@ fn expandCallArgs(f: *Func, type_pool: *TypeRegistry) {
 // Apply dec.rules optimizations
 // Reference: expand_calls.zig applyDecRules lines 608-638
 fn applyDecRules(f: *Func) {
+    debug.log(DebugPhase.ssa, "applyDecRules");
     var b: i64 = 0;
     while b < f.blocks_count {
         let block: *Block = f.getBlock(b);

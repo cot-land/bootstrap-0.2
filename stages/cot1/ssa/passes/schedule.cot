@@ -17,6 +17,7 @@
 // Run the schedule pass on a function
 // Reference: schedule.zig:47 schedule
 fn schedule(f: *Func) {
+    debug.log(DebugPhase.schedule, "schedule: pass (no-op)");
     // NO-OP for now - values are already in reasonable order from SSA builder
     // The Zig version does proper topological sort, but requires blocks
     // to store a mutable list of value pointers rather than a contiguous range.

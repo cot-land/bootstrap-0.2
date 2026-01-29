@@ -18,6 +18,7 @@
 // Run the early deadcode pass on a function
 // Reference: compile.zig:315 earlyDeadcode
 fn earlyDeadcode(f: *Func) {
+    debug.log_d(DebugPhase.ssa, "earlyDeadcode: {d} blocks", f.blocks_count);
     // May need multiple passes as removing values can create new dead values
     var changed: bool = true;
     var iterations: i64 = 0;
@@ -40,6 +41,7 @@ fn earlyDeadcode(f: *Func) {
 // Process a single block for deadcode elimination
 // Returns true if any use counts were decremented
 fn earlyDeadcodeBlock(f: *Func, block: *Block) bool {
+    debug.log_d(DebugPhase.ssa, "earlyDeadcodeBlock: {d} values", block.values_count);
     var changed: bool = false;
     var vi: i64 = 0;
 
@@ -85,5 +87,6 @@ fn earlyDeadcodeBlock(f: *Func, block: *Block) bool {
 
 // Check if a value can be removed (dead and no side effects)
 fn isDeadValue(v: *Value) bool {
+    debug.log_d(DebugPhase.ssa, "isDeadValue: uses={d}", v.uses);
     return v.uses == 0 and not Op_hasSideEffects(v.op);
 }

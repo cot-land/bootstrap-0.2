@@ -49,6 +49,7 @@ struct Local {
 
 // Static constructors (outside impl block)
 fn Local_create(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) Local {
+    debug.log_dd(DebugPhase.ssa, "Local_create: start={d} type={d}", name_start, type_idx);
     return Local{
         .name_start = name_start,
         .name_len = name_len,
@@ -63,6 +64,7 @@ fn Local_create(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool)
 }
 
 fn Local_createParam(name_start: i64, name_len: i64, type_idx: i64, param_idx: i64) Local {
+    debug.log_dd(DebugPhase.ssa, "Local_createParam: type={d} idx={d}", type_idx, param_idx);
     return Local{
         .name_start = name_start,
         .name_len = name_len,
@@ -149,6 +151,7 @@ impl Func {
     // Func owns its storage (matches bootstrap Zig pattern)
     // Allocates blocks, values, locals arrays directly into struct fields
     fn init(self: *Func, name_start: i64, name_len: i64, return_type: i64) {
+        debug.log_dd(DebugPhase.ssa, "Func.init: start={d} ret={d}", name_start, return_type);
         self.name_start = name_start;
         self.name_len = name_len;
         self.return_type = return_type;
@@ -187,6 +190,7 @@ impl Func {
 
     // Create a new block and add it to the function
     fn newBlock(self: *Func, kind: BlockKind) i64 {
+        debug.log_d(DebugPhase.ssa, "Func.newBlock: count={d}", self.blocks_count);
         // Grow blocks array if needed
         if self.blocks_count >= self.blocks_cap {
             let new_cap: i64 = self.blocks_cap * 2;
@@ -207,6 +211,7 @@ impl Func {
 
     // Create entry block (call once at start)
     fn newEntryBlock(self: *Func) i64 {
+        debug.log(DebugPhase.ssa, "Func.newEntryBlock");
         let id: i64 = self.newBlock(BlockKind.Plain);
         self.entry_block = id;
         self.current_block = id;
@@ -215,6 +220,7 @@ impl Func {
 
     // Get block by ID
     fn getBlock(self: *Func, id: i64) *Block {
+        debug.log_d(DebugPhase.ssa, "Func.getBlock: id={d}", id);
         if id < 0 or id >= self.blocks_count {
             return self.blocks;  // Return first as error placeholder
         }
@@ -223,6 +229,7 @@ impl Func {
 
     // Set current block (for value emission)
     fn setBlock(self: *Func, block_id: i64) {
+        debug.log_d(DebugPhase.ssa, "Func.setBlock: id={d}", block_id);
         self.current_block = block_id;
     }
 
@@ -232,6 +239,7 @@ impl Func {
 
     // Create a new value in the current block
     fn newValue(self: *Func, op: Op, type_idx: i64) *Value {
+        debug.log_dd(DebugPhase.ssa, "Func.newValue: count={d} type={d}", self.values_count, type_idx);
         // Grow values array if needed
         if self.values_count >= self.values_cap {
             let new_cap: i64 = self.values_cap * 2;
@@ -262,6 +270,7 @@ impl Func {
 
     // Get value by ID
     fn getValue(self: *Func, id: i64) *Value {
+        debug.log_d(DebugPhase.ssa, "Func.getValue: id={d}", id);
         if id < 0 or id >= self.values_count {
             return self.values;  // Return first as error placeholder
         }
@@ -274,6 +283,7 @@ impl Func {
 
     // Add a local variable
     fn addLocal(self: *Func, name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) i64 {
+        debug.log_dd(DebugPhase.ssa, "Func.addLocal: type={d} count={d}", type_idx, self.locals_count);
         // Grow locals array if needed
         if self.locals_count >= self.locals_cap {
             let new_cap: i64 = self.locals_cap * 2;
@@ -294,6 +304,7 @@ impl Func {
 
     // Add a parameter (parameters come before other locals)
     fn addParam(self: *Func, name_start: i64, name_len: i64, type_idx: i64) i64 {
+        debug.log_dd(DebugPhase.ssa, "Func.addParam: type={d} count={d}", type_idx, self.locals_count);
         // Grow locals array if needed
         if self.locals_count >= self.locals_cap {
             let new_cap: i64 = self.locals_cap * 2;
@@ -315,6 +326,7 @@ impl Func {
 
     // Get local by index
     fn getLocal(self: *Func, idx: i64) *Local {
+        debug.log_d(DebugPhase.ssa, "Func.getLocal: idx={d}", idx);
         if idx < 0 or idx >= self.locals_count {
             return self.locals;  // Return first as error placeholder
         }
@@ -375,6 +387,7 @@ impl Func {
 
     // Emit a constant integer
     fn emitConstInt(self: *Func, value: i64, type_idx: i64) *Value {
+        debug.log_dd(DebugPhase.ssa, "Func.emitConstInt: val={d} type={d}", value, type_idx);
         let v: *Value = self.newValue(Op.ConstInt, type_idx);
         v.aux_int = value;
         return v;
@@ -382,6 +395,7 @@ impl Func {
 
     // Emit a constant boolean
     fn emitConstBool(self: *Func, value: bool) *Value {
+        debug.log(DebugPhase.ssa, "Func.emitConstBool");
         let v: *Value = self.newValue(Op.ConstBool, 1);  // TYPE_BOOL = 1
         if value {
             v.aux_int = 1;
@@ -393,6 +407,7 @@ impl Func {
 
     // Emit a constant string
     fn emitConstString(self: *Func, str_start: i64, str_len: i64) *Value {
+        debug.log_dd(DebugPhase.ssa, "Func.emitConstString: start={d} len={d}", str_start, str_len);
         let v: *Value = self.newValue(Op.ConstString, 13);  // TYPE_STRING = 13
         v.aux_int = str_start;  // Offset in source text
         v.aux_ptr = str_len;    // Length of string
@@ -401,6 +416,7 @@ impl Func {
 
     // Emit a binary operation
     fn emitBinary(self: *Func, op: Op, left: *Value, right: *Value, type_idx: i64) *Value {
+        debug.log_d(DebugPhase.ssa, "Func.emitBinary: type={d}", type_idx);
         let v: *Value = self.newValue(op, type_idx);
         v.addArg2(left, right);
         return v;
@@ -408,6 +424,7 @@ impl Func {
 
     // Emit a unary operation
     fn emitUnary(self: *Func, op: Op, operand: *Value, type_idx: i64) *Value {
+        debug.log_d(DebugPhase.ssa, "Func.emitUnary: type={d}", type_idx);
         let v: *Value = self.newValue(op, type_idx);
         v.addArg(operand);
         return v;
@@ -415,6 +432,7 @@ impl Func {
 
     // Emit a select (conditional value): cond ? true_val : false_val
     fn emitSelect(self: *Func, cond: *Value, true_val: *Value, false_val: *Value, type_idx: i64) *Value {
+        debug.log_d(DebugPhase.ssa, "Func.emitSelect: type={d}", type_idx);
         let v: *Value = self.newValue(Op.Select, type_idx);
         v.addArg3(cond, true_val, false_val);
         return v;
@@ -422,6 +440,7 @@ impl Func {
 
     // Emit a load from local
     fn emitLoadLocal(self: *Func, local_idx: i64) *Value {
+        debug.log_d(DebugPhase.ssa, "Func.emitLoadLocal: idx={d}", local_idx);
         let local: *Local = self.getLocal(local_idx);
         let v: *Value = self.newValue(Op.LocalAddr, local.type_idx);
         v.aux_int = local_idx;
@@ -433,6 +452,7 @@ impl Func {
 
     // Emit a store to local
     fn emitStoreLocal(self: *Func, local_idx: i64, val: *Value) *Value {
+        debug.log_d(DebugPhase.ssa, "Func.emitStoreLocal: idx={d}", local_idx);
         let local: *Local = self.getLocal(local_idx);
         let addr: *Value = self.newValue(Op.LocalAddr, local.type_idx);
         addr.aux_int = local_idx;
@@ -444,6 +464,7 @@ impl Func {
 
     // Emit a return
     fn emitReturn(self: *Func, val: *Value) *Value {
+        debug.log_d(DebugPhase.ssa, "Func.emitReturn: block={d}", self.current_block);
         let ret: *Value = self.newValue(Op.Return, 0);
         if val.id != INVALID_ID {
             ret.addArg(val);
@@ -459,6 +480,7 @@ impl Func {
     // Emit a function call
     // name_start/name_len refer to positions in source
     fn emitCall(self: *Func, name_start: i64, name_len: i64, type_idx: i64) *Value {
+        debug.log_dd(DebugPhase.ssa, "Func.emitCall: start={d} type={d}", name_start, type_idx);
         let v: *Value = self.newValue(Op.Call, type_idx);
         v.aux_int = name_start;
         v.aux_ptr = name_len;
@@ -469,6 +491,7 @@ impl Func {
     // Following Zig pattern: src/frontend/ir.zig:1168
     // The function pointer will be added as first arg by caller
     fn emitCallIndirect(self: *Func, type_idx: i64) *Value {
+        debug.log_d(DebugPhase.ssa, "Func.emitCallIndirect: type={d}", type_idx);
         let v: *Value = self.newValue(Op.ClosureCall, type_idx);
         return v;
     }
@@ -479,6 +502,7 @@ impl Func {
 
     // Set up a conditional branch
     fn emitIf(self: *Func, cond: *Value, then_block: i64, else_block: i64) {
+        debug.log_dd(DebugPhase.ssa, "Func.emitIf: then={d} else={d}", then_block, else_block);
         let b: *Block = self.getBlock(self.current_block);
         b.kind = BlockKind.If;
         b.control = cond.id;
@@ -494,6 +518,7 @@ impl Func {
 
     // Set up an unconditional jump
     fn emitJump(self: *Func, target: i64) {
+        debug.log_dd(DebugPhase.ssa, "Func.emitJump: from={d} to={d}", self.current_block, target);
         let b: *Block = self.getBlock(self.current_block);
         b.kind = BlockKind.Plain;
         b.addSucc(target);
@@ -504,6 +529,7 @@ impl Func {
 
     // Mark current block as return block
     fn emitReturnBlock(self: *Func) {
+        debug.log_d(DebugPhase.ssa, "Func.emitReturnBlock: block={d}", self.current_block);
         let b: *Block = self.getBlock(self.current_block);
         b.kind = BlockKind.Return;
     }

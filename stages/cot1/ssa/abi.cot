@@ -30,6 +30,7 @@ enum ParamLocation {
 
 // Helper: convert ParamLocation to i64 for storage
 fn ParamLocation_toI64(loc: ParamLocation) i64 {
+    debug.log(DebugPhase.abi, "ParamLocation_toI64");
     if loc == ParamLocation.Register { return 0; }
     if loc == ParamLocation.Stack { return 1; }
     if loc == ParamLocation.HiddenPtr { return 2; }
@@ -59,6 +60,7 @@ struct ABIParamAssignment {
 }
 
 fn ABIParamAssignment_init() ABIParamAssignment {
+    debug.log(DebugPhase.abi, "ABIParamAssignment_init");
     var a: ABIParamAssignment = undefined;
     a.type_idx = 0;
     a.location = ParamLocation.Register;
@@ -71,6 +73,7 @@ fn ABIParamAssignment_init() ABIParamAssignment {
 }
 
 fn ABIParamAssignment_inRegs(type_idx: i64, r0: i64, r1: i64, count: i64) ABIParamAssignment {
+    debug.log_dd(DebugPhase.abi, "ABIParamAssignment_inRegs: r0={d} r1={d}", r0, r1);
     var a: ABIParamAssignment = ABIParamAssignment_init();
     a.type_idx = type_idx;
     a.location = ParamLocation.Register;
@@ -82,6 +85,7 @@ fn ABIParamAssignment_inRegs(type_idx: i64, r0: i64, r1: i64, count: i64) ABIPar
 }
 
 fn ABIParamAssignment_onStack(type_idx: i64, offset: i64, size: i64) ABIParamAssignment {
+    debug.log_dd(DebugPhase.abi, "ABIParamAssignment_onStack: offset={d} size={d}", offset, size);
     var a: ABIParamAssignment = ABIParamAssignment_init();
     a.type_idx = type_idx;
     a.location = ParamLocation.Stack;
@@ -125,6 +129,7 @@ const PARAM_FIELDS: i64 = 6;  // Fields per param in list
 impl ABIParamResultInfo {
 
     fn init(self: *ABIParamResultInfo) {
+        debug.log(DebugPhase.abi, "ABIParamResultInfo.init");
         i64list_init(&self.in_params);
         i64list_init(&self.out_params);
         self.in_params_count = 0;
@@ -142,6 +147,7 @@ impl ABIParamResultInfo {
     }
 
     fn addInParam(self: *ABIParamResultInfo, a: *ABIParamAssignment) {
+        debug.log_d(DebugPhase.abi, "ABIParamResultInfo.addInParam: type={d}", a.type_idx);
         i64list_append(&self.in_params, a.type_idx);
         i64list_append(&self.in_params, ParamLocation_toI64(a.location));
         i64list_append(&self.in_params, a.reg0);
@@ -152,6 +158,7 @@ impl ABIParamResultInfo {
     }
 
     fn addOutParam(self: *ABIParamResultInfo, a: *ABIParamAssignment) {
+        debug.log_d(DebugPhase.abi, "ABIParamResultInfo.addOutParam: type={d}", a.type_idx);
         i64list_append(&self.out_params, a.type_idx);
         i64list_append(&self.out_params, ParamLocation_toI64(a.location));
         i64list_append(&self.out_params, a.reg0);
@@ -162,6 +169,7 @@ impl ABIParamResultInfo {
     }
 
     fn getInParam(self: *ABIParamResultInfo, n: i64, out: *ABIParamAssignment) {
+        debug.log_d(DebugPhase.abi, "ABIParamResultInfo.getInParam: n={d}", n);
         if n < 0 or n >= self.in_params_count {
             out.* = ABIParamAssignment_init();
             return;
@@ -184,6 +192,7 @@ impl ABIParamResultInfo {
     }
 
     fn getOutParam(self: *ABIParamResultInfo, n: i64, out: *ABIParamAssignment) {
+        debug.log_d(DebugPhase.abi, "ABIParamResultInfo.getOutParam: n={d}", n);
         if n < 0 or n >= self.out_params_count {
             out.* = ABIParamAssignment_init();
             return;
@@ -206,6 +215,7 @@ impl ABIParamResultInfo {
     }
 
     fn argReg(self: *ABIParamResultInfo, n: i64) i64 {
+        debug.log_d(DebugPhase.abi, "ABIParamResultInfo.argReg: n={d}", n);
         if n < 0 or n >= self.in_params_count {
             return -1;
         }
@@ -214,6 +224,7 @@ impl ABIParamResultInfo {
     }
 
     fn resultReg(self: *ABIParamResultInfo, n: i64) i64 {
+        debug.log_d(DebugPhase.abi, "ABIParamResultInfo.resultReg: n={d}", n);
         if n < 0 or n >= self.out_params_count {
             return -1;
         }
@@ -261,6 +272,7 @@ impl ABIAssignState {
     }
 
     fn tryAllocRegs(self: *ABIAssignState, type_size: i64, out_r0: *i64, out_r1: *i64) i64 {
+        debug.log_d(DebugPhase.abi, "ABIAssignState.tryAllocRegs: size={d}", type_size);
         out_r0.* = -1;
         out_r1.* = -1;
     
@@ -283,6 +295,7 @@ impl ABIAssignState {
     }
 
     fn allocStack(self: *ABIAssignState, type_size: i64, alignment: i64) i64 {
+        debug.log_dd(DebugPhase.abi, "ABIAssignState.allocStack: size={d} align={d}", type_size, alignment);
         if alignment > 0 {
             let mask: i64 = alignment - 1;
             self.stack_offset = (self.stack_offset + mask) & (0 - alignment);
@@ -295,6 +308,7 @@ impl ABIAssignState {
 }
 
 fn ABIAssignState_init() ABIAssignState {
+    debug.log(DebugPhase.abi, "ABIAssignState_init");
     return ABIAssignState{
         .int_reg_idx = 0,
         .stack_offset = 0,
@@ -309,6 +323,7 @@ fn ABIAssignState_init() ABIAssignState {
 // ============================================================================
 
 fn ABI_getTypeSize(type_idx: i64) i64 {
+    debug.log_d(DebugPhase.abi, "ABI_getTypeSize: type={d}", type_idx);
     if type_idx == 0 { return 0; }       // void
     if type_idx == 1 { return 1; }       // bool
     if type_idx == 2 { return 1; }       // i8
@@ -327,6 +342,7 @@ fn ABI_getTypeSize(type_idx: i64) i64 {
 }
 
 fn ABI_getTypeAlignment(type_idx: i64) i64 {
+    debug.log_d(DebugPhase.abi, "ABI_getTypeAlignment: type={d}", type_idx);
     let size: i64 = ABI_getTypeSize(type_idx);
     if size >= 8 { return 8; }
     if size >= 4 { return 4; }
@@ -341,6 +357,7 @@ fn ABI_getTypeAlignment(type_idx: i64) i64 {
 fn ABI_analyzeFunc(info: *ABIParamResultInfo,
                    param_types: *i64, param_count: i64,
                    return_type: i64) {
+    debug.log_dd(DebugPhase.abi, "ABI_analyzeFunc: params={d} ret={d}", param_count, return_type);
     info.init();
 
     var state: ABIAssignState = ABIAssignState_init();
@@ -424,12 +441,14 @@ fn ABI_analyzeFunc(info: *ABIParamResultInfo,
 // ============================================================================
 
 fn ABI_alignUp(value: i64, alignment: i64) i64 {
+    debug.log_dd(DebugPhase.abi, "ABI_alignUp: val={d} align={d}", value, alignment);
     if alignment == 0 { return value; }
     let mask: i64 = alignment - 1;
     return (value + mask) & (0 - alignment);
 }
 
 fn ABI_regMask(reg: i64) i64 {
+    debug.log_d(DebugPhase.abi, "ABI_regMask: reg={d}", reg);
     if reg < 0 or reg >= 64 { return 0; }
     var one: i64 = 1;
     var i: i64 = 0;

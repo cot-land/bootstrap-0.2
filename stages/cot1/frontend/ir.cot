@@ -11,6 +11,7 @@
 
 import "types.cot"
 import "../lib/list.cot"
+import "../lib/pipeline_debug.cot"
 
 // ============================================================================
 // Type Aliases (cot1 feature: dogfooding our own language features)
@@ -231,6 +232,7 @@ struct IRNode {
 }
 
 fn IRNode_new(kind: IRNodeKind, type_idx: i64) IRNode {
+    debug.log_d(DebugPhase.lower, "IRNode_new: type={d}", type_idx);
     var node: IRNode = undefined;
     node.kind = kind;
     node.type_idx = type_idx;
@@ -250,6 +252,7 @@ fn IRNode_new(kind: IRNodeKind, type_idx: i64) IRNode {
 
 // Create a new IR node with source position
 fn IRNode_newWithPos(kind: IRNodeKind, type_idx: i64, pos: i64) IRNode {
+    debug.log_dd(DebugPhase.lower, "IRNode_newWithPos: type={d} pos={d}", type_idx, pos);
     var node: IRNode = IRNode_new(kind, type_idx);
     node.pos = pos;
     return node;
@@ -300,6 +303,7 @@ struct IRNodePool {
 }
 
 fn IRNodePool_init(pool: *IRNodePool, nodes: *IRNode, cap: i64) {
+    debug.log_d(DebugPhase.lower, "IRNodePool_init: cap={d}", cap);
     pool.nodes = nodes;
     pool.nodes_count = 0;
     pool.nodes_cap = cap;
@@ -307,12 +311,14 @@ fn IRNodePool_init(pool: *IRNodePool, nodes: *IRNode, cap: i64) {
 
 fn IRNodePool_add(pool: *IRNodePool, node: IRNode) i64 {
     if pool.nodes_count >= pool.nodes_cap {
+        debug.log(DebugPhase.lower, "IRNodePool_add: pool full!");
         return NULL_IR_NODE;
     }
     let idx: i64 = pool.nodes_count;
     let ptr: *IRNode = pool.nodes + idx;
     ptr.* = node;
     pool.nodes_count = pool.nodes_count + 1;
+    debug.log_d(DebugPhase.lower, "IRNodePool_add: -> idx={d}", idx);
     return idx;
 }
 
@@ -326,12 +332,14 @@ fn IRNodePool_count(pool: *IRNodePool) i64 {
 }
 
 fn IRNodePool_addConstInt(pool: *IRNodePool, value: i64, type_idx: i64) i64 {
+    debug.log_dd(DebugPhase.lower, "IRNodePool_addConstInt: val={d} type={d}", value, type_idx);
     var node: IRNode = IRNode_new(IRNodeKind.ConstInt, type_idx);
     node.value = value;
     return IRNodePool_add(pool, node);
 }
 
 fn IRNodePool_addBinary(pool: *IRNodePool, op: i64, left: i64, right: i64, type_idx: i64) i64 {
+    debug.log_ddd(DebugPhase.lower, "IRNodePool_addBinary: op={d} left={d} right={d}", op, left, right);
     var node: IRNode = IRNode_new(IRNodeKind.Binary, type_idx);
     node.op = op;
     node.left = left;
@@ -358,6 +366,7 @@ struct IRLocal {
 }
 
 fn IRLocal_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool, scope_depth: i64) IRLocal {
+    debug.log_dd(DebugPhase.lower, "IRLocal_new: type={d} scope={d}", type_idx, scope_depth);
     return IRLocal{
         .name_start = name_start,
         .name_len = name_len,
@@ -374,6 +383,7 @@ fn IRLocal_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool, 
 }
 
 fn IRLocal_newParam(name_start: i64, name_len: i64, type_idx: i64, param_idx: i64) IRLocal {
+    debug.log_dd(DebugPhase.lower, "IRLocal_newParam: type={d} param={d}", type_idx, param_idx);
     return IRLocal{
         .name_start = name_start,
         .name_len = name_len,
@@ -407,6 +417,7 @@ struct IRGlobal {
 }
 
 fn IRGlobal_new(name_start: i64, name_len: i64, type_idx: i64, is_mutable: bool) IRGlobal {
+    debug.log_d(DebugPhase.lower, "IRGlobal_new: type={d}", type_idx);
     return IRGlobal{
         .name_start = name_start,
         .name_len = name_len,
@@ -442,6 +453,7 @@ struct IRFunc {
 fn IRFunc_new(name_start: i64, name_len: i64, return_type: i64,
                nodes_start: i64, nodes_count: i64,
                locals_start: i64, locals_count: i64) IRFunc {
+    debug.log_dd(DebugPhase.lower, "IRFunc_new: nodes={d} locals={d}", nodes_count, locals_count);
     return IRFunc{
         .name_start = name_start,
         .name_len = name_len,
@@ -487,6 +499,7 @@ impl FuncBuilder {
     fn init(self: *FuncBuilder, name_start: i64, name_len: i64, return_type: i64,
                      locals: *IRLocal, locals_cap: i64,
                      nodes: *IRNode, nodes_cap: i64)  {
+    debug.log_dd(DebugPhase.lower, "FuncBuilder.init: ret={d} nodes_cap={d}", return_type, nodes_cap);
     self.name_start = name_start;
     self.name_len = name_len;
     self.return_type = return_type;
@@ -511,24 +524,29 @@ impl FuncBuilder {
     fn newBlock(self: *FuncBuilder) i64 {
     let id: i64 = self.next_block_id;
     self.next_block_id = self.next_block_id + 1;
+    debug.log_d(DebugPhase.lower, "FuncBuilder.newBlock: -> {d}", id);
     return id;
 }
 
 // Set the current block for subsequent nodes
     fn setBlock(self: *FuncBuilder, block_id: i64)  {
+    debug.log_d(DebugPhase.lower, "FuncBuilder.setBlock: {d}", block_id);
     self.current_block = block_id;
 }
 
 // Enter a new scope (increment scope depth)
     fn enterScope(self: *FuncBuilder)  {
     self.current_scope = self.current_scope + 1;
+    debug.log_d(DebugPhase.lower, "enterScope: depth -> {d}", self.current_scope);
 }
 
 // Exit current scope (decrement scope depth)
     fn exitScope(self: *FuncBuilder)  {
+    let old_scope: i64 = self.current_scope;
     if self.current_scope > 0 {
         self.current_scope = self.current_scope - 1;
     }
+    debug.log_dd(DebugPhase.lower, "exitScope: depth {d} -> {d}", old_scope, self.current_scope);
 }
 
     fn addLocal(self: *FuncBuilder, name_start: i64, name_len: i64,
@@ -540,6 +558,7 @@ impl FuncBuilder {
     let ptr: *IRLocal = self.locals + idx;
     ptr.* = IRLocal_new(name_start, name_len, type_idx, is_mutable, self.current_scope);
     self.locals_count = self.locals_count + 1;
+    debug.log_d(DebugPhase.lower, "addLocal: -> idx {d}", idx);
     return idx;
 }
 
@@ -554,18 +573,21 @@ impl FuncBuilder {
     ptr.* = IRLocal_newParam(name_start, name_len, type_idx, param_idx);
     ptr.size = size;  // Set the parameter size (critical for struct parameters)
     self.locals_count = self.locals_count + 1;
+    debug.log_dd(DebugPhase.lower, "addParam: idx {d} size {d}", idx, size);
     return idx;
 }
 
 // Set the size of a local variable (for arrays)
     fn setLocalSize(self: *FuncBuilder, local_idx: i64, size: i64)  {
     if local_idx < 0 or local_idx >= self.locals_count { return; }
+    debug.log_dd(DebugPhase.lower, "FuncBuilder.setLocalSize: idx={d} size={d}", local_idx, size);
     let local: *IRLocal = self.locals + local_idx;
     local.size = size;
 }
 
     fn emit(self: *FuncBuilder, node: IRNode) i64 {
     if self.nodes_count >= self.nodes_cap {
+        debug.log(DebugPhase.lower, "FuncBuilder.emit: nodes full!");
         return NULL_IR_NODE;
     }
     let idx: i64 = self.nodes_count;
@@ -574,16 +596,19 @@ impl FuncBuilder {
     ptr.block_id = self.current_block;  // Tag node with current block
     ptr.pos = self.current_pos;         // Tag node with current source position
     self.nodes_count = self.nodes_count + 1;
+    debug.log_dd(DebugPhase.lower, "FuncBuilder.emit: -> idx={d} block={d}", idx, self.current_block);
     return idx;
 }
 
     fn emitConstInt(self: *FuncBuilder, value: i64) i64 {
+    debug.log_d(DebugPhase.lower, "FuncBuilder.emitConstInt: {d}", value);
     var node: IRNode = IRNode_new(IRNodeKind.ConstInt, TYPE_I64);
     node.value = value;
     return self.emit(node);
 }
 
     fn emitConstBool(self: *FuncBuilder, value: bool) i64 {
+    debug.log(DebugPhase.lower, "FuncBuilder.emitConstBool");
     var node: IRNode = IRNode_new(IRNodeKind.ConstBool, TYPE_BOOL);
     if value {
         node.value = 1;
@@ -594,6 +619,7 @@ impl FuncBuilder {
 }
 
     fn emitConstString(self: *FuncBuilder, str_start: i64, str_len: i64) i64 {
+    debug.log_d(DebugPhase.strings, "[IR] emitConstString: len={d}", str_len);
     var node: IRNode = IRNode_new(IRNodeKind.ConstString, TYPE_STRING);
     node.left = str_start;   // Offset in source text
     node.right = str_len;    // Length of string content
@@ -601,6 +627,7 @@ impl FuncBuilder {
 }
 
     fn emitLoadLocal(self: *FuncBuilder, local_idx: i64) i64 {
+    debug.log_d(DebugPhase.lower, "FuncBuilder.emitLoadLocal: {d}", local_idx);
     let local: *IRLocal = self.locals + local_idx;
     var node: IRNode = IRNode_new(IRNodeKind.LoadLocal, local.type_idx);
     node.left = local_idx;
@@ -608,6 +635,7 @@ impl FuncBuilder {
 }
 
     fn emitStoreLocal(self: *FuncBuilder, local_idx: i64, value: i64) i64 {
+    debug.log_dd(DebugPhase.lower, "FuncBuilder.emitStoreLocal: idx={d} val={d}", local_idx, value);
     let local: *IRLocal = self.locals + local_idx;
     var node: IRNode = IRNode_new(IRNodeKind.StoreLocal, local.type_idx);
     node.left = local_idx;
@@ -616,6 +644,7 @@ impl FuncBuilder {
 }
 
     fn emitBinary(self: *FuncBuilder, op: i64, left: i64, right: i64, type_idx: i64) i64 {
+    debug.log_ddd(DebugPhase.lower, "FuncBuilder.emitBinary: op={d} left={d} right={d}", op, left, right);
     var node: IRNode = IRNode_new(IRNodeKind.Binary, type_idx);
     node.op = op;
     node.left = left;
@@ -624,6 +653,7 @@ impl FuncBuilder {
 }
 
     fn emitUnary(self: *FuncBuilder, op: i64, operand: i64, type_idx: i64) i64 {
+    debug.log_dd(DebugPhase.lower, "FuncBuilder.emitUnary: op={d} operand={d}", op, operand);
     var node: IRNode = IRNode_new(IRNodeKind.Unary, type_idx);
     node.op = op;
     node.left = operand;
@@ -632,6 +662,7 @@ impl FuncBuilder {
 
 // Emit a conditional select (ternary-like): cond ? true_val : false_val
     fn emitSelect(self: *FuncBuilder, cond: i64, true_val: i64, false_val: i64, type_idx: i64) i64 {
+    debug.log_ddd(DebugPhase.lower, "FuncBuilder.emitSelect: cond={d} true={d} false={d}", cond, true_val, false_val);
     var node: IRNode = IRNode_new(IRNodeKind.Select, type_idx);
     node.left = cond;
     node.right = true_val;
@@ -640,12 +671,14 @@ impl FuncBuilder {
 }
 
     fn emitReturn(self: *FuncBuilder, value: i64) i64 {
+    debug.log_d(DebugPhase.lower, "FuncBuilder.emitReturn: val={d}", value);
     var node: IRNode = IRNode_new(IRNodeKind.Return, TYPE_VOID);
     node.left = value;
     return self.emit(node);
 }
 
     fn emitReturnVoid(self: *FuncBuilder) i64 {
+    debug.log(DebugPhase.lower, "FuncBuilder.emitReturnVoid");
     var node: IRNode = IRNode_new(IRNodeKind.Return, TYPE_VOID);
     node.left = NULL_IR_NODE;
     return self.emit(node);
@@ -655,6 +688,7 @@ impl FuncBuilder {
 // cond = condition IR node index
 // then_block, else_block = target block IDs
     fn emitBranch(self: *FuncBuilder, cond: i64, then_block: i64, else_block: i64) i64 {
+    debug.log_ddd(DebugPhase.lower, "FuncBuilder.emitBranch: cond={d} then={d} else={d}", cond, then_block, else_block);
     var node: IRNode = IRNode_new(IRNodeKind.Branch, TYPE_VOID);
     node.left = cond;
     node.right = then_block;
@@ -664,6 +698,7 @@ impl FuncBuilder {
 
 // Emit an unconditional jump
     fn emitJump(self: *FuncBuilder, target_block: i64) i64 {
+    debug.log_d(DebugPhase.lower, "FuncBuilder.emitJump: target={d}", target_block);
     var node: IRNode = IRNode_new(IRNodeKind.Jump, TYPE_VOID);
     node.left = target_block;
     return self.emit(node);
@@ -673,6 +708,7 @@ impl FuncBuilder {
 // ptr_expr = IR node index of pointer expression
 // result_type = type of the pointed-to value
     fn emitLoad(self: *FuncBuilder, ptr_expr: i64, result_type: i64) i64 {
+    debug.log_dd(DebugPhase.lower, "FuncBuilder.emitLoad: ptr={d} type={d}", ptr_expr, result_type);
     var node: IRNode = IRNode_new(IRNodeKind.Load, result_type);
     node.left = ptr_expr;
     return self.emit(node);
@@ -682,6 +718,7 @@ impl FuncBuilder {
 // ptr_expr = IR node index of pointer expression
 // value_expr = IR node index of value to store
     fn emitStore(self: *FuncBuilder, ptr_expr: i64, value_expr: i64) i64 {
+    debug.log_dd(DebugPhase.lower, "FuncBuilder.emitStore: ptr={d} val={d}", ptr_expr, value_expr);
     var node: IRNode = IRNode_new(IRNodeKind.Store, TYPE_VOID);
     node.left = ptr_expr;
     node.right = value_expr;
@@ -690,6 +727,7 @@ impl FuncBuilder {
 
 // Emit address of local variable
     fn emitAddrLocal(self: *FuncBuilder, local_idx: i64, ptr_type: i64) i64 {
+    debug.log_d(DebugPhase.lower, "FuncBuilder.emitAddrLocal: idx={d}", local_idx);
     var node: IRNode = IRNode_new(IRNodeKind.AddrLocal, ptr_type);
     node.left = local_idx;
     return self.emit(node);
@@ -697,12 +735,14 @@ impl FuncBuilder {
 
 // Global variable access
     fn emitLoadGlobal(self: *FuncBuilder, global_idx: i64, type_idx: i64) i64 {
+    debug.log_dd(DebugPhase.lower, "FuncBuilder.emitLoadGlobal: idx={d} type={d}", global_idx, type_idx);
     var node: IRNode = IRNode_new(IRNodeKind.LoadGlobal, type_idx);
     node.left = global_idx;
     return self.emit(node);
 }
 
     fn emitStoreGlobal(self: *FuncBuilder, global_idx: i64, value: i64, type_idx: i64) i64 {
+    debug.log_dd(DebugPhase.lower, "FuncBuilder.emitStoreGlobal: idx={d} val={d}", global_idx, value);
     var node: IRNode = IRNode_new(IRNodeKind.StoreGlobal, type_idx);
     node.left = global_idx;
     node.right = value;
@@ -710,6 +750,7 @@ impl FuncBuilder {
 }
 
     fn emitAddrGlobal(self: *FuncBuilder, global_idx: i64, ptr_type: i64) i64 {
+    debug.log_d(DebugPhase.lower, "FuncBuilder.emitAddrGlobal: idx={d}", global_idx);
     var node: IRNode = IRNode_new(IRNodeKind.AddrGlobal, ptr_type);
     node.left = global_idx;
     return self.emit(node);
@@ -718,6 +759,7 @@ impl FuncBuilder {
 // Emit function address (for function pointers)
 // Following Zig: src/frontend/ir.zig:1025-1028 emitFuncAddr
     fn emitFuncAddr(self: *FuncBuilder, name_start: i64, name_len: i64, type_idx: i64) i64 {
+    debug.log_dd(DebugPhase.lower, "FuncBuilder.emitFuncAddr: start={d} len={d}", name_start, name_len);
     var node: IRNode = IRNode_new(IRNodeKind.FuncAddr, type_idx);
     node.func_name_start = name_start;
     node.func_name_len = name_len;
@@ -729,6 +771,7 @@ impl FuncBuilder {
 // offset = byte offset of field within struct
 // field_type = type of the field
     fn emitFieldLocal(self: *FuncBuilder, local_idx: i64, offset: i64, field_type: i64) i64 {
+    debug.log_ddd(DebugPhase.lower, "FuncBuilder.emitFieldLocal: idx={d} off={d} type={d}", local_idx, offset, field_type);
     var node: IRNode = IRNode_new(IRNodeKind.FieldLocal, field_type);
     node.left = local_idx;
     node.right = offset;
@@ -740,6 +783,7 @@ impl FuncBuilder {
 // offset = byte offset of field within struct
 // field_type = type of the field
     fn emitFieldValue(self: *FuncBuilder, base_expr: i64, offset: i64, field_type: i64) i64 {
+    debug.log_ddd(DebugPhase.lower, "FuncBuilder.emitFieldValue: base={d} off={d} type={d}", base_expr, offset, field_type);
     var node: IRNode = IRNode_new(IRNodeKind.FieldValue, field_type);
     node.left = base_expr;
     node.right = offset;
@@ -751,6 +795,7 @@ impl FuncBuilder {
 // offset = byte offset of field within struct
 // value_expr = IR node index of value to store
     fn emitStoreFieldLocal(self: *FuncBuilder, local_idx: i64, offset: i64, value_expr: i64) i64 {
+    debug.log_ddd(DebugPhase.lower, "FuncBuilder.emitStoreFieldLocal: idx={d} off={d} val={d}", local_idx, offset, value_expr);
     var node: IRNode = IRNode_new(IRNodeKind.StoreFieldLocal, TYPE_VOID);
     node.left = local_idx;
     node.right = offset;
@@ -763,6 +808,7 @@ impl FuncBuilder {
 // offset = byte offset of field within struct
 // value_expr = IR node index of value to store
     fn emitStoreField(self: *FuncBuilder, base_expr: i64, offset: i64, value_expr: i64, field_type: i64) i64 {
+    debug.log_ddd(DebugPhase.lower, "FuncBuilder.emitStoreField: base={d} off={d} val={d}", base_expr, offset, value_expr);
     var node: IRNode = IRNode_new(IRNodeKind.StoreField, field_type);
     node.left = base_expr;
     node.right = offset;
@@ -781,6 +827,7 @@ impl FuncBuilder {
 // elem_type = type of the elements
     fn emitIndexLocal(self: *FuncBuilder, local_idx: i64, index_expr: i64,
                                   elem_size: i64, elem_type: i64) i64 {
+    debug.log_ddd(DebugPhase.lower, "FuncBuilder.emitIndexLocal: idx={d} size={d} type={d}", local_idx, elem_size, elem_type);
     var node: IRNode = IRNode_new(IRNodeKind.IndexLocal, elem_type);
     node.left = local_idx;
     node.right = index_expr;
@@ -795,6 +842,7 @@ impl FuncBuilder {
 // elem_type = type of the elements
     fn emitIndexValue(self: *FuncBuilder, base_expr: i64, index_expr: i64,
                                   elem_size: i64, elem_type: i64) i64 {
+    debug.log_ddd(DebugPhase.lower, "FuncBuilder.emitIndexValue: base={d} size={d} type={d}", base_expr, elem_size, elem_type);
     var node: IRNode = IRNode_new(IRNodeKind.IndexValue, elem_type);
     node.left = base_expr;
     node.right = index_expr;
@@ -809,6 +857,7 @@ impl FuncBuilder {
 // elem_size = size of each element in bytes
     fn emitStoreIndexLocal(self: *FuncBuilder, local_idx: i64, index_expr: i64,
                                         value_expr: i64, elem_size: i64) i64 {
+    debug.log_ddd(DebugPhase.lower, "FuncBuilder.emitStoreIndexLocal: idx={d} val={d} size={d}", local_idx, value_expr, elem_size);
     var node: IRNode = IRNode_new(IRNodeKind.StoreIndexLocal, TYPE_VOID);
     node.left = local_idx;
     node.right = index_expr;
@@ -824,6 +873,7 @@ impl FuncBuilder {
 // elem_size = size of each element in bytes
     fn emitStoreIndexValue(self: *FuncBuilder, base_expr: i64, index_expr: i64,
                                         value_expr: i64, elem_size: i64) i64 {
+    debug.log_ddd(DebugPhase.lower, "FuncBuilder.emitStoreIndexValue: base={d} val={d} size={d}", base_expr, value_expr, elem_size);
     var node: IRNode = IRNode_new(IRNodeKind.StoreIndexValue, TYPE_VOID);
     node.left = base_expr;
     node.right = index_expr;
@@ -838,6 +888,7 @@ impl FuncBuilder {
 
 // Emit @string(ptr, len) builtin - construct string from pointer and length
     fn emitMakeString(self: *FuncBuilder, ptr_expr: i64, len_expr: i64) i64 {
+    debug.log_dd(DebugPhase.lower, "FuncBuilder.emitMakeString: ptr={d} len={d}", ptr_expr, len_expr);
     var node: IRNode = IRNode_new(IRNodeKind.MakeString, TYPE_STRING);
     node.left = ptr_expr;    // Pointer expression
     node.right = len_expr;   // Length expression
@@ -847,6 +898,7 @@ impl FuncBuilder {
 // Emit slice creation: left = pointer to first element, right = length
 // Slice is represented as (ptr, len) tuple like strings
     fn emitMakeSlice(self: *FuncBuilder, ptr_expr: i64, len_expr: i64, slice_type: i64) i64 {
+    debug.log_dd(DebugPhase.lower, "FuncBuilder.emitMakeSlice: ptr={d} len={d}", ptr_expr, len_expr);
     var node: IRNode = IRNode_new(IRNodeKind.MakeSlice, slice_type);
     node.left = ptr_expr;    // Pointer to first element
     node.right = len_expr;   // Length of slice
@@ -856,6 +908,7 @@ impl FuncBuilder {
 // Emit extract pointer from slice (Go: OpSlicePtr)
 // Following src/frontend/ir.zig:1133-1135
     fn emitSlicePtr(self: *FuncBuilder, slice_expr: i64, ptr_type: i64) i64 {
+    debug.log_d(DebugPhase.lower, "FuncBuilder.emitSlicePtr: slice={d}", slice_expr);
     var node: IRNode = IRNode_new(IRNodeKind.SlicePtr, ptr_type);
     node.left = slice_expr;
     return self.emit(node);
@@ -863,6 +916,7 @@ impl FuncBuilder {
 
 // Emit extract length from slice (Go: OpSliceLen)
     fn emitSliceLen(self: *FuncBuilder, slice_expr: i64) i64 {
+    debug.log_d(DebugPhase.lower, "FuncBuilder.emitSliceLen: slice={d}", slice_expr);
     var node: IRNode = IRNode_new(IRNodeKind.SliceLen, TYPE_I64);
     node.left = slice_expr;
     return self.emit(node);
@@ -871,6 +925,7 @@ impl FuncBuilder {
 // Emit indirect function call through function pointer (Go: ClosureCall)
 // Following Zig pattern: src/frontend/ir.zig:1168
     fn emitCallIndirect(self: *FuncBuilder, fn_ptr_expr: i64, args_start: i64, args_count: i64, return_type: i64) i64 {
+    debug.log_ddd(DebugPhase.lower, "FuncBuilder.emitCallIndirect: ptr={d} args={d} ret={d}", fn_ptr_expr, args_count, return_type);
     var node: IRNode = IRNode_new(IRNodeKind.CallIndirect, return_type);
     node.left = fn_ptr_expr;        // The loaded function pointer value
     node.args_start = args_start;   // Index into call_args array

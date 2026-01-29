@@ -16,6 +16,7 @@
 // Run the decompose pass on a function
 // Reference: decompose.zig:47 decompose
 fn decompose(f: *Func, type_pool: *TypeRegistry) {
+    debug.log_d(DebugPhase.ssa, "decompose: {d} blocks", f.blocks_count);
     // Process each block - may need multiple passes
     var changed: bool = true;
     var iterations: i64 = 0;
@@ -39,6 +40,7 @@ fn decompose(f: *Func, type_pool: *TypeRegistry) {
 // Returns true if any changes were made
 // Reference: decompose.zig:95 decomposeBlock
 fn decomposeBlock(f: *Func, block: *Block, type_pool: *TypeRegistry) bool {
+    debug.log_d(DebugPhase.ssa, "decomposeBlock: {d} values", block.values_count);
     var changed: bool = false;
 
     var vi: i64 = 0;
