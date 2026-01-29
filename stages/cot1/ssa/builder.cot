@@ -1862,23 +1862,8 @@ impl SSABuilder {
         var arg_idx: i64 = 0;
         while arg_idx < ir_node.call_args.count {
             let arg_ir_rel: i64 = i64list_get(&ir_node.call_args, arg_idx);
-            // Validate arg index
+            // Validate arg index - skip invalid
             if arg_ir_rel < 0 {
-                print("SSA ERROR: Invalid arg ir_rel=");
-                print(arg_ir_rel);
-                print(" for call arg ");
-                print(arg_idx);
-                print(" in ");
-                // Print current function name
-                if self.source != null and self.func.name_start >= 0 and self.func.name_len > 0 {
-                    write(1, self.source + self.func.name_start, self.func.name_len);
-                }
-                print(" calling <callee>");
-                // Print callee name disabled for now to debug crash
-                // if ir_node.func_name_start != 0 and ir_node.func_name_len > 0 {
-                //     write(1, @intToPtr(*u8, ir_node.func_name_start), ir_node.func_name_len);
-                // }
-                print("\n");
                 arg_idx = arg_idx + 1;
                 continue;
             }

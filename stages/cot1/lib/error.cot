@@ -470,7 +470,7 @@ fn trace_value(name: *u8, value: i64) {
 // Debug Logging
 // =============================================================================
 
-fn debug(msg: *u8) {
+fn error_debug(msg: *u8) {
     if not g_debug_verbose { return; }
     stderr_str("[DEBUG] ");
     stderr_ptr(msg);

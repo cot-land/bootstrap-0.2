@@ -3802,15 +3802,14 @@ impl Lowerer {
         }
 
         // Debug: log method call with return type info (matches Zig's lowerMethodCall debug)
-        if dbg_lower_enabled() {
-            print("[lower] lowerMethodCall: ");
-            dbg_print_str(@intToPtr(*u8, method_entry.synth_name_ptr), method_entry.synth_name_len);
-            print(" return_type=");
+        if debug.lower {
+            print("[lower] lowerMethodCall: '");
+            write(1, @intToPtr(*u8, method_entry.synth_name_ptr), method_entry.synth_name_len);
+            print("' ret=");
             print(call_ret_type);
-            let ret_size: i64 = self.type_pool.sizeof(call_ret_type);
-            print(" (");
-            print(ret_size);
-            print("B)\n");
+            print(" size=");
+            print(self.type_pool.sizeof(call_ret_type));
+            print("B\n");
         }
 
         // Create the call node with synthesized name and proper return type
@@ -3838,24 +3837,31 @@ impl Lowerer {
     fn lowerAddressOfExpr(self: *Lowerer, node: *Node) i64 {
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
-    
-        // For an Ident node, get the local and take its address
+
+        // For an Ident node, get the local or global and take its address
         if node.kind == NodeKind.Ident {
             let name_start: i64 = node.field0;
             let name_len: i64 = node.field1;
-    
-            // Find the local
+
+            // Try local first
             var local_idx: i64 = 0;
             while local_idx < fb.locals_count {
                 let local: *IRLocal = fb.locals + local_idx;
                 if names_equal(self.source, local.name_start, local.name_len, name_start, name_len) {
-                    // Found - emit local address
+                    // Found local - emit its address
                     return fb.emitAddrLocal(local_idx, TYPE_I64);
                 }
                 local_idx = local_idx + 1;
             }
+
+            // Try global
+            let global_idx: i64 = self.lookupGlobal(name_start, name_len);
+            if global_idx >= 0 {
+                // Found global - emit its address
+                return fb.emitAddrGlobal(global_idx, TYPE_I64);
+            }
         }
-    
+
         // For other expressions, lower and hope for the best
         // (This is a fallback - may need more cases)
         return self.lowerExpr(node);
@@ -4032,15 +4038,14 @@ impl Lowerer {
         }
 
         // Debug: log direct call with return type info (matches Zig's lowerCall debug)
-        if dbg_lower_enabled() {
-            print("[lower] lowerCall: ");
-            dbg_print_str(self.source + func_name_start, func_name_len);
-            print(" return_type=");
+        if debug.lower {
+            print("[lower] lowerCall: '");
+            write(1, self.source + func_name_start, func_name_len);
+            print("' ret=");
             print(call_ret_type);
-            let ret_size: i64 = self.type_pool.sizeof(call_ret_type);
-            print(" (");
-            print(ret_size);
-            print("B)\n");
+            print(" size=");
+            print(self.type_pool.sizeof(call_ret_type));
+            print("B\n");
         }
 
         var call_node: IRNode = IRNode_new(IRNodeKind.Call, call_ret_type);

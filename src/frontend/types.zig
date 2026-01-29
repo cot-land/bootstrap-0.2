@@ -713,6 +713,11 @@ pub const TypeRegistry = struct {
             return self.equal(from_t.array.elem, to_t.slice.elem);
         }
 
+        // STRING -> *u8 (string literals can be passed as *u8)
+        if (from == STRING and to_t == .pointer) {
+            if (to_t.pointer.elem == U8) return true;
+        }
+
         // Struct types (must be exactly equal)
         if (from_t == .struct_type and to_t == .struct_type) {
             return std.mem.eql(u8, from_t.struct_type.name, to_t.struct_type.name);

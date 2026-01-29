@@ -2558,12 +2558,17 @@ pub const Lowerer = struct {
                     break :blk try self.lowerExprNode(fa.base);
                 } else {
                     // Base is a value - need to take its address
-                    // Check if base is an identifier (local variable)
+                    // Check if base is an identifier (local or global variable)
                     const base_node = self.tree.getNode(fa.base) orelse return ir.null_node;
                     const base_expr = base_node.asExpr() orelse return ir.null_node;
                     if (base_expr == .ident) {
                         if (fb.lookupLocal(base_expr.ident.name)) |local_idx| {
                             break :blk try fb.emitAddrLocal(local_idx, base_type_idx, fa.span);
+                        }
+                        // Check if it's a global variable
+                        if (self.builder.lookupGlobal(base_expr.ident.name)) |g| {
+                            const ptr_type = self.type_reg.makePointer(base_type_idx) catch base_type_idx;
+                            break :blk try fb.emitAddrGlobal(g.idx, base_expr.ident.name, ptr_type, fa.span);
                         }
                     }
                     // For other expressions, lower and take address
