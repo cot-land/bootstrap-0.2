@@ -738,6 +738,7 @@ impl Lowerer {
         let slot: *i64 = self.defer_stack + self.defer_stack_count;
         slot.* = expr_idx;
         self.defer_stack_count = self.defer_stack_count + 1;
+        debug.log_d(DebugPhase.lower, "lowerDefer: pushed expr to defer stack (depth: {d})", self.defer_stack_count);
     }
 
     fn emitDeferredExprs(self: *Lowerer, target_depth: i64) {
@@ -1925,7 +1926,7 @@ impl Lowerer {
         if fb != null {
             fb.setPos(node.start);
         }
-    
+
         if node.kind == NodeKind.ReturnStmt {
             self.lowerReturn(node);
         } else if node.kind == NodeKind.VarDecl {
