@@ -871,7 +871,7 @@ pub const ARM64CodeGen = struct {
             // Generating an extra MOV is cheap; skipping it causes register clobbering.
             if (value.uses == 0) {
                 const has_side_effects = switch (value.op) {
-                    .store, .move, .static_call, .closure_call, .load_reg => true,
+                    .store, .move, .static_call, .closure_call, .load_reg, .copy => true,
                     // Don't skip const_int - may be a rematerialized value
                     .const_int, .const_64, .const_bool, .const_nil => true,
                     else => false,

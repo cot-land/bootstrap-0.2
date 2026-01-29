@@ -64,6 +64,19 @@ const StringRef = struct {
     string_data: []const u8,
 };
 
+/// Check if a value is a call result or a copy of a call result.
+/// Regalloc creates copy values to relocate call results out of RAX before div/mod.
+/// When rematerializing div/mod, we can't re-execute calls, so check for this.
+fn isCallOrCopyOfCall(v: *const Value) bool {
+    if (v.op == .static_call or v.op == .closure_call) return true;
+    // Check if it's a copy whose source is a call
+    if (v.op == .copy and v.args.len > 0) {
+        const src = v.args[0];
+        if (src.op == .static_call or src.op == .closure_call) return true;
+    }
+    return false;
+}
+
 /// AMD64 code generator.
 pub const AMD64CodeGen = struct {
     allocator: std.mem.Allocator,
@@ -740,9 +753,10 @@ pub const AMD64CodeGen = struct {
                     if (value.args.len < 2) break :blk false;
                     const op1 = value.args[0];
                     const op2 = value.args[1];
-                    // Check if either operand is a call result
-                    if (op1.op == .static_call or op1.op == .closure_call) break :blk false;
-                    if (op2.op == .static_call or op2.op == .closure_call) break :blk false;
+                    // Check if either operand is a call result (or a copy of a call result)
+                    // Regalloc creates copy values to relocate call results from RAX
+                    if (isCallOrCopyOfCall(op1)) break :blk false;
+                    if (isCallOrCopyOfCall(op2)) break :blk false;
                     break :blk true;
                 };
 
@@ -820,8 +834,10 @@ pub const AMD64CodeGen = struct {
                     if (value.args.len < 2) break :blk false;
                     const op1 = value.args[0];
                     const op2 = value.args[1];
-                    if (op1.op == .static_call or op1.op == .closure_call) break :blk false;
-                    if (op2.op == .static_call or op2.op == .closure_call) break :blk false;
+                    // Check if either operand is a call result (or a copy of a call result)
+                    // Regalloc creates copy values to relocate call results from RAX
+                    if (isCallOrCopyOfCall(op1)) break :blk false;
+                    if (isCallOrCopyOfCall(op2)) break :blk false;
                     break :blk true;
                 };
 
@@ -1872,9 +1888,11 @@ pub const AMD64CodeGen = struct {
         // Second pass: generate code, skipping dead values
         for (block.values.items) |value| {
             // Skip dead values (uses == 0) unless they have side effects
+            // Note: .copy is included because regalloc creates copy values for register moves
+            // that may not have their use counts updated
             if (value.uses == 0) {
                 const has_side_effects = switch (value.op) {
-                    .store, .move, .static_call, .closure_call, .load_reg => true,
+                    .store, .move, .static_call, .closure_call, .load_reg, .copy => true,
                     else => false,
                 };
                 if (!has_side_effects) {
@@ -2337,10 +2355,11 @@ pub const AMD64CodeGen = struct {
                 // AMD64 division: IDIV uses RDX:RAX / src -> RAX (quotient), RDX (remainder)
                 // BUG-078 FIX: Handle case where divisor is a call result (in RAX).
                 // If we load dividend into RAX first, we clobber the call result.
+                // Note: After regalloc fix, divisor may be a .copy of a call result.
                 const args = value.args;
                 if (args.len >= 2) {
-                    // Check if divisor is a call result (would be in RAX)
-                    const divisor_is_call = args[1].op == .static_call or args[1].op == .closure_call;
+                    // Check if divisor is a call result or copy of call result
+                    const divisor_is_call = isCallOrCopyOfCall(args[1]);
 
                     if (divisor_is_call) {
                         // Step 1: Save divisor (call result in RAX) to R11 FIRST
@@ -2374,10 +2393,11 @@ pub const AMD64CodeGen = struct {
             .mod => {
                 // Modulo: same as div but result is in RDX (remainder)
                 // BUG-078 FIX: Handle case where divisor is a call result (in RAX).
+                // Note: After regalloc fix, divisor may be a .copy of a call result.
                 const args = value.args;
                 if (args.len >= 2) {
-                    // Check if divisor is a call result (would be in RAX)
-                    const divisor_is_call = args[1].op == .static_call or args[1].op == .closure_call;
+                    // Check if divisor is a call result or copy of call result
+                    const divisor_is_call = isCallOrCopyOfCall(args[1]);
 
                     if (divisor_is_call) {
                         // Step 1: Save divisor (call result in RAX) to R11 FIRST
@@ -2932,42 +2952,40 @@ pub const AMD64CodeGen = struct {
                 if (args.len >= 4) {
                     debug.log(.codegen, "      string_concat (decomposed): 4 scalar args", .{});
 
-                    // Get current registers for each arg
-                    // Use only caller-saved registers (R10, R11, R8, R9) to avoid corrupting callee-saved regs
-                    const ptr1_reg = self.getRegForValue(args[0]) orelse blk: {
-                        try self.ensureInReg(args[0], .r10);
-                        break :blk Reg.r10;
-                    };
-                    const len1_reg = self.getRegForValue(args[1]) orelse blk: {
-                        try self.ensureInReg(args[1], .r11);
-                        break :blk Reg.r11;
-                    };
-                    const ptr2_reg = self.getRegForValue(args[2]) orelse blk: {
-                        try self.ensureInReg(args[2], .r8);
-                        break :blk Reg.r8;
-                    };
-                    const len2_reg = self.getRegForValue(args[3]) orelse blk: {
-                        try self.ensureInReg(args[3], .r9);
-                        break :blk Reg.r9;
-                    };
+                    // Force reload all 4 arguments into known registers.
+                    // getRegForValue may return stale assignments - the values might have been
+                    // clobbered by intervening operations. forceInReg always rematerializes.
+                    // Using callee-saved R12-R15 to avoid conflicts during loading.
+                    const push_r12 = asm_mod.encodePush(.r12);
+                    try self.emitBytes(push_r12.data[0..push_r12.len]);
+                    const push_r13 = asm_mod.encodePush(.r13);
+                    try self.emitBytes(push_r13.data[0..push_r13.len]);
+                    const push_r14 = asm_mod.encodePush(.r14);
+                    try self.emitBytes(push_r14.data[0..push_r14.len]);
+                    const push_r15 = asm_mod.encodePush(.r15);
+                    try self.emitBytes(push_r15.data[0..push_r15.len]);
 
-                    debug.log(.codegen, "      Current locations: ptr1={s}, len1={s}, ptr2={s}, len2={s}", .{
+                    // Load into callee-saved registers (won't conflict with each other)
+                    try self.forceInReg(args[0], .r12); // ptr1
+                    try self.forceInReg(args[1], .r13); // len1
+                    try self.forceInReg(args[2], .r14); // ptr2
+                    try self.forceInReg(args[3], .r15); // len2
+
+                    const ptr1_reg = Reg.r12;
+                    const len1_reg = Reg.r13;
+                    const ptr2_reg = Reg.r14;
+                    const len2_reg = Reg.r15;
+
+                    debug.log(.codegen, "      Loaded: ptr1={s}, len1={s}, ptr2={s}, len2={s}", .{
                         ptr1_reg.name(), len1_reg.name(), ptr2_reg.name(), len2_reg.name(),
                     });
 
-                    // Move args to calling convention registers via scratch regs to avoid clobbering
+                    // Move from callee-saved registers to AMD64 calling convention
                     // AMD64 System V: RDI=arg1, RSI=arg2, RDX=arg3, RCX=arg4
-                    // CRITICAL: Save ptr2 and len2 FIRST because they might be in r10/r11
-                    // which we use as scratch for ptr1/len1. This fixes the clobbering bug
-                    // where ptr2 was in r11 but r11 got overwritten with len1.
-                    try self.emit(3, asm_mod.encodeMovRegReg(.r14, ptr2_reg)); // r14 = ptr2 (save first!)
-                    try self.emit(3, asm_mod.encodeMovRegReg(.r15, len2_reg)); // r15 = len2 (save first!)
-                    try self.emit(3, asm_mod.encodeMovRegReg(.r10, ptr1_reg)); // r10 = ptr1
-                    try self.emit(3, asm_mod.encodeMovRegReg(.r11, len1_reg)); // r11 = len1 (now safe)
-                    try self.emit(3, asm_mod.encodeMovRegReg(.rdi, .r10)); // RDI = ptr1
-                    try self.emit(3, asm_mod.encodeMovRegReg(.rsi, .r11)); // RSI = len1
-                    try self.emit(3, asm_mod.encodeMovRegReg(.rdx, .r14)); // RDX = ptr2
-                    try self.emit(3, asm_mod.encodeMovRegReg(.rcx, .r15)); // RCX = len2
+                    try self.emit(3, asm_mod.encodeMovRegReg(.rdi, ptr1_reg)); // RDI = ptr1 (r12)
+                    try self.emit(3, asm_mod.encodeMovRegReg(.rsi, len1_reg)); // RSI = len1 (r13)
+                    try self.emit(3, asm_mod.encodeMovRegReg(.rdx, ptr2_reg)); // RDX = ptr2 (r14)
+                    try self.emit(3, asm_mod.encodeMovRegReg(.rcx, len2_reg)); // RCX = len2 (r15)
 
                     // Emit the call to __cot_str_concat
                     const call_offset = self.offset();
@@ -2983,6 +3001,16 @@ pub const AMD64CodeGen = struct {
                     // This is necessary because regalloc might assign RDX to something else
                     try self.emit(3, asm_mod.encodeMovRegReg(.r8, .rdx)); // R8 = RDX (len)
                     debug.log(.codegen, "      Results: RAX (ptr), RDX->R8 (len)", .{});
+
+                    // Restore callee-saved registers (reverse order)
+                    const pop_r15 = asm_mod.encodePop(.r15);
+                    try self.emitBytes(pop_r15.data[0..pop_r15.len]);
+                    const pop_r14 = asm_mod.encodePop(.r14);
+                    try self.emitBytes(pop_r14.data[0..pop_r14.len]);
+                    const pop_r13 = asm_mod.encodePop(.r13);
+                    try self.emitBytes(pop_r13.data[0..pop_r13.len]);
+                    const pop_r12 = asm_mod.encodePop(.r12);
+                    try self.emitBytes(pop_r12.data[0..pop_r12.len]);
                 } else if (args.len >= 2) {
                     // Old path (before expand_calls): 2 string args
                     debug.log(.codegen, "      string_concat (old): 2 string args - unexpected!", .{});
@@ -2997,14 +3025,22 @@ pub const AMD64CodeGen = struct {
                 // Regalloc tracks select_n as a normal SSA value.
                 //
                 // AMD64 ABI for 16-byte return (like string = ptr + len):
-                // - idx=0 → RAX (ptr)
-                // - idx=1 → RDX (len)
+                // - idx=0 → RAX (first value)
+                // - idx=1 → RDX (second value) for normal calls
+                //           R8 for string_concat (saves RDX to R8 immediately after call)
                 if (value.args.len >= 1) {
+                    const call_val = value.args[0];
                     const idx: usize = @intCast(value.aux_int);
                     const dest_reg = self.getDestRegForValue(value);
 
-                    // idx=0 → RAX, idx=1 → RDX
-                    const src_reg: Reg = if (idx == 0) .rax else .rdx;
+                    // idx=0 → RAX, idx=1 → depends on call type
+                    const src_reg: Reg = blk: {
+                        if (idx == 0) break :blk .rax;
+                        // For string_concat, RDX is saved to R8 to avoid clobbering
+                        if (call_val.op == .string_concat) break :blk .r8;
+                        // For normal calls, use RDX per AMD64 ABI
+                        break :blk .rdx;
+                    };
 
                     if (dest_reg != src_reg) {
                         try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, src_reg));

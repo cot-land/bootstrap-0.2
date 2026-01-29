@@ -900,31 +900,75 @@ pub const RegAllocState = struct {
             }
 
             // AMD64: Division/mod clobbers RAX (dividend) and RDX (CQO sign-extends RAX into RDX:RAX)
-            // Must spill both before div/mod to avoid clobbering live values
+            // Go reference: regalloc.go - register constraints for IDIV
+            //
+            // Key constraints:
+            // - Dividend (arg0) must be in RAX
+            // - Divisor (arg1) can be any register EXCEPT RAX (used by dividend) and RDX (clobbered by CQO)
+            // - Result is in RAX (for div) or RDX (for mod)
+            //
+            // Problem case: call result as divisor
+            // - Call returns result in RAX
+            // - Divisor (call result) is in RAX
+            // - We need RAX for dividend -> must relocate divisor first
             if ((v.op == .div or v.op == .mod) and self.target.arch == .amd64) {
-                // First spill RAX if it has a live value (not one of the div operands)
+                // Step 1: If divisor (arg1) is in RAX, relocate it to another register
+                // This must happen BEFORE we load dividend into RAX
+                if (v.args.len >= 2) {
+                    const divisor = v.args[1];
+                    const divisor_vi = &self.values[divisor.id];
+                    const divisor_in_rax = divisor_vi.inReg() and (divisor_vi.regs & (@as(RegMask, 1) << AMD64Regs.rax)) != 0;
+
+                    if (divisor_in_rax) {
+                        // Allocate a new register for divisor (not RAX or RDX)
+                        const forbidden = (@as(RegMask, 1) << AMD64Regs.rax) | (@as(RegMask, 1) << AMD64Regs.rdx);
+                        const allowed = self.allocatable_mask & ~forbidden;
+                        const new_reg = try self.allocReg(allowed, block);
+
+                        debug.log(.regalloc, "    DIV/MOD - relocating divisor v{d} from RAX to x{d}", .{ divisor.id, new_reg });
+
+                        // Create copy to move divisor from RAX to new register
+                        const copy = try self.f.newValue(.copy, divisor.type_idx, block, divisor.pos);
+                        copy.addArg(divisor);
+                        try self.ensureValState(copy);
+                        try self.f.setHome(copy, .{ .register = @intCast(new_reg) });
+                        self.values[copy.id].regs = types.regMaskSet(0, new_reg);
+                        self.regs[new_reg] = .{ .v = copy, .dirty = true };
+
+                        // Free RAX from holding the divisor
+                        self.freeReg(AMD64Regs.rax);
+
+                        // Update the div/mod instruction to use the copy as divisor
+                        v.args[1] = copy;
+
+                        // Insert copy before the div instruction
+                        try new_values.append(self.allocator, copy);
+                    }
+                }
+
+                // Step 2: Spill RAX if it has a value that's not the dividend
                 if (self.regs[AMD64Regs.rax].v != null) {
                     const rax_val = self.regs[AMD64Regs.rax].v.?;
-                    // Check if this value is one of the div operands (no need to spill if so)
-                    var is_operand = false;
-                    for (v.args) |arg| {
-                        if (arg == rax_val) {
-                            is_operand = true;
-                            break;
-                        }
-                    }
-                    if (!is_operand) {
+                    // Only keep if it's the dividend (arg0), otherwise spill
+                    const is_dividend = v.args.len > 0 and v.args[0] == rax_val;
+                    if (!is_dividend) {
                         debug.log(.regalloc, "    DIV/MOD - spilling RAX (clobbered by dividend)", .{});
                         if (try self.spillReg(AMD64Regs.rax, block)) |spill| {
                             try new_values.append(self.allocator, spill);
                         }
                     }
                 }
-                // Then spill RDX
+
+                // Step 3: Spill RDX (always clobbered by CQO)
                 if (self.regs[AMD64Regs.rdx].v != null) {
-                    debug.log(.regalloc, "    DIV/MOD - spilling RDX (clobbered by CQO)", .{});
-                    if (try self.spillReg(AMD64Regs.rdx, block)) |spill| {
-                        try new_values.append(self.allocator, spill);
+                    const rdx_val = self.regs[AMD64Regs.rdx].v.?;
+                    // Only spill if it's not the dividend (dividend could be here from a previous operation)
+                    const is_dividend = v.args.len > 0 and v.args[0] == rdx_val;
+                    if (!is_dividend) {
+                        debug.log(.regalloc, "    DIV/MOD - spilling RDX (clobbered by CQO)", .{});
+                        if (try self.spillReg(AMD64Regs.rdx, block)) |spill| {
+                            try new_values.append(self.allocator, spill);
+                        }
                     }
                 }
             }
