@@ -2,301 +2,358 @@
 // Source Position Tracking
 // =============================================================================
 //
-// Reference: src/frontend/source.zig
+// Reference: src/frontend/source.zig (Zig bootstrap)
 // Reference: Go's go/token/position.go
 //
 // Provides:
 // - Pos: compact byte-offset position
-// - Span: position ranges for AST nodes and errors
+// - Position: expanded line/column for display
+// - Span: range with start/end positions
 // - Source: file content with lazy line offset computation
-// - Position computation (line/column from offset)
 //
 // =============================================================================
 
 import "stdlib.cot"
 
-extern fn malloc_u8(count: i64) *u8;
-extern fn malloc_i64(count: i64) *i64;
-
-// =============================================================================
-// Constants
-// =============================================================================
-
-const SOURCE_MAX_LINES: i64 = 100000;  // Max lines in a source file
+extern fn malloc(size: i64) *u8;
+extern fn realloc(ptr: *u8, old_size: i64, new_size: i64) *u8;
+extern fn free(ptr: *u8);
 
 // =============================================================================
 // Pos - Compact source position (byte offset)
 // =============================================================================
 
-// A position is just a byte offset from start of file
-// Line/column computed on demand from Source
-
-fn Pos_advance(offset: i64, n: i64) i64 {
-    return offset + n;
+// A position in source code (byte offset from start of file).
+// Compact representation - line/column computed on demand.
+struct Pos {
+    offset: i64,
 }
 
-fn Pos_isValid(offset: i64) bool {
-    return offset >= 0;
-}
-
-// =============================================================================
-// Span - Range in source code
-// =============================================================================
-
-struct Span {
-    start: i64,  // Start byte offset
-    end: i64,    // End byte offset (exclusive)
-}
-
-fn Span_init(start: i64, end: i64) Span {
-    var s: Span = undefined;
-    s.start = start;
-    s.end = end;
-    return s;
-}
-
-fn Span_fromPos(pos: i64) Span {
-    var s: Span = undefined;
-    s.start = pos;
-    s.end = pos;
-    return s;
-}
-
-fn Span_merge(a: *Span, b: *Span) Span {
-    var result: Span = undefined;
-    if a.start < b.start {
-        result.start = a.start;
-    } else {
-        result.start = b.start;
+impl Pos {
+    // Create a zero position.
+    fn zero() Pos {
+        return Pos{ .offset = 0 };
     }
-    if a.end > b.end {
-        result.end = a.end;
-    } else {
-        result.end = b.end;
-    }
-    return result;
-}
 
-fn Span_len(s: *Span) i64 {
-    return s.end - s.start;
+    // Advance by n bytes.
+    fn advance(self: *Pos, n: i64) Pos {
+        return Pos{ .offset = self.offset + n };
+    }
+
+    // Check if position is valid.
+    fn isValid(self: *Pos) bool {
+        return self.offset >= 0;
+    }
 }
 
 // =============================================================================
 // Position - Human-readable (line/column)
 // =============================================================================
 
+// Human-readable source position (for error messages).
+// Line and column are 1-based.
 struct Position {
-    filename: *u8,
-    filename_len: i64,
+    filename: string,
     offset: i64,    // 0-based byte offset
     line: i64,      // 1-based line number
     column: i64,    // 1-based column number
 }
 
-fn Position_init() Position {
-    var p: Position = undefined;
-    p.filename = null;
-    p.filename_len = 0;
-    p.offset = 0;
-    p.line = 1;
-    p.column = 1;
-    return p;
+impl Position {
+    // Create zero position.
+    fn zero() Position {
+        return Position{
+            .filename = "",
+            .offset = 0,
+            .line = 0,
+            .column = 0,
+        };
+    }
+
+    // Print as "file:line:col" to stderr.
+    fn print(self: *Position) {
+        if self.filename.len > 0 {
+            eprint(self.filename);
+            eprint(":");
+        }
+        eprint(self.line);
+        eprint(":");
+        eprint(self.column);
+    }
+
+    // Print as "file:line:col" to stdout.
+    fn printStdout(self: *Position) {
+        if self.filename.len > 0 {
+            print(self.filename);
+            print(":");
+        }
+        print(self.line);
+        print(":");
+        print(self.column);
+    }
 }
 
-// Print position as "file:line:col" to stderr
-fn Position_print(p: *Position) {
-    if p.filename != null and p.filename_len > 0 {
-        // Print filename character by character
-        var i: i64 = 0;
-        while i < p.filename_len {
-            var ch: [1]u8 = undefined;
-            ch[0] = (p.filename + i).*;
-            eprint(@string(&ch[0], 1));
-            i = i + 1;
-        }
-        eprint(":");
+// =============================================================================
+// Span - Range in source code
+// =============================================================================
+
+// A range in source code (start and end positions).
+// Used for AST nodes and error messages.
+struct Span {
+    start: i64,  // Start byte offset
+    end: i64,    // End byte offset (exclusive)
+}
+
+impl Span {
+    // Create zero span.
+    fn zero() Span {
+        return Span{ .start = 0, .end = 0 };
     }
-    eprint(p.line);
-    eprint(":");
-    eprint(p.column);
+
+    // Create span from start and end offsets.
+    fn init(start: i64, end: i64) Span {
+        return Span{ .start = start, .end = end };
+    }
+
+    // Create span from a single position (zero-width).
+    fn fromPos(pos: i64) Span {
+        return Span{ .start = pos, .end = pos };
+    }
+
+    // Merge two spans (union).
+    fn merge(self: *Span, other: *Span) Span {
+        var result: Span = undefined;
+        if self.start < other.start {
+            result.start = self.start;
+        } else {
+            result.start = other.start;
+        }
+        if self.end > other.end {
+            result.end = self.end;
+        } else {
+            result.end = other.end;
+        }
+        return result;
+    }
+
+    // Length in bytes.
+    fn len(self: *Span) i64 {
+        return self.end - self.start;
+    }
 }
 
 // =============================================================================
 // Source - File content with line tracking
 // =============================================================================
 
+// Source holds the content of a source file.
 struct Source {
-    filename: *u8,
-    filename_len: i64,
-    content: *u8,
-    content_len: i64,
-    line_offsets: *i64,     // Byte offsets of line starts
+    filename: string,       // File name (for error messages)
+    content: string,        // Source content (UTF-8)
+    line_offsets: *i64,     // Byte offsets of line starts (dynamic)
     line_count: i64,        // Number of lines
+    line_cap: i64,          // Capacity of line_offsets array
     offsets_computed: bool, // Lazy computation flag
 }
 
-fn Source_init(src: *Source, filename: *u8, filename_len: i64, content: *u8, content_len: i64) {
-    src.filename = filename;
-    src.filename_len = filename_len;
-    src.content = content;
-    src.content_len = content_len;
-    src.line_offsets = null;
-    src.line_count = 0;
-    src.offsets_computed = false;
-}
-
-// Allocate storage for line offsets
-fn Source_allocateOffsets(src: *Source) {
-    if src.line_offsets != null {
-        return;
-    }
-    src.line_offsets = malloc_i64(SOURCE_MAX_LINES);
-}
-
-// Compute line offsets (lazy)
-fn Source_ensureLineOffsets(src: *Source) {
-    if src.offsets_computed {
-        return;
+impl Source {
+    // Initialize a source from content.
+    fn init(filename: string, content: string) Source {
+        return Source{
+            .filename = filename,
+            .content = content,
+            .line_offsets = null,
+            .line_count = 0,
+            .line_cap = 0,
+            .offsets_computed = false,
+        };
     }
 
-    Source_allocateOffsets(src);
+    // Free resources.
+    fn deinit(self: *Source) {
+        if self.line_offsets != null {
+            free(@ptrCast(*u8, self.line_offsets));
+            self.line_offsets = null;
+        }
+    }
 
-    // Line 1 starts at offset 0
-    src.line_offsets.* = 0;
-    src.line_count = 1;
+    // Get the byte at a position, or 0 if past end.
+    fn at(self: *Source, offset: i64) u8 {
+        if offset < 0 or offset >= self.content.len {
+            return 0;
+        }
+        return (self.content.ptr + offset).*;
+    }
 
-    // Scan for newlines
-    var i: i64 = 0;
-    while i < src.content_len {
-        let c: u8 = (src.content + i).*;
-        if c == 10 {  // '\n'
-            if src.line_count < SOURCE_MAX_LINES {
-                (src.line_offsets + src.line_count).* = i + 1;
-                src.line_count = src.line_count + 1;
+    // Get a slice of source content.
+    fn slice(self: *Source, start: i64, end: i64) string {
+        var s: i64 = start;
+        var e: i64 = end;
+        if s < 0 { s = 0; }
+        if e > self.content.len { e = self.content.len; }
+        if s > e { s = e; }
+        return @string(self.content.ptr + s, e - s);
+    }
+
+    // Get the text for a span.
+    fn spanText(self: *Source, span: *Span) string {
+        return self.slice(span.start, span.end);
+    }
+
+    // Ensure line offsets are computed (lazy).
+    fn ensureLineOffsets(self: *Source) {
+        if self.offsets_computed {
+            return;
+        }
+
+        // Count newlines first to know how much to allocate
+        var count: i64 = 1;  // Line 1 starts at offset 0
+        var i: i64 = 0;
+        while i < self.content.len {
+            if (self.content.ptr + i).* == 10 {  // '\n'
+                count = count + 1;
+            }
+            i = i + 1;
+        }
+
+        // Allocate line_offsets array
+        let bytes_needed: i64 = count * 8;  // sizeof(i64) = 8
+        self.line_offsets = @ptrCast(*i64, malloc(bytes_needed));
+        self.line_cap = count;
+
+        // Fill in offsets
+        self.line_offsets.* = 0;  // Line 1 starts at offset 0
+        self.line_count = 1;
+
+        i = 0;
+        while i < self.content.len {
+            if (self.content.ptr + i).* == 10 {  // '\n'
+                if self.line_count < self.line_cap {
+                    (self.line_offsets + self.line_count).* = i + 1;
+                    self.line_count = self.line_count + 1;
+                }
+            }
+            i = i + 1;
+        }
+
+        self.offsets_computed = true;
+    }
+
+    // Convert a byte offset to a full Position with line/column.
+    fn position(self: *Source, offset: i64) Position {
+        self.ensureLineOffsets();
+
+        // Binary search for the line containing this offset
+        var line: i64 = 0;
+        var lo: i64 = 0;
+        var hi: i64 = self.line_count;
+
+        while lo < hi {
+            let mid: i64 = lo + (hi - lo) / 2;
+            let line_start: i64 = (self.line_offsets + mid).*;
+            if line_start <= offset {
+                line = mid;
+                lo = mid + 1;
+            } else {
+                hi = mid;
             }
         }
-        i = i + 1;
+
+        let line_start: i64 = (self.line_offsets + line).*;
+        let column: i64 = offset - line_start;
+
+        return Position{
+            .filename = self.filename,
+            .offset = offset,
+            .line = line + 1,      // 1-based
+            .column = column + 1,  // 1-based
+        };
     }
 
-    src.offsets_computed = true;
-}
+    // Get the line containing a position (for error context).
+    fn getLine(self: *Source, offset: i64) string {
+        self.ensureLineOffsets();
 
-// Get byte at position, or 0 if past end
-fn Source_at(src: *Source, offset: i64) u8 {
-    if offset < 0 or offset >= src.content_len {
-        return 0;
-    }
-    return (src.content + offset).*;
-}
+        let pos: Position = self.position(offset);
+        let line_idx: i64 = pos.line - 1;
 
-// Get slice of content (returns pointer, caller must track length)
-fn Source_slice(src: *Source, start: i64, end: i64) *u8 {
-    var s: i64 = start;
-    var e: i64 = end;
-    if s < 0 { s = 0; }
-    if e > src.content_len { e = src.content_len; }
-    if s > e { s = e; }
-    return src.content + s;
-}
-
-fn Source_sliceLen(src: *Source, start: i64, end: i64) i64 {
-    var s: i64 = start;
-    var e: i64 = end;
-    if s < 0 { s = 0; }
-    if e > src.content_len { e = src.content_len; }
-    if s > e { s = e; }
-    return e - s;
-}
-
-// Convert byte offset to line/column Position
-fn Source_position(src: *Source, offset: i64) Position {
-    Source_ensureLineOffsets(src);
-
-    var result: Position = undefined;
-    result.filename = src.filename;
-    result.filename_len = src.filename_len;
-    result.offset = offset;
-
-    // Binary search for line containing offset
-    var line: i64 = 0;
-    var lo: i64 = 0;
-    var hi: i64 = src.line_count;
-
-    while lo < hi {
-        let mid: i64 = lo + (hi - lo) / 2;
-        let line_start: i64 = (src.line_offsets + mid).*;
-        if line_start <= offset {
-            line = mid;
-            lo = mid + 1;
-        } else {
-            hi = mid;
+        if line_idx < 0 or line_idx >= self.line_count {
+            return "";
         }
-    }
 
-    let line_start: i64 = (src.line_offsets + line).*;
-    let column: i64 = offset - line_start;
+        let start: i64 = (self.line_offsets + line_idx).*;
 
-    result.line = line + 1;      // 1-based
-    result.column = column + 1;  // 1-based
-
-    return result;
-}
-
-// Get the line containing a position (for error context)
-// Returns pointer to start of line, sets out_len to length
-fn Source_getLine(src: *Source, offset: i64, out_len: *i64) *u8 {
-    Source_ensureLineOffsets(src);
-
-    let pos: Position = Source_position(src, offset);
-    let line_idx: i64 = pos.line - 1;
-
-    let start: i64 = (src.line_offsets + line_idx).*;
-
-    // Find end of line (next newline or end of content)
-    var end: i64 = start;
-    while end < src.content_len {
-        let c: u8 = (src.content + end).*;
-        if c == 10 {  // '\n'
-            break;
+        // Find end of line (next newline or end of content)
+        var end: i64 = start;
+        while end < self.content.len {
+            if (self.content.ptr + end).* == 10 {  // '\n'
+                break;
+            }
+            end = end + 1;
         }
-        end = end + 1;
+
+        return @string(self.content.ptr + start, end - start);
     }
 
-    out_len.* = end - start;
-    return src.content + start;
-}
+    // Get total line count.
+    fn lineCount(self: *Source) i64 {
+        self.ensureLineOffsets();
+        return self.line_count;
+    }
 
-// Get total line count
-fn Source_lineCount(src: *Source) i64 {
-    Source_ensureLineOffsets(src);
-    return src.line_count;
+    // Print source line with caret indicator (for error context).
+    fn printErrorContext(self: *Source, offset: i64) {
+        let line: string = self.getLine(offset);
+        let pos: Position = self.position(offset);
+
+        // Print the line
+        eprint("    ");
+        eprint(line);
+        eprintln("");
+
+        // Print caret indicator
+        eprint("    ");
+        var i: i64 = 0;
+        while i < pos.column - 1 {
+            let idx: i64 = i;
+            if idx < line.len {
+                let c: u8 = (line.ptr + idx).*;
+                if c == 9 {  // '\t'
+                    eprint("\t");
+                } else {
+                    eprint(" ");
+                }
+            } else {
+                eprint(" ");
+            }
+            i = i + 1;
+        }
+        eprintln("^");
+    }
 }
 
 // =============================================================================
-// Utility: Print source line with caret indicator
+// Convenience Functions
 // =============================================================================
 
-fn Source_printErrorContext(src: *Source, offset: i64) {
-    var line_len: i64 = 0;
-    let line: *u8 = Source_getLine(src, offset, &line_len);
-    let pos: Position = Source_position(src, offset);
+// Create a Pos from an offset.
+fn Pos_new(offset: i64) Pos {
+    return Pos{ .offset = offset };
+}
 
-    // Print the line
-    eprint("    ");
-    eprint(@string(line, line_len));
-    eprintln("");
+// Create a Span from two offsets.
+fn Span_new(start: i64, end: i64) Span {
+    return Span{ .start = start, .end = end };
+}
 
-    // Print caret indicator
-    eprint("    ");
-    var i: i64 = 0;
-    while i < pos.column - 1 {
-        let c: u8 = (line + i).*;
-        if c == 9 {  // '\t'
-            eprint("\t");
-        } else {
-            eprint(" ");
-        }
-        i = i + 1;
-    }
-    eprintln("^");
+// Create a Source from filename and content (free function constructor).
+fn Source_new(filename: string, content: string) Source {
+    return Source{
+        .filename = filename,
+        .content = content,
+        .line_offsets = null,
+        .line_count = 0,
+        .line_cap = 0,
+        .offsets_computed = false,
+    };
 }

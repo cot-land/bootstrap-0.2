@@ -137,6 +137,10 @@ var g_source_cap: i64 = 0;
 var g_source_path: *u8 = null;
 var g_source_path_len: i64 = 0;
 
+// Source tracking for error reporting (file:line:col)
+var g_src: Source;
+var g_error_reporter: ErrorReporter;
+
 const INIT_OUTPUT_PATH: i64 = 256;
 var g_output_path: *u8 = null;
 var g_output_path_cap: i64 = 0;
@@ -466,9 +470,9 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     let file_node: i64 = parser.parseFile();
 
     if parser.hadError() {
-        print("  FAIL: Parser error at position ");
-        print(parser.scanner.pos);
-        print("\n");
+        // Use error infrastructure for proper file:line:col reporting
+        g_error_reporter.errorAt(parser.scanner.pos, "parser error");
+        g_error_reporter.printSummary();
         return 1;
     }
 
@@ -512,9 +516,12 @@ fn Driver_compileFile(source: string, out_path: *u8, out_path_len: i64) i64 {
     checker.checkFile();
 
     if not checker.ok() {
-        print("  FAIL: Type check errors: ");
-        print(checker.errors());
-        print("\n");
+        // Report type errors with proper file:line:col
+        // Note: Checker errors already printed during checking
+        // Just show summary here
+        eprint("  Type check failed: ");
+        eprint(checker.errors());
+        eprintln(" errors");
         return 1;
     }
     print("  Type check OK\n");
@@ -1017,6 +1024,11 @@ fn main(argc: i64, argv: **u8) i64 {
 
     // Create string view of source
     let source: string = @string(g_source, g_source_len);
+
+    // Initialize error infrastructure with source location tracking
+    let filename: string = @string(source_path, source_path_len);
+    g_src = Source_new(filename, source);
+    g_error_reporter = ErrorReporter_new(&g_src);
 
     let result: i64 = Driver_compileFile(source, g_output_path, g_output_path_len);
 
