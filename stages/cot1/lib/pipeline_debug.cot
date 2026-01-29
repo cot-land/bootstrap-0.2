@@ -182,6 +182,16 @@ impl Debug {
         write(1, "\n".ptr, 1);
     }
 
+    // Log with three i64s: debug.log_ddd(.lower, "x={d} y={d} z={d}", d1, d2, d3)
+    fn log_ddd(self: *Debug, phase: DebugPhase, fmt: *u8, d1: i64, d2: i64, d3: i64) {
+        if not self.isEnabled(phase) { return; }
+        write(1, "[".ptr, 1);
+        write(1, self.phaseName(phase), self.phaseNameLen(phase));
+        write(1, "] ".ptr, 2);
+        self.print_fmt_ddd(fmt, d1, d2, d3);
+        write(1, "\n".ptr, 1);
+    }
+
     // ==========================================================================
     // Format string parsing helpers
     // ==========================================================================
@@ -304,6 +314,33 @@ impl Debug {
                         print(d1);
                     } else {
                         print(d2);
+                    }
+                    which_d = which_d + 1;
+                    i = i + 3;
+                    continue;
+                }
+            }
+            write(1, fmt + i, 1);
+            i = i + 1;
+        }
+    }
+
+    fn print_fmt_ddd(self: *Debug, fmt: *u8, d1: i64, d2: i64, d3: i64) {
+        let len: i64 = str_len(fmt);
+        var i: i64 = 0;
+        var which_d: i64 = 0;
+        while i < len {
+            let c: u8 = (fmt + i).*;
+            if c == 123 and i + 2 < len {  // '{'
+                let c2: u8 = (fmt + i + 1).*;
+                let c3: u8 = (fmt + i + 2).*;
+                if c2 == 100 and c3 == 125 {  // 'd' '}'
+                    if which_d == 0 {
+                        print(d1);
+                    } else if which_d == 1 {
+                        print(d2);
+                    } else {
+                        print(d3);
                     }
                     which_d = which_d + 1;
                     i = i + 3;

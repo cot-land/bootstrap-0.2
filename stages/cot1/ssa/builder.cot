@@ -13,6 +13,7 @@
 // Import func.cot for Block, Value, Local types
 // The Zig compiler deduplicates imports, so this won't cause duplicate definitions
 import "func.cot"
+import "../lib/pipeline_debug.cot"  // COT_DEBUG matching Zig compiler
 
 // ============================================================================
 // Constants
@@ -1035,8 +1036,12 @@ impl SSABuilder {
     }
 
     fn build(self: *SSABuilder) i64 {
-        // Step 1: Find max block_id
-    
+        // Get function name from source + offset
+        let fn_name: *u8 = self.source + self.func.name_start;
+        debug.log_s(DebugPhase.ssa, "=== Building SSA for '{s}' ===", fn_name, self.func.name_len);
+        let ir_node_count: i64 = self.ir_nodes_end - self.ir_nodes_start;
+        debug.log_d(DebugPhase.ssa, "  IR has {d} nodes", ir_node_count);
+
         // Step 1: Find max block_id in IR nodes to know how many blocks we need
         var max_block_id: i64 = 0;
         var ir_idx: i64 = self.ir_nodes_start;
@@ -1086,6 +1091,8 @@ impl SSABuilder {
             local_idx = local_idx + 1;
             ssa_local_idx = ssa_local_idx + 1;
         }
+        debug.log_d(DebugPhase.ssa, "  Copied {d} local sizes for stack allocation", self.ir_locals_count);
+
         // Step 4: Handle parameters
         // Step 4: Handle parameters with 3-phase approach (BUG-056 fix)
         // Following Zig's ssa_builder.zig lines 111-242
@@ -1276,6 +1283,7 @@ impl SSABuilder {
         }
     
         // Step 5: Convert IR nodes to SSA
+        debug.log(DebugPhase.ssa, "  Converting IR nodes to SSA...");
         // Track current IR block for block transitions
         var current_ir_block: i64 = 0;
         ir_idx = self.ir_nodes_start;
@@ -1285,6 +1293,7 @@ impl SSABuilder {
             // Handle block transitions
             if ir_node.block_id != current_ir_block {
                 current_ir_block = ir_node.block_id;
+                debug.log_d(DebugPhase.ssa, "  Processing IR block {d}", current_ir_block);
                 let ssa_block: i64 = self.getSSABlock(current_ir_block);
                 if ssa_block >= 0 {
                     self.setBlock(ssa_block);
@@ -1293,21 +1302,24 @@ impl SSABuilder {
 
             // Convert this node
             self.convertNode(ir_node, ir_idx);
-    
+
             ir_idx = ir_idx + 1;
         }
     
         // Step 6: Insert phi nodes for forward references
         // Reference: Zig ssa_builder.zig:455
+        debug.log(DebugPhase.ssa, "  Inserting phis...");
         self.insertPhis();
-    
+
         // Step 6.5: Verify SSA form
         // Reference: Zig ssa_builder.zig:459
+        debug.log(DebugPhase.ssa, "  Verifying SSA form...");
         self.verify();
-    
+
         // Step 7: Emit return block
         self.func.emitReturnBlock();
-    
+
+        debug.log_dd(DebugPhase.ssa, "  SSA build complete: {d} blocks, entry=block {d}", self.func.blocks_count, 0);
         return 0;
     }
 
@@ -1416,6 +1428,7 @@ impl SSABuilder {
     fn convertConstInt(self: *SSABuilder, ir_node: *IRNode) i64 {
         let val: *Value = self.func.emitConstInt(ir_node.value, TYPE_I64);
         self.assignReg(val);
+        debug.log_dd(DebugPhase.ssa, "    -> v{d} const_int {d}", val.id, ir_node.value);
         return val.id;
     }
 
@@ -1423,12 +1436,14 @@ impl SSABuilder {
         // String literal: left=str_start, right=str_len in source
         let val: *Value = self.func.emitConstString(ir_node.left, ir_node.right);
         self.assignReg(val);
+        debug.log_dd(DebugPhase.ssa, "    -> v{d} const_string len={d}", val.id, ir_node.right);
         return val.id;
     }
 
     fn convertConstBool(self: *SSABuilder, ir_node: *IRNode) i64 {
         let val: *Value = self.func.emitConstBool(ir_node.value != 0);
         self.assignReg(val);
+        debug.log_dd(DebugPhase.ssa, "    -> v{d} const_bool {d}", val.id, ir_node.value);
         return val.id;
     }
 
@@ -1439,6 +1454,7 @@ impl SSABuilder {
         let ssa_op: Op = Op_fromIRBinaryOp(ir_node.op);
         let val: *Value = self.func.emitBinary(ssa_op, left_val, right_val, TYPE_I64);
         self.assignReg(val);
+        debug.log_dd(DebugPhase.ssa, "    -> v{d} binary op={d}", val.id, ir_node.op);
         return val.id;
     }
 
@@ -1449,6 +1465,7 @@ impl SSABuilder {
         let val: *Value = self.func.newValue(ssa_op, TYPE_I64);
         val.addArg(operand_val);
         self.assignReg(val);
+        debug.log_dd(DebugPhase.ssa, "    -> v{d} unary op={d}", val.id, ir_node.op);
         return val.id;
     }
 
@@ -1456,6 +1473,7 @@ impl SSABuilder {
         let loc_idx: i64 = ir_node.left;
         let load_val: *Value = self.func.emitLoadLocal(loc_idx);
         self.assignReg(load_val);
+        debug.log_dd(DebugPhase.ssa, "    -> v{d} load_local idx={d}", load_val.id, loc_idx);
         return load_val.id;
     }
 
@@ -1494,11 +1512,13 @@ impl SSABuilder {
             let move_val: *Value = self.func.newValue(Op.Move, TYPE_VOID);
             move_val.aux_int = struct_size;
             move_val.addArg2(dest_addr, value_val);
+            debug.log_dd(DebugPhase.ssa, "    store_local (large struct {d}B) -> OpMove v{d}", struct_size, move_val.id);
             return move_val.id;
         }
     
         // Non-struct: use normal store
         let store_val: *Value = self.func.emitStoreLocal(loc_idx, value_val);
+        debug.log_dd(DebugPhase.ssa, "    store_local idx={d} v{d}", loc_idx, value_val.id);
         // Stores don't need registers (they write to memory)
         return store_val.id;
     }
@@ -1509,6 +1529,7 @@ impl SSABuilder {
         let addr_val: *Value = self.func.newValue(Op.LocalAddr, TYPE_I64);
         addr_val.aux_int = loc_idx;
         self.assignReg(addr_val);
+        debug.log_dd(DebugPhase.ssa, "    -> v{d} addr_local idx={d}", addr_val.id, loc_idx);
         return addr_val.id;
     }
 
@@ -1518,6 +1539,7 @@ impl SSABuilder {
         let load_val: *Value = self.func.newValue(Op.GlobalLoad, ir_node.type_idx);
         load_val.aux_int = global_idx;
         self.assignReg(load_val);
+        debug.log_dd(DebugPhase.ssa, "    -> v{d} global_load idx={d}", load_val.id, global_idx);
         return load_val.id;
     }
 
@@ -1529,6 +1551,7 @@ impl SSABuilder {
         store_val.aux_int = global_idx;
         store_val.addArg(val);
         self.assignReg(store_val);
+        debug.log_dd(DebugPhase.ssa, "    global_store idx={d} v{d}", global_idx, val.id);
         return store_val.id;
     }
 
@@ -1538,6 +1561,7 @@ impl SSABuilder {
         let addr_val: *Value = self.func.newValue(Op.GlobalAddr, TYPE_I64);
         addr_val.aux_int = global_idx;
         self.assignReg(addr_val);
+        debug.log_dd(DebugPhase.ssa, "    -> v{d} addr_global idx={d}", addr_val.id, global_idx);
         return addr_val.id;
     }
 
@@ -1548,6 +1572,7 @@ impl SSABuilder {
         addr_val.aux_int = ir_node.func_name_start;
         addr_val.aux_ptr = ir_node.func_name_len;
         self.assignReg(addr_val);
+        debug.log_d(DebugPhase.ssa, "    -> v{d} func_addr", addr_val.id);
         return addr_val.id;
     }
 
@@ -1558,6 +1583,7 @@ impl SSABuilder {
         let load_val: *Value = self.func.newValue(Op.Load, ir_node.type_idx);
         load_val.addArg(ptr_val);
         self.assignReg(load_val);
+        debug.log_dd(DebugPhase.ssa, "    -> v{d} load ptr=v{d}", load_val.id, ptr_val.id);
         return load_val.id;
     }
 
@@ -1567,6 +1593,7 @@ impl SSABuilder {
         let val_val: *Value = self.getOperandValue(ir_node.right);
         let store_val: *Value = self.func.newValue(Op.Store, TYPE_VOID);
         store_val.addArg2(ptr_val, val_val);
+        debug.log_dd(DebugPhase.ssa, "    ptr_store ptr=v{d} val=v{d}", ptr_val.id, val_val.id);
         // Stores don't need registers
         return store_val.id;
     }
@@ -1598,6 +1625,7 @@ impl SSABuilder {
                    field_type.kind == TypeKind.Slice or field_type.kind == TypeKind.String {
                     // Compound type - return address for further access
                     self.assignReg(off_val);
+                    debug.log_ddd(DebugPhase.ssa, "    field_local idx={d} offset={d} -> v{d} (composite addr)", loc_idx, offset, off_val.id);
                     return off_val.id;
                 }
             }
@@ -1605,6 +1633,7 @@ impl SSABuilder {
         // Also check for built-in TYPE_STRING and TYPE_SLICE constants
         if ir_node.type_idx == TYPE_STRING or ir_node.type_idx == TYPE_SLICE {
             self.assignReg(off_val);
+            debug.log_ddd(DebugPhase.ssa, "    field_local idx={d} offset={d} -> v{d} (slice/string)", loc_idx, offset, off_val.id);
             return off_val.id;
         }
 
@@ -1612,6 +1641,7 @@ impl SSABuilder {
         let load_val: *Value = self.func.newValue(Op.Load, ir_node.type_idx);
         load_val.addArg(off_val);
         self.assignReg(load_val);
+        debug.log_ddd(DebugPhase.ssa, "    field_local idx={d} offset={d} -> v{d}", loc_idx, offset, load_val.id);
         return load_val.id;
     }
 
@@ -1638,6 +1668,7 @@ impl SSABuilder {
                    field_type.kind == TypeKind.Slice or field_type.kind == TypeKind.String {
                     // Compound type - return address for further access
                     self.assignReg(off_val);
+                    debug.log_ddd(DebugPhase.ssa, "    field_value base=v{d} offset={d} -> v{d} (composite)", base_val.id, offset, off_val.id);
                     return off_val.id;
                 }
             }
@@ -1645,6 +1676,7 @@ impl SSABuilder {
         // Also check for built-in TYPE_STRING and TYPE_SLICE constants
         if ir_node.type_idx == TYPE_STRING or ir_node.type_idx == TYPE_SLICE {
             self.assignReg(off_val);
+            debug.log_ddd(DebugPhase.ssa, "    field_value base=v{d} offset={d} -> v{d} (slice/string)", base_val.id, offset, off_val.id);
             return off_val.id;
         }
 
@@ -1652,6 +1684,7 @@ impl SSABuilder {
         let load_val: *Value = self.func.newValue(Op.Load, ir_node.type_idx);
         load_val.addArg(off_val);
         self.assignReg(load_val);
+        debug.log_ddd(DebugPhase.ssa, "    field_value base=v{d} offset={d} -> v{d}", base_val.id, offset, load_val.id);
         return load_val.id;
     }
 
@@ -1660,21 +1693,22 @@ impl SSABuilder {
         let loc_idx: i64 = ir_node.left;
         let offset: i64 = ir_node.right;
         let val_val: *Value = self.getOperandValue(ir_node.value);
-    
+
         // 1. Get address of local
         let addr_val: *Value = self.func.newValue(Op.LocalAddr, TYPE_I64);
         addr_val.aux_int = loc_idx;
         self.assignReg(addr_val);
-    
+
         // 2. Add offset to get field address
         let off_val: *Value = self.func.newValue(Op.OffPtr, TYPE_I64);
         off_val.addArg(addr_val);
         off_val.aux_int = offset;
         self.assignReg(off_val);
-    
+
         // 3. Store the value
         let store_val: *Value = self.func.newValue(Op.Store, TYPE_VOID);
         store_val.addArg2(off_val, val_val);
+        debug.log_ddd(DebugPhase.ssa, "    store_field_local idx={d} offset={d} v{d}", loc_idx, offset, val_val.id);
         return store_val.id;
     }
 
@@ -1699,6 +1733,7 @@ impl SSABuilder {
         if field_type == TYPE_BOOL or field_type == TYPE_I8 or field_type == 6 {
             store_val.aux_int = 1;  // Signal byte store to codegen
         }
+        debug.log_ddd(DebugPhase.ssa, "    store_field base=v{d} offset={d} v{d}", base_val.id, offset, val_val.id);
         return store_val.id;
     }
 
@@ -1707,26 +1742,27 @@ impl SSABuilder {
         let loc_idx: i64 = ir_node.left;
         let idx_val: *Value = self.getOperandValue(ir_node.right);
         let elem_size: i64 = ir_node.value;
-    
+
         // 1. Get address of local array
         let addr_val: *Value = self.func.newValue(Op.LocalAddr, TYPE_I64);
         addr_val.aux_int = loc_idx;
         self.assignReg(addr_val);
-    
+
         // 2. Compute byte offset: index * elem_size
         let size_val: *Value = self.func.emitConstInt(elem_size, TYPE_I64);
         self.assignReg(size_val);
         let offset_val: *Value = self.func.emitBinary(Op.Mul64, idx_val, size_val, TYPE_I64);
         self.assignReg(offset_val);
-    
+
         // 3. Add offset to base address
         let ptr_val: *Value = self.func.emitBinary(Op.AddPtr, addr_val, offset_val, TYPE_I64);
         self.assignReg(ptr_val);
-    
+
         // 4. Load the element value
         let load_val: *Value = self.func.newValue(Op.Load, ir_node.type_idx);
         load_val.addArg(ptr_val);
         self.assignReg(load_val);
+        debug.log_ddd(DebugPhase.ssa, "    index_local idx={d} elem_size={d} -> v{d}", loc_idx, elem_size, load_val.id);
         return load_val.id;
     }
 
@@ -1736,17 +1772,17 @@ impl SSABuilder {
         let base_val: *Value = self.getOperandValue(ir_node.left);
         let idx_val: *Value = self.getOperandValue(ir_node.right);
         let elem_size: i64 = ir_node.value;
-    
+
         // 1. Compute byte offset: index * elem_size
         let size_val: *Value = self.func.emitConstInt(elem_size, TYPE_I64);
         self.assignReg(size_val);
         let offset_val: *Value = self.func.emitBinary(Op.Mul64, idx_val, size_val, TYPE_I64);
         self.assignReg(offset_val);
-    
+
         // 2. Add offset to base address
         let ptr_val: *Value = self.func.emitBinary(Op.AddPtr, base_val, offset_val, TYPE_I64);
         self.assignReg(ptr_val);
-    
+
         // 3. For struct types, return address without loading
         // Following Zig ssa_builder.zig:1333-1337:
         //   const elem_type = self.type_registry.get(node.type_idx);
@@ -1755,14 +1791,16 @@ impl SSABuilder {
         if self.type_registry != null and ir_node.type_idx > 0 {
             let elem_type: *Type = self.type_registry.get(ir_node.type_idx);
             if elem_type.kind == TypeKind.Struct {
+                debug.log_ddd(DebugPhase.ssa, "    index_value base=v{d} elem_size={d} -> v{d} (struct addr)", base_val.id, elem_size, ptr_val.id);
                 return ptr_val.id;
             }
         }
-    
+
         // 4. Load the element value for primitives
         let load_val: *Value = self.func.newValue(Op.Load, ir_node.type_idx);
         load_val.addArg(ptr_val);
         self.assignReg(load_val);
+        debug.log_ddd(DebugPhase.ssa, "    index_value base=v{d} elem_size={d} -> v{d}", base_val.id, elem_size, load_val.id);
         return load_val.id;
     }
 
@@ -1794,6 +1832,7 @@ impl SSABuilder {
         let store_val: *Value = self.func.newValue(Op.Store, TYPE_VOID);
         store_val.addArg2(ptr_val, val_val);
         store_val.aux_int = elem_size;  // Store element size for codegen
+        debug.log_ddd(DebugPhase.ssa, "    store_index_local idx={d} elem_size={d} v{d}", loc_idx, elem_size, val_val.id);
         return store_val.id;
     }
 
@@ -1803,22 +1842,23 @@ impl SSABuilder {
         let idx_val: *Value = self.getOperandValue(ir_node.right);
         let val_val: *Value = self.getOperandValue(ir_node.value);
         let elem_size: i64 = ir_node.op;
-    
+
         // 1. Compute byte offset: index * elem_size
         let size_val: *Value = self.func.emitConstInt(elem_size, TYPE_I64);
         self.assignReg(size_val);
         let offset_val: *Value = self.func.emitBinary(Op.Mul64, idx_val, size_val, TYPE_I64);
         self.assignReg(offset_val);
-    
+
         // 2. Add offset to base address
         let ptr_val: *Value = self.func.emitBinary(Op.AddPtr, base_val, offset_val, TYPE_I64);
         self.assignReg(ptr_val);
-    
+
         // 3. Store the value
         // BUG FIX: Propagate elem_size to Store for correct sized store instruction
         let store_val: *Value = self.func.newValue(Op.Store, TYPE_VOID);
         store_val.addArg2(ptr_val, val_val);
         store_val.aux_int = elem_size;  // Store element size for codegen
+        debug.log_ddd(DebugPhase.ssa, "    store_index_value base=v{d} elem_size={d} v{d}", base_val.id, elem_size, val_val.id);
         return store_val.id;
     }
 
@@ -1829,6 +1869,7 @@ impl SSABuilder {
         let make_val: *Value = self.func.newValue(Op.StringMake, TYPE_STRING);
         make_val.addArg2(ptr_val, len_val);
         self.assignReg(make_val);
+        debug.log_ddd(DebugPhase.ssa, "    -> v{d} string_make ptr=v{d} len=v{d}", make_val.id, ptr_val.id, len_val.id);
         return make_val.id;
     }
 
@@ -1839,6 +1880,7 @@ impl SSABuilder {
         let make_val: *Value = self.func.newValue(Op.SliceMake, TYPE_I64);
         make_val.addArg2(ptr_val, len_val);
         self.assignReg(make_val);
+        debug.log_ddd(DebugPhase.ssa, "    -> v{d} slice_make ptr=v{d} len=v{d}", make_val.id, ptr_val.id, len_val.id);
         return make_val.id;
     }
 
@@ -1848,6 +1890,7 @@ impl SSABuilder {
         let ptr_val: *Value = self.func.newValue(Op.SlicePtr, TYPE_I64);
         ptr_val.addArg(slice_val);
         self.assignReg(ptr_val);
+        debug.log_dd(DebugPhase.ssa, "    slice_ptr v{d} -> v{d}", slice_val.id, ptr_val.id);
         return ptr_val.id;
     }
 
@@ -1857,6 +1900,7 @@ impl SSABuilder {
         let len_val: *Value = self.func.newValue(Op.SliceLen, TYPE_I64);
         len_val.addArg(slice_val);
         self.assignReg(len_val);
+        debug.log_dd(DebugPhase.ssa, "    slice_len v{d} -> v{d}", slice_val.id, len_val.id);
         return len_val.id;
     }
 
@@ -1881,13 +1925,14 @@ impl SSABuilder {
             arg_idx = arg_idx + 1;
         }
         self.assignReg(val);
+        debug.log_dd(DebugPhase.ssa, "    -> v{d} call with {d} args", val.id, ir_node.call_args.count);
         return val.id;
     }
 
     fn convertCallIndirect(self: *SSABuilder, ir_node: *IRNode) i64 {
         // Create ClosureCall value
         let val: *Value = self.func.emitCallIndirect(TYPE_I64);
-    
+
         // First argument is the function pointer (ir_node.left)
         // Use convertNode pattern like Zig
         let fn_ptr_abs_idx: i64 = self.ir_nodes_start + ir_node.left;
@@ -1895,7 +1940,7 @@ impl SSABuilder {
         let fn_ptr_value_id: i64 = self.convertNode(fn_ptr_ir_node, fn_ptr_abs_idx);
         let fn_ptr_val: *Value = self.func.getValue(fn_ptr_value_id);
         val.addArg(fn_ptr_val);
-    
+
         // Add remaining arguments - call convertNode for each arg (matches Zig)
         var arg_idx: i64 = 0;
         while arg_idx < ir_node.call_args.count {
@@ -1908,13 +1953,14 @@ impl SSABuilder {
             arg_idx = arg_idx + 1;
         }
         self.assignReg(val);
+        debug.log_dd(DebugPhase.ssa, "    -> v{d} closure_call (indirect) with {d} args", val.id, ir_node.call_args.count);
         return val.id;
     }
 
     fn convertStrConcat(self: *SSABuilder, ir_node: *IRNode) i64 {
         // Create StringConcat value (returns string type)
         let val: *Value = self.func.newValue(Op.StringConcat, TYPE_STRING);
-    
+
         // Convert and add the 4 args: ptr1, len1, ptr2, len2
         var arg_idx: i64 = 0;
         while arg_idx < ir_node.call_args.count {
@@ -1930,8 +1976,9 @@ impl SSABuilder {
             val.addArg(arg_val);
             arg_idx = arg_idx + 1;
         }
-    
+
         self.assignReg(val);
+        debug.log_d(DebugPhase.ssa, "    -> v{d} string_concat", val.id);
         return val.id;
     }
 
@@ -1942,6 +1989,7 @@ impl SSABuilder {
         let false_val: *Value = self.getOperandValue(ir_node.value);
         let val: *Value = self.func.emitSelect(cond_val, true_val, false_val, TYPE_I64);
         self.assignReg(val);
+        debug.log_dd(DebugPhase.ssa, "    select cond=v{d} -> v{d}", cond_val.id, val.id);
         return val.id;
     }
 
@@ -1950,21 +1998,25 @@ impl SSABuilder {
         let cond_val: *Value = self.getOperandValue(ir_node.left);
         let then_block: i64 = ir_node.right;
         let else_block: i64 = ir_node.value;
+        debug.log_ddd(DebugPhase.ssa, "    branch cond=v{d} then={d} else={d}", cond_val.id, then_block, else_block);
         self.func.emitIf(cond_val, then_block, else_block);
     }
 
     fn convertJump(self: *SSABuilder, ir_node: *IRNode) {
         let target_block: i64 = ir_node.left;
+        debug.log_d(DebugPhase.ssa, "    jump -> block {d}", target_block);
         self.func.emitJump(target_block);
     }
 
     fn convertReturn(self: *SSABuilder, ir_node: *IRNode) {
         if ir_node.left >= 0 {
             let ret_val: *Value = self.getOperandValue(ir_node.left);
+            debug.log_d(DebugPhase.ssa, "    ret v{d}", ret_val.id);
             self.func.emitReturn(ret_val);
         } else {
             // Void return - emit return with no value
             let void_ret: *Value = self.func.newValue(Op.Return, TYPE_VOID);
+            debug.log(DebugPhase.ssa, "    ret void");
             // BUG-073: Also set block kind to Return for void returns
             self.func.emitReturnBlock();
         }
