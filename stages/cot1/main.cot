@@ -41,6 +41,9 @@ import "lib/debug.cot"
 // Debug initialization - command-line parsing and startup/shutdown
 import "lib/debug_init.cot"
 
+// Pipeline debug (COT_DEBUG env var) - matches Zig compiler's debug output
+import "lib/pipeline_debug.cot"
+
 // Import processing - path tracking, resolution, cycle detection
 import "lib/import.cot"
 
@@ -851,6 +854,10 @@ fn main(argc: i64, argv: **u8) i64 {
 
     // Initialize debug infrastructure - parses -d, -v, -t, --debug-* flags
     debug_startup(argc, argv);
+
+    // Initialize pipeline debug from COT_DEBUG/COT_TRACE env vars
+    // This matches Zig compiler's pipeline_debug.zig for easy comparison
+    pipeline_debug_init();
 
     // Allocate ALL dynamic buffers - NO STATIC ARRAYS
 

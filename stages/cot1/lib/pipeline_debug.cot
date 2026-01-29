@@ -1,0 +1,433 @@
+// =============================================================================
+// Pipeline Debug Infrastructure
+// =============================================================================
+//
+// Matches the Zig compiler's src/pipeline_debug.zig for easy comparison.
+//
+// Usage:
+//   COT_DEBUG=parse,lower,ssa,regalloc  - Enable specific phases
+//   COT_DEBUG=all                        - Enable all debug output
+//   COT_TRACE=funcname                   - Trace a specific function
+//
+// Phases: parse, check, lower, ssa, schedule, regalloc, codegen, strings, abi
+//
+// =============================================================================
+
+import "stdlib.cot"
+
+// Write syscall for printing strings with known length
+extern fn write(fd: i32, buf: *u8, count: i64) i64;
+
+// Helper to print string with known length
+fn dbg_print_str(s: *u8, len: i64) {
+    if s != null and len > 0 {
+        write(1, s, len);
+    }
+}
+
+// =============================================================================
+// Debug Phase Flags (matches Zig's DebugPhases struct)
+// =============================================================================
+
+var g_dbg_parse: bool = false;
+var g_dbg_check: bool = false;
+var g_dbg_lower: bool = false;
+var g_dbg_ssa: bool = false;
+var g_dbg_schedule: bool = false;
+var g_dbg_regalloc: bool = false;
+var g_dbg_codegen: bool = false;
+var g_dbg_strings: bool = false;
+var g_dbg_abi: bool = false;
+var g_dbg_all: bool = false;
+
+// Trace function name (if set, traces that function through all phases)
+var g_trace_func: *u8 = null;
+var g_trace_func_len: i64 = 0;
+
+// Flag to track if debug was initialized
+var g_dbg_initialized: bool = false;
+
+// =============================================================================
+// Environment Variable Access (via libc getenv)
+// =============================================================================
+
+extern fn getenv(name: *u8) *u8;
+
+// =============================================================================
+// String Comparison Helpers
+// =============================================================================
+
+fn dbg_streq(a: *u8, a_len: i64, b: *u8, b_len: i64) bool {
+    if a_len != b_len { return false; }
+    var i: i64 = 0;
+    while i < a_len {
+        if (a + i).* != (b + i).* { return false; }
+        i = i + 1;
+    }
+    return true;
+}
+
+fn dbg_strlen(s: *u8) i64 {
+    if s == null { return 0; }
+    var len: i64 = 0;
+    while (s + len).* != 0 {
+        len = len + 1;
+    }
+    return len;
+}
+
+// =============================================================================
+// Parse COT_DEBUG Environment Variable
+// =============================================================================
+
+fn parse_debug_phases(env: *u8) {
+    if env == null { return; }
+
+    let env_len: i64 = dbg_strlen(env);
+    var start: i64 = 0;
+    var i: i64 = 0;
+
+    while i <= env_len {
+        var c: u8 = 0;
+        if i < env_len {
+            c = (env + i).*;
+        }
+
+        // On comma or end of string, process the token
+        if c == 44 or c == 0 {  // 44 = ','
+            let token_len: i64 = i - start;
+            if token_len > 0 {
+                let token: *u8 = env + start;
+
+                // Match against known phases
+                if dbg_streq(token, token_len, "all".ptr, 3) {
+                    g_dbg_all = true;
+                } else if dbg_streq(token, token_len, "parse".ptr, 5) {
+                    g_dbg_parse = true;
+                } else if dbg_streq(token, token_len, "check".ptr, 5) {
+                    g_dbg_check = true;
+                } else if dbg_streq(token, token_len, "lower".ptr, 5) {
+                    g_dbg_lower = true;
+                } else if dbg_streq(token, token_len, "ssa".ptr, 3) {
+                    g_dbg_ssa = true;
+                } else if dbg_streq(token, token_len, "schedule".ptr, 8) {
+                    g_dbg_schedule = true;
+                } else if dbg_streq(token, token_len, "regalloc".ptr, 8) {
+                    g_dbg_regalloc = true;
+                } else if dbg_streq(token, token_len, "codegen".ptr, 7) {
+                    g_dbg_codegen = true;
+                } else if dbg_streq(token, token_len, "strings".ptr, 7) {
+                    g_dbg_strings = true;
+                } else if dbg_streq(token, token_len, "abi".ptr, 3) {
+                    g_dbg_abi = true;
+                }
+            }
+            start = i + 1;
+        }
+        i = i + 1;
+    }
+}
+
+// =============================================================================
+// Initialize Debug Infrastructure (call once at startup)
+// =============================================================================
+
+fn pipeline_debug_init() {
+    if g_dbg_initialized { return; }
+    g_dbg_initialized = true;
+
+    // Parse COT_DEBUG
+    let debug_env: *u8 = getenv("COT_DEBUG".ptr);
+    if debug_env != null {
+        parse_debug_phases(debug_env);
+    }
+
+    // Parse COT_TRACE
+    let trace_env: *u8 = getenv("COT_TRACE".ptr);
+    if trace_env != null {
+        g_trace_func = trace_env;
+        g_trace_func_len = dbg_strlen(trace_env);
+
+        // Print trace banner (matches Zig output)
+        print("\n");
+        print("======================================================================\n");
+        print("  COT_TRACE enabled for function: ");
+        dbg_print_str(trace_env, g_trace_func_len);
+        print("\n");
+        print("  Tracing through ALL pipeline phases\n");
+        print("======================================================================\n");
+        print("\n");
+    }
+}
+
+// =============================================================================
+// Phase Check Functions (matches Zig's isEnabled)
+// =============================================================================
+
+fn dbg_parse_enabled() bool {
+    return g_dbg_all or g_dbg_parse;
+}
+
+fn dbg_check_enabled() bool {
+    return g_dbg_all or g_dbg_check;
+}
+
+fn dbg_lower_enabled() bool {
+    return g_dbg_all or g_dbg_lower;
+}
+
+fn dbg_ssa_enabled() bool {
+    return g_dbg_all or g_dbg_ssa;
+}
+
+fn dbg_schedule_enabled() bool {
+    return g_dbg_all or g_dbg_schedule;
+}
+
+fn dbg_regalloc_enabled() bool {
+    return g_dbg_all or g_dbg_regalloc;
+}
+
+fn dbg_codegen_enabled() bool {
+    return g_dbg_all or g_dbg_codegen;
+}
+
+fn dbg_strings_enabled() bool {
+    return g_dbg_all or g_dbg_strings;
+}
+
+fn dbg_abi_enabled() bool {
+    return g_dbg_all or g_dbg_abi;
+}
+
+// =============================================================================
+// Trace Function Check (matches Zig's shouldTrace)
+// =============================================================================
+
+fn dbg_should_trace(func_name: *u8, func_name_len: i64) bool {
+    if g_trace_func == null { return false; }
+    return dbg_streq(g_trace_func, g_trace_func_len, func_name, func_name_len);
+}
+
+// =============================================================================
+// Debug Logging Functions (matches Zig's log format)
+// =============================================================================
+
+// Log with phase prefix: [phase] message
+fn dbg_log_parse(msg: *u8) {
+    if not dbg_parse_enabled() { return; }
+    print("[parse] ");
+    print(msg);
+    print("\n");
+}
+
+fn dbg_log_check(msg: *u8) {
+    if not dbg_check_enabled() { return; }
+    print("[check] ");
+    print(msg);
+    print("\n");
+}
+
+fn dbg_log_lower(msg: *u8) {
+    if not dbg_lower_enabled() { return; }
+    print("[lower] ");
+    print(msg);
+    print("\n");
+}
+
+fn dbg_log_ssa(msg: *u8) {
+    if not dbg_ssa_enabled() { return; }
+    print("[ssa] ");
+    print(msg);
+    print("\n");
+}
+
+fn dbg_log_regalloc(msg: *u8) {
+    if not dbg_regalloc_enabled() { return; }
+    print("[regalloc] ");
+    print(msg);
+    print("\n");
+}
+
+fn dbg_log_codegen(msg: *u8) {
+    if not dbg_codegen_enabled() { return; }
+    print("[codegen] ");
+    print(msg);
+    print("\n");
+}
+
+// Log with value: [phase] message value
+fn dbg_log_lower_val(msg: *u8, val: i64) {
+    if not dbg_lower_enabled() { return; }
+    print("[lower] ");
+    print(msg);
+    print(val);
+    print("\n");
+}
+
+fn dbg_log_ssa_val(msg: *u8, val: i64) {
+    if not dbg_ssa_enabled() { return; }
+    print("[ssa] ");
+    print(msg);
+    print(val);
+    print("\n");
+}
+
+fn dbg_log_codegen_val(msg: *u8, val: i64) {
+    if not dbg_codegen_enabled() { return; }
+    print("[codegen] ");
+    print(msg);
+    print(val);
+    print("\n");
+}
+
+// =============================================================================
+// Phase Markers (matches Zig's tracePhase output format)
+// =============================================================================
+
+fn dbg_phase_start(phase_name: *u8) {
+    if not g_dbg_all { return; }
+    print("\n");
+    print("------------------------------------------------------------------\n");
+    print(" PHASE: ");
+    print(phase_name);
+    print("\n");
+    print("------------------------------------------------------------------\n");
+}
+
+fn dbg_phase_end(phase_name: *u8) {
+    if not g_dbg_all { return; }
+    print("-- END ");
+    print(phase_name);
+    print(" --\n");
+}
+
+// =============================================================================
+// Function Trace Output (matches Zig's tracePhase for functions)
+// =============================================================================
+
+fn dbg_trace_func_phase(func_name: *u8, func_name_len: i64, phase_name: *u8) {
+    if not dbg_should_trace(func_name, func_name_len) { return; }
+
+    print("\n");
+    print("------------------------------------------------------------------\n");
+    print(" PHASE: ");
+    print(phase_name);
+    print("\n");
+    print(" FUNC:  ");
+    dbg_print_str(func_name, func_name_len);
+    print("\n");
+    print("------------------------------------------------------------------\n");
+}
+
+// =============================================================================
+// Value Tracing (matches Zig's traceValue format)
+// Format: v{id}: TYPE({size}B) = OP arg1, arg2 [aux] uses={n}
+// =============================================================================
+
+fn dbg_trace_value(v_id: i64, type_size: i64, op_name: *u8, uses: i64) {
+    if not dbg_ssa_enabled() { return; }
+    print("    v");
+    print(v_id);
+    print(": (");
+    print(type_size);
+    print("B) = ");
+    print(op_name);
+    print(" uses=");
+    print(uses);
+    print("\n");
+}
+
+fn dbg_trace_value_with_arg(v_id: i64, type_size: i64, op_name: *u8, arg_id: i64, uses: i64) {
+    if not dbg_ssa_enabled() { return; }
+    print("    v");
+    print(v_id);
+    print(": (");
+    print(type_size);
+    print("B) = ");
+    print(op_name);
+    print(" v");
+    print(arg_id);
+    print(" uses=");
+    print(uses);
+    print("\n");
+}
+
+fn dbg_trace_value_with_2args(v_id: i64, type_size: i64, op_name: *u8, arg1_id: i64, arg2_id: i64, uses: i64) {
+    if not dbg_ssa_enabled() { return; }
+    print("    v");
+    print(v_id);
+    print(": (");
+    print(type_size);
+    print("B) = ");
+    print(op_name);
+    print(" v");
+    print(arg1_id);
+    print(", v");
+    print(arg2_id);
+    print(" uses=");
+    print(uses);
+    print("\n");
+}
+
+// =============================================================================
+// Block Tracing
+// =============================================================================
+
+fn dbg_trace_block(block_id: i64, kind_name: *u8) {
+    if not dbg_ssa_enabled() { return; }
+    print("\n  b");
+    print(block_id);
+    print(" (");
+    print(kind_name);
+    print("):\n");
+}
+
+fn dbg_trace_block_pred(pred_id: i64) {
+    if not dbg_ssa_enabled() { return; }
+    print("    pred: b");
+    print(pred_id);
+    print("\n");
+}
+
+fn dbg_trace_block_succ(succ_id: i64) {
+    if not dbg_ssa_enabled() { return; }
+    print("    succ: b");
+    print(succ_id);
+    print("\n");
+}
+
+// =============================================================================
+// IR Debug Output (for lower phase)
+// =============================================================================
+
+fn dbg_ir_node(node_idx: i64, kind_name: *u8, type_idx: i64) {
+    if not dbg_lower_enabled() { return; }
+    print("  n");
+    print(node_idx);
+    print(": ");
+    print(kind_name);
+    print(" type=");
+    print(type_idx);
+    print("\n");
+}
+
+fn dbg_ir_func_start(func_name: *u8, func_name_len: i64, return_type: i64) {
+    if not dbg_lower_enabled() { return; }
+    print("\nfunc ");
+    dbg_print_str(func_name, func_name_len);
+    print(" -> type=");
+    print(return_type);
+    print(":\n");
+}
+
+fn dbg_ir_local(local_idx: i64, name: *u8, name_len: i64, type_idx: i64) {
+    if not dbg_lower_enabled() { return; }
+    print("  local[");
+    print(local_idx);
+    print("] ");
+    dbg_print_str(name, name_len);
+    print(" : type=");
+    print(type_idx);
+    print("\n");
+}
