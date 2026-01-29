@@ -762,8 +762,8 @@ impl FuncBuilder {
 // base_expr = IR node index of base address expression
 // offset = byte offset of field within struct
 // value_expr = IR node index of value to store
-    fn emitStoreField(self: *FuncBuilder, base_expr: i64, offset: i64, value_expr: i64) i64 {
-    var node: IRNode = IRNode_new(IRNodeKind.StoreField, TYPE_VOID);
+    fn emitStoreField(self: *FuncBuilder, base_expr: i64, offset: i64, value_expr: i64, field_type: i64) i64 {
+    var node: IRNode = IRNode_new(IRNodeKind.StoreField, field_type);
     node.left = base_expr;
     node.right = offset;
     node.value = value_expr;

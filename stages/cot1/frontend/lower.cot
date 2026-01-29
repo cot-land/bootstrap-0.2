@@ -742,11 +742,12 @@ impl Lowerer {
 
     fn emitDeferredExprs(self: *Lowerer, target_depth: i64) {
         while self.defer_stack_count > target_depth {
+            debug.log_d(DebugPhase.lower, "emitDeferredExprs: emitting defer (remaining: {d})", self.defer_stack_count);
             // Pop from stack
             self.defer_stack_count = self.defer_stack_count - 1;
             let slot: *i64 = self.defer_stack + self.defer_stack_count;
             let defer_expr_idx: i64 = slot.*;
-    
+
             // Lower the deferred expression
             if defer_expr_idx >= 0 {
                 let expr: *Node = self.nodes + defer_expr_idx;
@@ -1358,6 +1359,9 @@ impl Lowerer {
             }
         }
 
+        // Debug: log function being lowered (matches Zig's lowerFunction debug)
+        debug.log_s(DebugPhase.lower, "lowerFnDecl: '{s}'", self.source + node.field0, node.field1);
+
         // Ensure capacity for this function's locals and nodes
         // Estimate: params + 100 locals per function should be safe
         let estimated_locals: i64 = node.field3 + 100;
@@ -1866,19 +1870,20 @@ impl Lowerer {
             self.lowerIf(node);
             return false;  // If statements don't guarantee termination
         }
-    
+
         if node.kind != NodeKind.BlockStmt {
             // For other statement types, lower as statement
             self.lowerStmt(node);
             return node.kind == NodeKind.ReturnStmt;
         }
-    
+
         // BlockStmt fields:
         // field0 = stmts_start (index in children array)
         // field1 = stmts_count
-    
+
         let stmts_start: i64 = node.field0;
         let stmts_count: i64 = node.field1;
+        debug.log_d(DebugPhase.lower, "BLOCK_STMT enter: {d} stmts", stmts_count);
     
         // Safety check: bail if stmts_count is corrupted
         if stmts_count > 500 {
@@ -1989,7 +1994,9 @@ impl Lowerer {
     fn lowerReturn(self: *Lowerer, node: *Node) {
         // ReturnStmt fields:
         // field0 = value (node index, -1 if void)
-    
+
+        debug.log(DebugPhase.lower, "lowerReturn");
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null {
             return;
@@ -2036,22 +2043,25 @@ impl Lowerer {
         // field3 = init_expr node index
         // field4 = type_start (legacy, not used with TypeExpr)
         // field5 = type_expr (TypeExpr AST node index)
-    
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null {
             return;
         }
-    
+
         // is_mutable = NOT is_let (var = mutable, let = immutable)
         let is_mutable: bool = node.field0 == 0;
         let type_expr_idx: i64 = node.field5;
-    
+
         // Resolve TypeExpr AST node to TypeRegistry index
         // Reference: Zig's checker.zig resolveTypeExpr()
         var type_idx: i64 = resolve_type_expr(self, type_expr_idx);
         if type_idx < 0 {
             type_idx = TYPE_I64;  // Fallback
         }
+
+        // Debug: log variable declaration (matches Zig's lowerLocalVarDecl)
+        debug.log_sd(DebugPhase.lower, "lowerVarDecl var='{s}' type={d}", self.source + node.field1, node.field2, type_idx);
     
         // Determine local type and size based on resolved type
         var local_type: i64 = TYPE_I64;
@@ -2431,12 +2441,13 @@ impl Lowerer {
         // ArrayLit fields:
         // field0 = elements_start (index in children array)
         // field1 = elements_count
-    
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return; }
-    
+
         let elements_start: i64 = node.field0;
         let elements_count: i64 = node.field1;
+        debug.log_d(DebugPhase.lower, "lowerArrayInit local_idx={d}", local_idx);
     
         // Set the local's size to fit all elements (8 bytes per element for i64)
         let array_size: i64 = elements_count * 8;
@@ -2595,10 +2606,12 @@ impl Lowerer {
         // field0 = condition expr node index
         // field1 = then body node index
         // field2 = else body node index (-1 if none)
-    
+
+        debug.log(DebugPhase.lower, "lowerIf");
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return; }
-    
+
         // Create blocks
         let then_block: i64 = fb.newBlock();
         var else_block: i64 = -1;
@@ -2646,7 +2659,9 @@ impl Lowerer {
         // field1 = body
         // field2 = label name start (0 if no label) - cot1
         // field3 = label name len (0 if no label) - cot1
-    
+
+        debug.log(DebugPhase.lower, "lowerWhile");
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return; }
     
@@ -2716,10 +2731,12 @@ impl Lowerer {
         // field1 = binding name_len
         // field2 = iterable expression (node index)
         // field3 = body (block node index)
-    
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return; }
-    
+
+        debug.log_s(DebugPhase.lower, "lowerFor: binding '{s}'", self.source + node.field0, node.field1);
+
         let binding_start: i64 = node.field0;
         let binding_len: i64 = node.field1;
         let iter_node_idx: i64 = node.field2;
@@ -2850,11 +2867,13 @@ impl Lowerer {
     fn lowerBreak(self: *Lowerer, node: *Node) {
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return; }
-    
+
+        debug.log(DebugPhase.lower, "lowerBreak");
+
         // cot1: Check for labeled break
         let label_start: i64 = node.field0;
         let label_len: i64 = node.field1;
-    
+
         var target_block: i64 = self.loop_break_block;
         var defer_depth: i64 = self.loop_defer_depth;
     
@@ -2879,11 +2898,13 @@ impl Lowerer {
     fn lowerContinue(self: *Lowerer, node: *Node) {
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return; }
-    
+
+        debug.log(DebugPhase.lower, "lowerContinue");
+
         // cot1: Check for labeled continue
         let label_start: i64 = node.field0;
         let label_len: i64 = node.field1;
-    
+
         var target_block: i64 = self.loop_continue_block;
         var defer_depth: i64 = self.loop_defer_depth;
     
@@ -2991,7 +3012,7 @@ impl Lowerer {
     fn lowerStructLit(self: *Lowerer, node: *Node) i64 {
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
-    
+
         // StructLit fields:
         // field0 = type_name_start, field1 = type_name_len
         // field2 = fields_start (in children), field3 = fields_count
@@ -2999,10 +3020,15 @@ impl Lowerer {
         let type_name_len: i64 = node.field1;
         let fields_start: i64 = node.field2;
         let fields_count: i64 = node.field3;
-    
+
+        debug.log_sd(DebugPhase.lower, "lowerStructLit: struct '{s}' ({d} fields)",
+                     self.source + type_name_start, type_name_len, fields_count);
+
         // Look up the struct type by name
         let struct_type_idx: i64 = self.type_pool.findByName(self.source + type_name_start, type_name_len);
         if struct_type_idx < 0 {
+            debug.log_s(DebugPhase.lower, "  struct type '{s}' not found",
+                        self.source + type_name_start, type_name_len);
             return NULL_NODE;
         }
     
@@ -3115,6 +3141,8 @@ impl Lowerer {
         // Check for global variable
         let global_idx: i64 = self.lookupGlobal(node.field0, node.field1);
         if global_idx >= 0 {
+            debug.log_sd(DebugPhase.lower, "lowerIdent: found global '{s}' at idx {d}",
+                         self.source + node.field0, node.field1, global_idx);
             let g: *IRGlobal = self.getGlobal(global_idx);
             // Arrays are accessed by address, scalars are loaded
             if g.is_array {
@@ -3303,6 +3331,7 @@ impl Lowerer {
         // String concatenation: string + string -> call __cot_str_concat
         // Following Zig pattern: src/frontend/lower.zig:1476-1484
         if left_type == TYPE_STRING and ast_op == 0 {
+            debug.log(DebugPhase.lower, "lowerBinary: string concatenation");
             return self.lowerStrConcat(left_node, right_node);
         }
     
@@ -3497,15 +3526,19 @@ impl Lowerer {
         // UnaryExpr fields:
         // field0 = operand (node index)
         // field1 = op (UnaryOp as integer)
-    
+
         let fb: *FuncBuilder = self.current_func;
-    
+
         let operand_node: *Node = self.nodes + node.field0;
         let operand_idx: i64 = self.lowerExpr(operand_node);
-    
+
+        if operand_idx == NULL_NODE {
+            debug.log(DebugPhase.lower, "lowerUnary: operand lowered to null_node");
+        }
+
         // Convert AST operator to IR operator
         let ir_op: i64 = ASTUnaryOp_toIROp(node.field1);
-    
+
         return fb.emitUnary(ir_op, operand_idx, TYPE_I64);
     }
 
@@ -3802,15 +3835,9 @@ impl Lowerer {
         }
 
         // Debug: log method call with return type info (matches Zig's lowerMethodCall debug)
-        if debug.lower {
-            print("[lower] lowerMethodCall: '");
-            write(1, @intToPtr(*u8, method_entry.synth_name_ptr), method_entry.synth_name_len);
-            print("' ret=");
-            print(call_ret_type);
-            print(" size=");
-            print(self.type_pool.sizeof(call_ret_type));
-            print("B\n");
-        }
+        debug.log_sdd(DebugPhase.lower, "lowerMethodCall: '{s}' ret={d} size={d}B",
+                      @intToPtr(*u8, method_entry.synth_name_ptr), method_entry.synth_name_len,
+                      call_ret_type, self.type_pool.sizeof(call_ret_type));
 
         // Create the call node with synthesized name and proper return type
         var ir_node: IRNode = IRNode_new(IRNodeKind.Call, call_ret_type);
@@ -3826,11 +3853,19 @@ impl Lowerer {
             let arg_ptr: *i64 = self.children + args_start + i;
             let arg_node_idx: i64 = arg_ptr.*;
             let arg_node: *Node = self.nodes + arg_node_idx;
-            let arg_val: i64 = self.lowerExpr(arg_node);
+
+            // BUG-075: String literals passed as call args need SlicePtr to extract just the pointer
+            var arg_val: i64 = 0;
+            if arg_node.kind == NodeKind.StringLit {
+                let const_str: i64 = fb.emitConstString(arg_node.field0, arg_node.field1);
+                arg_val = fb.emitSlicePtr(const_str, TYPE_I64);
+            } else {
+                arg_val = self.lowerExpr(arg_node);
+            }
             i64list_append(&ir_node.call_args, arg_val);
             i = i + 1;
         }
-    
+
         return fb.emit(ir_node);
     }
 
@@ -3973,7 +4008,17 @@ impl Lowerer {
             let arg_child_ptr: *i64 = self.children + args_start + i;
             let arg_node_idx: i64 = arg_child_ptr.*;
             let arg_node: *Node = self.nodes + arg_node_idx;
-            let arg_ir_idx: i64 = self.lowerExpr(arg_node);
+
+            // BUG-075: String literals passed as call args need SlicePtr to extract just the pointer
+            // Otherwise ConstString (type_idx=13, 16 bytes) causes ABI to allocate 2 registers
+            // but only the pointer should be passed (to *u8 parameters)
+            var arg_ir_idx: i64 = 0;
+            if arg_node.kind == NodeKind.StringLit {
+                let const_str: i64 = fb.emitConstString(arg_node.field0, arg_node.field1);
+                arg_ir_idx = fb.emitSlicePtr(const_str, TYPE_I64);
+            } else {
+                arg_ir_idx = self.lowerExpr(arg_node);
+            }
 
             i64list_append(&arg_ir, arg_ir_idx);
             if has_any_call {
@@ -4038,15 +4083,9 @@ impl Lowerer {
         }
 
         // Debug: log direct call with return type info (matches Zig's lowerCall debug)
-        if debug.lower {
-            print("[lower] lowerCall: '");
-            write(1, self.source + func_name_start, func_name_len);
-            print("' ret=");
-            print(call_ret_type);
-            print(" size=");
-            print(self.type_pool.sizeof(call_ret_type));
-            print("B\n");
-        }
+        debug.log_sdd(DebugPhase.lower, "lowerCall: '{s}' ret={d} size={d}B",
+                      self.source + func_name_start, func_name_len,
+                      call_ret_type, self.type_pool.sizeof(call_ret_type));
 
         var call_node: IRNode = IRNode_new(IRNodeKind.Call, call_ret_type);
         call_node.func_name_start = copy_func_name(self.source, func_name_start, func_name_len);
@@ -4059,10 +4098,12 @@ impl Lowerer {
         // AssignExpr fields:
         // field0 = target (identifier node or deref expr)
         // field1 = value (expression)
-    
+
+        debug.log(DebugPhase.lower, "lowerAssign");
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
-    
+
         let target_node: *Node = self.nodes + node.field0;
     
         // Lower the value expression first
@@ -4332,10 +4373,12 @@ impl Lowerer {
     fn lowerDeref(self: *Lowerer, node: *Node) i64 {
         // DerefExpr fields:
         // field0 = operand (the pointer expression)
-    
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
-    
+
+        debug.log(DebugPhase.lower, "lowerDeref");
+
         // Lower the pointer expression
         let operand_node: *Node = self.nodes + node.field0;
         let ptr_idx: i64 = self.lowerExpr(operand_node);
@@ -4353,13 +4396,15 @@ impl Lowerer {
         // field0 = base expression (node index)
         // field1 = field_name_start (offset in source)
         // field2 = field_name_len
-    
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
-    
+
         let base_node: *Node = self.nodes + node.field0;
         let field_name_start: i64 = node.field1;
         let field_name_len: i64 = node.field2;
+
+        debug.log_s(DebugPhase.lower, "lowerFieldAccess: field '{s}'", self.source + field_name_start, field_name_len);
     
         // Check for enum variant access first (e.g., Status.Active)
         // Following Zig's pattern (lower.zig:1510-1519)
@@ -4392,9 +4437,26 @@ impl Lowerer {
             }
     
             if local_idx < 0 {
+                // Not a local - try global variable (debug.count)
+                // Following Zig: src/frontend/lower.zig:2137-2141
+                let global_idx: i64 = self.lookupGlobal(base_node.field0, base_node.field1);
+                if global_idx >= 0 {
+                    let g: *IRGlobal = self.ir_globals + global_idx;
+                    // Get address of global struct
+                    let global_addr: i64 = fb.emitAddrGlobal(global_idx, g.type_idx);
+                    // Look up field in the global's struct type
+                    let field_info: *FieldInfo = self.type_pool.lookupField(g.type_idx,
+                                                                   self.source + field_name_start, field_name_len);
+                    if field_info != null {
+                        // Load field from global address at offset
+                        return fb.emitFieldValue(global_addr, field_info.offset, field_info.type_idx);
+                    }
+                    // Field not found, fallback to offset 0
+                    return fb.emitFieldValue(global_addr, 0, TYPE_I64);
+                }
                 return NULL_NODE;  // Variable not found
             }
-    
+
             // Check if local is a pointer to struct (auto-dereference)
             let local_type: *Type = self.type_pool.get(local_type_idx);
             var struct_type_idx: i64 = local_type_idx;
@@ -4725,10 +4787,12 @@ impl Lowerer {
         // field1 = index expression
         //
         // Following src/frontend/lower.zig:1623-1712 (lowerIndex)
-    
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
-    
+
+        debug.log(DebugPhase.lower, "lowerIndex");
+
         let base_node: *Node = self.nodes + node.field0;
         let index_node_idx: i64 = node.field1;
     
@@ -4834,9 +4898,11 @@ impl Lowerer {
     }
 
     fn lowerSliceExpr(self: *Lowerer, node: *Node) i64 {
+        debug.log(DebugPhase.lower, "lowerSliceExpr");
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
-    
+
         let base_node: *Node = self.nodes + node.field0;
         let start_node_idx: i64 = node.field1;
         let end_node_idx: i64 = node.field2;
@@ -4989,11 +5055,28 @@ impl Lowerer {
                 }
                 i = i + 1;
             }
-    
+
             if local_idx < 0 {
+                // Not a local - try global variable (g_pool.field = value)
+                // Following Zig: src/frontend/lower.zig:1094-1103
+                let global_idx: i64 = self.lookupGlobal(base_node.field0, base_node.field1);
+                if global_idx >= 0 {
+                    let g: *IRGlobal = self.ir_globals + global_idx;
+                    // Get address of global struct
+                    let global_addr: i64 = fb.emitAddrGlobal(global_idx, g.type_idx);
+                    // Look up field in the global's struct type
+                    let field_info: *FieldInfo = self.type_pool.lookupField(g.type_idx,
+                                                                   self.source + field_name_start, field_name_len);
+                    if field_info != null {
+                        // Store to field at offset
+                        return fb.emitStoreField(global_addr, field_info.offset, value_idx, field_info.type_idx);
+                    }
+                    // Field not found, fallback to offset 0
+                    return fb.emitStoreField(global_addr, 0, value_idx, TYPE_I64);
+                }
                 return NULL_NODE;  // Variable not found
             }
-    
+
             // Check if local is a pointer to struct (auto-dereference for assignment)
             let local_type: *Type = self.type_pool.get(local_type_idx);
             var struct_type_idx: i64 = local_type_idx;
@@ -5026,13 +5109,13 @@ impl Lowerer {
                     // String/slice field: store ptr at offset, len at offset+8
                     let str_ptr_ir: i64 = fb.emitSlicePtr(value_idx, TYPE_I64);
                     let str_len_ir: i64 = fb.emitSliceLen(value_idx);
-                    fb.emitStoreField(ptr_val, field_info.offset, str_ptr_ir);
-                    fb.emitStoreField(ptr_val, field_info.offset + 8, str_len_ir);
+                    fb.emitStoreField(ptr_val, field_info.offset, str_ptr_ir, TYPE_I64);
+                    fb.emitStoreField(ptr_val, field_info.offset + 8, str_len_ir, TYPE_I64);
                     return value_idx;
                 }
 
                 // Store value through the pointer at field offset
-                return fb.emitStoreField(ptr_val, field_info.offset, value_idx);
+                return fb.emitStoreField(ptr_val, field_info.offset, value_idx, field_info.type_idx);
             }
     
             // Direct struct assignment
@@ -5094,6 +5177,7 @@ impl Lowerer {
             if local.is_param {
                 // Try to find field in any struct type in TypeRegistry
                 var field_offset: i64 = 0;  // Default to offset 0 if not found
+                var field_type: i64 = TYPE_I64;  // Default type
                 // Use the local's type_idx if available
                 if local.type_idx > 0 {
                     var search_type_idx: i64 = local.type_idx;
@@ -5106,11 +5190,12 @@ impl Lowerer {
                                                                                      self.source + field_name_start, field_name_len);
                         if param_field_info != null {
                             field_offset = param_field_info.offset;
+                            field_type = param_field_info.type_idx;
                         }
                     }
                 }
                 let ptr_val: i64 = fb.emitLoadLocal(local_idx);
-                return fb.emitStoreField(ptr_val, field_offset, value_idx);
+                return fb.emitStoreField(ptr_val, field_offset, value_idx, field_type);
             }
     
             // Last fallback: use offset 0 (for untyped cases)
@@ -5123,9 +5208,10 @@ impl Lowerer {
         if base_node.kind == NodeKind.DerefExpr {
             let ptr_operand: *Node = self.nodes + base_node.field0;
             let ptr_val: i64 = self.lowerExpr(ptr_operand);
-    
+
             // Try to find struct type from the pointer local's info
             var field_offset: i64 = 0;
+            var field_type: i64 = TYPE_I64;
             if ptr_operand.kind == NodeKind.Ident {
                 // Look up the pointer local to get its struct type info
                 var i: i64 = 0;
@@ -5143,6 +5229,7 @@ impl Lowerer {
                                                                                  self.source + field_name_start, field_name_len);
                                 if info != null {
                                     field_offset = info.offset;
+                                    field_type = info.type_idx;
                                 }
                             }
                         }
@@ -5151,8 +5238,8 @@ impl Lowerer {
                     i = i + 1;
                 }
             }
-    
-            return fb.emitStoreField(ptr_val, field_offset, value_idx);
+
+            return fb.emitStoreField(ptr_val, field_offset, value_idx, field_type);
         }
     
         // Case 3: Base is another field access (chained: a.b.c = value)
@@ -5229,7 +5316,7 @@ impl Lowerer {
                                         if root_type != null and root_type.kind == TypeKind.Pointer {
                                             // Pointer to struct - load the pointer first
                                             let ptr_val: i64 = fb.emitLoadLocal(root_local_idx);
-                                            return fb.emitStoreField(ptr_val, total_offset, value_idx);
+                                            return fb.emitStoreField(ptr_val, total_offset, value_idx, final_info.type_idx);
                                         }
                                         return fb.emitStoreFieldLocal(root_local_idx, total_offset, value_idx);
                                     }
@@ -5249,7 +5336,8 @@ impl Lowerer {
             // base_node is the intermediate field access (e.g., o.inner)
             // We need to find what type that field has, then look up field_name in it
             var final_field_offset: i64 = 0;
-    
+            var final_field_type: i64 = TYPE_I64;
+
             // Try to find the base field's type using TypeRegistry lookup
             if walk_node.kind == NodeKind.Ident and root_local_idx >= 0 {
                 let local: *IRLocal = fb.locals + root_local_idx;
@@ -5262,20 +5350,21 @@ impl Lowerer {
                         let base_field_name_len: i64 = base_node.field2;
                         let base_info: *FieldInfo = self.type_pool.lookupField(local_struct_type,
                                                                               self.source + base_field_name_start, base_field_name_len);
-    
+
                         if base_info != null and base_info.type_idx > 0 {
                             // Now look up the final field in the base's type
                             let final_info: *FieldInfo = self.type_pool.lookupField(base_info.type_idx,
                                                                                    self.source + field_name_start, field_name_len);
                             if final_info != null {
                                 final_field_offset = final_info.offset;
+                                final_field_type = final_info.type_idx;
                             }
                         }
                     }
                 }
             }
-    
-            return fb.emitStoreField(base_val, final_field_offset, value_idx);
+
+            return fb.emitStoreField(base_val, final_field_offset, value_idx, final_field_type);
         }
     
         // Case 4: Base is an IndexExpr (arr[i].field = value)
@@ -5314,27 +5403,29 @@ impl Lowerer {
     
                     // Get field offset within the element struct
                     var field_offset: i64 = 0;
+                    var field_type: i64 = TYPE_I64;
                     let field_info: *FieldInfo = self.type_pool.lookupField(elem_type_idx,
                                                                            self.source + field_name_start, field_name_len);
                     if field_info != null {
                         field_offset = field_info.offset;
+                        field_type = field_info.type_idx;
                     }
-    
+
                     // Compute element address: base_addr + index * elem_size
                     let base_addr: i64 = fb.emitAddrLocal(local_idx, TYPE_I64);
                     let size_val: i64 = fb.emitConstInt(elem_size);
                     let offset_val: i64 = fb.emitBinary(IR_OP_MUL, index_ir, size_val, TYPE_I64);
                     let elem_addr: i64 = fb.emitBinary(IR_OP_ADD, base_addr, offset_val, TYPE_I64);
-    
+
                     // Store at field offset within element
-                    return fb.emitStoreField(elem_addr, field_offset, value_idx);
+                    return fb.emitStoreField(elem_addr, field_offset, value_idx, field_type);
                 }
             }
         }
-    
+
         // Case 5: Other expressions - lower and store at offset 0
         let base_val: i64 = self.lowerExpr(base_node);
-        return fb.emitStoreField(base_val, 0, value_idx);
+        return fb.emitStoreField(base_val, 0, value_idx, TYPE_I64);
     }
 
     fn lowerIndexAssign(self: *Lowerer, target: *Node, value_idx: i64) i64 {
@@ -5490,15 +5581,17 @@ impl Lowerer {
                 if type_arg_idx >= 0 {
                     let type_idx: i64 = resolve_type_expr(self, type_arg_idx);
                     let size: i64 = self.type_pool.sizeof(type_idx);
+                    debug.log_dd(DebugPhase.lower, "@sizeOf({d}) = {d}", type_idx, size);
                     return fb.emitConstInt(size);
                 }
                 // Fallback if no type arg
                 return fb.emitConstInt(8);
             }
         }
-    
+
         // @alignOf(type) - return type alignment (simplified: assume 8 for now)
         if first_char == 97 and name_len == 7 {  // 'a' and length 7
+            debug.log(DebugPhase.lower, "@alignOf -> 8");
             // For now, return 8 (alignment of i64)
             return fb.emitConstInt(8);
         }
@@ -5507,24 +5600,27 @@ impl Lowerer {
         // Following Zig pattern: src/frontend/lower.zig:2456-2461
         // Just return the operand - pointers are already i64 internally
         if first_char == 112 and name_len == 8 {  // 'p' and length 8 for "ptrToInt"
+            debug.log(DebugPhase.lower, "@ptrToInt(expr) to i64");
             if arg1_idx >= 0 {
                 let ptr_node: *Node = self.nodes + arg1_idx;
                 return self.lowerExpr(ptr_node);
             }
         }
-    
+
         // @intToPtr(type, val) - convert i64 to pointer
         // Just return the value - it's already i64 internally
         if first_char == 105 and name_len == 8 {  // 'i' and length 8 for "intToPtr"
+            debug.log(DebugPhase.lower, "@intToPtr(type, expr)");
             if arg1_idx >= 0 {
                 let val_node: *Node = self.nodes + arg1_idx;
                 return self.lowerExpr(val_node);
             }
         }
-    
+
         // @ptrCast(type, ptr) - reinterpret pointer type
         // Following Zig: just return the operand since pointers are i64 internally
         if first_char == 112 and name_len == 7 {  // 'p' and length 7 for "ptrCast"
+            debug.log(DebugPhase.lower, "@ptrCast(type, expr)");
             if arg1_idx >= 0 {
                 let ptr_node: *Node = self.nodes + arg1_idx;
                 return self.lowerExpr(ptr_node);
@@ -5537,6 +5633,7 @@ impl Lowerer {
             let second_char: u8 = (self.source + name_start + 1).*;
             if second_char == 115 {  // 's' for "assert"
                 if arg1_idx >= 0 {
+                    debug.log(DebugPhase.lower, "@assert(condition)");
                     // Lower the condition
                     let cond_node: *Node = self.nodes + arg1_idx;
                     let condition: i64 = self.lowerExpr(cond_node);
@@ -5581,10 +5678,12 @@ impl Lowerer {
         // field1 = cases_start (index in children array)
         // field2 = cases_count
         // field3 = else_body (node index, -1 if no else)
-    
+
         let fb: *FuncBuilder = self.current_func;
         if fb == null { return NULL_NODE; }
-    
+
+        debug.log_d(DebugPhase.lower, "lowerSwitchExpr: {d} cases", node.field2);
+
         // Lower the subject expression once
         let subject_node: *Node = self.nodes + node.field0;
         let subject: i64 = self.lowerExpr(subject_node);

@@ -1680,19 +1680,25 @@ impl SSABuilder {
 
     fn convertStoreField(self: *SSABuilder, ir_node: *IRNode) i64 {
         // Store to field via computed address: left = base_expr, right = offset, value = stored_expr
+        // ir_node.type_idx contains the field's type for correct store size
         let base_val: *Value = self.getOperandValue(ir_node.left);
         let offset: i64 = ir_node.right;
         let val_val: *Value = self.getOperandValue(ir_node.value);
-    
+        let field_type: i64 = ir_node.type_idx;
+
         // 1. Add offset to base to get field address
         let off_val: *Value = self.func.newValue(Op.OffPtr, TYPE_I64);
         off_val.addArg(base_val);
         off_val.aux_int = offset;
         self.assignReg(off_val);
-    
-        // 2. Store the value
+
+        // 2. Store the value - set aux_int for byte-sized types
+        // TYPE_BOOL = 1, TYPE_I8 = 2, TYPE_U8 = 6
         let store_val: *Value = self.func.newValue(Op.Store, TYPE_VOID);
         store_val.addArg2(off_val, val_val);
+        if field_type == TYPE_BOOL or field_type == TYPE_I8 or field_type == 6 {
+            store_val.aux_int = 1;  // Signal byte store to codegen
+        }
         return store_val.id;
     }
 

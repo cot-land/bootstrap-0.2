@@ -2454,8 +2454,52 @@ pub const Lowerer = struct {
         var args = std.ArrayListUnmanaged(ir.NodeIndex){};
         defer args.deinit(self.allocator);
 
-        for (call.args) |arg_idx| {
-            const arg_node = try self.lowerExprNode(arg_idx);
+        // BUG-075: Get function param types to check if string args should be coerced to pointers
+        // Look up the function's signature to get parameter types
+        var param_types: ?[]const types.FuncParam = null;
+        if (self.chk.scope.lookup(func_name)) |sym| {
+            const func_type = self.type_reg.get(sym.type_idx);
+            if (func_type == .func) {
+                param_types = func_type.func.params;
+            }
+        }
+
+        for (call.args, 0..) |arg_idx, arg_i| {
+            // BUG-075: Check if this arg is a string literal being passed to a pointer param
+            // In this case, we should extract just the pointer, not pass the whole string
+            const ast_node = self.tree.getNode(arg_idx) orelse {
+                debug.log(.lower, "lowerCall: WARNING - could not get AST node for arg, skipping", .{});
+                continue;
+            };
+            const ast_expr = ast_node.asExpr() orelse {
+                debug.log(.lower, "lowerCall: WARNING - arg is not an expression, skipping", .{});
+                continue;
+            };
+
+            var arg_node: ir.NodeIndex = ir.null_node;
+
+            // Check if arg is a string literal and param expects a pointer
+            if (ast_expr == .literal and ast_expr.literal.kind == .string) {
+                var param_is_pointer = false;
+                if (param_types) |params| {
+                    if (arg_i < params.len) {
+                        const param_type = self.type_reg.get(params[arg_i].type_idx);
+                        param_is_pointer = (param_type == .pointer);
+                    }
+                }
+                if (param_is_pointer) {
+                    // String literal passed to pointer param: extract just the pointer
+                    const str_node = try self.lowerLiteral(ast_expr.literal);
+                    arg_node = try fb.emitSlicePtr(str_node, TypeRegistry.I64, call.span);
+                    debug.log(.lower, "lowerCall: arg {d} is string->*ptr coercion, emitting slice_ptr", .{arg_i});
+                } else {
+                    // String literal passed to string param: pass as-is (will be expanded by pass)
+                    arg_node = try self.lowerLiteral(ast_expr.literal);
+                }
+            } else {
+                arg_node = try self.lowerExprNode(arg_idx);
+            }
+
             // Skip null_node sentinel values (indicates lowering failure)
             if (arg_node == ir.null_node) {
                 debug.log(.lower, "lowerCall: WARNING - arg lowered to null_node, skipping", .{});
@@ -2596,8 +2640,50 @@ pub const Lowerer = struct {
         try args.append(self.allocator, receiver_val);
 
         // Lower the remaining arguments
-        for (call.args) |arg_idx| {
-            const arg_node = try self.lowerExprNode(arg_idx);
+        // BUG-075: Get method param types to check if string args should be coerced to pointers
+        // Note: first param is the receiver (self), so we offset by 1 when checking param types
+        const func_type_for_params = self.type_reg.get(method_info.func_type);
+        var param_types: ?[]const types.FuncParam = null;
+        if (func_type_for_params == .func) {
+            param_types = func_type_for_params.func.params;
+        }
+
+        for (call.args, 0..) |arg_idx, arg_i| {
+            // BUG-075: Check if this arg is a string literal being passed to a pointer param
+            const ast_node = self.tree.getNode(arg_idx) orelse {
+                debug.log(.lower, "lowerMethodCall: WARNING - could not get AST node for arg, skipping", .{});
+                continue;
+            };
+            const ast_expr = ast_node.asExpr() orelse {
+                debug.log(.lower, "lowerMethodCall: WARNING - arg is not an expression, skipping", .{});
+                continue;
+            };
+
+            var arg_node: ir.NodeIndex = ir.null_node;
+
+            // Check if arg is a string literal and param expects a pointer
+            // Note: param index is arg_i + 1 because receiver is param 0
+            if (ast_expr == .literal and ast_expr.literal.kind == .string) {
+                var param_is_pointer = false;
+                if (param_types) |params| {
+                    const param_idx = arg_i + 1; // +1 for receiver
+                    if (param_idx < params.len) {
+                        const param_type = self.type_reg.get(params[param_idx].type_idx);
+                        param_is_pointer = (param_type == .pointer);
+                    }
+                }
+                if (param_is_pointer) {
+                    // String literal passed to pointer param: extract just the pointer
+                    const str_node = try self.lowerLiteral(ast_expr.literal);
+                    arg_node = try fb.emitSlicePtr(str_node, TypeRegistry.I64, call.span);
+                    debug.log(.lower, "lowerMethodCall: arg {d} is string->*ptr coercion, emitting slice_ptr", .{arg_i});
+                } else {
+                    arg_node = try self.lowerLiteral(ast_expr.literal);
+                }
+            } else {
+                arg_node = try self.lowerExprNode(arg_idx);
+            }
+
             // Skip null_node sentinel values (indicates lowering failure)
             if (arg_node == ir.null_node) {
                 debug.log(.lower, "lowerMethodCall: WARNING - arg lowered to null_node, skipping", .{});

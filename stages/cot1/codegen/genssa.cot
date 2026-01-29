@@ -20,6 +20,7 @@ import "amd64.cot"
 import "../obj/macho.cot"
 import "../obj/elf.cot"
 import "../obj/dwarf.cot"
+import "../lib/pipeline_debug.cot"
 
 // NOTE: print() and print_int() are defined in main.cot and available to all imported files
 
@@ -780,6 +781,11 @@ fn reloadSpilledArgs(self: *GenState, v: *Value) {
 // Returns 0 on success, error code otherwise.
 fn generate(self: *GenState) i64 {
     let f: *Func = self.func;
+    let start_offset: i64 = self.code_count;
+
+    // Debug: log function being generated (matches Zig's arm64.zig debug)
+    debug.log_dd(DebugPhase.codegen, "Generating code for function, {d} blocks, frame={d}B",
+                 f.blocks_count, f.frame_size);
 
     // BUG-054: Check if this function returns >16B (needs hidden return pointer)
     // Following Zig: src/codegen/arm64.zig:493-522
@@ -802,8 +808,10 @@ fn generate(self: *GenState) i64 {
 
     // Store frame_size for stack arg access in Op.Arg handling
     self.frame_size = frame_size;
+    debug.log_d(DebugPhase.codegen, "  Stack frame: {d} bytes", frame_size);
 
     // Emit function prologue based on target architecture
+    debug.log(DebugPhase.codegen, "  Emitting prologue");
     if self.target == TARGET_AMD64 {
         // AMD64 prologue:
         // PUSH RBP
@@ -897,6 +905,8 @@ fn generate(self: *GenState) i64 {
     self.resolveBranches();
     gs_time_resolve = gs_time_resolve + (get_time_ns() - t_tmp);
 
+    debug.log_d(DebugPhase.codegen, "  Function done, code size: {d} bytes", self.code_count - start_offset);
+
     return 0;
 }
 
@@ -910,6 +920,10 @@ fn generate(self: *GenState) i64 {
 // Generate code for all values in a block
 fn blockValues(self: *GenState, block: *Block) {
     let f: *Func = self.func;
+
+    // Debug: log block being processed (matches Zig's arm64.zig:759)
+    debug.log_d(DebugPhase.codegen, "  Block b{d}", block.id);
+
     // BUG-073 FIX: Iterate by value's block_id instead of block's values_start/values_count.
     // The expand_calls pass adds new values that break the contiguous values assumption.
     var value_id: i64 = 0;
@@ -961,6 +975,9 @@ fn blockValues(self: *GenState, block: *Block) {
 
 // Generate code for a single SSA value
 fn value(self: *GenState, v: *Value) {
+    // Debug: log each value being generated (matches Zig's arm64.zig:774)
+    debug.log_d(DebugPhase.codegen, "    v{d}", v.id);
+
     // No-op values (following Go's pattern)
     if v.op == Op.Phi {
         return;  // Phi nodes handled by register allocator
@@ -1116,6 +1133,7 @@ fn constInt(self: *GenState, v: *Value) {
     if rd < 0 { return; }
 
     let imm: i64 = v.aux_int;
+    debug.log_dd(DebugPhase.codegen, "      -> x{d} = #{d}", rd, imm);
 
     if self.target == TARGET_AMD64 {
         // AMD64: MOV r64, imm32 (sign-extended) or MOV r64, imm64
@@ -1291,6 +1309,7 @@ fn constString(self: *GenState, v: *Value) {
 
     let str_start: i64 = v.aux_int;
     let str_len: i64 = v.aux_ptr;
+    debug.log_dd(DebugPhase.codegen, "      -> x{d} = str len={d} (pending reloc)", rd, str_len);
 
     // Record the code offset for relocation
     let reloc_offset: i64 = self.code_count;
@@ -1606,6 +1625,8 @@ fn add(self: *GenState, v: *Value) {
     let rd: i64 = v.reg;
     if rd < 0 { return; }
 
+    debug.log_d(DebugPhase.codegen, "      ADD -> x{d}", rd);
+
     let f: *Func = self.func;
     let arg0: *Value = f.getValue(v.getArg(0));
     let arg1: *Value = f.getValue(v.getArg(1));
@@ -1636,6 +1657,8 @@ fn sub(self: *GenState, v: *Value) {
     let rd: i64 = v.reg;
     if rd < 0 { return; }
 
+    debug.log_d(DebugPhase.codegen, "      SUB -> x{d}", rd);
+
     let f: *Func = self.func;
     let arg0: *Value = f.getValue(v.getArg(0));
     let arg1: *Value = f.getValue(v.getArg(1));
@@ -1664,6 +1687,8 @@ fn mul(self: *GenState, v: *Value) {
     let rd: i64 = v.reg;
     if rd < 0 { return; }
 
+    debug.log_d(DebugPhase.codegen, "      MUL -> x{d}", rd);
+
     let f: *Func = self.func;
     let arg0: *Value = f.getValue(v.getArg(0));
     let arg1: *Value = f.getValue(v.getArg(1));
@@ -1683,6 +1708,8 @@ fn mul(self: *GenState, v: *Value) {
 fn div(self: *GenState, v: *Value) {
     let rd: i64 = v.reg;
     if rd < 0 { return; }
+
+    debug.log_d(DebugPhase.codegen, "      DIV -> x{d}", rd);
 
     let f: *Func = self.func;
     let arg0: *Value = f.getValue(v.getArg(0));
@@ -2017,20 +2044,23 @@ fn load(self: *GenState, v: *Value) {
     let rd: i64 = v.reg;
     if rd < 0 { return; }
 
+    debug.log_d(DebugPhase.codegen, "      load -> x{d}", rd);
+
     let f: *Func = self.func;
     let addr: *Value = f.getValue(v.getArg(0));
 
-    // Check if we need byte-sized load (TYPE_U8 = 6, TYPE_I8 = 2)
+    // Check if we need byte-sized load (TYPE_BOOL = 1, TYPE_I8 = 2, TYPE_U8 = 6)
     // IMPORTANT: Also check SOURCE type (from LocalAddr), not just Load value type
     // This handles cases where the Load value type doesn't match the local's type
-    var is_byte: bool = v.type_idx == 6 or v.type_idx == 2;
+    var is_byte: bool = v.type_idx == 1 or v.type_idx == 2 or v.type_idx == 6;
 
     // Check if address is LocalAddr - emit SP-relative load directly
     if addr.op == Op.LocalAddr {
         let local_idx: i64 = addr.aux_int;
         let local: *Local = f.getLocal(local_idx);
         // Also check local's type in case Load value type is wrong
-        if local.type_idx == 6 or local.type_idx == 2 {
+        // TYPE_BOOL = 1, TYPE_I8 = 2, TYPE_U8 = 6
+        if local.type_idx == 1 or local.type_idx == 2 or local.type_idx == 6 {
             is_byte = true;
         }
         if self.target == TARGET_AMD64 {
@@ -2104,14 +2134,16 @@ fn load(self: *GenState, v: *Value) {
 }
 
 fn store(self: *GenState, v: *Value) {
+    debug.log(DebugPhase.codegen, "      store");
+
     let f: *Func = self.func;
     let addr: *Value = f.getValue(v.getArg(0));
     let val: *Value = f.getValue(v.getArg(1));
 
-    // Check if we need byte-sized store (TYPE_U8 = 6, TYPE_I8 = 2)
+    // Check if we need byte-sized store (TYPE_BOOL = 1, TYPE_I8 = 2, TYPE_U8 = 6)
     // IMPORTANT: Check DESTINATION type (from LocalAddr), not source value type
     // This handles cases like "let d: u8 = 101" where 101 has type i64
-    var is_byte: bool = val.type_idx == 6 or val.type_idx == 2;
+    var is_byte: bool = val.type_idx == 1 or val.type_idx == 2 or val.type_idx == 6;
 
     // BUG FIX: Check Store's aux_int for explicit element size
     // StoreIndexLocal/StoreIndexValue set aux_int = elem_size
@@ -2123,7 +2155,8 @@ fn store(self: *GenState, v: *Value) {
     if addr.op == Op.LocalAddr {
         let local_idx: i64 = addr.aux_int;
         let local: *Local = f.getLocal(local_idx);
-        if local.type_idx == 6 or local.type_idx == 2 {
+        // TYPE_BOOL = 1, TYPE_I8 = 2, TYPE_U8 = 6
+        if local.type_idx == 1 or local.type_idx == 2 or local.type_idx == 6 {
             is_byte = true;
         }
     }
@@ -2577,6 +2610,8 @@ fn offPtr(self: *GenState, v: *Value) {
 
 fn call(self: *GenState, v: *Value) {
     let f: *Func = self.func;
+
+    debug.log_d(DebugPhase.codegen, "      call: {d} args", v.args.count);
 
     // BUG-054: Check if call returns >16B (needs hidden return)
     var call_ret_size: i64 = 8;  // Default to 8 bytes
@@ -3305,6 +3340,8 @@ fn materializeArgToReg(self: *GenState, arg_val: *Value, target_reg: i64) {
 fn emitReturn(self: *GenState, v: *Value) {
     let f: *Func = self.func;
 
+    debug.log_d(DebugPhase.codegen, "      return: {d} args", v.args.count);
+
     // BUG-054: Hidden return handling for structs >16B
     // Following Zig: src/codegen/arm64.zig:851-963
     if self.has_hidden_return and v.args.count > 0 {
@@ -3491,6 +3528,7 @@ fn emitReturn(self: *GenState, v: *Value) {
     }
 
     // Emit epilogue: deallocate frame, restore saved registers, return
+    debug.log(DebugPhase.codegen, "      Emitting epilogue");
     // BUG-054: Frame size may be larger if we have hidden return
     var frame_size: i64 = f.frame_size;
     if self.has_hidden_return {
@@ -3682,6 +3720,8 @@ fn emitPhiMoves(self: *GenState, current_block: *Block, target_block_id: i64) {
 // ============================================================================
 
 fn blockControl(self: *GenState, block: *Block, next_block: i64) {
+    debug.log_d(DebugPhase.codegen, "    Block b{d} control", block.id);
+
     if block.kind == BlockKind.Return {
         // Return blocks don't need control flow - Return value handles it
         return;
