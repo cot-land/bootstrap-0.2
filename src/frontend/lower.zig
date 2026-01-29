@@ -2726,7 +2726,11 @@ pub const Lowerer = struct {
         const ptr_type = try self.type_reg.makePointer(TypeRegistry.U8);
 
         // Check if argument is an integer type (includes UNTYPED_INT for literals like 42)
-        const is_integer = arg_type == TypeRegistry.I8 or
+        // BUG-078: Also treat enum types as integers since they're represented as i64
+        const type_info = self.type_reg.get(arg_type);
+        const is_enum = type_info == .enum_type;
+        const is_integer = is_enum or
+            arg_type == TypeRegistry.I8 or
             arg_type == TypeRegistry.I16 or
             arg_type == TypeRegistry.I32 or
             arg_type == TypeRegistry.I64 or

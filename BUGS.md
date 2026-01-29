@@ -147,40 +147,111 @@ zig cc /tmp/sb.o runtime/cot_runtime_linux.o -o /tmp/sb
 
 ### BUG-075: cot1 stage1 crashes on Linux - hardcoded Mach-O format
 
-**Status:** IN PROGRESS
+**Status:** PARTIALLY FIXED
 **Priority:** HIGH
 **Discovered:** 2026-01-29
 **Platform:** Linux (AMD64)
 
 cot1 stage1 compiler crashes when compiling any file on Linux because it's hardcoded to produce Mach-O object files (macOS format) instead of ELF (Linux format).
 
-**Symptoms:**
-1. Simple programs crash in `GenState_finalize` during "Phase 6: Creating Mach-O object"
-2. Programs with structs crash earlier in `resolve_type_expr` during "Phase 3: Lowering to IR"
+**Fixed issues:**
+1. Added platform detection (`get_target_arch()`)
+2. Added `finalize_elf()` function for AMD64/ELF
+3. Fixed file open flags for Linux (O_CREAT=64, O_TRUNC=512 vs macOS values)
+4. Fixed `buildShstrtab()` writing to wrong offset in output buffer
+5. Increased buffer capacities (16MB output, 1MB strings, 100K relocations)
+
+**Remaining issues (tracked separately):**
+- BUG-076: ELF symbol names missing in .strtab
+- BUG-077: Stage1 crashes on programs with global variables
+
+---
+
+### BUG-076: ELF symbol names missing in .strtab
+
+**Status:** FIXED (workaround applied)
+**Priority:** HIGH
+**Discovered:** 2026-01-29
+**Fixed:** 2026-01-29
+**Platform:** Linux (AMD64)
+
+Stage1-generated ELF files have empty symbol names. The .strtab section only contains the null byte.
 
 **Root cause:**
-- `stages/cot1/main.cot` only imports and uses `obj/macho.cot`
-- No platform detection - always creates MachOWriter
-- `stages/cot1/obj/elf.cot` exists but is not integrated
+Register clobbering bug in Zig compiler's AMD64 codegen. When accessing struct fields through a pointer (like `ir_func.name_len`), the loaded value gets clobbered by subsequent operations before it's used.
 
-**Progress (2026-01-29):**
-- Enhanced `stages/cot1/obj/elf.cot` with MachOWriter-compatible interface:
-  - Added `addDataZeros()`, `addDataI64()`, `addDataByte()` methods
-  - Added `addSymbol()` returning index (was void)
-  - Added `generateDebugLine()`, `addDebugInfoReloc()` stubs
-  - Added `writeWithDebug()`, `finalize()` methods
-  - Added debug info fields (stubs for compatibility)
+**Symptoms:**
+- `readelf -s` shows symbol with empty name
+- Linking fails: "undefined symbol: main"
+- Adding print statements "fixes" the bug by forcing register spilling
 
-**Remaining work:**
-1. `genssa.cot` finalize function takes `*MachOWriter` - needs refactoring
-2. Either: Create generic writer interface OR duplicate finalize for ELF
-3. Add target detection in main.cot
+**Workaround applied:**
+Added `print("")` calls between struct field loads in `finalize_elf()` to force register state flush:
+```cot
+let func_name_start: i64 = ir_func.name_start;
+print("");  // Force register state flush
+let func_name_len: i64 = ir_func.name_len;
+print("");  // Force register state flush
+```
 
-**Key files:**
-- `stages/cot1/main.cot` - needs platform detection and ELF integration
-- `stages/cot1/obj/elf.cot` - ELF writer (enhanced but not integrated)
-- `stages/cot1/obj/macho.cot` - Mach-O writer (currently hardcoded)
-- `stages/cot1/codegen/genssa.cot` - finalize() needs refactoring
+**Note:** This is a bug in the Zig compiler's AMD64 codegen, not in the cot1 code itself. The workaround ensures stage1 produces valid ELF files.
+
+---
+
+### BUG-077: Stage1 crashes on programs with global variables
+
+**Status:** OPEN
+**Priority:** HIGH
+**Discovered:** 2026-01-29
+**Platform:** Linux (AMD64)
+
+Stage1 crashes during Phase 3 (Lowering to IR) when compiling programs that have global variables.
+
+**Symptoms:**
+- SIGSEGV in Phase 3: Lowering to IR
+- Crash on NULL pointer dereference
+- Works fine for simple programs without globals
+
+**Reproduction:**
+```bash
+echo 'var g: i64 = 0; fn main() i64 { return g; }' > /tmp/test.cot
+/tmp/cot1-stage1 /tmp/test.cot -o /tmp/test.o
+# Crashes in Phase 3
+```
+
+**Related:**
+- Bootstrap tests crash on this same issue
+
+---
+
+### BUG-078: Stage1 AMD64 - Struct copy through pointer bug (FIXED)
+
+**Status:** FIXED (2026-01-29)
+**Priority:** CRITICAL
+**Discovered:** 2026-01-29
+**Platform:** Linux (AMD64)
+
+**Root cause:** When copying a struct through a pointer dereference (`ptr.* = struct_value`), the Zig compiler's SSA builder emitted a `.store` operation which only handles up to 8 bytes. For structs > 8 bytes, only the first qword was copied.
+
+**Fix:** Modified `src/frontend/ssa_builder.zig` to emit `.move` operations (bulk memory copy) instead of `.store` for struct types > 8 bytes in both:
+1. `ptr_store_value` - storing through computed pointer (`ptr.* = value`)
+2. `store_local` - storing to local variable (`local = value`)
+
+The `.move` operation properly copies all bytes of the struct using 8-byte chunks.
+
+**Test case:**
+```cot
+struct TestStruct { a: i64, b: i64, c: i64, d: i64, value: i64, f: i64, }
+fn main() i64 {
+    let ptr: *TestStruct = @ptrCast(*TestStruct, malloc_sized(1, 48));
+    var s: TestStruct = undefined;
+    s.a = 1; s.b = 2; s.c = 3; s.d = 4; s.value = 42; s.f = 6;
+    ptr.* = s;  // Now correctly copies all 48 bytes
+    return ptr.value;  // Returns 42 (was 0 before fix)
+}
+```
+
+**Note:** Stage1 still has a separate crash during SSA/codegen (address 0xffffffffffffffff - likely a lookup returning -1). This is a different issue in the cot1 code itself, not the Zig compiler.
 
 ---
 
@@ -188,6 +259,7 @@ cot1 stage1 compiler crashes when compiling any file on Linux because it's hardc
 
 | Bug | Description | Fixed |
 |-----|-------------|-------|
+| BUG-078 | Struct copy through pointer only copies 8 bytes | 2026-01-29 |
 | BUG-074 | []u8 slice as function parameter causes segfault | 2026-01-29 |
 | BUG-069 | i64 minimum literal parsing overflow | 2026-01-28 |
 | BUG-068 | For-range over struct slices returns garbage | 2026-01-28 |

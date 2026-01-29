@@ -726,7 +726,32 @@ pub const SSABuilder = struct {
                 addr_val.aux_int = @intCast(s.local_idx);
                 try cur.addValue(self.allocator, addr_val);
 
-                // Regular store for non-slice types
+                // BUG-078 FIX: For struct types > 8 bytes, use OpMove for bulk copy
+                // EXCEPTION: For call results, use .store because AMD64 codegen handles struct returns
+                const type_size = self.type_registry.sizeOf(value.type_idx);
+                const is_large_struct = (value_type == .struct_type) and (type_size > 8);
+                const is_call_result = (value.op == .static_call or value.op == .closure_call);
+
+                if (is_large_struct and !is_call_result) {
+                    // For large structs from memory (not call results), use OpMove.
+                    // If value came from a load, extract the source address.
+                    const src_addr = if (value.op == .load and value.args.len > 0)
+                        value.args[0] // Source address from load
+                    else
+                        value; // Assume it's already an address
+
+                    // Emit OpMove for bulk memory copy
+                    const move_val = try self.func.newValue(.move, TypeRegistry.VOID, cur, self.cur_pos);
+                    move_val.addArg2(addr_val, src_addr);
+                    move_val.aux_int = @intCast(type_size);
+                    try cur.addValue(self.allocator, move_val);
+                    debug.log(.ssa, "    store_local (large struct {d}B) -> OpMove v{}", .{ type_size, move_val.id });
+                    self.assign(s.local_idx, value);
+                    break :blk value;
+                }
+
+                // For call results and other cases, use .store
+                // AMD64 codegen handles struct call results (9-16B in RAX:RDX, >16B via hidden return)
                 const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
                 store_val.addArg2(addr_val, value);
                 try cur.addValue(self.allocator, store_val);
@@ -1136,6 +1161,36 @@ pub const SSABuilder = struct {
                 // Store through computed pointer: ptr.* = value
                 const ptr_val = try self.convertNode(p.ptr) orelse return error.MissingValue;
                 const value = try self.convertNode(p.value) orelse return error.MissingValue;
+
+                // BUG-078 FIX: For struct types > 8 bytes, use OpMove for bulk copy
+                // instead of .store which only handles up to 8 bytes.
+                // EXCEPTION: For call results (static_call/closure_call), use .store
+                // because the AMD64 codegen has special handling for struct returns in RAX:RDX.
+                // Go reference: expand_calls.go - large struct handling
+                const value_type = self.type_registry.get(value.type_idx);
+                const type_size = self.type_registry.sizeOf(value.type_idx);
+                const is_large_struct = (value_type == .struct_type) and (type_size > 8);
+                const is_call_result = (value.op == .static_call or value.op == .closure_call);
+
+                if (is_large_struct and !is_call_result) {
+                    // For large structs from memory (not call results), use OpMove.
+                    // If value came from a load, extract the source address.
+                    const src_addr = if (value.op == .load and value.args.len > 0)
+                        value.args[0] // Source address from load
+                    else
+                        value; // Assume it's already an address
+
+                    // Emit OpMove for bulk memory copy
+                    const move_val = try self.func.newValue(.move, TypeRegistry.VOID, cur, self.cur_pos);
+                    move_val.addArg2(ptr_val, src_addr);
+                    move_val.aux_int = @intCast(type_size);
+                    try cur.addValue(self.allocator, move_val);
+                    debug.log(.ssa, "    ptr_store_value (large struct {d}B) -> OpMove v{}", .{ type_size, move_val.id });
+                    break :blk move_val;
+                }
+
+                // For call results and scalar types, use .store
+                // AMD64 codegen handles struct call results (9-16B in RAX:RDX, >16B via hidden return)
                 const store_val = try self.func.newValue(.store, TypeRegistry.VOID, cur, self.cur_pos);
                 store_val.addArg2(ptr_val, value);
                 try cur.addValue(self.allocator, store_val);
