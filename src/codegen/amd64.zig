@@ -308,6 +308,12 @@ pub const AMD64CodeGen = struct {
                 if (val_state.firstReg()) |reg_num| {
                     return regNumToAMD64(@intCast(reg_num));
                 }
+                // BUG-078 FIX: If the value was spilled (spill != null) and has no register
+                // in the current state (firstReg returned null), don't trust the home.
+                // Return null to force a reload from the spill slot.
+                if (val_state.spill != null) {
+                    return null;
+                }
             }
         }
         // Fall back to home assignment (persists even after value is "dead")
@@ -332,13 +338,43 @@ pub const AMD64CodeGen = struct {
 
     /// Force rematerialize a value into a register, ignoring any existing register allocation.
     /// Use this when you know the register might have been reused for other values.
-    fn forceInReg(self: *AMD64CodeGen, value: *const Value, hint_reg: Reg) !void {
+    fn forceInReg(self: *AMD64CodeGen, value: *const Value, hint_reg: Reg) std.mem.Allocator.Error!void {
         return self.rematerializeValue(value, hint_reg);
     }
 
     /// Internal: actually rematerialize a value into hint_reg
-    fn rematerializeValue(self: *AMD64CodeGen, value: *const Value, hint_reg: Reg) !void {
-        // Need to reload from spill slot or rematerialize
+    fn rematerializeValue(self: *AMD64CodeGen, value: *const Value, hint_reg: Reg) std.mem.Allocator.Error!void {
+        // BUG-078 FIX: Check if this value was spilled. If so, reload from the spill slot
+        // instead of trying to rematerialize. This is critical for values like .arg that
+        // can't be rematerialized after function calls (the ABI registers are clobbered).
+        if (self.regalloc_state) |state| {
+            if (value.id < state.values.len) {
+                const val_state = state.values[value.id];
+                if (val_state.spill) |spill| {
+                    // Value was spilled - load from the spill slot
+                    const loc = spill.getHome() orelse {
+                        debug.log(.codegen, "WARNING: spill v{d} has no stack location", .{spill.id});
+                        // Fall through to normal rematerialization below
+                        return self.rematerializeByOp(value, hint_reg);
+                    };
+                    const byte_off = loc.stackOffset();
+                    // MOV hint_reg, [RBP - (offset + 8)]
+                    // The +8 matches store_reg/load_reg - spill slots are 8 bytes
+                    const disp: i32 = -@as(i32, @intCast(byte_off + 8));
+                    const load = asm_mod.encodeLoadDisp32(hint_reg, .rbp, disp);
+                    try self.emitBytes(load.data[0..load.len]);
+                    debug.log(.codegen, "      reload spilled v{d} from [RBP{d}] to {s}", .{ value.id, disp, hint_reg.name() });
+                    return;
+                }
+            }
+        }
+
+        // Not spilled - rematerialize by operation type
+        return self.rematerializeByOp(value, hint_reg);
+    }
+
+    /// Rematerialize a value by its operation type (no spill check)
+    fn rematerializeByOp(self: *AMD64CodeGen, value: *const Value, hint_reg: Reg) std.mem.Allocator.Error!void {
         switch (value.op) {
             .const_int, .const_64 => {
                 // Rematerialize constant
@@ -696,6 +732,157 @@ pub const AMD64CodeGen = struct {
                     }
                 }
             },
+            .div => {
+                // Rematerialize division - conditional recomputation
+                // If either operand is a call result, DON'T recompute (call can't be re-executed)
+                // Instead, use the default case (load from home)
+                const can_recompute = blk: {
+                    if (value.args.len < 2) break :blk false;
+                    const op1 = value.args[0];
+                    const op2 = value.args[1];
+                    // Check if either operand is a call result
+                    if (op1.op == .static_call or op1.op == .closure_call) break :blk false;
+                    if (op2.op == .static_call or op2.op == .closure_call) break :blk false;
+                    break :blk true;
+                };
+
+                if (can_recompute) {
+                    // Safe to recompute - neither operand is a call result
+                    const op1 = value.args[0];
+                    const op2 = value.args[1];
+
+                    // Save R14 and R15 (callee-saved)
+                    const push_r14 = asm_mod.encodePush(.r14);
+                    try self.emitBytes(push_r14.data[0..push_r14.len]);
+                    const push_r15 = asm_mod.encodePush(.r15);
+                    try self.emitBytes(push_r15.data[0..push_r15.len]);
+
+                    // Rematerialize dividend into R14, divisor into R15
+                    try self.rematerializeValue(op1, .r14);
+                    try self.rematerializeValue(op2, .r15);
+
+                    // Move dividend to RAX, divisor to R11
+                    try self.emit(3, asm_mod.encodeMovRegReg(.rax, .r14));
+                    try self.emit(3, asm_mod.encodeMovRegReg(.r11, .r15));
+
+                    // CQO - sign extend RAX to RDX:RAX
+                    try self.emit(2, asm_mod.encodeCqo());
+
+                    // IDIV R11
+                    try self.emit(3, asm_mod.encodeIdivReg(.r11));
+
+                    // Result is in RAX, move to hint_reg if needed
+                    if (hint_reg == .r14) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(.r14, .rax));
+                        const pop_r15 = asm_mod.encodePop(.r15);
+                        try self.emitBytes(pop_r15.data[0..pop_r15.len]);
+                        try self.emitBytes(&[_]u8{ 0x48, 0x83, 0xC4, 0x08 });
+                    } else if (hint_reg == .r15) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(.r15, .rax));
+                        const pop_temp = asm_mod.encodePop(.r14);
+                        try self.emitBytes(pop_temp.data[0..pop_temp.len]);
+                        const pop_r14 = asm_mod.encodePop(.r14);
+                        try self.emitBytes(pop_r14.data[0..pop_r14.len]);
+                    } else {
+                        if (hint_reg != .rax) {
+                            try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, .rax));
+                        }
+                        const pop_r15 = asm_mod.encodePop(.r15);
+                        try self.emitBytes(pop_r15.data[0..pop_r15.len]);
+                        const pop_r14 = asm_mod.encodePop(.r14);
+                        try self.emitBytes(pop_r14.data[0..pop_r14.len]);
+                    }
+                    debug.log(.codegen, "      rematerialize div (recomputed) to {s}", .{hint_reg.name()});
+                } else {
+                    // Can't safely recompute - fall through to default (load from home)
+                    if (value.getHome()) |loc| {
+                        switch (loc) {
+                            .stack => |byte_off| {
+                                const disp: i32 = -byte_off;
+                                const load = asm_mod.encodeLoadDisp32(hint_reg, .rbp, disp);
+                                try self.emitBytes(load.data[0..load.len]);
+                            },
+                            .register => |reg_num| {
+                                const src_reg = regNumToAMD64(@intCast(reg_num));
+                                if (src_reg != hint_reg) {
+                                    try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, src_reg));
+                                }
+                            },
+                        }
+                    } else {
+                        debug.log(.codegen, "WARNING: div with call operand has no home", .{});
+                    }
+                }
+            },
+            .mod => {
+                // Rematerialize modulo - same conditional logic as div
+                const can_recompute = blk: {
+                    if (value.args.len < 2) break :blk false;
+                    const op1 = value.args[0];
+                    const op2 = value.args[1];
+                    if (op1.op == .static_call or op1.op == .closure_call) break :blk false;
+                    if (op2.op == .static_call or op2.op == .closure_call) break :blk false;
+                    break :blk true;
+                };
+
+                if (can_recompute) {
+                    const op1 = value.args[0];
+                    const op2 = value.args[1];
+
+                    const push_r14 = asm_mod.encodePush(.r14);
+                    try self.emitBytes(push_r14.data[0..push_r14.len]);
+                    const push_r15 = asm_mod.encodePush(.r15);
+                    try self.emitBytes(push_r15.data[0..push_r15.len]);
+
+                    try self.rematerializeValue(op1, .r14);
+                    try self.rematerializeValue(op2, .r15);
+
+                    try self.emit(3, asm_mod.encodeMovRegReg(.rax, .r14));
+                    try self.emit(3, asm_mod.encodeMovRegReg(.r11, .r15));
+                    try self.emit(2, asm_mod.encodeCqo());
+                    try self.emit(3, asm_mod.encodeIdivReg(.r11));
+
+                    if (hint_reg == .r14) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(.r14, .rdx));
+                        const pop_r15 = asm_mod.encodePop(.r15);
+                        try self.emitBytes(pop_r15.data[0..pop_r15.len]);
+                        try self.emitBytes(&[_]u8{ 0x48, 0x83, 0xC4, 0x08 });
+                    } else if (hint_reg == .r15) {
+                        try self.emit(3, asm_mod.encodeMovRegReg(.r15, .rdx));
+                        const pop_temp = asm_mod.encodePop(.r14);
+                        try self.emitBytes(pop_temp.data[0..pop_temp.len]);
+                        const pop_r14 = asm_mod.encodePop(.r14);
+                        try self.emitBytes(pop_r14.data[0..pop_r14.len]);
+                    } else {
+                        if (hint_reg != .rdx) {
+                            try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, .rdx));
+                        }
+                        const pop_r15 = asm_mod.encodePop(.r15);
+                        try self.emitBytes(pop_r15.data[0..pop_r15.len]);
+                        const pop_r14 = asm_mod.encodePop(.r14);
+                        try self.emitBytes(pop_r14.data[0..pop_r14.len]);
+                    }
+                    debug.log(.codegen, "      rematerialize mod (recomputed) to {s}", .{hint_reg.name()});
+                } else {
+                    if (value.getHome()) |loc| {
+                        switch (loc) {
+                            .stack => |byte_off| {
+                                const disp: i32 = -byte_off;
+                                const load = asm_mod.encodeLoadDisp32(hint_reg, .rbp, disp);
+                                try self.emitBytes(load.data[0..load.len]);
+                            },
+                            .register => |reg_num| {
+                                const src_reg = regNumToAMD64(@intCast(reg_num));
+                                if (src_reg != hint_reg) {
+                                    try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, src_reg));
+                                }
+                            },
+                        }
+                    } else {
+                        debug.log(.codegen, "WARNING: mod with call operand has no home", .{});
+                    }
+                }
+            },
             .copy => {
                 // Copy needs to trace through to the source value
                 if (value.args.len > 0) {
@@ -711,7 +898,9 @@ pub const AMD64CodeGen = struct {
             },
             .static_call => {
                 // Function call result is in RAX (System V ABI)
-                // The value should have a spill slot if it lived across another call
+                // CRITICAL: Only trust STACK homes - register homes or RAX may have been
+                // clobbered. If there's no stack home, we can't rematerialize the call result
+                // (we can't re-execute the call due to potential side effects).
                 if (value.getHome()) |loc| {
                     switch (loc) {
                         .stack => |byte_off| {
@@ -720,19 +909,20 @@ pub const AMD64CodeGen = struct {
                             try self.emitBytes(load.data[0..load.len]);
                             debug.log(.codegen, "      reload static_call from [RBP{d}] to {s}", .{ disp, hint_reg.name() });
                         },
-                        .register => |reg_num| {
-                            const src_reg = regNumToAMD64(@intCast(reg_num));
-                            if (src_reg != hint_reg) {
-                                try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, src_reg));
-                                debug.log(.codegen, "      reload static_call from {s} to {s}", .{ src_reg.name(), hint_reg.name() });
+                        .register => {
+                            // DON'T trust register homes - they may have been clobbered
+                            // Fall through to warning
+                            debug.log(.codegen, "WARNING: static_call has register home but may be clobbered, copying from RAX", .{});
+                            if (hint_reg != .rax) {
+                                try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, .rax));
                             }
                         },
                     }
                 } else {
-                    // Fallback: result should be in RAX
+                    // Fallback: result should be in RAX (hope it wasn't clobbered)
+                    debug.log(.codegen, "WARNING: static_call has no home, copying from RAX (may be stale)", .{});
                     if (hint_reg != .rax) {
                         try self.emit(3, asm_mod.encodeMovRegReg(hint_reg, .rax));
-                        debug.log(.codegen, "      reload static_call from RAX to {s}", .{hint_reg.name()});
                     }
                 }
             },
@@ -1899,7 +2089,51 @@ pub const AMD64CodeGen = struct {
                         // Just ensure they stay there (no-op, but log it)
                         debug.log(.codegen, "      ret static_call: result already in RAX/RDX", .{});
                     } else {
-                        try self.moveToRAX(ret_val);
+                        // BUG-078 FIX: Handle 9-16 byte struct returns
+                        // These need to return in RAX:RDX (first 8 bytes in RAX, second 8 in RDX)
+                        const ret_size = self.getTypeSize(ret_val.type_idx);
+                        if (ret_size > 8 and ret_size <= 16) {
+                            // Get source address of struct
+                            var src_addr_reg: Reg = .r11;
+                            if (ret_val.op == .load and ret_val.args.len > 0) {
+                                const src_addr = ret_val.args[0];
+                                if (src_addr.op == .local_addr) {
+                                    const local_idx: u32 = @intCast(src_addr.aux_int);
+                                    if (local_idx < self.func.local_offsets.len and local_idx < self.func.local_sizes.len) {
+                                        const byte_offset: i32 = @intCast(self.func.local_offsets[local_idx]);
+                                        const local_size: i32 = @intCast(self.func.local_sizes[local_idx]);
+                                        const disp: i32 = -(byte_offset + local_size);
+                                        try self.emitLeaFromFrame(src_addr_reg, disp);
+                                    }
+                                } else {
+                                    const addr_reg = self.getRegForValue(src_addr) orelse blk: {
+                                        try self.ensureInReg(src_addr, src_addr_reg);
+                                        break :blk src_addr_reg;
+                                    };
+                                    if (addr_reg != src_addr_reg) {
+                                        try self.emit(3, asm_mod.encodeMovRegReg(src_addr_reg, addr_reg));
+                                    }
+                                }
+                            } else {
+                                // Try to get value address from register
+                                const val_reg = self.getRegForValue(ret_val) orelse blk: {
+                                    try self.ensureInReg(ret_val, src_addr_reg);
+                                    break :blk src_addr_reg;
+                                };
+                                if (val_reg != src_addr_reg) {
+                                    try self.emit(3, asm_mod.encodeMovRegReg(src_addr_reg, val_reg));
+                                }
+                            }
+                            // Load first 8 bytes into RAX
+                            const load_rax = asm_mod.encodeMovRegMemDisp(.rax, src_addr_reg, 0);
+                            try self.code.appendSlice(self.allocator, load_rax.data[0..load_rax.len]);
+                            // Load second 8 bytes into RDX
+                            const load_rdx = asm_mod.encodeMovRegMemDisp(.rdx, src_addr_reg, 8);
+                            try self.code.appendSlice(self.allocator, load_rdx.data[0..load_rdx.len]);
+                            debug.log(.codegen, "      ret {d}B struct: [{s}] -> RAX:RDX", .{ ret_size, src_addr_reg.name() });
+                        } else {
+                            try self.moveToRAX(ret_val);
+                        }
                     }
                 }
                 try self.emitEpilogue();
@@ -2101,39 +2335,32 @@ pub const AMD64CodeGen = struct {
 
             .div => {
                 // AMD64 division: IDIV uses RDX:RAX / src -> RAX (quotient), RDX (remainder)
+                // BUG-078 FIX: Handle case where divisor is a call result (in RAX).
+                // If we load dividend into RAX first, we clobber the call result.
                 const args = value.args;
                 if (args.len >= 2) {
-                    const op1_reg = self.getRegForValue(args[0]) orelse blk: {
-                        try self.ensureInReg(args[0], .rax);
-                        break :blk Reg.rax;
-                    };
-                    var op2_reg = self.getRegForValue(args[1]) orelse blk: {
-                        // Use R11 for divisor to avoid conflicts with RAX/RDX
-                        try self.ensureInReg(args[1], .r11);
-                        break :blk Reg.r11;
-                    };
+                    // Check if divisor is a call result (would be in RAX)
+                    const divisor_is_call = args[1].op == .static_call or args[1].op == .closure_call;
 
-                    // If op2 is in RAX, move it to R11 before we put op1 in RAX
-                    if (op2_reg == .rax and op1_reg != .rax) {
+                    if (divisor_is_call) {
+                        // Step 1: Save divisor (call result in RAX) to R11 FIRST
                         try self.emit(3, asm_mod.encodeMovRegReg(.r11, .rax));
-                        op2_reg = .r11;
-                    }
 
-                    // CRITICAL: If op2 is in RDX, move it to R11 BEFORE CQO clobbers RDX
-                    if (op2_reg == .rdx) {
-                        try self.emit(3, asm_mod.encodeMovRegReg(.r11, .rdx));
-                        op2_reg = .r11;
-                    }
+                        // Step 2: Load dividend into RAX (now safe - divisor saved in R11)
+                        try self.forceInReg(args[0], .rax);
+                    } else {
+                        // Standard case: load dividend first (uses R11 for address scratch)
+                        try self.forceInReg(args[0], .rax);
 
-                    // Move dividend to RAX if needed
-                    if (op1_reg != .rax) {
-                        try self.emit(3, asm_mod.encodeMovRegReg(.rax, op1_reg));
+                        // Then load divisor into R11
+                        try self.forceInReg(args[1], .r11);
                     }
+                    const op2_reg: Reg = .r11;
 
-                    // CQO: sign-extend RAX into RDX:RAX
+                    // Step 3: CQO - sign-extend RAX into RDX:RAX
                     try self.emit(2, asm_mod.encodeCqo());
 
-                    // IDIV op2 (RDX:RAX / op2 -> RAX)
+                    // Step 4: IDIV R11 (RDX:RAX / R11 -> RAX)
                     try self.emit(3, asm_mod.encodeIdivReg(op2_reg));
 
                     // Result is in RAX, move to dest if needed
@@ -2146,37 +2373,34 @@ pub const AMD64CodeGen = struct {
 
             .mod => {
                 // Modulo: same as div but result is in RDX (remainder)
+                // BUG-078 FIX: Handle case where divisor is a call result (in RAX).
                 const args = value.args;
                 if (args.len >= 2) {
-                    const op1_reg = self.getRegForValue(args[0]) orelse blk: {
-                        try self.ensureInReg(args[0], .rax);
-                        break :blk Reg.rax;
-                    };
-                    var op2_reg = self.getRegForValue(args[1]) orelse blk: {
-                        // Use R11 for divisor to avoid conflicts with RAX/RDX
-                        try self.ensureInReg(args[1], .r11);
-                        break :blk Reg.r11;
-                    };
+                    // Check if divisor is a call result (would be in RAX)
+                    const divisor_is_call = args[1].op == .static_call or args[1].op == .closure_call;
 
-                    // If op2 is in RAX, move it to R11 before we put op1 in RAX
-                    if (op2_reg == .rax and op1_reg != .rax) {
+                    if (divisor_is_call) {
+                        // Step 1: Save divisor (call result in RAX) to R11 FIRST
                         try self.emit(3, asm_mod.encodeMovRegReg(.r11, .rax));
-                        op2_reg = .r11;
-                    }
 
-                    // CRITICAL: If op2 is in RDX, move it to R11 BEFORE CQO clobbers RDX
-                    if (op2_reg == .rdx) {
-                        try self.emit(3, asm_mod.encodeMovRegReg(.r11, .rdx));
-                        op2_reg = .r11;
-                    }
+                        // Step 2: Load dividend into RAX (now safe - divisor saved in R11)
+                        try self.forceInReg(args[0], .rax);
+                    } else {
+                        // Standard case: load dividend first (uses R11 for address scratch)
+                        try self.forceInReg(args[0], .rax);
 
-                    if (op1_reg != .rax) {
-                        try self.emit(3, asm_mod.encodeMovRegReg(.rax, op1_reg));
+                        // Then load divisor into R11
+                        try self.forceInReg(args[1], .r11);
                     }
+                    const op2_reg: Reg = .r11;
+
+                    // Step 3: CQO - sign-extend RAX into RDX:RAX
                     try self.emit(2, asm_mod.encodeCqo());
+
+                    // Step 4: IDIV R11 (RDX:RAX / R11 -> RAX quotient, RDX remainder)
                     try self.emit(3, asm_mod.encodeIdivReg(op2_reg));
 
-                    // Remainder is in RDX
+                    // Remainder is in RDX, move to dest if needed
                     const dest_reg = self.getDestRegForValue(value);
                     if (dest_reg != .rdx) {
                         try self.emit(3, asm_mod.encodeMovRegReg(dest_reg, .rdx));
@@ -2900,6 +3124,15 @@ pub const AMD64CodeGen = struct {
                         const store_len = asm_mod.encodeMovMemReg(addr_reg, 8, .r8);
                         try self.code.appendSlice(self.allocator, store_len.data[0..store_len.len]);
                         debug.log(.codegen, "      -> stored string_concat RAX,R8 to [{s}]", .{addr_reg.name()});
+                    } else if (type_size > 8 and type_size <= 16 and (val.op == .static_call or val.op == .closure_call)) {
+                        // BUG-078 FIX: 9-16 byte struct call results are returned in RAX:RDX
+                        // Store RAX at offset 0
+                        const store_rax = asm_mod.encodeMovMemReg(addr_reg, 0, .rax);
+                        try self.code.appendSlice(self.allocator, store_rax.data[0..store_rax.len]);
+                        // Store RDX at offset 8 (for the remaining bytes)
+                        const store_rdx = asm_mod.encodeMovMemReg(addr_reg, 8, .rdx);
+                        try self.code.appendSlice(self.allocator, store_rdx.data[0..store_rdx.len]);
+                        debug.log(.codegen, "      -> stored {d}B call result RAX,RDX to [{s}]", .{ type_size, addr_reg.name() });
                     } else {
                         // Normal store - get value to register
                         const val_reg = self.getRegForValue(val) orelse blk: {
@@ -3446,9 +3679,23 @@ pub const AMD64CodeGen = struct {
                     };
                     const byte_off = loc.stackOffset();
 
-                    // Get the register holding the value to spill
-                    const src_reg = self.getRegForValue(src_value) orelse blk: {
-                        try self.ensureInReg(src_value, .r11);
+                    // BUG-078 FIX: Get the register from the HOME assignment, not getRegForValue.
+                    // At this point, the value is still in its original register - we haven't
+                    // stored it to the spill slot yet! getRegForValue would return null because
+                    // the value is marked as spilled, but the spill hasn't executed yet.
+                    const src_reg: Reg = if (src_value.getHome()) |home| blk: {
+                        switch (home) {
+                            .register => |reg_num| break :blk regNumToAMD64(@intCast(reg_num)),
+                            .stack => {
+                                // This shouldn't happen - src should be in a register for store_reg
+                                debug.log(.codegen, "      store_reg v{d}: src home is stack, rematerializing", .{value.id});
+                                try self.rematerializeByOp(src_value, .r11);
+                                break :blk Reg.r11;
+                            },
+                        }
+                    } else blk: {
+                        // No home - rematerialize the value
+                        try self.rematerializeByOp(src_value, .r11);
                         break :blk Reg.r11;
                     };
 
